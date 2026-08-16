@@ -7,7 +7,9 @@ run as a WebAssembly module by
 `fn.go` is an ordinary [function-sdk-go](https://github.com/crossplane/function-sdk-go)
 function: edit `RunFunction`, keep the tests in `fn_test.go` passing, and never
 touch a wasm toolchain — `main.go` registers the function with the `wasmfn`
-guest SDK, which is what the function-wasm runtime calls.
+guest SDK, which is what the function-wasm runtime calls. `wasmfn.HTTPClient()`
+is an `*http.Client` that performs requests through the host (`config.greetingUrl`
+uses it); the Composition's `sandbox.egress` grant decides which are allowed.
 
 ```shell
 # Unit tests run natively.
@@ -30,6 +32,7 @@ Reference the module from a Composition step of function-wasm:
     apiVersion: wasm.fn.crossplane.io/v1beta1
     kind: Input
     module:
+      type: OCI
       oci:                     # printed by guestfn push
         ref: ghcr.io/example/my-fn:v0.1.0@sha256:<manifest digest>
     config:

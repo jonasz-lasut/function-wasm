@@ -158,6 +158,7 @@ func TestCompile(t *testing.T) {
 func TestRun(t *testing.T) {
 	type args struct {
 		cfg  Config
+		run  RunOptions
 		ctx  func() (context.Context, context.CancelFunc)
 		opts testwasm.Options
 	}
@@ -212,6 +213,33 @@ func TestRun(t *testing.T) {
 				opts: testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"},
 			},
 			want: want{errIs: ErrTimeout},
+		},
+		"RunTimeout": {
+			reason: "A per-run timeout below the engine's interrupts the guest sooner, and the message names the budget that applied.",
+			args:   args{cfg: Config{Timeout: 10 * time.Second}, run: RunOptions{Timeout: 50 * time.Millisecond}, opts: testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"}},
+			want:   want{errIs: ErrTimeout, err: "(50ms)"},
+		},
+		"RunTimeoutCapped": {
+			reason: "A per-run timeout above the engine's is capped to it: the Config stays the ceiling.",
+			args:   args{cfg: Config{Timeout: 50 * time.Millisecond}, run: RunOptions{Timeout: 10 * time.Second}, opts: testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"}},
+			want:   want{errIs: ErrTimeout, err: "(50ms)"},
+		},
+		"RunMemoryLimit": {
+			reason: "A per-run memory limit below the engine's applies to the store.",
+			args: args{
+				run:  RunOptions{MemoryLimit: 3 * 65536},
+				opts: testwasm.Options{Body: "(if (i32.eq (memory.grow (i32.const 64)) (i32.const -1)) (then unreachable)) (i64.const 0)"},
+			},
+			want: want{err: "wasmfn_run failed: trap", trapLogged: true},
+		},
+		"RunMemoryLimitCapped": {
+			reason: "A per-run memory limit above the engine's is capped to it.",
+			args: args{
+				cfg:  Config{MemoryLimit: 3 * 65536},
+				run:  RunOptions{MemoryLimit: 64 << 20},
+				opts: testwasm.Options{Body: "(if (i32.eq (memory.grow (i32.const 64)) (i32.const -1)) (then unreachable)) (i64.const 0)"},
+			},
+			want: want{err: "wasmfn_run failed: trap", trapLogged: true},
 		},
 		"MemoryLimit": {
 			reason: "Growing beyond the memory limit fails inside the guest, which then traps.",
@@ -276,12 +304,15 @@ func TestRun(t *testing.T) {
 			defer cancel()
 			log := &recorder{}
 
-			got, err := e.Run(ctx, m, request(), log)
+			got, err := e.Run(ctx, m, request(), log, tc.args.run)
 
 			switch {
 			case tc.want.errIs != nil:
 				if !errors.Is(err, tc.want.errIs) {
 					t.Fatalf("\n%s\nRun(): want error %v, got %v", tc.reason, tc.want.errIs, err)
+				}
+				if tc.want.err != "" && !strings.Contains(err.Error(), tc.want.err) {
+					t.Fatalf("\n%s\nRun(): want error containing %q, got %v", tc.reason, tc.want.err, err)
 				}
 			case tc.want.err != "":
 				if err == nil || !strings.Contains(err.Error(), tc.want.err) {
@@ -333,7 +364,7 @@ func TestRunMetrics(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _ = e.Run(context.Background(), m, request(), &recorder{})
+		_, _ = e.Run(context.Background(), m, request(), &recorder{}, RunOptions{})
 	}
 
 	for _, o := range []string{metrics.OutcomeOK, metrics.OutcomeError, metrics.OutcomeTimeout} {
@@ -362,7 +393,7 @@ func TestRunConcurrent(t *testing.T) {
 	errs := make(chan error, 32)
 	for range 32 {
 		wg.Go(func() {
-			got, err := e.Run(context.Background(), m, request(), &recorder{})
+			got, err := e.Run(context.Background(), m, request(), &recorder{}, RunOptions{})
 			if err != nil {
 				errs <- err
 				return

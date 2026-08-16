@@ -1,7 +1,7 @@
 # [[ .Name ]]
 
 A [Crossplane](https://crossplane.io) composition function in Rust, compiled to
-a wasip1 reactor of about 150 KB and run by
+a wasip1 reactor of about 250 KB and run by
 [function-wasm](https://github.com/jonasz-lasut/function-wasm).
 
 - `proto/run_function.proto` is crossplane's `RunFunction` contract, vendored;
@@ -11,6 +11,10 @@ a wasip1 reactor of about 150 KB and run by
   and the `wasmfn_alloc`/`wasmfn_run` exports of the function-wasm
   [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md)
   behind `#[cfg(target_os = "wasi")]`, so `cargo test` runs natively.
+- `src/http.rs` — `http::get`/`http::send` over the `wasmfn.http` import:
+  HTTP through the host, within the Composition's `sandbox.egress` grant
+  (`config.greetingUrl` uses it). Natively the host is a closure installed
+  with `http::set_host`, so the tests fake it.
 
 ```shell
 rustup target add wasm32-wasip1
@@ -35,6 +39,7 @@ Reference the module from a Composition step of function-wasm:
     apiVersion: wasm.fn.crossplane.io/v1beta1
     kind: Input
     module:
+      type: OCI
       oci:                     # printed by guestfn push
         ref: ghcr.io/example/[[ .Name ]]:v0.1.0@sha256:<manifest digest>
     config:

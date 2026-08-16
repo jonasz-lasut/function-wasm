@@ -3,8 +3,11 @@
 package main
 
 import (
+	"context"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -19,9 +22,11 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
+	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
+	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
 )
 
 // sweepInterval is how often the on-disk caches are measured and bounded.
@@ -47,6 +52,19 @@ type CLI struct {
 	MaxCacheSize          int           `help:"Bound in MB on the on-disk caches together (fetched modules and compiled artifacts); the least recently used entries are removed past it, at startup and every ten minutes. 0 leaves them unbounded." default:"0" env:"MAX_CACHE_SIZE"`
 	ModuleMemoryLimit     int           `help:"Maximum linear memory of a running module in MB." default:"512"`
 	CosignKey             string        `help:"PEM file with one or more cosign public keys. When set, only OCI modules carrying a cosign signature by one of the keys run; http and path sources are refused." env:"COSIGN_KEY" type:"existingfile"`
+
+	// Readiness and the concurrent-runs bound.
+	MaxConcurrentRuns int      `help:"Most module runs executing at once; a further request waits for a slot until its deadline, then fails with a fatal result. 0 leaves concurrency to the caller." default:"0" env:"MAX_CONCURRENT_RUNS"`
+	HealthAddress     string   `help:"Address of the plain-HTTP health endpoints /livez and /readyz (ready once the caches are open and --warm-modules are loaded); empty disables them. The gRPC health service on the function port answers too, but speaks mTLS." default:":8081" env:"HEALTH_ADDRESS"`
+	WarmModules       []string `help:"Modules loaded — resolved, verified, compiled or mapped from the artifact cache — before the health service reports Serving: OCI references pinned to their manifest digest (repo[:tag]@sha256:...) and, with --module-dir, path:<file> entries. Repeatable or comma-separated. One that fails to load is logged and loaded on its first request instead." env:"WARM_MODULES" sep:"," placeholder:"REF"`
+	// Sandbox ceilings (docs/one-pager-sandbox.md): every capability is
+	// switched on with --enable-sandbox-<feature>; a Composition asks for
+	// less through the Input's sandbox, never more. Host directories are
+	// deliberately not mountable into modules — no flag offers it.
+	EnableSandboxPrivateTmp bool   `help:"Let Compositions give their modules a private, empty, writable /tmp for the duration of a request (sandbox.filesystem.privateTmp), created under $TMPDIR and removed afterwards." env:"ENABLE_SANDBOX_PRIVATE_TMP"`
+	EnableSandboxEnv        bool   `help:"Let Compositions set the environment variables their modules see (sandbox.env); non-secret values only." env:"ENABLE_SANDBOX_ENV"`
+	EnableSandboxEgress     bool   `help:"Let Compositions grant their modules HTTP(S) requests through the host (sandbox.egress.http): the host performs wasmfn.http requests within each Composition's grant and the egress policy. Off, any sandbox.egress grant is a fatal result." env:"ENABLE_SANDBOX_EGRESS"`
+	SandboxEgressPolicy     string `help:"YAML or JSON file with the egress ceiling: hosts and hostPatterns a Composition may grant (any, when both are empty), blockedCIDRs and allowedCIDRs on top of the default block list (loopback, link-local, private, cluster and reserved ranges), and the per-run budgets timeout, maxRequests, maxResponseBytes, maxRedirects. Without it the defaults apply." env:"SANDBOX_EGRESS_POLICY" type:"existingfile"`
 }
 
 // Run this Function.
@@ -61,8 +79,9 @@ func (c *CLI) Run() error {
 	}
 
 	eng, err := engine.New(engine.Config{
-		Timeout:     c.ModuleTimeout,
-		MemoryLimit: int64(c.ModuleMemoryLimit) << 20,
+		Timeout:           c.ModuleTimeout,
+		MemoryLimit:       int64(c.ModuleMemoryLimit) << 20,
+		MaxConcurrentRuns: c.MaxConcurrentRuns,
 	})
 	if err != nil {
 		return err
@@ -91,11 +110,44 @@ func (c *CLI) Run() error {
 	if err != nil {
 		return err
 	}
+	// The sandbox ceiling is checked once here — an unwritable $TMPDIR stops
+	// the runtime instead of failing every request that asks for a /tmp.
+	ceiling, err := sandbox.NewCeiling(sandbox.Options{
+		EnablePrivateTmp: c.EnableSandboxPrivateTmp,
+		EnableEnv:        c.EnableSandboxEnv,
+	})
+	if err != nil {
+		return err
+	}
+	// The egress ceiling: only with the flag, so a runtime that never opted
+	// in has no code path that dials out for a module.
+	var egressCeiling *egress.Egress
+	if c.EnableSandboxEgress {
+		policy := egress.Policy{}
+		if c.SandboxEgressPolicy != "" {
+			if policy, err = egress.LoadPolicy(c.SandboxEgressPolicy); err != nil {
+				return err
+			}
+		}
+		if egressCeiling, err = egress.New(policy); err != nil {
+			return err
+		}
+	} else if c.SandboxEgressPolicy != "" {
+		return errors.New("--sandbox-egress-policy needs --enable-sandbox-egress")
+	}
+	if c.EnableSandboxPrivateTmp || c.EnableSandboxEnv || c.EnableSandboxEgress {
+		egressCeilingText := "disabled"
+		if egressCeiling != nil {
+			egressCeilingText = egressCeiling.Describe()
+		}
+		log.Info("Sandbox grants enabled", "private-tmp", c.EnableSandboxPrivateTmp, "env", c.EnableSandboxEnv, "egress", c.EnableSandboxEgress, "egress-policy", c.SandboxEgressPolicy, "egress-ceiling", egressCeilingText)
+	}
 
 	fn := &Function{
 		log:    log,
 		ttl:    ttl,
 		engine: eng,
+		egress: egressCeiling,
 		modules: engine.NewCache(eng, engine.CacheOptions{
 			Disk:                  compiled,
 			NoMemory:              !c.EnableMemoryCache,
@@ -103,19 +155,63 @@ func (c *CLI) Run() error {
 			MaxConcurrentCompiles: c.MaxConcurrentCompiles,
 		}),
 		resolver: resolver,
+		sandbox:  ceiling,
 	}
-	// The gRPC health service answers Serving once the caches are open and
-	// the engine is up, so a readiness probe (grpc_health_probe or a
-	// Kubernetes gRPC probe on the function port) has something to ask.
+	// Readiness: the caches are open, the engine is up and the modules named
+	// by --warm-modules are loaded. It is answered twice — by the gRPC health
+	// service on the function port, and by /readyz on --health-address in
+	// plain HTTP, because the function port speaks mTLS in every real
+	// install and kubelet's gRPC probe dials without credentials. Warm-up
+	// runs while the server already listens: the probes read "not ready" in
+	// the meantime instead of a closed port (a liveness probe on the same
+	// port would not survive minutes of compiling), a request that arrives
+	// early is served cold or joins the load in progress, and a warm entry
+	// that fails only costs its first request the load — never readiness.
 	healthSrv := health.NewServer()
-	healthSrv.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
-	healthSrv.SetServingStatus(fnv1.FunctionRunnerService_ServiceDesc.ServiceName, healthgrpc.HealthCheckResponse_SERVING)
+	var ready atomic.Bool
+	setHealth := func(status healthgrpc.HealthCheckResponse_ServingStatus) {
+		healthSrv.SetServingStatus("", status)
+		healthSrv.SetServingStatus(fnv1.FunctionRunnerService_ServiceDesc.ServiceName, status)
+		ready.Store(status == healthgrpc.HealthCheckResponse_SERVING)
+	}
+	setHealth(healthgrpc.HealthCheckResponse_NOT_SERVING)
+	if c.HealthAddress != "" {
+		go serveHealth(log, c.HealthAddress, &ready)
+	}
+	go func() {
+		fn.warm(context.Background(), c.WarmModules, c.MaxConcurrentCompiles)
+		setHealth(healthgrpc.HealthCheckResponse_SERVING)
+	}()
 	return function.Serve(fn,
 		function.Listen(c.Network, c.Address),
 		function.MTLSCertificates(c.TLSCertsDir),
 		function.Insecure(c.Insecure),
 		function.MaxRecvMessageSize(c.MaxRecvMessageSize*1024*1024),
 		function.WithHealthServer(healthSrv))
+}
+
+// serveHealth answers /livez (the process is up) and /readyz (200 once
+// ready, 503 while warming) in plain HTTP on address, for probes that cannot
+// speak the function port's mTLS. It runs for the life of the process.
+func serveHealth(log logging.Logger, address string, ready *atomic.Bool) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if !ready.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("warming\n"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	srv := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	if err := srv.ListenAndServe(); err != nil {
+		log.Info("Cannot serve health probes", "address", address, "error", err)
+	}
 }
 
 // sweepCaches bounds the on-disk caches to maxBytes, now and every ten

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -86,8 +87,49 @@ func TestRunFunction(t *testing.T) {
 			},
 			want: want{err: "cannot get observed composite resource: none in request"},
 		},
+		"GreetingFromURL": {
+			reason: "input.config.greetingUrl fetches the greeting through the host's wasmfn.http import (a fake host here).",
+			req: func(t *testing.T) *fnv1.RunFunctionRequest {
+				return &fnv1.RunFunctionRequest{
+					Meta:     &fnv1.RequestMeta{Tag: "hello"},
+					Input:    mustStruct(t, `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"fn.wasm"},"config":{"greetingUrl":"https://greetings.example.com/en"}}`),
+					Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: mustStruct(t, `{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)}},
+				}
+			},
+			want: want{rsp: &fnv1.RunFunctionResponse{
+				Meta: &fnv1.ResponseMeta{Tag: "hello", Ttl: durationpb.New(60 * time.Second)},
+				Desired: &fnv1.State{Resources: map[string]*fnv1.Resource{
+					"greeting": {Resource: mustStruct(t, `{"apiVersion":"v1","kind":"ConfigMap","data":{"greeting":"howdy my-xr"}}`)},
+				}},
+				Results:    []*fnv1.Result{{Severity: fnv1.Severity_SEVERITY_NORMAL, Message: "greeted my-xr", Target: fnv1.Target_TARGET_COMPOSITE.Enum()}},
+				Conditions: []*fnv1.Condition{{Type: "FunctionSuccess", Status: fnv1.Status_STATUS_CONDITION_TRUE, Reason: "Success", Target: fnv1.Target_TARGET_COMPOSITE_AND_CLAIM.Enum()}},
+			}},
+		},
+		"GreetingURLRefused": {
+			reason: "A request the host refuses is an error naming the host's reason.",
+			req: func(t *testing.T) *fnv1.RunFunctionRequest {
+				return &fnv1.RunFunctionRequest{
+					Meta:     &fnv1.RequestMeta{Tag: "hello"},
+					Input:    mustStruct(t, `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"fn.wasm"},"config":{"greetingUrl":"https://evil.example.com/en"}}`),
+					Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: mustStruct(t, `{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)}},
+				}
+			},
+			want: want{err: `cannot fetch greeting: sandbox.egress: no rule admits host "evil.example.com"`},
+		},
 	}
 	logSink = func(int32, []byte) {}
+	// A fake host for wasmfn.http: greetings.example.com answers, anything
+	// else is refused the way the runtime words it.
+	httpSink = func(payload []byte) ([]byte, error) {
+		req := &HTTPRequest{}
+		if err := json.Unmarshal(payload, req); err != nil {
+			t.Fatal(err)
+		}
+		if req.URL == "https://greetings.example.com/en" && (req.Method == "" || req.Method == "GET") {
+			return json.Marshal(&HTTPResponse{Status: 200, Headers: map[string][]string{"Content-Type": {"text/plain"}}, Body: []byte("howdy\n")})
+		}
+		return json.Marshal(&HTTPResponse{Error: `sandbox.egress: no rule admits host "evil.example.com"`})
+	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			rsp, err := RunFunction(tc.req(t))

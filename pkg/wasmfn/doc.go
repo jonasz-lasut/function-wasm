@@ -11,10 +11,12 @@
 //	func init() { wasmfn.Register(&Function{log: wasmfn.NewLogger()}) }
 //	func main()  {}
 //
-// Register and NewLogger are portable so the guest package still builds and its
-// tests still run natively; only the ABI exports and the host log import are
+// Register, NewLogger, GetConfig and HTTPClient are portable so the guest
+// package still builds and its tests still run natively; only the ABI
+// exports and the two host imports (wasmfn.log, wasmfn.http) are
 // wasip1-specific. See docs/abi.md in the function-wasm repository for the
-// host/guest contract (exports wasmfn_alloc and wasmfn_run, protobuf payloads).
+// host/guest contract (exports wasmfn_alloc and wasmfn_run, protobuf
+// payloads, the JSON payloads of the imports).
 //
 // The package deliberately imports only function-sdk-go's proto types and
 // crossplane-runtime's logging interface: a guest that speaks raw protobuf

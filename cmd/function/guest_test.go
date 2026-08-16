@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +22,7 @@ import (
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/resource"
 
+	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
 	"github.com/jonasz-lasut/function-wasm/internal/testwasm"
@@ -94,7 +99,24 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 		t.Fatal(err)
 	}
 	log := newRecorder()
-	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver}
+	// A greeting server for the guests' greetingUrl, reachable through the
+	// host's egress: the ceiling lifts the loopback ranges the block list
+	// would otherwise refuse (every resolved address is judged).
+	greetings := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/en" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte("howdy\n"))
+	}))
+	defer greetings.Close()
+	ceiling, err := egress.New(egress.Policy{AllowedCIDRs: []string{"127.0.0.0/8", "::1/128"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: ceiling}
+	greetingsHost, _, _ := net.SplitHostPort(strings.TrimPrefix(greetings.URL, "http://"))
+	egressGrant := `"sandbox":{"egress":{"http":[{"host":"` + greetingsHost + `","methods":["GET"]}]}}`
 
 	xr := resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)
 	response := func(greeting string) *fnv1.RunFunctionResponse {
@@ -120,17 +142,33 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 	}{
 		"Default": {
 			reason: "The guest composes a ConfigMap and its logs surface with the host's context.",
-			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"path":"` + file + `"}}`,
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"` + file + `"}}`,
 			want:   want{rsp: response("hello my-xr"), logs: []string{"Running function tag=hello", guestLog}},
 		},
 		"Configured": {
 			reason: "input.config reaches the guest.",
-			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"path":"` + file + `"},"config":{"greeting":"hi"}}`,
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"` + file + `"},"config":{"greeting":"hi"}}`,
 			want:   want{rsp: response("hi my-xr"), logs: []string{"Running function tag=hello", guestLog}},
+		},
+		"GreetingFromURL": {
+			reason: "The guest fetches its greeting through the host's wasmfn.http import within the Composition's egress grant — the same helper shape in Go (wasmfn.HTTPClient), TinyGo and Rust.",
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"` + file + `"},` + egressGrant + `,"config":{"greetingUrl":"` + greetings.URL + `/en"}}`,
+			want:   want{rsp: response("howdy my-xr"), logs: []string{"Running function tag=hello", guestLog, "method=GET outcome=ok"}},
+		},
+		"GreetingURLWithoutGrant": {
+			reason: "Without an egress grant the host refuses the import's call and the guest reports it as a fatal result — no trap, no crash.",
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"` + file + `"},"config":{"greetingUrl":"` + greetings.URL + `/en"}}`,
+			want: want{rsp: &fnv1.RunFunctionResponse{
+				Meta: &fnv1.ResponseMeta{Tag: "hello", Ttl: durationpb.New(60 * time.Second)},
+				Results: []*fnv1.Result{{
+					Severity: fnv1.Severity_SEVERITY_FATAL,
+					Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+				}},
+			}, logs: []string{"method=GET outcome=refused"}},
 		},
 		"BadConfig": {
 			reason: "A config the guest cannot use is a fatal result from the guest, not a crash.",
-			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"path":"` + file + `"},"config":{"greeting":7}}`,
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"` + file + `"},"config":{"greeting":7}}`,
 			want: want{rsp: &fnv1.RunFunctionResponse{
 				Meta: &fnv1.ResponseMeta{Tag: "hello", Ttl: durationpb.New(60 * time.Second)},
 				Results: []*fnv1.Result{{
@@ -164,8 +202,8 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 				t.Errorf("\n%s\nRunFunction(): -want rsp, +got rsp:\n%s", tc.reason, diff)
 			}
 			for _, want := range tc.want.logs {
-				if !slices.Contains(*log.seen, want) {
-					t.Errorf("\n%s\nlogs: missing %q in %q", tc.reason, want, *log.seen)
+				if !slices.ContainsFunc(*log.seen, func(line string) bool { return strings.Contains(line, want) }) {
+					t.Errorf("\n%s\nlogs: missing a line containing %q in %q", tc.reason, want, *log.seen)
 				}
 			}
 		})

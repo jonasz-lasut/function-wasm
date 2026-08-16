@@ -2,22 +2,22 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.3
+* Status: Implemented, revision 1.1
 
-Whether the Input's `module` object should change shape before `v0.1.0`
-freezes it: from six sibling fields to a discriminated union, with `policy`
-and `limits` as top-level siblings. Raised by the 2026-08-16 architecture
-review; nothing here is implemented. This document is the authoritative
-shape and holds every proposed Input field: the trust-model and
-resource-governance one-pagers describe what is implemented and point here
-for `policy` and `limits`.
+The shape of the Input before `v0.1.0` freezes it: a discriminated `module`
+instead of six sibling fields, with `policy`, `limits` and `sandbox` as
+top-level siblings. Raised by the 2026-08-16 architecture review; revision
+1.0 is what shipped, revision 1.1 records the `sandbox` grants that landed.
+This document is the authoritative shape and holds every Input field: the
+trust-model and resource-governance one-pagers describe what `policy` and
+`limits` mean, the sandbox one-pager what the `sandbox` subtree does.
 
-## The proposed Input, in one place
+## The Input, in one place
 
 ```yaml
 apiVersion: wasm.fn.crossplane.io/v1beta1
 kind: Input
-module:                                   # what runs
+module:                                   # what runs — required
   type: OCI                               # OCI | HTTP | Path — always the Composition's choice
   oci:                                    # exactly one of the typed object …
     ref: ghcr.io/example/greeter:v1@sha256:…
@@ -26,13 +26,15 @@ module:                                   # what runs
   # path: fn.wasm
   # from: status.module                   # … or the XR field holding it (an object of `type`)
 policy:                                   # what an XR-chosen module may be and spend
-  repositoryAllowList: ["ghcr.io/example-org/"]   # prefixes the XR's ref must match
+  repositoryAllowList: ["ghcr.io/example-org/"]   # prefixes the XR's ref (or url) must match
   credentialsAllowList: ["registry"]              # step credentials the XR object may name
 limits:                                   # what this step's run may consume, ≤ the runtime's ceilings
   timeout: 5s
   memory: 128Mi
-sandbox:                                  # grants (sandbox one-pager): filesystem, network, env
-  scratch: true
+sandbox:                                  # grants (sandbox one-pager) within the --enable-sandbox-* flags
+  filesystem: {privateTmp: true}          # a private /tmp; host directories are never mountable
+  egress: {http: [{host | hostPattern, methods, pathPrefix}]}
+  env: {KEY: value}
 config:                                   # opaque, forwarded to the module
   greeting: hi
 ```
@@ -44,63 +46,86 @@ choose the module, not widen its permissions, its grants or its budget.
 
 ## Today
 
-```yaml
-module:
-  # exactly one of
-  oci:      {ref, credentials}
-  http:     {url, digest}
-  path:     fn.wasm
-  ociFrom:  status.module     # the XR field holds an {ref} object
-  httpFrom: spec.url          # … an {url, digest} object
-  pathFrom: spec.path         # … a string
-```
+The shape above is implemented in `input/v1beta1/input.go`, enforced by
+`internal/module.Validate`/`FromComposite`, `internal/module/policy.go`,
+`cmd/function/fn.go` (`runOptions`) and `internal/sandbox`, and described
+by the generated CRD under `package/input/`.
 
-Six optional fields, an "exactly one" invariant, and every source kind
-present twice — statically and as a `*From` pointer. The invariant is
-enforced by the runtime and, since this revision, by a CEL rule in the CRD.
-Rules that depend on *where* a source came from (an XR-chosen source may not
-name credentials; a proposed repository allowlist applies to XR-chosen
-sources only) live in code and prose, not in the schema. Adding a source
-kind adds two fields; adding a policy field has no natural home.
+- `module.type` is required (`OCI`, `HTTP`, `Path`). Exactly one of the
+  typed object it names (`oci`, `http`, `path`) or `from` is set, and no
+  object of another type may be present. The runtime checks it on every
+  request; three CEL rules on the `module` object say the same for tooling
+  that reads the schema (`crossplane resource validate`, IDEs) —
+  `self.type == 'OCI' ? (has(self.oci) != has(self.from)) : !has(self.oci)`
+  and its two siblings. Crossplane itself never installs a function's Input
+  CRD — an Input is a fragment of a Composition, not an object — so the
+  runtime is the only gate that always runs, and every marker on the types
+  is mirrored in `Validate`/`ValidatePolicy`/`sandbox.Validate`.
+- `module.from` names a field of the observed composite resource under
+  `spec.` or `status.` (pattern-checked), read on every request and decoded
+  strictly (unknown fields refused) into the object `type` names — an
+  `{ref, credentials}` object for `OCI`, `{url, digest}` for `HTTP`, a
+  string for `Path` — then validated like a static source. Errors name the
+  field: `module.from: status.module of the composite resource is not a
+  {ref, credentials} object: …`.
+- `policy` applies only to XR-chosen modules. `repositoryAllowList` is a
+  list of string prefixes the XR's `oci.ref` (or `http.url`) must start with
+  — matched on the normalized location, required whenever `module.from`
+  names an OCI or HTTP source; a ref outside every prefix is a fatal result
+  naming the policy and the ref. `credentialsAllowList` names the step credentials an
+  XR-chosen `oci` object may spend, and only on a ref the repository list
+  admits — the CRD and the runtime refuse a credentials list without a
+  repository list, so a credential is never spendable on an arbitrary host.
+  Absent or empty, an XR object naming credentials is refused as before,
+  with a hint at the policy. For a static source the policy is ignored (its
+  shape is still validated).
+- `limits.timeout` (a duration string, e.g. `5s`) and `limits.memory` (a
+  quantity, e.g. `128Mi`) must each be at most the runtime's ceiling
+  (`--module-timeout`, `--module-memory-limit`); asking for more is a fatal
+  result naming both (`limits.memory 1Gi exceeds the runtime's
+  --module-memory-limit of 512Mi`), asking for less narrows that run's
+  epoch deadline and store limiter (`engine.RunOptions`, capped by the
+  engine's `Config` whatever the caller passes).
+- `sandbox` — `filesystem.privateTmp`, `egress.http[] {host | hostPattern,
+  methods, pathPrefix}`, `env`. The Go types, the CRD schema (with a CEL
+  rule for host XOR hostPattern) and `internal/sandbox.Validate` check the
+  shape; `internal/sandbox.Ceiling` checks each grant against the operator's
+  `--enable-sandbox-*` flag and refuses it with a fatal result naming the
+  grant and the flag; `egress` is checked against the operator's egress
+  ceiling the same way (`internal/egress`). The private `/tmp`
+  (`--enable-sandbox-private-tmp`), `env` (`--enable-sandbox-env`) and
+  `egress` (`--enable-sandbox-egress` + `--sandbox-egress-policy`) are all
+  implemented; host directories are deliberately not mountable. The
+  behaviour is the sandbox one-pager's.
+- `guestfn push` prints the module block in this shape (`type: OCI` +
+  `oci.ref`); the scaffold templates and examples use `type: Path` for local
+  rendering.
 
-## Proposal
+## Why this shape
+
+The previous Input had six optional fields under `module` (`oci`, `http`,
+`path`, `ociFrom`, `httpFrom`, `pathFrom`), an "exactly one" invariant, and
+every source kind present twice — statically and as a `*From` pointer.
+Rules that depend on *where* a source came from (an XR-chosen source may
+not name credentials; a repository allowlist applies to XR-chosen sources
+only) lived in code and prose, not in the schema. Adding a source kind added
+two fields; a policy field had no natural home.
 
 The Crossplane idiom — a `type` discriminator next to a typed object — with
-`from` as an orthogonal switch:
-
-```yaml
-module:
-  type: OCI                    # OCI | HTTP | Path
-  oci:
-    ref: ghcr.io/example/greeter:v1@sha256:…
-    credentials: registry
-```
-
-```yaml
-module:
-  type: OCI
-  from: status.module          # the XR field holds an OCI object; oci: is not set
-policy:                        # Composition-owned, never read from the XR
-  repositoryAllowList: ["ghcr.io/example-org/"]
-  credentialsAllowList: ["registry"]
-```
+`from` as an orthogonal switch fixes all of that:
 
 - `module.type` says what kind of source this step runs; the Composition
   author always chooses the kind, an XR author only the instance.
-- Exactly one of the typed object (`oci`/`http`/`path`) or `from` is set,
-  and it must match `type` — three CEL rules, all expressible:
-  `self.type == 'OCI' ? (has(self.oci) != has(self.from)) : !has(self.oci)`
-  and its two siblings.
-- `policy` is a top-level sibling of `module` — the trust model's fields:
-  `repositoryAllowList` (prefixes an XR-chosen ref must match) and
-  `credentialsAllowList` (step credentials an XR-chosen object may name;
-  absent or empty means none, today's rule). It applies to `module.from`
-  sources; the CRD can require `has(self.policy)` when `has(self.module.from)`
-  for deployments that want it, and it never has to be read from the XR.
+- Exactly one of the typed object or `from` is set, and it must match
+  `type` — three CEL rules, all expressible.
+- `policy` is a top-level sibling of `module` — the trust model's fields. It
+  applies to `module.from` sources and never has to be read from the XR; the
+  CRD could require `has(self.policy)` when `has(self.module.from)` for
+  deployments that want it.
 - `limits` is the other top-level sibling — the resource-governance
   proposal (`timeout`, `memory`, each at most the runtime's ceiling).
 - The runtime's `FromComposite` reads the XR field into the object
-  `module.type` names; the credentials rule becomes "an object read through
+  `module.type` names; the credentials rule is "an object read through
   `from` may name only what `policy.credentialsAllowList` allows, and only
   for a ref within `policy.repositoryAllowList`" — one rule, stated once,
   and structurally impossible to bypass from the XR.
@@ -109,10 +134,9 @@ policy:                        # Composition-owned, never read from the XR
 
 Refusing credentials on XR-chosen modules is safe but blunt: a platform
 team that wants tenants to pick modules *from the platform's private
-registry* must mount a Docker config into the runtime. The shape above gives
-the Composition a top-level `policy` — read from the Input only, never
-through `module.from` — that fences what an XR-chosen module may be and
-spend:
+registry* would otherwise have to mount a Docker config into the runtime.
+`policy` — read from the Input only, never through `module.from` — fences
+what an XR-chosen module may be and spend:
 
 ```yaml
 module:
@@ -123,70 +147,39 @@ policy:
   credentialsAllowList: ["registry"]              # step credentials the XR object may name
 ```
 
-- `policy.repositoryAllowList`: an XR-chosen `ref` (or `url` for `HTTP`)
-  must start with one of the entries; anything else is a fatal result naming
-  the policy. Absent, any repository is allowed — today's behaviour.
-- `policy.credentialsAllowList`: the step credentials an XR-chosen object may
-  name, spent only on a ref the repository list admits. Absent or empty, none
-  — today's rule. A credential outside the list is a fatal result.
-
 The XR keeps choosing the artifact; the Composition keeps choosing where
-from and with what. The rule becomes structural rather than a refusal, the
-same field serves signature-free deployments that still want to fence
-tenants to a registry, and the CRD can validate it (`policy` required
-whenever `module.from` is set, for deployments that want that). Deferred
-until a deployment needs private-registry tenant modules without a mounted
-Docker config; it lands together with the discriminated `module`.
+from and with what. The same field serves signature-free deployments that
+still want to fence tenants to a registry. Prefixes are plain string
+prefixes: `ghcr.io/example-org/` with the trailing slash, or
+`ghcr.io/example-organisation/…` is admitted too.
 
 ## `limits`: per-Composition budgets
 
-The ceilings are global. A trusted internal policy module and a tenant's
-labelling module get the same 30 s / 512 MB, and the operator cannot give
-one more room without giving it to all. The sandbox one-pager's principle
-applies — the operator sets the ceiling, the Composition asks for less —
-so the Input gains a top-level `limits`, a sibling of `module` and `policy`:
-
-```yaml
-module:
-  type: OCI
-  oci: {ref: ghcr.io/example/greeter:v1@sha256:…}
-limits:
-  timeout: 5s          # ≤ --module-timeout
-  memory: 128Mi        # ≤ --module-memory-limit
-```
-
-read from the Input only (never through `module.from`: an XR author must
-not widen a budget), validated against the flags at request time and
-applied to that run's store. Raising above the ceiling stays operator-only.
-Trade-offs: two more Input fields to document, and a Composition author who
-sets them tightly gets fatal results the operator did not cause; the
+The ceilings are global — a trusted internal policy module and a tenant's
+labelling module get the same 30 s / 512 MB. The sandbox one-pager's
+principle applies — the operator sets the ceiling, the Composition asks for
+less — so the Input has a top-level `limits`, read from the Input only
+(never through `module.from`: an XR author must not widen a budget),
+validated against the flags at request time and applied to that run's
+store. Raising above the ceiling stays operator-only. A Composition author
+who sets them tightly gets fatal results the operator did not cause; the
 benefit is a shared runtime where the loudest module cannot spend the whole
-ceiling. This is a small change once wanted; it is deferred until a
-deployment asks for it, so the Input does not grow speculatively before
-`v0.1.0`.
+ceiling.
 
 ## Migration
 
-None: the API is `v1beta1` and unreleased. Doing this later means a
-`v1beta2` with a conversion — the Input has no controller, so conversion is
-documentation and a `guestfn`-style rewrite. Doing it now costs a day: the
-Go types, `FromComposite`, `Validate`, the CRD markers, README, AGENTS,
-scaffold templates and goldens, and every test that builds an Input.
+None was needed: the API is `v1beta1` and unreleased, and the change landed
+before `v0.1.0`. An Input in the old shape fails decoding (`ociFrom` and
+friends are unknown fields) or validation (`module.type is required`); the
+fix is `type: OCI|HTTP|Path` plus the matching object, or `type` + `from`
+for the former `*From` fields.
 
-## Alternatives
+## Alternatives considered
 
 | option | verdict |
 |---|---|
-| keep the six fields, add CEL for exactly-one (done) | works; policy fields would still have no home and each new kind adds two fields |
-| `source: {kind, oci, http, path}` nested one level down | same as the proposal with an extra level; nothing gained |
+| keep the six fields, add CEL for exactly-one | works; policy fields would still have no home and each new kind adds two fields |
+| `source: {kind, oci, http, path}` nested one level down | same as the chosen shape with an extra level; nothing gained |
 | `type` + typed object, `from` inside the typed object (`oci: {from: status.module}`) | reads well for one kind, but `path: {from: …}` turns a string into an object and the credentials rule needs "if from is set" inside each object |
 | `policy` and `limits` under `module` | ties Composition-owned policy to the thing an XR may choose; as top-level siblings they are visibly not part of what `from` reads |
 | drop `*From` sources altogether | removes the whole class of XR-author decisions; loses the per-tenant use case the README leads with |
-
-## Recommendation
-
-Do it before `v0.1.0` if `policy` (trust model) or `limits` (resource
-governance) is wanted in the first release — they belong with the
-discriminated `module`, and the schema is the cheaper half. If not, ship the
-six fields with the CEL rule and revisit with the first policy field; the
-cost then is a `v1beta2`.

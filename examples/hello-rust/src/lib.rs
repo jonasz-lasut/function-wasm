@@ -5,7 +5,10 @@
 //! `run_function` is ordinary Rust over the protobuf messages prost generated
 //! from the vendored crossplane proto; `abi` implements the function-wasm ABI
 //! (`wasmfn_alloc`, `wasmfn_run`, the `wasmfn.log` import) and only exists on
-//! the wasi target so the crate also builds and tests natively.
+//! the wasi target so the crate also builds and tests natively; `http` is
+//! egress through the host (`wasmfn.http`), granted per Composition.
+
+pub mod http;
 
 use std::collections::BTreeMap;
 
@@ -38,11 +41,20 @@ pub fn run_function(req: &RunFunctionRequest) -> Result<RunFunctionResponse, Str
         .unwrap_or_default();
     log::info("Running function", &[("tag", &tag)]);
 
-    let greeting = match config_string(req, "greeting") {
+    let mut greeting = match config_string(req, "greeting") {
         Ok(Some(g)) => g,
         Ok(None) => "hello".to_string(),
         Err(e) => return Err(format!("cannot read config: {e}")),
     };
+    // greetingUrl fetches the greeting through the host instead — the
+    // sandbox.egress grant of the Composition decides whether it may.
+    match config_string(req, "greetingUrl") {
+        Ok(Some(url)) => {
+            greeting = http::get_text(&url).map_err(|e| format!("cannot fetch greeting: {e}"))?;
+        }
+        Ok(None) => {}
+        Err(e) => return Err(format!("cannot read config: {e}")),
+    }
 
     let name = req
         .observed
@@ -240,14 +252,15 @@ pub mod log {
 
 /// The function-wasm ABI v1 exports, only on the wasi target.
 #[cfg(target_os = "wasi")]
-mod abi {
+pub(crate) mod abi {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
     thread_local! {
         // Buffers the host reads or writes through raw pointers: inputs handed
-        // out by wasmfn_alloc until wasmfn_run consumes them, and the last
-        // response until the next call.
+        // out by wasmfn_alloc until wasmfn_run consumes them, responses the
+        // host wrote through wasmfn_alloc inside a wasmfn.http call until the
+        // guest takes them, and the last response until the next call.
         static BUFFERS: RefCell<HashMap<u32, Vec<u8>>> = RefCell::new(HashMap::new());
     }
 
@@ -255,6 +268,12 @@ mod abi {
         let ptr = buf.as_ptr() as u32;
         BUFFERS.with(|b| b.borrow_mut().insert(ptr, buf));
         ptr
+    }
+
+    /// Takes a buffer the host filled through wasmfn_alloc (a wasmfn.http
+    /// response) out of the pinned set.
+    pub(crate) fn take(ptr: u32) -> Option<Vec<u8>> {
+        BUFFERS.with(|b| b.borrow_mut().remove(&ptr))
     }
 
     #[no_mangle]
@@ -378,6 +397,57 @@ mod tests {
             run_function(&req).unwrap_err(),
             "cannot read config: greeting must be a string"
         );
+    }
+
+    #[test]
+    fn greeting_from_url_through_the_host() {
+        // A fake host for wasmfn.http: greetings.example.com answers, anything
+        // else is refused the way the runtime words it.
+        http::set_host(|payload| {
+            let req: serde_json::Value = serde_json::from_slice(payload).unwrap();
+            let get = req["method"].as_str().is_none_or(|m| m == "GET");
+            if get && req["url"] == "https://greetings.example.com/en" {
+                return Ok(br#"{"status":200,"headers":{"Content-Type":["text/plain"]},"body":"aG93ZHkK"}"#.to_vec());
+            }
+            Ok(br#"{"status":0,"error":"sandbox.egress: no rule admits host \"evil.example.com\""}"#.to_vec())
+        });
+        let req = |url: &str| RunFunctionRequest {
+            meta: Some(RequestMeta {
+                tag: "hello".into(),
+                ..Default::default()
+            }),
+            input: Some(input(Some(object(vec![("greetingUrl", string(url))])))),
+            observed: Some(xr("my-xr")),
+            ..Default::default()
+        };
+        let rsp = run_function(&req("https://greetings.example.com/en")).unwrap();
+        assert_eq!(greeting_of(&rsp), "howdy my-xr");
+        assert_eq!(
+            run_function(&req("https://evil.example.com/en")).unwrap_err(),
+            "cannot fetch greeting: sandbox.egress: no rule admits host \"evil.example.com\""
+        );
+    }
+
+    #[test]
+    fn http_codec_round_trip() {
+        http::set_host(|payload| {
+            let req: serde_json::Value = serde_json::from_slice(payload).unwrap();
+            assert_eq!(req["method"], "POST");
+            assert_eq!(req["headers"]["Accept"][0], "application/json");
+            assert_eq!(req["body"], "eyJuYW1lIjoieCJ9"); // {"name":"x"}
+            Ok(br#"{"status":503,"body":"bm8="}"#.to_vec())
+        });
+        let mut headers = std::collections::BTreeMap::new();
+        headers.insert("Accept".to_string(), vec!["application/json".to_string()]);
+        let rsp = http::send(&http::Request {
+            method: "POST".into(),
+            url: "https://api.example.com/v1/items".into(),
+            headers,
+            body: br#"{"name":"x"}"#.to_vec(),
+        })
+        .unwrap();
+        assert_eq!(rsp.status, 503);
+        assert_eq!(rsp.body, b"no");
     }
 
     #[test]
