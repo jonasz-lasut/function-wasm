@@ -1,0 +1,273 @@
+# Copyright 2026 The function-wasm Authors.
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - release-*
+  pull_request: {}
+  workflow_dispatch: {}
+
+env:
+  # Common versions
+  GOLANGCI_VERSION: 'v2.12.2'
+
+jobs:
+  detect-noop:
+    runs-on: ubuntu-24.04
+    outputs:
+      noop: ${{ steps.noop.outputs.should_skip }}
+    steps:
+      - name: Detect No-op Changes
+        id: noop
+        uses: fkirc/skip-duplicate-actions@b974a9395958c231af965b70070979a577efa578 # v5.3.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          paths_ignore: '["**.md", "**.json"]'
+          do_not_skip: '["workflow_dispatch", "schedule", "push"]'
+
+  check-diff:
+    runs-on: ubuntu-24.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Tidies every Go module (root, the wasmfn guest SDK, the Go example
+      # guests), regenerates the Input CRD (package/input) and the guestfn
+      # scaffold goldens; all of it must be committed. The TinyGo example's
+      # generated protobuf code is checked by the render-tinygo job.
+      - name: Check Diff
+        run: |
+          go mod tidy
+          (cd pkg/wasmfn && go mod tidy)
+          (cd examples/hello-go && go mod tidy)
+          (cd examples/hello-tinygo && go mod tidy)
+          go generate ./...
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "There are uncommitted changes after running go mod tidy and go generate ./...; commit all generated files:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+          echo "Branch is clean"
+
+  lint:
+    runs-on: ubuntu-24.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - .
+          - pkg/wasmfn
+          - examples/hello-go
+          - examples/hello-tinygo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_VERSION }}
+          working-directory: ${{ matrix.module }}
+
+  unit-test:
+    runs-on: ubuntu-24.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # wasmtime-go is CGo: the runner's gcc links the bundled libwasmtime.
+      - name: Build
+        run: go build ./... && go vet ./...
+
+      # The root tests also build examples/hello-go to wasip1 and run it through
+      # the host, so the Go toolchain doubles as the guest compiler here.
+      - name: Run Unit Tests
+        run: go test -race ./... -covermode=atomic -coverprofile=./coverage.txt
+
+      - name: Test the Guest SDK
+        working-directory: pkg/wasmfn
+        run: |
+          go test -race ./...
+          GOOS=wasip1 GOARCH=wasm go vet ./...
+
+      - name: Publish Unit Test Coverage
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        with:
+          flags: unittests
+          files: coverage.txt
+
+  # The example guest is the scaffold rendered for itself. Rendering it with
+  # crossplane render against the runtime built from this tree proves the
+  # whole chain: guest compiles to wasm, the runtime serves it over gRPC,
+  # Crossplane accepts the response.
+  render-go:
+    name: render (go)
+    runs-on: ubuntu-24.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+    env:
+      # These environment variables are important to the Crossplane CLI
+      # install.sh script. They determine what version it installs.
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.4.1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Test the Example Guest
+        working-directory: examples/hello-go
+        run: go test -race ./...
+
+      - name: Render the Example
+        run: make -C examples/hello-go render-check
+
+  # The same guest without function-sdk-go, built with TinyGo: protobuf-go
+  # message types plus vtprotobuf's reflection-free codecs, generated from the
+  # vendored proto and committed (regenerated here to catch drift), then
+  # rendered through the runtime.
+  render-tinygo:
+    name: render (tinygo)
+    runs-on: ubuntu-24.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.4.1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Setup TinyGo
+        uses: acifani/setup-tinygo@f51bf108c9895381060398804ce6cf6f62692106 # v3.0.1
+        with:
+          tinygo-version: '0.41.1'
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # make generate builds the protoc plugins from go.mod's tool directives.
+      - name: Check Generated Code
+        working-directory: examples/hello-tinygo
+        run: |
+          go mod tidy
+          make generate
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/hello-tinygo is not up to date with its proto or go.mod; commit the result of make generate:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Test the TinyGo Guest
+        working-directory: examples/hello-tinygo
+        run: go test -race ./...
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the TinyGo Guest
+        run: make -C examples/hello-tinygo render-check
+
+  # The same guest in Rust (prost over the vendored proto, cdylib for
+  # wasm32-wasip1), rendered through the runtime.
+  render-rust:
+    name: render (rust)
+    runs-on: ubuntu-24.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.4.1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The runtime the render runs against is built from this tree.
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          targets: wasm32-wasip1
+          components: rustfmt, clippy
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint and Test the Rust Guest
+        working-directory: examples/hello-rust
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --target wasm32-wasip1 -- -D warnings
+          cargo test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the Rust Guest
+        run: make -C examples/hello-rust render-check

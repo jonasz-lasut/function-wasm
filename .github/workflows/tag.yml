@@ -1,0 +1,51 @@
+# Copyright 2026 The function-wasm Authors.
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.1.0)'
+        required: true
+      message:
+        description: 'Tag message'
+        required: true
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Create Tag
+        uses: negz/create-tag@8dce6c9d9b12d161abe01c02d2b03f19e2e9e9bb # v2
+        with:
+          version: ${{ github.event.inputs.version }}
+          message: ${{ github.event.inputs.message }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The wasmfn guest SDK is a nested Go module released in lockstep: its
+      # tag is prefixed with the module directory so `go get
+      # github.com/jonasz-lasut/function-wasm/pkg/wasmfn@vX.Y.Z` resolves, and a
+      # released guestfn pins the same version in the projects it scaffolds.
+      - name: Create Guest SDK Tag
+        uses: negz/create-tag@8dce6c9d9b12d161abe01c02d2b03f19e2e9e9bb # v2
+        with:
+          version: pkg/wasmfn/${{ github.event.inputs.version }}
+          message: ${{ github.event.inputs.message }}
+          token: ${{ secrets.GITHUB_TOKEN }}

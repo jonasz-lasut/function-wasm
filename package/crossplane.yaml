@@ -1,0 +1,23 @@
+---
+apiVersion: meta.pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-wasm
+  annotations:
+    meta.crossplane.io/maintainer: Jonasz Małecki <jonaszlasut@proton.me>
+    meta.crossplane.io/source: github.com/jonasz-lasut/function-wasm
+    meta.crossplane.io/license: Apache-2.0
+    meta.crossplane.io/description: "A composition function that runs a WebAssembly module supplied through its input in a wasmtime sandbox: write an ordinary function-sdk-go function, compile it to wasip1, publish it as an OCI artifact and reference it from a Composition step."
+    meta.crossplane.io/readme: |
+      function-wasm runs a WebAssembly module in a wasmtime sandbox. The
+      module implements the composition function contract
+      (RunFunctionRequest in, RunFunctionResponse out); its source is an OCI
+      artifact, an HTTP URL or a served file, named in the step's Input or
+      read from a field of the composite resource, and its config block is
+      passed through untouched. One
+      installed function serves any number of modules. See the
+      [README](https://github.com/jonasz-lasut/function-wasm)
+      for the guest SDK, the guestfn CLI, examples and documentation.
+spec:
+  capabilities:
+  - composition

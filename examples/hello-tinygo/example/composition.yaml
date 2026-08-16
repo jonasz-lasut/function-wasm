@@ -1,0 +1,23 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: hello-tinygo
+spec:
+  compositeTypeRef:
+    apiVersion: example.crossplane.io/v1
+    kind: XR
+  mode: Pipeline
+  pipeline:
+  - step: hello-tinygo
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        # For local rendering the runtime serves this directory (--module-dir).
+        # In a cluster use an oci reference pinned to the digest guestfn push
+        # prints.
+        path: fn.wasm
+      config:
+        greeting: hi
