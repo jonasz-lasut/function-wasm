@@ -67,18 +67,14 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	}
 	log = log.WithValues("module", ref.Description, "digest", ref.Digest)
 
-	mod, err := f.modules.Get(ref.Digest, func() (*engine.Module, error) {
+	mod, err := f.modules.Get(ref.Digest, func() ([]byte, error) {
 		start := time.Now()
 		wasm, err := ref.Fetch(ctx)
 		if err != nil {
 			return nil, errors.Wrap(err, "cannot fetch module")
 		}
-		m, err := f.engine.Compile(wasm)
-		if err != nil {
-			return nil, err
-		}
-		log.Debug("Compiled module", "bytes", len(wasm), "duration", time.Since(start).String())
-		return m, nil
+		log.Debug("Fetched module", "bytes", len(wasm), "duration", time.Since(start).String())
+		return wasm, nil
 	})
 	if err != nil {
 		response.Fatal(rsp, errors.Wrapf(err, "cannot load module %s", ref.Description))

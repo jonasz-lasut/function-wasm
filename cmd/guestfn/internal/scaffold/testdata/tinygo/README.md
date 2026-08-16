@@ -22,7 +22,7 @@ go test ./...
 # Compile to a wasip1 module with TinyGo.
 guestfn build                       # tinygo build -target=wasip1 -buildmode=c-shared -no-debug -o fn.wasm .
 
-# Publish it as an OCI artifact and pin the digest it prints.
+# Publish it as an OCI artifact; it prints the module block for the Composition.
 guestfn push ghcr.io/example/my-fn:v0.1.0
 ```
 
@@ -36,8 +36,8 @@ Reference the module from a Composition step of function-wasm:
     apiVersion: wasm.fn.crossplane.io/v1beta1
     kind: Input
     module:
-      oci:
-        ref: ghcr.io/example/my-fn@sha256:<digest printed by guestfn push>
+      oci:                     # printed by guestfn push
+        ref: ghcr.io/example/my-fn:v0.1.0@sha256:<manifest digest>
     config:
       greeting: hi
 ```

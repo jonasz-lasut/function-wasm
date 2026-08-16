@@ -19,10 +19,14 @@ const (
 
 // Label values.
 const (
+	// CacheCompiled is the in-memory tier of compiled modules.
 	CacheCompiled = "compiled"
-	CacheBlob     = "blob"
-	EventHit      = "hit"
-	EventMiss     = "miss"
+	// CacheCompiledDisk is the on-disk store of wasmtime artifacts.
+	CacheCompiledDisk = "compiled-disk"
+	// CacheBlob is the on-disk store of fetched modules.
+	CacheBlob = "blob"
+	EventHit  = "hit"
+	EventMiss = "miss"
 
 	OutcomeOK      = "ok"
 	OutcomeError   = "error"
@@ -62,6 +66,6 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystem,
 		Name:      "cache_events_total",
-		Help:      "Cache lookups by cache (compiled, blob) and event (hit, miss).",
+		Help:      "Cache lookups by cache (compiled = in-memory modules, compiled-disk = wasmtime artifacts on disk, blob = fetched modules on disk) and event (hit, miss).",
 	}, []string{"cache", "event"})
 )
