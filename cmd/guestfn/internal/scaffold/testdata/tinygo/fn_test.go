@@ -1,0 +1,134 @@
+package main
+
+import (
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/testing/protocmp"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
+
+	"github.com/example/my-fn/internal/fnv1"
+)
+
+func mustStruct(t *testing.T, s string) *structpb.Struct {
+	t.Helper()
+	st := &structpb.Struct{}
+	if err := protojson.Unmarshal([]byte(s), st); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+func TestRunFunction(t *testing.T) {
+	type want struct {
+		rsp *fnv1.RunFunctionResponse
+		err string
+	}
+	cases := map[string]struct {
+		reason string
+		req    func(t *testing.T) *fnv1.RunFunctionRequest
+		want   want
+	}{
+		"DefaultGreeting": {
+			reason: "Without config the ConfigMap says hello to the XR.",
+			req: func(t *testing.T) *fnv1.RunFunctionRequest {
+				return &fnv1.RunFunctionRequest{
+					Meta:     &fnv1.RequestMeta{Tag: "hello"},
+					Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: mustStruct(t, `{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)}},
+				}
+			},
+			want: want{rsp: &fnv1.RunFunctionResponse{
+				Meta: &fnv1.ResponseMeta{Tag: "hello", Ttl: durationpb.New(60 * time.Second)},
+				Desired: &fnv1.State{Resources: map[string]*fnv1.Resource{
+					"greeting": {Resource: mustStruct(t, `{"apiVersion":"v1","kind":"ConfigMap","data":{"greeting":"hello my-xr"}}`)},
+				}},
+				Results:    []*fnv1.Result{{Severity: fnv1.Severity_SEVERITY_NORMAL, Message: "greeted my-xr", Target: fnv1.Target_TARGET_COMPOSITE.Enum()}},
+				Conditions: []*fnv1.Condition{{Type: "FunctionSuccess", Status: fnv1.Status_STATUS_CONDITION_TRUE, Reason: "Success", Target: fnv1.Target_TARGET_COMPOSITE_AND_CLAIM.Enum()}},
+			}},
+		},
+		"ConfiguredGreeting": {
+			reason: "input.config.greeting replaces the default and existing desired resources are kept.",
+			req: func(t *testing.T) *fnv1.RunFunctionRequest {
+				return &fnv1.RunFunctionRequest{
+					Meta:     &fnv1.RequestMeta{Tag: "hello"},
+					Input:    mustStruct(t, `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"path":"fn.wasm"},"config":{"greeting":"hi"}}`),
+					Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: mustStruct(t, `{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)}},
+					Desired:  &fnv1.State{Resources: map[string]*fnv1.Resource{"other": {Resource: mustStruct(t, `{"apiVersion":"v1","kind":"Secret"}`)}}},
+				}
+			},
+			want: want{rsp: &fnv1.RunFunctionResponse{
+				Meta: &fnv1.ResponseMeta{Tag: "hello", Ttl: durationpb.New(60 * time.Second)},
+				Desired: &fnv1.State{Resources: map[string]*fnv1.Resource{
+					"other":    {Resource: mustStruct(t, `{"apiVersion":"v1","kind":"Secret"}`)},
+					"greeting": {Resource: mustStruct(t, `{"apiVersion":"v1","kind":"ConfigMap","data":{"greeting":"hi my-xr"}}`)},
+				}},
+				Results:    []*fnv1.Result{{Severity: fnv1.Severity_SEVERITY_NORMAL, Message: "greeted my-xr", Target: fnv1.Target_TARGET_COMPOSITE.Enum()}},
+				Conditions: []*fnv1.Condition{{Type: "FunctionSuccess", Status: fnv1.Status_STATUS_CONDITION_TRUE, Reason: "Success", Target: fnv1.Target_TARGET_COMPOSITE_AND_CLAIM.Enum()}},
+			}},
+		},
+		"BadConfig": {
+			reason: "A greeting that is not a string is an error.",
+			req: func(t *testing.T) *fnv1.RunFunctionRequest {
+				return &fnv1.RunFunctionRequest{
+					Meta:  &fnv1.RequestMeta{Tag: "hello"},
+					Input: mustStruct(t, `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","config":{"greeting":7}}`),
+				}
+			},
+			want: want{err: "cannot read config: greeting must be a string"},
+		},
+		"NoComposite": {
+			reason: "A request without an observed composite is an error.",
+			req: func(*testing.T) *fnv1.RunFunctionRequest {
+				return &fnv1.RunFunctionRequest{Meta: &fnv1.RequestMeta{Tag: "hello"}}
+			},
+			want: want{err: "cannot get observed composite resource: none in request"},
+		},
+	}
+	logSink = func(int32, []byte) {}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rsp, err := RunFunction(tc.req(t))
+			if tc.want.err != "" {
+				if err == nil || err.Error() != tc.want.err {
+					t.Fatalf("\n%s\nRunFunction(): want error %q, got %v", tc.reason, tc.want.err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("\n%s\nRunFunction(): unexpected error %v", tc.reason, err)
+			}
+			if diff := cmp.Diff(tc.want.rsp, rsp, protocmp.Transform()); diff != "" {
+				t.Errorf("\n%s\nRunFunction(): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+// TestHandleRoundTrip proves the wire path the host uses: encoded request in,
+// decodable response out, an error surfacing as a fatal result.
+func TestHandleRoundTrip(t *testing.T) {
+	logSink = func(int32, []byte) {}
+	req := &fnv1.RunFunctionRequest{Meta: &fnv1.RequestMeta{Tag: "t"}}
+	in, err := req.MarshalVT()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rsp := &fnv1.RunFunctionResponse{}
+	if err := rsp.UnmarshalVT(handle(in)); err != nil {
+		t.Fatalf("handle() returned undecodable bytes: %v", err)
+	}
+	want := &fnv1.RunFunctionResponse{
+		Meta: &fnv1.ResponseMeta{Tag: "t", Ttl: durationpb.New(60 * time.Second)},
+		Results: []*fnv1.Result{{
+			Severity: fnv1.Severity_SEVERITY_FATAL,
+			Message:  "cannot get observed composite resource: none in request",
+			Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+		}},
+	}
+	if diff := cmp.Diff(want, rsp, protocmp.Transform()); diff != "" {
+		t.Errorf("handle(): -want, +got:\n%s", diff)
+	}
+}
