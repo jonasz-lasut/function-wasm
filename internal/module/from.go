@@ -75,9 +75,9 @@ func decodeStrict(value any, into any) error {
 func kindOf(name string) string {
 	switch name {
 	case "ociFrom":
-		return "{ref, credentials} object"
+		return "{ref, digest, credentials} object"
 	case "httpFrom":
-		return "{url} object"
+		return "{url, digest} object"
 	default:
 		return "string"
 	}

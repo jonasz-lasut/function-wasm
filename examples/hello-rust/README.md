@@ -21,7 +21,7 @@ cargo test
 # Compile to a wasip1 module.
 guestfn build                       # cargo build --release --target wasm32-wasip1 → fn.wasm
 
-# Publish it as an OCI artifact and pin the digest it prints.
+# Publish it as an OCI artifact; it prints the module block for the Composition.
 guestfn push ghcr.io/example/hello-rust:v0.1.0
 ```
 
@@ -35,8 +35,8 @@ Reference the module from a Composition step of function-wasm:
     apiVersion: wasm.fn.crossplane.io/v1beta1
     kind: Input
     module:
-      oci:
-        ref: ghcr.io/example/hello-rust@sha256:<digest printed by guestfn push>
+      oci:                     # printed by guestfn push
+        ref: ghcr.io/example/hello-rust:v0.1.0@sha256:<manifest digest>
     config:
       greeting: hi
 ```

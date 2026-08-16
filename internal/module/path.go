@@ -38,21 +38,25 @@ func (r *Resolver) resolvePath(src v1beta1.ModuleSource) (*Ref, error) {
 	if err != nil {
 		return nil, err
 	}
-	digest, err = pin(src.Digest, digest)
-	if err != nil {
-		return nil, err
-	}
 	return &Ref{
 		Digest:      digest,
 		Description: "module file " + src.Path,
-		fetch: r.verified("path", digest, func(context.Context) ([]byte, error) {
+		// Served files are on disk already; the blob store is skipped.
+		fetch: func(context.Context) ([]byte, error) {
 			f, err := os.Open(full) //nolint:gosec // full is confined to the module directory above.
 			if err != nil {
 				return nil, fmt.Errorf("cannot read module file: %w", err)
 			}
 			defer func() { _ = f.Close() }()
-			return readCapped(f, r.opts.MaxSize)
-		}),
+			b, err := readCapped(f, r.opts.MaxSize)
+			if err != nil {
+				return nil, err
+			}
+			if got := digestOf(b); got != digest {
+				return nil, fmt.Errorf("module file changed while being read: content is %s, expected %s", got, digest)
+			}
+			return b, nil
+		},
 	}, nil
 }
 

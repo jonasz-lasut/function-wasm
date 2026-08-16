@@ -94,7 +94,7 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 		t.Fatal(err)
 	}
 	log := newRecorder()
-	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(2), resolver: resolver}
+	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver}
 
 	xr := resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)
 	response := func(greeting string) *fnv1.RunFunctionResponse {

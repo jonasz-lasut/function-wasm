@@ -59,10 +59,15 @@ func sign(t *testing.T, key crypto.Signer, payload []byte) []byte {
 	return sig
 }
 
-// pushSignature publishes a cosign-style signature artifact for
-// manifestDigest whose payload claims signedDigest.
-func pushSignature(t *testing.T, repo name.Repository, manifestDigest, signedDigest string, key crypto.Signer) {
+// pushSignature publishes a cosign-style signature artifact for ref whose
+// payload claims the manifest digest of ref, or claims instead when set.
+func pushSignature(t *testing.T, ref name.Digest, key crypto.Signer, claims string) {
 	t.Helper()
+	repo, manifestDigest := ref.Context(), ref.DigestStr()
+	signedDigest := manifestDigest
+	if claims != "" {
+		signedDigest = claims
+	}
 	payload := []byte(`{"critical":{"identity":{"docker-reference":"` + repo.String() + `"},"image":{"docker-manifest-digest":"` + signedDigest + `"},"type":"cosign container image signature"},"optional":null}`)
 	img, err := mutate.Append(empty.Image, mutate.Addendum{
 		Layer:       static.NewLayer(payload, "application/vnd.dev.cosign.simplesigning.v1+json"),
@@ -74,6 +79,19 @@ func pushSignature(t *testing.T, repo name.Repository, manifestDigest, signedDig
 	if err := remote.Write(repo.Tag(SignatureTag(manifestDigest)), img); err != nil {
 		t.Fatalf("cannot push signature: %v", err)
 	}
+}
+
+func digestRef(t *testing.T, ref string) name.Digest {
+	t.Helper()
+	d, err := name.NewDigest(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func oci(ref string) v1beta1.ModuleSource {
+	return v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: ref}}
 }
 
 func TestVerifier(t *testing.T) {
@@ -100,15 +118,15 @@ func TestVerifier(t *testing.T) {
 	}
 
 	layer := static.NewLayer(module, "application/wasm")
-	signedRepo, signedDigest := artifact(t, host, "signed", layer)
-	pushSignature(t, signedRepo, signedDigest, signedDigest, ecKey)
-	rsaRepo, rsaDigest := artifact(t, host, "rsa", layer)
-	pushSignature(t, rsaRepo, rsaDigest, rsaDigest, rsaKey)
-	edRepo, edDigest := artifact(t, host, "ed", layer)
-	pushSignature(t, edRepo, edDigest, edDigest, edKey)
-	unsignedRepo, _ := artifact(t, host, "unsigned", layer)
-	wrongPayloadRepo, wrongPayloadDigest := artifact(t, host, "wrongpayload", layer)
-	pushSignature(t, wrongPayloadRepo, wrongPayloadDigest, otherDigest, ecKey)
+	signedRef := artifact(t, host, "signed", layer)
+	pushSignature(t, digestRef(t, signedRef), ecKey, "")
+	rsaRef := artifact(t, host, "rsa", layer)
+	pushSignature(t, digestRef(t, rsaRef), rsaKey, "")
+	edRef := artifact(t, host, "ed", layer)
+	pushSignature(t, digestRef(t, edRef), edKey, "")
+	unsignedRef := artifact(t, host, "unsigned", layer)
+	wrongPayloadRef := artifact(t, host, "wrongpayload", layer)
+	pushSignature(t, digestRef(t, wrongPayloadRef), ecKey, otherDigest)
 
 	cases := map[string]struct {
 		reason string
@@ -119,39 +137,39 @@ func TestVerifier(t *testing.T) {
 		"ECDSA": {
 			reason: "A module signed with the configured ECDSA key resolves.",
 			keys:   [][]byte{pemPublic(t, &ecKey.PublicKey)},
-			src:    v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: signedRepo.String() + ":v1"}},
+			src:    oci(signedRef),
 		},
 		"RSA": {
 			reason: "RSA PKCS#1 v1.5 signatures verify too.",
 			keys:   [][]byte{pemPublic(t, &rsaKey.PublicKey)},
-			src:    v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: rsaRepo.String() + ":v1"}},
+			src:    oci(rsaRef),
 		},
 		"Ed25519": {
 			reason: "ed25519 signatures verify too.",
 			keys:   [][]byte{pemPublic(t, edKey.Public())},
-			src:    v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: edRepo.String() + ":v1"}},
+			src:    oci(edRef),
 		},
 		"SecondKeyMatches": {
 			reason: "Any of several configured keys is enough.",
 			keys:   [][]byte{pemPublic(t, &otherKey.PublicKey), pemPublic(t, &ecKey.PublicKey)},
-			src:    v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: signedRepo.String() + ":v1"}},
+			src:    oci(signedRef),
 		},
 		"Unsigned": {
 			reason: "A module without a signature artifact is refused.",
 			keys:   [][]byte{pemPublic(t, &ecKey.PublicKey)},
-			src:    v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: unsignedRepo.String() + ":v1"}},
+			src:    oci(unsignedRef),
 			want:   "carries no cosign signature",
 		},
 		"WrongKey": {
 			reason: "A signature by another key is refused.",
 			keys:   [][]byte{pemPublic(t, &otherKey.PublicKey)},
-			src:    v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: signedRepo.String() + ":v1"}},
+			src:    oci(signedRef),
 			want:   "signature does not verify with the configured keys",
 		},
 		"PayloadForOtherDigest": {
 			reason: "A valid signature over a payload naming another manifest is refused.",
 			keys:   [][]byte{pemPublic(t, &ecKey.PublicKey)},
-			src:    v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: wrongPayloadRepo.String() + ":v1"}},
+			src:    oci(wrongPayloadRef),
 			want:   "payload signs " + otherDigest,
 		},
 		"PathRefused": {
@@ -176,21 +194,26 @@ func TestVerifier(t *testing.T) {
 				t.Fatal(err)
 			}
 			ref, err := r.Resolve(context.Background(), tc.src, nil)
+			if err != nil {
+				// Only the source shape is judged at resolve time.
+				if tc.want != "" && strings.Contains(err.Error(), tc.want) {
+					return
+				}
+				t.Fatalf("\n%s\nResolve(): unexpected error %v", tc.reason, err)
+			}
+			_, err = ref.Fetch(context.Background())
 			if tc.want != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.want) {
-					t.Fatalf("\n%s\nResolve(): want error containing %q, got %v", tc.reason, tc.want, err)
+					t.Fatalf("\n%s\nFetch(): want error containing %q, got %v", tc.reason, tc.want, err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("\n%s\nResolve(): unexpected error %v", tc.reason, err)
-			}
-			if _, err := ref.Fetch(context.Background()); err != nil {
 				t.Fatalf("\n%s\nFetch(): %v", tc.reason, err)
 			}
-			// The second resolution is served from the verified set.
-			if _, err := r.Resolve(context.Background(), tc.src, nil); err != nil {
-				t.Fatalf("\n%s\nsecond Resolve(): %v", tc.reason, err)
+			// The second fetch is served from the verified set.
+			if _, err := ref.Fetch(context.Background()); err != nil {
+				t.Fatalf("\n%s\nsecond Fetch(): %v", tc.reason, err)
 			}
 		})
 	}
