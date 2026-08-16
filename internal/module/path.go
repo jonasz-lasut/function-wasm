@@ -53,6 +53,9 @@ func (r *Resolver) resolvePath(src v1beta1.ModuleSource) (*Ref, error) {
 				return nil, err
 			}
 			if got := digestOf(b); got != digest {
+				// The stamp lied (a same-size rewrite within the mtime
+				// granularity): forget it so the next request re-hashes.
+				r.files.Delete(full)
 				return nil, fmt.Errorf("module file changed while being read: content is %s, expected %s", got, digest)
 			}
 			return b, nil

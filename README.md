@@ -195,13 +195,13 @@ output; CI runs it).
 
 | field | type | description |
 |---|---|---|
-| `module` | object | where the module comes from — exactly one of `oci`, `http`, `path`, `ociFrom`, `httpFrom`, `pathFrom` |
+| `module` | object | where the module comes from — exactly one of `oci`, `http`, `path`, `ociFrom`, `httpFrom`, `pathFrom` (a CEL rule in the Input CRD enforces it wherever the schema is checked; the runtime checks it on every request) |
 | `module.oci.ref` | string | OCI artifact reference **pinned to its manifest digest**, `registry/repo@sha256:…`, as `guestfn push` prints it. The manifest digest pins the module (the manifest states its layer's digest; both are verified on fetch) and addresses the caches. A tag alone is not accepted (tags can be moved; the runtime resolves nothing at request time); `registry/repo:tag@sha256:…` is fine — the digest is what is fetched, the tag is human-readable context and may even no longer exist. The module is the `application/wasm` (or `vnd.wasm` content) layer, the only layer, or the first `.wasm` file of a single tar layer |
 | `module.oci.credentials` | string | name of a pipeline-step credential (a Secret with `.dockerconfigjson`, or `username` and `password` keys) used to pull. Without it the runtime's Docker config (`DOCKER_CONFIG`) and anonymous access are tried |
 | `module.http.url` | string | download the module over HTTP(S) |
 | `module.http.digest` | string | **required** — `sha256:<hex>` of the module; the download is verified against it |
 | `module.path` | string | a file relative to the runtime's `--module-dir`; refused unless that flag is set — local rendering and volume-mounted modules; carries no digest |
-| `module.ociFrom` | string | a field of the observed composite resource, under `spec.` or `status.`, holding an OCI source object `{ref, credentials}` — e.g. `status.module`; read on every request, so each XR can choose its module |
+| `module.ociFrom` | string | a field of the observed composite resource, under `spec.` or `status.`, holding an OCI source object `{ref}` — e.g. `status.module`; read on every request, so each XR can choose its module. It may not name `credentials` (see the trust model): a module the XR chooses is pulled with the runtime's Docker config or anonymously |
 | `module.httpFrom` | string | likewise, holding an HTTP source object `{url, digest}` |
 | `module.pathFrom` | string | likewise, holding a module path (a string) relative to `--module-dir` |
 | `config` | object | opaque, passed to the module untouched inside the request input; a Go guest reads it with `wasmfn.GetConfig` |
@@ -242,8 +242,8 @@ Credentials for a step are declared on the pipeline step:
 
 1. The Input is decoded. A `*From` source is read from the observed
    composite resource first (`ociFrom: status.module` expects
-   `status.module` to be `{ref, credentials}`; a typo or a wrong shape is a
-   fatal result naming the field). Resolving does no I/O: the **digest** that
+   `status.module` to be `{ref}`; a typo or a wrong shape is a fatal result
+   naming the field). Resolving does no I/O: the **digest** that
    pins the module comes from the Input — the manifest digest of an OCI
    reference, `http.digest` for a URL — or from hashing a served file when
    it changes.
@@ -273,7 +273,10 @@ The full host/guest contract is in [docs/abi.md](docs/abi.md).
 | `--max-module-size` | | `128` MB | largest module accepted |
 | `--module-timeout` | | `30s` | wall-clock budget of one run |
 | `--module-memory-limit` | | `512` MB | linear memory a run may use |
-| `--disable-memory-cache` | `DISABLE_MEMORY_CACHE` | off | keep no compiled module in memory between requests; each request loads the module's compiled artifact from disk (milliseconds). For runtimes serving large Go modules — a compiled Go guest is well over 100 MB in memory |
+| `--enable-memory-cache` | `ENABLE_MEMORY_CACHE` | `true` | keep compiled modules in memory between requests. With `--enable-memory-cache=false` (or `--no-enable-memory-cache`) each request maps the module's compiled artifact from disk (6–8 ms for a large Go module) and releases it afterwards |
+| `--max-cached-modules` | `MAX_CACHED_MODULES` | `0` (unbounded) | most compiled modules resident at once; the least recently used is dropped beyond it (freed once its last run ends). Artifacts are mapped from disk, so a resident Go module costs ~90 MB of file-backed memory |
+| `--max-concurrent-compiles` | `MAX_CONCURRENT_COMPILES` | `1` | modules compiled at once. One compile already uses every core (~25 CPU-seconds and ~1 GB for a large Go module); further first requests wait their turn instead of multiplying that |
+| `--max-cache-size` | `MAX_CACHE_SIZE` | `0` (unbounded) | MB the two on-disk caches may hold together; past it the least recently used entries (fetched modules and artifacts alike, ~230 MB per Go module version) are removed, at startup and every ten minutes. Size the volume, or set this below its size |
 | `--cosign-key` | `COSIGN_KEY` | unset | PEM file of cosign public key(s); when set only OCI modules with a matching `cosign sign --key` signature run, and `http`/`path` sources are refused |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
@@ -281,7 +284,61 @@ The usual function-sdk-go flags (`--insecure`, `--debug`, `--tls-server-certs-di
 `--address`, `--max-recv-message-size`) apply too. The caches live under
 `/tmp/function-wasm-cache` (not configurable); back it with a volume through a
 `DeploymentRuntimeConfig` to keep them across pod restarts, and mount an
-emptyDir there if the pod's root filesystem is read-only.
+emptyDir there if the pod's root filesystem is read-only. A volume shared
+between pods is safe: entries are content-addressed and written atomically,
+and artifacts of another wasmtime version are only removed once nothing has
+written them for a day, so a rolling upgrade does not thrash.
+
+The runtime serves the gRPC health service (`grpc.health.v1.Health`) on the
+function port, Serving once its caches are open — the target for a
+Kubernetes gRPC readiness probe:
+
+```yaml
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: function-wasm
+spec:
+  deploymentTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            readinessProbe:
+              grpc:
+                port: 9443
+```
+
+Ready is not warm: the first request for a module on a pod pays a
+deserialize (with a warm volume) or a compile (~2 s for a large Go module).
+
+## Sizing
+
+What a request and a module cost depends almost entirely on the guest's
+toolchain — the host adds about 60 µs. Measured on linux/arm64 with the
+example guests (a `function-sdk-go` Go guest, a raw-proto Go guest using
+only `wasmfn`, TinyGo, Rust):
+
+| | Go (~75 MB) | Go, raw proto (~20 MB) | TinyGo (~1.4 MB) | Rust (~150 KB) |
+|---|---|---|---|---|
+| one request (CPU) | 8–11 ms, 91 % of it the Go runtime's own init | 1.2 ms | 0.4 ms | 0.05 ms |
+| first compile of a module | 23–28 CPU-seconds, ~1 GB peak | 6 CPU-s | 1 CPU-s | 0.1 CPU-s |
+| resident in memory | ~90 MB, file-backed | ~40 MB | 3.5 MB | 0.7 MB |
+| per in-flight run | 11–16 MB | 4–8 MB | < 1 MB | < 1 MB |
+| on disk per module version | ~230 MB (module + artifact) | ~60 MB | 5 MB | 0.9 MB |
+| load from a warm volume | 6–8 ms | 2 ms | 0.2 ms | 0.05 ms |
+
+Rules of thumb: memory ≈ resident modules + `--max-concurrent-compiles` × 1 GB
++ concurrent runs × 16 MB; a cold start compiles every module once, so ten Go
+modules on two cores take about two minutes and a warm volume under
+`/tmp/function-wasm-cache` turns that into a second; disk grows by one
+module + artifact per digest ever served unless `--max-cache-size` bounds
+it. Requests scale linearly with cores — nothing in the run path is
+serialised. Large observed state costs on every request regardless of the
+guest (about 20 ms per MB of composite resource, four protobuf passes). The
+full model of bounds and budgets is
+[docs/one-pager-resource-governance.md](docs/one-pager-resource-governance.md).
 
 ## Metrics
 
@@ -293,20 +350,32 @@ The runtime serves Prometheus metrics where function-sdk-go puts them
 | `function_wasm_module_compile_duration_seconds` | | histogram of wasmtime compile time (compiled-cache misses) |
 | `function_wasm_module_fetch_duration_seconds` | `source` = oci, http, path | histogram of fetch + verify time (blob-cache hits included) |
 | `function_wasm_module_run_duration_seconds` | `outcome` = ok, error, timeout | histogram of one guest run, instantiate to response |
-| `function_wasm_module_cache_events_total` | `cache` = compiled (memory), compiled-disk, blob; `event` = hit, miss | cache lookups |
+| `function_wasm_module_cache_events_total` | `cache` = compiled (memory), compiled-disk, blob; `event` = hit, miss, stale (compiled-disk only: an artifact wasmtime refused) | cache lookups |
+| `function_wasm_module_cache_bytes` | `cache` = compiled-disk, blob | bytes on disk per store, measured every ten minutes |
 
 No metric carries a module identity: the set of digests a Function serves is
 unbounded. Logs carry the module reference and digest.
 
 ## Trust model
 
+The complete model — parties, what pins the code, credentials, what the
+guest sees, threats considered — is
+[docs/one-pager-trust-model.md](docs/one-pager-trust-model.md); this is the
+short version.
+
 A module runs with the privileges of the Composition that references it: it
-sees the request's observed and desired state, context and any step
-credentials, exactly as a native function would. With a `*From` source the
+sees the request's observed and desired state, context and the step
+credentials, exactly as a native function would — except the credential that
+pulled it (`module.oci.credentials`), which is the host's and never reaches
+the guest. With a `*From` source the
 **composite resource's author** picks the module — use it where XR authors
-are trusted to, restrict what they can pick with `--cosign-key`, and note
-that a credentials name read from the XR can only select among the
-credentials the Composition step already declares. The sandbox protects the
+are trusted to, and restrict what they can pick with `--cosign-key`. A
+source read from the XR may not name a step credential: the XR author would
+also pick the registry host the secret is sent to, and a registry that
+answers with a `Basic` challenge receives it — so an XR-chosen module is
+pulled with the runtime's own Docker config (mount one through a
+`DeploymentRuntimeConfig` and set `DOCKER_CONFIG`; credentials there are
+bound to their registry host) or anonymously. The sandbox protects the
 runtime process — and with it every other Composition sharing the Function —
 from a crashing, looping or memory-hungry module, and gives a module no
 filesystem, environment or network. Every remote module is pinned by a
@@ -319,7 +388,9 @@ To restrict a Function to modules your organisation signed, sign them with
 `cosign sign --key cosign.key <ref>` and start the runtime with
 `--cosign-key cosign.pub` (a `DeploymentRuntimeConfig` mounts the key and
 sets the flag or `COSIGN_KEY`). Every OCI module is then verified once per
-manifest digest before it is fetched, and unsigned sources are refused.
+manifest digest per process before it is run — before any cache is
+consulted, so an artifact left on a persisted volume by a runtime without
+the key is not served by one with it — and unsigned sources are refused.
 Keyless (Fulcio/Rekor) signatures are not verified.
 
 ## Development

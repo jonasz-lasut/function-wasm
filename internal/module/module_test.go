@@ -82,7 +82,8 @@ func TestFromComposite(t *testing.T) {
 		"apiVersion": "example.org/v1",
 		"kind":       "XR",
 		"spec": map[string]any{
-			"module":  map[string]any{"ref": manifestRef, "credentials": "registry"},
+			"module":  map[string]any{"ref": manifestRef},
+			"private": map[string]any{"ref": manifestRef, "credentials": "registry"},
 			"url":     map[string]any{"url": "https://example.com/fn.wasm", "digest": moduleDigest},
 			"nopin":   map[string]any{"url": "https://example.com/fn.wasm"},
 			"path":    "fn.wasm",
@@ -111,10 +112,16 @@ func TestFromComposite(t *testing.T) {
 			want:      want{src: v1beta1.ModuleSource{Path: "x.wasm"}},
 		},
 		"OCIFromSpec": {
-			reason:    "An OCI source object under spec becomes the oci source, credentials included.",
+			reason:    "An OCI source object under spec becomes the oci source.",
 			src:       v1beta1.ModuleSource{OCIFrom: "spec.module"},
 			composite: composite,
-			want:      want{src: v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: manifestRef, Credentials: "registry"}}},
+			want:      want{src: v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: manifestRef}}},
+		},
+		"OCIFromCredentials": {
+			reason:    "A source the composite resource chooses may not spend the step's credentials: its author picks the registry host they would be sent to.",
+			src:       v1beta1.ModuleSource{OCIFrom: "spec.private"},
+			composite: composite,
+			want:      want{err: `module.ociFrom: spec.private of the composite resource names credentials "registry", but a module chosen by the composite resource cannot use the step's credentials`},
 		},
 		"OCIFromStatus": {
 			reason:    "status works the same way.",
@@ -156,13 +163,13 @@ func TestFromComposite(t *testing.T) {
 			reason:    "A value that does not decode into the source type is an error.",
 			src:       v1beta1.ModuleSource{OCIFrom: "spec.path"},
 			composite: composite,
-			want:      want{err: "module.ociFrom: spec.path of the composite resource is not a {ref, digest, credentials} object"},
+			want:      want{err: "module.ociFrom: spec.path of the composite resource is not a {ref} object"},
 		},
 		"UnknownField": {
 			reason:    "A typo in the object is refused rather than ignored.",
 			src:       v1beta1.ModuleSource{OCIFrom: "spec.typo"},
 			composite: composite,
-			want:      want{err: `is not a {ref, digest, credentials} object: json: unknown field "reference"`},
+			want:      want{err: `is not a {ref} object: json: unknown field "reference"`},
 		},
 		"PathNotString": {
 			reason:    "pathFrom must point at a string.",
@@ -421,13 +428,18 @@ func artifact(t *testing.T, reg string, repo string, layers ...v1.Layer) string 
 }
 
 func tarLayer(t *testing.T, gz bool) v1.Layer {
+	return paddedTarLayer(t, gz, []byte("hi"))
+}
+
+// paddedTarLayer stores the module behind a README of the given content.
+func paddedTarLayer(t *testing.T, gz bool, readme []byte) v1.Layer {
 	t.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	if err := tw.WriteHeader(&tar.Header{Name: "README", Typeflag: tar.TypeReg, Mode: 0o600, Size: 2}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: "README", Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(readme))}); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = tw.Write([]byte("hi"))
+	_, _ = tw.Write(readme)
 	if err := tw.WriteHeader(&tar.Header{Name: "fn.wasm", Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(module))}); err != nil {
 		t.Fatal(err)
 	}
@@ -468,6 +480,7 @@ func TestResolveOCI(t *testing.T) {
 	singleRef := artifact(t, host, "single", static.NewLayer(module, "application/octet-stream"))
 	tarRef := artifact(t, host, "tar", tarLayer(t, false))
 	tgzRef := artifact(t, host, "tgz", tarLayer(t, true))
+	bombRef := artifact(t, host, "bomb", paddedTarLayer(t, true, make([]byte, 64<<10)))
 	ambiguousRef := artifact(t, host, "ambiguous", other, static.NewLayer(module, "application/octet-stream"))
 	missingRef := host + "/wasm@" + otherDigest
 	manifest := wasmRef[strings.Index(wasmRef, "@")+1:]
@@ -495,6 +508,7 @@ func TestResolveOCI(t *testing.T) {
 		"SingleLayer":       {reason: "A single layer of any type is the module.", src: v1beta1.OCISource{Ref: singleRef}, want: want{manifests: 1, blobs: 1}},
 		"TarLayer":          {reason: "A tar layer yields its .wasm file.", src: v1beta1.OCISource{Ref: tarRef}, want: want{manifests: 1, blobs: 1}},
 		"GzipTarLayer":      {reason: "A gzipped tar layer (FROM scratch image) works too.", src: v1beta1.OCISource{Ref: tgzRef}, want: want{manifests: 1, blobs: 1}},
+		"TarBomb":           {reason: "An archive that expands past eight times the size limit before its .wasm entry is refused, not decompressed to the end.", opts: Options{MaxSize: 4 << 10}, src: v1beta1.OCISource{Ref: bombRef}, want: want{err: "exceeds the size limit before any .wasm file", manifests: 1, blobs: 1}},
 		"Ambiguous":         {reason: "Several layers with no wasm-typed one cannot be resolved.", src: v1beta1.OCISource{Ref: ambiguousRef}, want: want{err: "has 2 layers and none is a wasm layer", manifests: 1}},
 		"Missing":           {reason: "An unknown manifest is an error at fetch time.", src: v1beta1.OCISource{Ref: missingRef}, want: want{err: "cannot fetch manifest", manifests: 1}},
 		"CorruptLayer":      {reason: "A layer whose bytes do not match the digest the manifest states is refused and not stored.", opts: Options{Blobs: cache.New(afero.NewMemMapFs(), true)}, src: v1beta1.OCISource{Ref: wasmRef}, corrupt: true, want: want{err: "module layer", manifests: 1, blobs: 1}},

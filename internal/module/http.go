@@ -13,7 +13,7 @@ func (r *Resolver) resolveHTTP(src v1beta1.ModuleSource) (*Ref, error) {
 	digest := src.HTTP.Digest
 	return &Ref{
 		Digest:      digest,
-		Description: url,
+		Description: "http " + url,
 		fetch: timed("http", func(ctx context.Context) ([]byte, error) {
 			return r.verified(ctx, "module", digest, func(ctx context.Context) ([]byte, error) {
 				req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

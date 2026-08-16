@@ -30,7 +30,8 @@ Crossplane RunFunctionRequest
 │  3. registryAuth(req, module) → authn.Authenticator      (step credential)   │
 │  4. resolver.Resolve(module) → module.Ref{Digest, Fetch}   internal/module   │
 │       no I/O: oci manifest digest from the ref, http.digest from the Input,  │
-│       path hashed by size+mtime                                              │
+│       path hashed by size+mtime; then ref.Verify — the cosign check, before  │
+│       any cache is consulted, once per digest per process                    │
 │  5. modules.Get(digest, fetch)                             engine.Cache      │
 │       memory (idle TTL) → compiled artifact on disk → fetch (oci: manifest   │
 │       GET → layer digest; blob store on disk → source, verified against the  │
@@ -54,16 +55,16 @@ Inside the module (a Go guest built with `wasmfn`): `wasmfn_run` looks up the bu
 ```
 cmd/function/main.go        kong CLI → engine.New, openCaches (afero stores under /tmp/function-wasm-cache), module.NewResolver, engine.NewCache → function.Serve(&Function{})
 cmd/function/fn.go          Function.RunFunction: the seven steps above; registryAuth for OCI step credentials
-internal/engine             wasmtime wrapper — the ONLY importer of github.com/bytecodealliance/wasmtime-go/vNN
-  engine.go                   Engine (config, epoch ticker, linker with WASI + wasmfn.log), Compile + checkABI
+internal/engine             wasmtime wrapper — the only production importer of github.com/bytecodealliance/wasmtime-go/vNN (internal/testwasm uses its Wat2Wasm)
+  engine.go                   Engine (config, on-demand epoch ticker, linker with WASI + wasmfn.log; native unwind info off), Compile + checkABI, Module leases
   run.go                      Run: store per call, deadline/limiter, ABI calls, guestError/trapText
   hostlog.go                  wasmfn.log import → logging.Logger
-  cache.go                    Cache: memory (idle TTL) over the compiled-artifact store, single-flight loads; Serialize/Deserialize/Version in engine.go
+  cache.go                    Cache: memory (idle TTL, LRU bound, leases) over the compiled-artifact store (mapped), single-flight loads with compile slots; Serialize/Deserialize/DeserializeFile/Version in engine.go
 internal/cache              afero content-addressed Store (verify on read for blobs), Subdir, RemoveOthers; DefaultDir /tmp/function-wasm-cache
 internal/module             ModuleSource → Ref{Digest, Description, Fetch}
   module.go                   Resolver, Options (Blobs *cache.Store), Validate (digest-pinned oci refs, required http digest), verified() (blob store + digest check), timed() (fetch metric)
   oci.go / http.go / path.go  one source each; oci keys on the manifest digest, fetches the manifest only inside Fetch and stores the layer by its digest
-  from.go                     FromComposite: ociFrom/httpFrom/pathFrom → the field of the observed XR (spec./status. only), decoded strictly
+  from.go                     FromComposite: ociFrom/httpFrom/pathFrom → the field of the observed XR (spec./status. only), decoded strictly; an XR-chosen oci source may not name step credentials
   auth.go                     AuthFor: step credential (.dockerconfigjson | username/password) → authn.Authenticator
   signature.go                Verifier: cosign key-based signature check (<repo>:sha256-<digest>.sig, simple-signing payload; ECDSA/RSA/ed25519); no sigstore dependency
 internal/testwasm           WAT fixtures implementing ABI v1 (testwasm.Fixed) and BuildGuest (go build of a Go guest)
@@ -93,7 +94,7 @@ docs/abi.md                 the language-agnostic host/guest contract
 ├── examples/hello-rust/    same guest, Rust + prost — Cargo crate, `make build` targets wasm32-wasip1
 ├── examples/render.sh      shared render/render-check driver
 ├── docs/abi.md
-├── Dockerfile              CGo build (cross gcc when BUILDARCH != TARGETARCH), distroless/cc runtime image
+├── Dockerfile              CGo build (cross gcc when BUILDARCH != TARGETARCH), Chainguard glibc-dynamic runtime image (digest-pinned, Renovate bumps it)
 └── .github/workflows/      ci.yml (Go modules + the TinyGo/Rust render jobs), publish-pkg.yml, supplychain.yml, grype-scan.yml, tag.yml
 ```
 
@@ -126,7 +127,7 @@ A guest's returned `error` becomes a fatal result on a fresh response (what a gR
 
 ### Caches
 
-Two on-disk stores under `/tmp/function-wasm-cache` (fixed; `internal/cache`, afero): `modules/<digest>` — every fetched blob (an OCI layer as delivered, tar included; an HTTP module), verified on read, never held in memory; `compiled/<engine.Version()>/<digest>` — wasmtime artifacts (`Module.Serialize`), other version dirs removed at startup. In memory: compiled modules only, idle TTL 10 min (`engine.DefaultIdleTTL`), single-flight loads, or nothing at all with `--disable-memory-cache` (`engine.CacheOptions.NoMemory`; large Go modules). Keys are digests stated in the Input — the manifest digest of `oci.ref` (the manifest pins the layer; the blob store keeps the layer under its own digest, so a lost artifact costs one manifest GET and no download), `http.digest` (required) — or hashed for served files. Full design: `docs/one-pager-cache.md`.
+Two on-disk stores under `/tmp/function-wasm-cache` (fixed; `internal/cache`, afero): `modules/<digest>` — every fetched blob (an OCI layer as delivered, tar included; an HTTP module), verified on read, never held in memory; `compiled/<engine.Version()>/<digest>` — wasmtime artifacts (`Module.Serialize`; `Version()` = wasmtime-go module version + GOOS/GOARCH), other version dirs removed at startup once a day old (`cache.StaleVersionAge`). In memory: compiled modules only, reference-counted (`Module.Release`; freed on the last release), idle TTL 10 min (`engine.DefaultIdleTTL`), LRU-bounded by `--max-cached-modules` (`CacheOptions.MaxEntries`), single-flight loads under the cache's own context (`DefaultLoadTimeout`) with `--max-concurrent-compiles` slots (default 1), or nothing at all with `--enable-memory-cache=false` (`CacheOptions.NoMemory` — the internal option is the opt-out so the zero value keeps the tier); artifacts on a real filesystem are mapped with `DeserializeFile` (`cache.Store.Path`), never copied. Keys are digests stated in the Input — the manifest digest of `oci.ref` (the manifest pins the layer; the blob store keeps the layer under its own digest, so a lost artifact costs one manifest GET and no download), `http.digest` (required) — or hashed for served files. Full design: `docs/one-pager-cache.md`.
 
 ### One-pagers
 
@@ -142,11 +143,11 @@ then the body. Bump the revision when the design changes; flip Draft → Impleme
 
 ### Signatures
 
-`--cosign-key` loads PEM public keys into `module.Verifier`; the resolver verifies every OCI manifest digest once (`<repo>:sha256-<hex>.sig`, layer annotation `dev.cosignproject.cosign/signature`, payload `critical.image.docker-manifest-digest` must match) and refuses non-OCI sources. Keyless (Fulcio/Rekor) is deliberately unsupported: sigstore-go alone is ~370 modules and needs network access to Rekor/TUF at run time.
+`--cosign-key` loads PEM public keys into `module.Verifier`; `Ref.Verify` checks every OCI manifest digest once per process (`<repo>:sha256-<hex>.sig`, layer annotation `dev.cosignproject.cosign/signature`, payload `critical.image.docker-manifest-digest` must match), `RunFunction` calls it **before** the caches (an artifact on disk may predate the key), and non-OCI sources are refused. Keyless (Fulcio/Rekor) is deliberately unsupported: sigstore-go alone is ~370 modules and needs network access to Rekor/TUF at run time.
 
 ### Metrics
 
-`internal/metrics` registers `function_wasm_module_{compile,fetch,run}_duration_seconds` and `function_wasm_module_cache_events_total` on the default Prometheus registry (function-sdk-go serves it on `:8080/metrics`). Never add a module/digest label — unbounded cardinality. `metrics.Sample` reads a series back for tests.
+`internal/metrics` registers `function_wasm_module_{compile,fetch,run}_duration_seconds`, `function_wasm_module_cache_events_total` and `function_wasm_module_cache_bytes` on the default Prometheus registry (function-sdk-go serves it on `:8080/metrics`). Never add a module/digest label — unbounded cardinality. `metrics.Sample` reads a series back for tests.
 
 ### Guest size
 
@@ -236,7 +237,7 @@ Configuration is `.golangci.yml` (golangci-lint v2, the version CI pins is in `.
 - Prefer self-documenting code; comments explain *why*, as the existing ones do.
 - English only; inclusive terminology (allowlist/blocklist, primary/replica, main branch).
 - Conventional commits: `<type>(<scope>): <subject>`, imperative, ≤ 50 chars, one logical change per commit.
-- Only `internal/engine` imports `github.com/bytecodealliance/wasmtime-go/vNN` — its majors change the import path.
+- Only `internal/engine` (and `internal/testwasm`, for `Wat2Wasm`) imports `github.com/bytecodealliance/wasmtime-go/vNN` — its majors change the import path.
 - `wasmfn` must stay importable natively (unconstrained `doc.go`, portable `Register`/`NewLogger`/`GetConfig`); only the exports and the host import are `//go:build wasip1`.
 
 ## Common Development Tasks
@@ -273,18 +274,19 @@ By hand: `go run ./cmd/function --insecure --debug --module-dir=examples/hello-g
 
 ## Key Dependencies
 
-- `github.com/bytecodealliance/wasmtime-go/v47` — the sandbox. CGo binding to a prebuilt static libwasmtime (linux amd64/arm64, macOS, Windows). Needs gcc to build and test; the image is `distroless/cc` (glibc + libgcc). Each wasmtime release is a new Go major with a new import path.
+- `github.com/bytecodealliance/wasmtime-go/v47` — the sandbox. CGo binding to a prebuilt static libwasmtime (linux amd64/arm64, macOS, Windows). Needs gcc to build and test; the runtime image is `cgr.dev/chainguard/glibc-dynamic` (glibc + libgcc_s + libstdc++, nonroot, `/tmp`), digest-pinned in the Dockerfile — its Wolfi glibc must never be older than the one `golang:<go.mod version>` (Debian trixie, 2.41) links against. Each wasmtime release is a new Go major with a new import path.
 - `github.com/crossplane/function-sdk-go` — gRPC server, `request`/`response`, protobuf types; also what guests code against (through `wasmfn`).
 - `github.com/google/go-containerregistry` — OCI pull (`remote`, `name`, `authn`) and, in `guestfn push`, artifact creation.
 - `github.com/alecthomas/kong` — both CLIs.
 
 ## Important Design Decisions
 
-- **wasmtime-go over wazero** (Jonasz, 2026-08-16): better WASI support and the reference runtime, accepted CGo cost; the image moved from distroless/static to distroless/cc rather than static-linking glibc. `internal/engine` is the seam if this ever changes.
-- **Transparent proxy**: the host forwards the whole request and returns the whole response; requirements/extra-resource round trips work with no runtime knowledge. The host adds `meta` only when the guest omitted it.
+- **wasmtime-go over wazero** (Jonasz, 2026-08-16): better WASI support and the reference runtime, accepted CGo cost; the image moved from distroless/static to a glibc base rather than static-linking glibc — Chainguard `glibc-dynamic` over `distroless/cc-debian13` because it scanned clean where distroless carried won't-fix libc6 CVEs (Jonasz, 2026-08-16: fewer CVEs wins). `internal/engine` is the seam if this ever changes.
+- **Transparent proxy**: the host forwards the whole request and returns the whole response; requirements/extra-resource round trips work with no runtime knowledge. The host adds `meta` only when the guest omitted it. One carve-out: the step credential named by `module.oci.credentials` pulled the module and is removed from the forwarded request — the guest never sees the host's registry secret.
 - **Guest error → fatal result** instead of a gRPC error: crossplane treats both as a failed step, fatal results are visible in `crossplane render --include-function-results`, and the wire stays one message (no envelope proto).
 - **Memory-export ABI, not stdin/stdout**: wasmtime-go's WASI config only offers files or inherited descriptors for stdio, so a stream ABI would need temp files per call.
 - **Fresh instance per request** (~10 ms): hermetic, no reentrancy, no leaks; the expensive part (compile, ~2.4 s for a 75 MB Go guest) is cached by content digest in memory and as a wasmtime artifact on disk.
+- **Disk caches are bounded by LRU sweep, not per-entry policy**: `--max-cache-size` (off by default) removes least recently used entries across both stores (`cache.Sweep`; a read touches the entry) at startup and every ten minutes; entries are immutable and reproducible, so removal is always safe.
 - **Digests are stated, not discovered** (Jonasz, 2026-08-16): OCI refs must be `@sha256:` pinned (`repo:tag@sha256:…` is fine, the tag is context) and `http.digest` is required — no tags alone, no request-time resolution, no tag TTL; the caches key on the stated digest and every fetch is verified against it. An OCI source carries no separate module digest: the manifest digest already pins the layer, and duplicating it would only be one more thing to get wrong. Fetched modules always go to disk and never stay in memory; compiled modules stay in memory ten minutes idle. No cache flags.
 - **Guest scaffold is wasm-only**: only the runtime is a gRPC server; the guest's tests run natively because `Register`/`NewLogger` are portable.
 - **`pkg/wasmfn` is a nested module** (importable, hence under `pkg/`), never depends on the root module, and re-implements the two `response` helpers it needs (`to`, `fatal`) rather than importing `function-sdk-go/response`, so raw-proto guests stay ~20 MB; `guestfn` and `wasmfn` are tagged in lockstep so a released CLI pins the matching SDK.
@@ -296,6 +298,9 @@ By hand: `go run ./cmd/function --insecure --debug --module-dir=examples/hello-g
 - `README.md` — user-facing behaviour, the Input reference, runtime flags, trust model
 - `docs/abi.md` — the host/guest contract
 - `docs/one-pager-cache.md` — the two on-disk caches and the memory tier
+- `docs/one-pager-resource-governance.md` — every bound on a run, the tiers, compiles and disk; sizing; readiness (implemented)
+- `docs/one-pager-trust-model.md` — who picks code, what pins it, credentials, what the guest sees, threats (implemented)
+- `docs/one-pager-module-source-schema.md` — draft: the future Input in one place — discriminated `module`, top-level `policy` (allowlists for XR-chosen modules), `limits` (per-Composition budgets), `sandbox`
 - `docs/one-pager-sandbox.md` — design sketch (not implemented) for granting modules filesystem, HTTP egress or environment access
 - `input/v1beta1/input.go` — authoritative Input schema
 - `.claude/skills/cut-release/SKILL.md` — cutting a minor/major release (`release-X.Y` branch, tag, package publish); one release branch is kept at a time

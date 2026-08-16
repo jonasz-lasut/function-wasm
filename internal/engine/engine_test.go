@@ -124,6 +124,13 @@ func TestCompile(t *testing.T) {
 			},
 			want: want{err: "module imports env.magic, which the host does not provide"},
 		},
+		"BadLogImportType": {
+			reason: "The wasmfn.log import must have the ABI's type; a mismatch fails at load with one line, not at every instantiate with wasmtime's causes.",
+			wasm: func(t *testing.T) []byte {
+				return testwasm.Fixed(t, cannedResponse(), testwasm.Options{Extra: `(import "wasmfn" "log" (func $log (param i32)))`})
+			},
+			want: want{err: "module imports wasmfn.log with the wrong type, ABI v1 requires (i32, i32, i32) -> ()"},
+		},
 	}
 
 	e, err := New(Config{})
@@ -370,4 +377,13 @@ func TestRunConcurrent(t *testing.T) {
 	for err := range errs {
 		t.Errorf("concurrent Run(): %v", err)
 	}
+}
+
+func TestCloseTwice(t *testing.T) {
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Close()
+	e.Close()
 }

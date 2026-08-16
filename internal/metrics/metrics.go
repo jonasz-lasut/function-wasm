@@ -27,6 +27,9 @@ const (
 	CacheBlob = "blob"
 	EventHit  = "hit"
 	EventMiss = "miss"
+	// EventStale is a compiled-disk lookup that found an artifact wasmtime
+	// refused (another version, a corrupt file) — a miss that cost a read.
+	EventStale = "stale"
 
 	OutcomeOK      = "ok"
 	OutcomeError   = "error"
@@ -66,6 +69,14 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystem,
 		Name:      "cache_events_total",
-		Help:      "Cache lookups by cache (compiled = in-memory modules, compiled-disk = wasmtime artifacts on disk, blob = fetched modules on disk) and event (hit, miss).",
+		Help:      "Cache lookups by cache (compiled = in-memory modules, compiled-disk = wasmtime artifacts on disk, blob = fetched modules on disk) and event (hit, miss, stale).",
 	}, []string{"cache", "event"})
+
+	// CacheBytes is the size of each on-disk store, as of the last sweep.
+	CacheBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: subsystem,
+		Name:      "cache_bytes",
+		Help:      "Bytes held by each on-disk store (compiled-disk = wasmtime artifacts, blob = fetched modules), measured by the periodic sweep.",
+	}, []string{"cache"})
 )

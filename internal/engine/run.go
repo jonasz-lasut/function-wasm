@@ -42,6 +42,7 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 		return nil, fmt.Errorf("request of %d bytes exceeds what a 32-bit guest can address", len(in))
 	}
 
+	defer e.running()()
 	store := wasmtime.NewStoreWithData(e.engine, &call{log: log})
 	defer store.Close()
 
@@ -76,7 +77,11 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 	if err != nil {
 		return nil, guestError(ExportAlloc+" failed", err, budget, log)
 	}
-	ptr := uint32(ret.(int32)) //nolint:gosec // i32 reinterpreted as a pointer.
+	allocated, ok := ret.(int32)
+	if !ok {
+		return nil, fmt.Errorf("%s returned %T, ABI v1 requires i32", ExportAlloc, ret)
+	}
+	ptr := uint32(allocated) //nolint:gosec // i32 reinterpreted as a pointer.
 	if err := checkBounds(memory.DataSize(store), ptr, uint32(size)); err != nil {
 		return nil, fmt.Errorf("%s returned an invalid buffer: %w", ExportAlloc, err)
 	}
@@ -86,13 +91,18 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 	if err != nil {
 		return nil, guestError(ExportRun+" failed", err, budget, log)
 	}
-	packed := uint64(ret.(int64))                        //nolint:gosec // i64 reinterpreted as packed ptr<<32|len.
+	result, ok := ret.(int64)
+	if !ok {
+		return nil, fmt.Errorf("%s returned %T, ABI v1 requires i64", ExportRun, ret)
+	}
+	packed := uint64(result)                             //nolint:gosec // i64 reinterpreted as packed ptr<<32|len.
 	outPtr, outLen := uint32(packed>>32), uint32(packed) //nolint:gosec // Unpacking the halves.
 	if err := checkBounds(memory.DataSize(store), outPtr, outLen); err != nil {
 		return nil, fmt.Errorf("%s returned an invalid response buffer: %w", ExportRun, err)
 	}
-	// The store dies with this call, so the response is copied out.
-	out := bytes.Clone(memory.UnsafeData(store)[outPtr : outPtr+outLen])
+	// The store dies with this call, so the response is copied out; two
+	// slicing steps keep the arithmetic in 64 bits.
+	out := bytes.Clone(memory.UnsafeData(store)[outPtr:][:outLen])
 
 	rsp = &fnv1.RunFunctionResponse{}
 	if err := proto.Unmarshal(out, rsp); err != nil {
@@ -140,6 +150,9 @@ func guestError(what string, err error, budget time.Duration, log logging.Logger
 		if status, ok := werr.ExitStatus(); ok {
 			return fmt.Errorf("%s: module exited with status %d", what, status)
 		}
+		// Anything else wasmtime reports (a linking failure, say) is
+		// multi-line with its causes; the first line is the finding.
+		return fmt.Errorf("%s: %s", what, firstLine(werr.Error()))
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }
