@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +26,7 @@ import (
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
+	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
 )
 
@@ -110,35 +113,48 @@ func NewResolver(o Options) (*Resolver, error) {
 	return &Resolver{opts: o, client: client}, nil
 }
 
-// Validate reports whether src names exactly one usable source. Sources read
-// from the composite resource (the *From fields) are validated for their
-// field path here and for their content by FromComposite.
+// Validate reports whether src names exactly one usable source: Type is set
+// and exactly one of the object it names (oci, http, path) or From is set,
+// with no object of another type present. A source read from the composite
+// resource (From) is validated for its field path here and for its content
+// by FromComposite.
 func Validate(src v1beta1.ModuleSource) error {
-	set := 0
-	for _, ok := range []bool{src.OCI != nil, src.HTTP != nil, src.Path != "", src.OCIFrom != "", src.HTTPFrom != "", src.PathFrom != ""} {
-		if ok {
-			set++
+	if src.Type == "" {
+		return errors.New("module.type is required: OCI, HTTP or Path")
+	}
+	objects := map[v1beta1.ModuleType]bool{
+		v1beta1.ModuleTypeOCI:  src.OCI != nil,
+		v1beta1.ModuleTypeHTTP: src.HTTP != nil,
+		v1beta1.ModuleTypePath: src.Path != "",
+	}
+	if _, ok := objects[src.Type]; !ok {
+		return fmt.Errorf("module.type %q must be OCI, HTTP or Path", src.Type)
+	}
+	for _, t := range []v1beta1.ModuleType{v1beta1.ModuleTypeOCI, v1beta1.ModuleTypeHTTP, v1beta1.ModuleTypePath} {
+		if t != src.Type && objects[t] {
+			return fmt.Errorf("module.%s is set but module.type is %s", fieldOf(t), src.Type)
 		}
 	}
-	if set != 1 {
-		return errors.New("module must set exactly one of oci, http, path, ociFrom, httpFrom and pathFrom")
+	if objects[src.Type] == (src.From != "") {
+		return fmt.Errorf("module.type %s needs exactly one of module.%s and module.from", src.Type, fieldOf(src.Type))
 	}
-	for field, from := range map[string]string{"ociFrom": src.OCIFrom, "httpFrom": src.HTTPFrom, "pathFrom": src.PathFrom} {
-		if from != "" && !fromPattern.MatchString(from) {
-			return fmt.Errorf("module.%s %q must be a field under spec or status of the composite resource, e.g. status.module", field, from)
-		}
+	if src.From != "" && !fromPattern.MatchString(src.From) {
+		return fmt.Errorf("module.from %q must be a field under spec or status of the composite resource, e.g. status.module", src.From)
 	}
 	if src.OCI != nil {
 		if src.OCI.Ref == "" {
 			return errors.New("module.oci.ref is required")
 		}
-		if _, err := name.NewDigest(src.OCI.Ref); err != nil {
-			return fmt.Errorf("module.oci.ref %q must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported", src.OCI.Ref)
+		if _, err := ociLocation(src.OCI.Ref); err != nil {
+			return err
 		}
 	}
 	if src.HTTP != nil {
 		if src.HTTP.URL == "" {
 			return errors.New("module.http.url is required")
+		}
+		if _, err := httpLocation(src.HTTP.URL); err != nil {
+			return err
 		}
 		if err := checkDigest("module.http.digest", src.HTTP.Digest); err != nil {
 			return err
@@ -147,9 +163,67 @@ func Validate(src v1beta1.ModuleSource) error {
 	return nil
 }
 
+// repositorySegment is one path component of an OCI repository name (the
+// distribution spec's grammar): lowercase, so "..", "." and empty components
+// — which a registry or a proxy might collapse, escaping a repository
+// prefix — are not repository names.
+var repositorySegment = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
+
+// ociLocation checks an OCI reference and returns "registry/repository" —
+// what policy.repositoryAllowList prefixes are matched against — without
+// the tag or digest.
+func ociLocation(ref string) (string, error) {
+	d, err := name.NewDigest(ref)
+	if err != nil {
+		return "", fmt.Errorf("module.oci.ref %q must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported", ref)
+	}
+	repo := d.Context().RepositoryStr()
+	for seg := range strings.SplitSeq(repo, "/") {
+		if !repositorySegment.MatchString(seg) {
+			return "", fmt.Errorf("module.oci.ref %q: repository %q is not a valid repository name (lowercase path components, no . or .. or empty ones)", ref, repo)
+		}
+	}
+	return d.Context().RegistryStr() + "/" + repo, nil
+}
+
+// httpLocation checks a module URL and returns "scheme://host/path" —
+// what policy.repositoryAllowList prefixes are matched against — with the
+// host lowercased and the path required to be normalized, so a prefix
+// cannot be escaped with dot segments the server would collapse; the query
+// is not part of the location.
+func httpLocation(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("module.http.url %q is not a URL: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("module.http.url %q must be an http or https URL", raw)
+	}
+	if u.Hostname() == "" || u.User != nil {
+		return "", fmt.Errorf("module.http.url %q must name a host and carry no user information", raw)
+	}
+	if !egress.NormalizedPath(u.Path) {
+		return "", fmt.Errorf("module.http.url %q must have a normalized path (no . or .. segments, no empty segments)", raw)
+	}
+	return u.Scheme + "://" + strings.ToLower(u.Host) + u.Path, nil
+}
+
+// fieldOf names the Input field holding a source of type t.
+func fieldOf(t v1beta1.ModuleType) string {
+	switch t {
+	case v1beta1.ModuleTypeOCI:
+		return "oci"
+	case v1beta1.ModuleTypeHTTP:
+		return "http"
+	case v1beta1.ModuleTypePath:
+		return "path"
+	}
+	return string(t)
+}
+
 func checkDigest(field, digest string) error {
 	if digest == "" {
-		return fmt.Errorf("%s is required: the sha256 of the module, as guestfn push prints it", field)
+		return fmt.Errorf("%s is required: the sha256 of the module file (sha256sum fn.wasm)", field)
 	}
 	if !digestPattern.MatchString(digest) {
 		return fmt.Errorf("%s %q is not sha256:<64 hex characters>", field, digest)
@@ -157,7 +231,7 @@ func checkDigest(field, digest string) error {
 	return nil
 }
 
-// Resolve resolves a concrete src — one whose *From fields have been
+// Resolve resolves a concrete src — one whose From field has been
 // materialised by FromComposite. auth authenticates OCI pulls; nil falls back
 // to the resolver's keychain. Resolving does no I/O: the digest comes from
 // the Input (or, for a served file, from the file), and fetching is deferred
@@ -167,20 +241,21 @@ func (r *Resolver) Resolve(ctx context.Context, src v1beta1.ModuleSource, auth a
 	if err := Validate(src); err != nil {
 		return nil, err
 	}
-	if src.OCIFrom != "" || src.HTTPFrom != "" || src.PathFrom != "" {
-		return nil, errors.New("a *From source must be materialised with FromComposite before it is resolved")
+	if src.From != "" {
+		return nil, errors.New("a module.from source must be materialised with FromComposite before it is resolved")
 	}
-	if r.opts.Verifier != nil && src.OCI == nil {
+	if r.opts.Verifier != nil && src.Type != v1beta1.ModuleTypeOCI {
 		return nil, errors.New("only cosign-signed oci modules are accepted (--cosign-key is set); http and path sources are refused")
 	}
-	switch {
-	case src.Path != "":
+	switch src.Type {
+	case v1beta1.ModuleTypePath:
 		return r.resolvePath(src)
-	case src.HTTP != nil:
+	case v1beta1.ModuleTypeHTTP:
 		return r.resolveHTTP(src)
-	default:
+	case v1beta1.ModuleTypeOCI:
 		return r.resolveOCI(ctx, src, auth)
 	}
+	return nil, fmt.Errorf("module.type %q must be OCI, HTTP or Path", src.Type)
 }
 
 // readCapped reads at most limit bytes and reports when the source held more.

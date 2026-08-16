@@ -20,8 +20,9 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          Input configures which WebAssembly module function-wasm runs and what it
-          receives.
+          Input configures which WebAssembly module function-wasm runs, what an
+          XR-chosen module may be and spend, what a run may consume, and what the
+          module receives.
         properties:
           apiVersion:
             description: |-
@@ -45,13 +46,50 @@ spec:
               In CamelCase.
               More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
             type: string
+          limits:
+            description: |-
+              Limits narrow what this step's run may consume below the runtime's
+              ceilings (--module-timeout, --module-memory-limit). Asking for more
+              than a ceiling is a fatal result naming both. Read from the Input only.
+            properties:
+              memory:
+                anyOf:
+                - type: integer
+                - type: string
+                description: |-
+                  Memory caps the guest's linear memory, e.g. "128Mi"; at most
+                  --module-memory-limit. A guest that grows past it sees memory.grow
+                  fail (a Go guest panics), which ends the run as a fatal result.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+              timeout:
+                description: |-
+                  Timeout is the wall-clock budget of one run, e.g. "5s" or "1m30s"; at
+                  most --module-timeout. The request context's deadline still applies if
+                  shorter.
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                type: string
+            type: object
           metadata:
             type: object
           module:
             description: Module locates the WebAssembly module to run.
             properties:
+              from:
+                description: |-
+                  From names a field of the observed composite resource, under spec or
+                  status, that holds the source Type names — an {ref, credentials}
+                  object for OCI, an {url, digest} object for HTTP, a string for Path —
+                  e.g. "status.module". The value is read on every request, so each
+                  composite resource can pick its own module; the Input's policy fences
+                  what it may pick and spend. Nothing but the source is read from the
+                  composite resource: policy, limits and sandbox are the Composition's.
+                pattern: ^(spec|status)\..+
+                type: string
               http:
-                description: HTTP downloads the module from a URL.
+                description: |-
+                  HTTP downloads the module from a URL. Set with type HTTP, unless From
+                  names the composite resource field holding the object.
                 properties:
                   digest:
                     description: |-
@@ -67,21 +105,21 @@ spec:
                 - digest
                 - url
                 type: object
-              httpFrom:
-                description: |-
-                  HTTPFrom names a field of the observed composite resource, under spec
-                  or status, that holds an HTTP source — an object with url and digest.
-                pattern: ^(spec|status)\..+
-                type: string
               oci:
-                description: OCI pulls the module from an OCI registry.
+                description: |-
+                  OCI pulls the module from an OCI registry. Set with type OCI, unless
+                  From names the composite resource field holding the object.
                 properties:
                   credentials:
                     description: |-
                       Credentials names a credential of the pipeline step (a Secret) used to
                       pull the artifact. The Secret carries either a .dockerconfigjson key
                       or username and password keys. Without it the function's own Docker
-                      config (DOCKER_CONFIG) and anonymous access are tried.
+                      config (DOCKER_CONFIG) and anonymous access are tried. An object read
+                      through module.from may name credentials only when the Input's
+                      policy.credentialsAllowList lists them (and its ref passes
+                      policy.repositoryAllowList): the composite resource's author would
+                      otherwise choose the registry host a step credential is sent to.
                     type: string
                   ref:
                     description: |-
@@ -98,38 +136,179 @@ spec:
                 required:
                 - ref
                 type: object
-              ociFrom:
-                description: |-
-                  OCIFrom names a field of the observed composite resource, under spec
-                  or status, that holds an OCI source — an object with ref — e.g.
-                  "status.module". The value is read on every request, so each composite
-                  resource can pick its own module. It may not name credentials: the
-                  module is pulled with the runtime's Docker config or anonymously, since
-                  the composite resource's author would otherwise choose the registry a
-                  step credential is sent to.
-                pattern: ^(spec|status)\..+
-                type: string
               path:
                 description: |-
                   Path names a module file relative to the directory the function was
                   started with (--module-dir); it is refused when that flag is unset.
                   Meant for local rendering and volume-mounted modules; it carries no
-                  digest.
+                  digest. Set with type Path, unless From names the composite resource
+                  field holding the string.
                 type: string
-              pathFrom:
+              type:
                 description: |-
-                  PathFrom names a field of the observed composite resource, under spec
-                  or status, that holds a module path (a string) relative to --module-dir.
-                pattern: ^(spec|status)\..+
+                  Type is the kind of source: OCI (an artifact in a registry, the oci
+                  object), HTTP (a URL, the http object) or Path (a file under the
+                  runtime's --module-dir, path). The Composition always chooses the
+                  kind; with From, the composite resource chooses the instance.
+                enum:
+                - OCI
+                - HTTP
+                - Path
                 type: string
+            required:
+            - type
             type: object
             x-kubernetes-validations:
-            - message: exactly one of oci, http, path, ociFrom, httpFrom and pathFrom
-                must be set
-              rule: '[has(self.oci), has(self.http), has(self.path), has(self.ociFrom),
-                has(self.httpFrom), has(self.pathFrom)].filter(x, x).size() == 1'
+            - message: type OCI needs exactly one of oci and from, and oci is only
+                allowed with type OCI
+              rule: 'self.type == ''OCI'' ? (has(self.oci) != has(self.from)) : !has(self.oci)'
+            - message: type HTTP needs exactly one of http and from, and http is only
+                allowed with type HTTP
+              rule: 'self.type == ''HTTP'' ? (has(self.http) != has(self.from)) :
+                !has(self.http)'
+            - message: type Path needs exactly one of path and from, and path is only
+                allowed with type Path
+              rule: 'self.type == ''Path'' ? (has(self.path) != has(self.from)) :
+                !has(self.path)'
+          policy:
+            description: |-
+              Policy fences a module the composite resource chooses (module.from):
+              which repositories it may come from and which step credentials it may
+              spend. It is read from the Input only — never through module.from — so
+              an XR author may pick the module, not widen the policy. It is ignored
+              for a module the Composition names statically.
+            properties:
+              credentialsAllowList:
+                description: |-
+                  CredentialsAllowList are the pipeline-step credentials an XR-chosen
+                  oci object may name, spent only on a ref RepositoryAllowList admits —
+                  so it requires RepositoryAllowList: a credential must never be
+                  spendable on an arbitrary host. Absent or empty, an XR-chosen object
+                  naming credentials is refused.
+                items:
+                  minLength: 1
+                  type: string
+                type: array
+              repositoryAllowList:
+                description: |-
+                  RepositoryAllowList are string prefixes an XR-chosen oci.ref (or
+                  http.url) must start with, e.g. "ghcr.io/example-org/" — the trailing
+                  slash matters: "ghcr.io/example-org" also admits
+                  "ghcr.io/example-organisation/...". Prefixes are matched against the
+                  normalized location — registry/repository for OCI (no tag or digest),
+                  scheme://host/path for HTTP (host lowercased, no query) — and a ref or
+                  URL whose path is not already normalized (dot segments, empty
+                  segments) is refused outright. A ref outside every prefix is a fatal
+                  result naming the policy and the ref. Required whenever module.from
+                  names an OCI or HTTP source: without it the composite resource's
+                  author could point the runtime at any host and read what its answer
+                  says.
+                items:
+                  minLength: 1
+                  type: string
+                type: array
+            type: object
+            x-kubernetes-validations:
+            - message: policy.credentialsAllowList requires policy.repositoryAllowList
+              rule: '!has(self.credentialsAllowList) || size(self.credentialsAllowList)
+                == 0 || (has(self.repositoryAllowList) && size(self.repositoryAllowList)
+                > 0)'
+          sandbox:
+            description: |-
+              Sandbox grants the module filesystem, egress or environment access
+              beyond the default sandbox (nothing), each within a ceiling the
+              operator set with an --enable-sandbox-* flag; a grant outside the
+              ceiling is a fatal result naming the grant and the flag. Read from the
+              Input only.
+            properties:
+              egress:
+                description: Egress grants HTTP(S) requests through the host to listed
+                  hosts.
+                properties:
+                  http:
+                    description: |-
+                      HTTP lists the requests the host will perform for the guest; anything
+                      not matched by an entry is refused. The operator's
+                      --enable-sandbox-egress and --sandbox-egress-policy (allowed hosts,
+                      blocked CIDRs, per-request budgets) are the ceiling.
+                    items:
+                      description: SandboxHTTPRule admits requests to one host or
+                        host pattern.
+                      properties:
+                        host:
+                          description: |-
+                            Host is an exact host name, e.g. api.example.com. Exactly one of Host
+                            and HostPattern is set.
+                          minLength: 1
+                          type: string
+                        hostPattern:
+                          description: |-
+                            HostPattern is a host name with a leading wildcard label, e.g.
+                            "*.internal.example.com".
+                          pattern: ^\*\.[^*]+$
+                          type: string
+                        methods:
+                          description: |-
+                            Methods the rule admits, e.g. [GET, POST]; at least one — nothing is
+                            admitted implicitly.
+                          items:
+                            enum:
+                            - GET
+                            - HEAD
+                            - POST
+                            - PUT
+                            - PATCH
+                            - DELETE
+                            - OPTIONS
+                            type: string
+                          minItems: 1
+                          type: array
+                        pathPrefix:
+                          description: |-
+                            PathPrefix the request path must start with, e.g. /v1/; empty admits
+                            any path.
+                          pattern: ^/
+                          type: string
+                      required:
+                      - methods
+                      type: object
+                      x-kubernetes-validations:
+                      - message: exactly one of host and hostPattern must be set
+                        rule: has(self.host) != has(self.hostPattern)
+                    type: array
+                type: object
+              env:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Env sets the environment variables the module sees — exactly these,
+                  never the runtime's (--enable-sandbox-env). Non-secret configuration
+                  only: secrets keep coming through step credentials, so nothing the
+                  guest might log or write to its private /tmp carries them. Keys are
+                  identifiers ([A-Za-z_][A-Za-z0-9_]*); values may not contain NUL.
+                type: object
+              filesystem:
+                description: |-
+                  Filesystem grants a private /tmp. Host directories are deliberately
+                  not mountable into a module: the request is a module's only view of
+                  the world beyond what it may write for itself.
+                properties:
+                  privateTmp:
+                    description: |-
+                      PrivateTmp pre-opens a private, empty, writable /tmp for the duration
+                      of the request, created under the runtime's $TMPDIR before the module
+                      runs and removed when the run ends whatever its outcome — systemd's
+                      PrivateTmp (--enable-sandbox-private-tmp).
+                    type: boolean
+                type: object
+            type: object
         required:
         - module
         type: object
+        x-kubernetes-validations:
+        - message: module.from with type OCI or HTTP requires policy.repositoryAllowList
+          rule: '!has(self.module.from) || self.module.type == ''Path'' || (has(self.policy)
+            && has(self.policy.repositoryAllowList) && size(self.policy.repositoryAllowList)
+            > 0)'
     served: true
     storage: true

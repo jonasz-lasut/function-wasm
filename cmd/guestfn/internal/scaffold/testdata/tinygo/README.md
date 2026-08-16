@@ -2,7 +2,7 @@
 
 A [Crossplane](https://crossplane.io) composition function built with
 [TinyGo](https://tinygo.org) and run as a WebAssembly module by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm) — about 1.3 MB,
+[function-wasm](https://github.com/jonasz-lasut/function-wasm) — about 1.8 MB,
 without function-sdk-go.
 
 - `fn.go` — `RunFunction` over the raw `RunFunctionRequest`/`RunFunctionResponse`
@@ -14,6 +14,10 @@ without function-sdk-go.
   (needs `protoc`; the plugins are built from `go.mod`'s tool directives).
 - `abi_wasip1.go` — the function-wasm [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md)
   in forty lines: `wasmfn_alloc`, `wasmfn_run`, and the `wasmfn.log` import.
+- `http.go` / `http_wasip1.go` — `HTTPGet`/`HTTPDo` over the `wasmfn.http`
+  import: HTTP through the host, within the Composition's `sandbox.egress`
+  grant (`config.greetingUrl` uses it). Natively the host is a swappable
+  function (`httpSink`), so `fn_test.go` fakes it.
 
 ```shell
 # Unit tests run natively with the Go toolchain.
@@ -36,6 +40,7 @@ Reference the module from a Composition step of function-wasm:
     apiVersion: wasm.fn.crossplane.io/v1beta1
     kind: Input
     module:
+      type: OCI
       oci:                     # printed by guestfn push
         ref: ghcr.io/example/my-fn:v0.1.0@sha256:<manifest digest>
     config:

@@ -16,8 +16,9 @@ spec:
       kind: Input
       module:
         # For local rendering the runtime serves this directory (--module-dir).
-        # In a cluster use an oci reference pinned to the digest guestfn push
-        # prints.
+        # In a cluster use type: OCI and an oci reference pinned to the digest
+        # guestfn push prints.
+        type: Path
         path: fn.wasm
       config:
         greeting: hi

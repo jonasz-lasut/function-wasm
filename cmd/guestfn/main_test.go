@@ -242,7 +242,8 @@ func TestPush(t *testing.T) {
 		t.Fatalf("push: %v", err)
 	}
 	// The output is the module block a Composition needs, verbatim: the
-	// pushed tag kept for readability, pinned to the manifest digest.
+	// discriminated source with the pushed tag kept for readability, pinned
+	// to the manifest digest.
 	var refLine string
 	for _, line := range strings.Split(out.String(), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "ref: ") {
@@ -251,6 +252,9 @@ func TestPush(t *testing.T) {
 	}
 	if !strings.HasPrefix(refLine, host+"/greeter:v1@sha256:") {
 		t.Fatalf("push output should show the tag pinned to the manifest digest:\n%s", out.String())
+	}
+	if want := "module:\n  type: OCI\n  oci:\n    ref: " + refLine + "\n"; !strings.HasSuffix(out.String(), want) {
+		t.Errorf("push output should end with the module block:\nwant suffix:\n%s\ngot:\n%s", want, out.String())
 	}
 	wantDigest := refLine[strings.Index(refLine, "@")+1:]
 
@@ -279,7 +283,7 @@ func TestPush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := r.Resolve(context.Background(), v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: refLine}}, nil)
+	got, err := r.Resolve(context.Background(), v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: refLine}}, nil)
 	if err != nil {
 		t.Fatalf("resolve pushed artifact: %v", err)
 	}

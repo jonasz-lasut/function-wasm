@@ -35,6 +35,19 @@ func RunFunction(req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error
 			}
 			greeting = s.StringValue
 		}
+		// greetingUrl fetches the greeting through the host instead — the
+		// sandbox.egress grant of the Composition decides whether it may.
+		if u, ok := cfg.GetFields()["greetingUrl"]; ok {
+			s, isString := u.GetKind().(*structpb.Value_StringValue)
+			if !isString {
+				return nil, errors.New("cannot read config: greetingUrl must be a string")
+			}
+			text, err := httpGetText(s.StringValue)
+			if err != nil {
+				return nil, errors.New("cannot fetch greeting: " + err.Error())
+			}
+			greeting = text
+		}
 	}
 
 	xr := req.GetObserved().GetComposite().GetResource()

@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 2.0
+* Status: Implemented, revision 2.2
 
 function-wasm keeps two caches on disk under one fixed directory, both
 addressed by content digests, plus a bounded in-memory tier for compiled
@@ -10,7 +10,9 @@ modules. Fetched modules always land on disk and are never held in memory;
 compiled modules are mapped from their on-disk artifact, held in memory
 while they are used and always persisted. Nothing has to be invalidated: an
 entry's name is its content. The knobs are safety limits — how many modules
-stay resident, how many compile at once — not cache tuning.
+stay resident, how many compile at once — not cache tuning; the one
+addition of revision 2.2, `--warm-modules`, decides *when* the caches are
+filled (before readiness), not how.
 
 ## Layout
 
@@ -118,6 +120,45 @@ RunFunction
   not copied — they are on disk already.
 
 Nothing keeps raw module bytes in memory beyond the compile call itself.
+Warm-up (next) is the same path entered at startup instead of at a request.
+
+### Warm-up
+
+Ready is not warm by default: the health service reports Serving once the
+caches are open, and the first request for each module on a pod pays a map
+(warm volume) or a compile (cold). `--warm-modules` (repeatable, or one
+comma-separated value, or `WARM_MODULES`) names modules to load first —
+OCI references pinned to their manifest digest (`repo[:tag]@sha256:…`,
+pulled with the runtime's Docker config; there is no step credential at
+startup) and, with `--module-dir`, `path:<file>` entries. Each entry takes
+the request path exactly (`cmd/function/warm.go` → the same `load` as
+`RunFunction`): resolve, `Verify` (a `--cosign-key` runtime refuses an
+unsigned or non-OCI entry as it would a request), then `Get` — memory, the
+artifact on disk, or fetch and compile — and the lease is returned at once:
+the memory tier keeps its own, and with `--enable-memory-cache=false` the
+artifact on disk is the point. Ordering:
+
+1. the engine and both caches open (a failure here still refuses to start);
+2. the health service is registered as *Not Serving* and the gRPC server
+   starts listening — the port is open, a probe reads Not Serving rather
+   than a refused connection, and a request that arrives early is served
+   cold or joins the warm load already in flight for its digest;
+3. the entries load, at most `--max-concurrent-compiles` at a time (the
+   compile slots: more in flight would only queue on them holding fetched
+   bytes, and a warm compile takes its slot like any first request, so
+   early requests for other modules queue behind it as they would behind
+   each other);
+4. every entry loaded or failed → *Serving*.
+
+A failure is logged (`Cannot warm module` with the entry and the reason —
+a tag instead of a digest, a missing file, an unreachable registry, bytes
+that do not compile) and nothing else: readiness is never held back by an
+entry, and the module it names is loaded on its first request as before.
+Warm-up therefore only ever costs time between listen and Serving — one
+map per entry on a warm volume, one compile per entry on a cold cache — and
+a gRPC liveness probe on the same port needs a failure threshold that
+outlasts the longest expected warm-up (a TCP probe does not care). A volume
+under `/tmp/function-wasm-cache` remains the way to make that time short.
 
 ## Failure behaviour
 
@@ -163,7 +204,10 @@ last sweep. Debug logs carry the module digest and fetch size.
   out because every option was a way to run without a cache; the knobs that
   remain (`--enable-memory-cache`, `--max-cached-modules`,
   `--max-concurrent-compiles`) bound memory and CPU and keep both disk
-  caches on.
+  caches on, and `--warm-modules` only fills them earlier.
+- No warm-up from a manifest of "every module ever served": what to warm is
+  the operator's list, stated like a Composition states a module — a digest,
+  never a tag — so a pod never resolves anything at startup either.
 - Compressed tar layers are stored as delivered and decompressed on every
   artifact miss (~150 ms for a 75 MB guest); `guestfn push` and `oras push`
   produce raw `application/wasm` layers, which cost nothing to extract.

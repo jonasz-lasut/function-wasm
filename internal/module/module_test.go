@@ -45,21 +45,26 @@ func TestValidate(t *testing.T) {
 		src    v1beta1.ModuleSource
 		want   string
 	}{
-		"OCI":             {reason: "A digest-pinned reference is valid.", src: v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: manifestRef}}},
-		"HTTP":            {reason: "A URL with a digest is valid.", src: v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: "https://x/fn.wasm", Digest: moduleDigest}}},
-		"Path":            {reason: "Path alone is valid; it carries no digest.", src: v1beta1.ModuleSource{Path: "fn.wasm"}},
-		"OCIFrom":         {reason: "A field under status is a valid dynamic source.", src: v1beta1.ModuleSource{OCIFrom: "status.module"}},
-		"HTTPFromSpec":    {reason: "A field under spec is a valid dynamic source.", src: v1beta1.ModuleSource{HTTPFrom: "spec.module.http"}},
-		"PathFromNested":  {reason: "Nested field paths are accepted.", src: v1beta1.ModuleSource{PathFrom: "spec.modules[0].path"}},
-		"None":            {reason: "No source is invalid.", want: "exactly one of"},
-		"Two":             {reason: "Two sources are invalid.", src: v1beta1.ModuleSource{Path: "a", OCIFrom: "status.x"}, want: "exactly one of"},
-		"OCITagAndDigest": {reason: "A tag next to the manifest digest is fine: the digest pins the manifest, the tag is human-readable context.", src: v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: "example.com/repo:v1@" + otherDigest}}},
-		"OCITag":          {reason: "A tag reference is refused: tags can be moved.", src: v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: "example.com/repo:v1"}}, want: "must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported"},
-		"OCINoRef":        {reason: "An OCI source needs a ref.", src: v1beta1.ModuleSource{OCI: &v1beta1.OCISource{}}, want: "module.oci.ref is required"},
-		"HTTPNoDigest":    {reason: "The module digest is mandatory for HTTP.", src: v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: "https://x"}}, want: "module.http.digest is required"},
-		"HTTPNoURL":       {reason: "An HTTP source needs a URL.", src: v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{Digest: moduleDigest}}, want: "module.http.url is required"},
-		"FromMetadata":    {reason: "Only spec and status of the composite may name a module.", src: v1beta1.ModuleSource{OCIFrom: "metadata.annotations.module"}, want: `module.ociFrom "metadata.annotations.module" must be a field under spec or status`},
-		"FromBare":        {reason: "spec alone is not a field.", src: v1beta1.ModuleSource{PathFrom: "spec"}, want: "must be a field under spec or status"},
+		"OCI":             {reason: "A digest-pinned reference is valid.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
+		"HTTP":            {reason: "A URL with a digest is valid.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://x/fn.wasm", Digest: moduleDigest}}},
+		"Path":            {reason: "Path alone is valid; it carries no digest.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
+		"OCIFrom":         {reason: "A field under status is a valid dynamic source.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}},
+		"HTTPFromSpec":    {reason: "A field under spec is a valid dynamic source.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.module.http"}},
+		"PathFromNested":  {reason: "Nested field paths are accepted.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec.modules[0].path"}},
+		"NoType":          {reason: "The type is required.", src: v1beta1.ModuleSource{Path: "fn.wasm"}, want: "module.type is required"},
+		"UnknownType":     {reason: "Only the three kinds exist.", src: v1beta1.ModuleSource{Type: "S3", Path: "fn.wasm"}, want: `module.type "S3" must be OCI, HTTP or Path`},
+		"None":            {reason: "A type without its object or from is invalid.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI}, want: "module.type OCI needs exactly one of module.oci and module.from"},
+		"ObjectAndFrom":   {reason: "The typed object and from are exclusive.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "a", From: "status.x"}, want: "module.type Path needs exactly one of module.path and module.from"},
+		"WrongObject":     {reason: "An object of another type is refused even next to the right one.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}, Path: "fn.wasm"}, want: "module.path is set but module.type is OCI"},
+		"WrongObjectOnly": {reason: "An object that does not match the type is refused before the missing one is reported.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, HTTP: &v1beta1.HTTPSource{URL: "https://x", Digest: moduleDigest}}, want: "module.http is set but module.type is Path"},
+		"WrongObjectFrom": {reason: "from does not excuse an object of another type.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url", OCI: &v1beta1.OCISource{Ref: manifestRef}}, want: "module.oci is set but module.type is HTTP"},
+		"OCITagAndDigest": {reason: "A tag next to the manifest digest is fine: the digest pins the manifest, the tag is human-readable context.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: "example.com/repo:v1@" + otherDigest}}},
+		"OCITag":          {reason: "A tag reference is refused: tags can be moved.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: "example.com/repo:v1"}}, want: "must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported"},
+		"OCINoRef":        {reason: "An OCI source needs a ref.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{}}, want: "module.oci.ref is required"},
+		"HTTPNoDigest":    {reason: "The module digest is mandatory for HTTP.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://x"}}, want: "module.http.digest is required"},
+		"HTTPNoURL":       {reason: "An HTTP source needs a URL.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{Digest: moduleDigest}}, want: "module.http.url is required"},
+		"FromMetadata":    {reason: "Only spec and status of the composite may name a module.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "metadata.annotations.module"}, want: `module.from "metadata.annotations.module" must be a field under spec or status`},
+		"FromBare":        {reason: "spec alone is not a field.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec"}, want: "must be a field under spec or status"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -77,122 +82,228 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidatePolicy(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		policy *v1beta1.Policy
+		want   string
+	}{
+		"Nil":              {reason: "No policy: any repository, no credentials."},
+		"Empty":            {reason: "An empty policy is the same as none.", policy: &v1beta1.Policy{}},
+		"Repositories":     {reason: "A repository list alone is fine.", policy: &v1beta1.Policy{RepositoryAllowList: []string{"ghcr.io/example-org/"}}},
+		"Both":             {reason: "Credentials with repositories is the intended shape.", policy: &v1beta1.Policy{RepositoryAllowList: []string{"ghcr.io/example-org/"}, CredentialsAllowList: []string{"registry"}}},
+		"CredentialsAlone": {reason: "A credential must never be spendable on an arbitrary host.", policy: &v1beta1.Policy{CredentialsAllowList: []string{"registry"}}, want: "policy.credentialsAllowList requires policy.repositoryAllowList"},
+		"EmptyPrefix":      {reason: "An empty prefix would admit everything.", policy: &v1beta1.Policy{RepositoryAllowList: []string{""}}, want: "policy.repositoryAllowList entries must not be empty"},
+		"EmptyCredential":  {reason: "An empty credential name is a mistake.", policy: &v1beta1.Policy{RepositoryAllowList: []string{"x/"}, CredentialsAllowList: []string{""}}, want: "policy.credentialsAllowList entries must not be empty"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := ValidatePolicy(tc.policy)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("\n%s\nValidatePolicy(): unexpected error %v", tc.reason, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("\n%s\nValidatePolicy(): want error containing %q, got %v", tc.reason, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestFromComposite(t *testing.T) {
 	composite := map[string]any{
 		"apiVersion": "example.org/v1",
 		"kind":       "XR",
 		"spec": map[string]any{
-			"module":  map[string]any{"ref": manifestRef},
-			"private": map[string]any{"ref": manifestRef, "credentials": "registry"},
-			"url":     map[string]any{"url": "https://example.com/fn.wasm", "digest": moduleDigest},
-			"nopin":   map[string]any{"url": "https://example.com/fn.wasm"},
-			"path":    "fn.wasm",
-			"typo":    map[string]any{"reference": manifestRef},
-			"number":  7,
-			"modules": []any{map[string]any{"ref": manifestRef}},
+			"module":    map[string]any{"ref": manifestRef},
+			"private":   map[string]any{"ref": manifestRef, "credentials": "registry"},
+			"other":     map[string]any{"ref": "other.example.com/repo@" + otherDigest, "credentials": "registry"},
+			"url":       map[string]any{"url": "https://example.com/fn.wasm", "digest": moduleDigest},
+			"nopin":     map[string]any{"url": "https://example.com/fn.wasm"},
+			"dotted":    map[string]any{"ref": "example.com/repo/../evil@" + otherDigest},
+			"dottedurl": map[string]any{"url": "https://example.com/pub/../secret.wasm", "digest": moduleDigest},
+			"upperurl":  map[string]any{"url": "https://EXAMPLE.com/fn.wasm?x=1", "digest": moduleDigest},
+			"path":      "fn.wasm",
+			"typo":      map[string]any{"reference": manifestRef},
+			"number":    7,
+			"modules":   []any{map[string]any{"ref": manifestRef}},
 		},
 		"status": map[string]any{
 			"module": map[string]any{"ref": manifestRef},
 		},
+	}
+	fenced := &v1beta1.Policy{RepositoryAllowList: []string{"example.com/"}}
+	trusted := &v1beta1.Policy{RepositoryAllowList: []string{"example.com/"}, CredentialsAllowList: []string{"registry"}}
+	type args struct {
+		src       v1beta1.ModuleSource
+		policy    *v1beta1.Policy
+		composite map[string]any
 	}
 	type want struct {
 		src v1beta1.ModuleSource
 		err string
 	}
 	cases := map[string]struct {
-		reason    string
-		src       v1beta1.ModuleSource
-		composite map[string]any
-		want      want
+		reason string
+		args   args
+		want   want
 	}{
 		"Static": {
-			reason:    "A concrete source passes through untouched.",
-			src:       v1beta1.ModuleSource{Path: "x.wasm"},
-			composite: composite,
-			want:      want{src: v1beta1.ModuleSource{Path: "x.wasm"}},
+			reason: "A concrete source passes through untouched.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "x.wasm"}, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "x.wasm"}},
+		},
+		"StaticIgnoresPolicy": {
+			reason: "The policy fences what the composite resource chooses; a source the Composition names is not subject to it.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: "other.example.com/repo@" + otherDigest, Credentials: "registry"}}, policy: fenced, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: "other.example.com/repo@" + otherDigest, Credentials: "registry"}}},
+		},
+		"StaticInvalidPolicy": {
+			reason: "The policy's shape is checked whatever the source.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "x.wasm"}, policy: &v1beta1.Policy{CredentialsAllowList: []string{"registry"}}, composite: composite},
+			want:   want{err: "policy.credentialsAllowList requires policy.repositoryAllowList"},
 		},
 		"OCIFromSpec": {
-			reason:    "An OCI source object under spec becomes the oci source.",
-			src:       v1beta1.ModuleSource{OCIFrom: "spec.module"},
-			composite: composite,
-			want:      want{src: v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: manifestRef}}},
+			reason: "An OCI source object under spec becomes the oci source, within the repositories the Composition fenced it to.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: fenced, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
+		},
+		"OCIFromUnfenced": {
+			reason: "A source the composite resource chooses requires policy.repositoryAllowList: without one its author could point the runtime at any host and read what the answer says.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, composite: composite},
+			want:   want{err: "module.from: spec.module of the composite resource names a OCI source, but policy.repositoryAllowList is not set"},
+		},
+		"HTTPFromUnfenced": {
+			reason: "The same for a URL — the runtime would GET whatever the composite resource named.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, composite: composite},
+			want:   want{err: "module.from: spec.url of the composite resource names a HTTP source, but policy.repositoryAllowList is not set"},
 		},
 		"OCIFromCredentials": {
-			reason:    "A source the composite resource chooses may not spend the step's credentials: its author picks the registry host they would be sent to.",
-			src:       v1beta1.ModuleSource{OCIFrom: "spec.private"},
-			composite: composite,
-			want:      want{err: `module.ociFrom: spec.private of the composite resource names credentials "registry", but a module chosen by the composite resource cannot use the step's credentials`},
+			reason: "Fenced but without a credentials list, a source the composite resource chooses may not spend the step's credentials.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.private"}, policy: fenced, composite: composite},
+			want:   want{err: `module.from: spec.private of the composite resource names credentials "registry", but a module chosen by the composite resource cannot use the step's credentials (the registry host would be its author's) unless policy.credentialsAllowList allows them`},
+		},
+		"OCIFromDotSegments": {
+			reason: "A ref whose repository path has dot segments could escape a prefix once a registry or proxy collapses it; it is not a repository name.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.dotted"}, policy: fenced, composite: composite},
+			want:   want{err: `is not a valid repository name`},
+		},
+		"HTTPFromDotSegments": {
+			reason: "A URL path with dot segments is refused for the same reason.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.dottedurl"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/pub/"}}, composite: composite},
+			want:   want{err: `must have a normalized path`},
+		},
+		"HTTPFromHostCase": {
+			reason: "Prefixes match the normalized location: the host lowercased, the query left out.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.upperurl"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/"}}, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://EXAMPLE.com/fn.wasm?x=1", Digest: moduleDigest}}},
+		},
+		"OCIFromCredentialsAllowed": {
+			reason: "A policy that lists the credential and the repository lets the composite resource spend it.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.private"}, policy: trusted, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef, Credentials: "registry"}}},
+		},
+		"OCIFromCredentialsNotListed": {
+			reason: "A credential outside the list is refused.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.private"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"example.com/"}, CredentialsAllowList: []string{"other"}}, composite: composite},
+			want:   want{err: `module.from: spec.private of the composite resource names credentials "registry", which policy.credentialsAllowList does not allow (allowed: other)`},
+		},
+		"OCIFromCredentialsOutsideRepositories": {
+			reason: "A listed credential is still refused for a repository outside the allow list: the repository check comes first, so the secret never reaches a host the Composition did not admit.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.other"}, policy: trusted, composite: composite},
+			want:   want{err: `module.from: spec.other of the composite resource names ref "other.example.com/repo", which policy.repositoryAllowList does not admit (allowed prefixes: example.com/)`},
+		},
+		"OCIFromRepositoryAllowed": {
+			reason: "A ref within the allow list is admitted.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: fenced, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
+		},
+		"OCIFromRepositoryRefused": {
+			reason: "A ref outside every prefix is refused naming the policy and the ref.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"ghcr.io/example-org/", "registry.example.com/"}}, composite: composite},
+			want:   want{err: `module.from: spec.module of the composite resource names ref "example.com/repo", which policy.repositoryAllowList does not admit (allowed prefixes: ghcr.io/example-org/, registry.example.com/)`},
 		},
 		"OCIFromStatus": {
-			reason:    "status works the same way.",
-			src:       v1beta1.ModuleSource{OCIFrom: "status.module"},
-			composite: composite,
-			want:      want{src: v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: manifestRef}}},
+			reason: "status works the same way.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}, policy: fenced, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
 		},
 		"OCIFromArray": {
-			reason:    "Field paths may index into arrays.",
-			src:       v1beta1.ModuleSource{OCIFrom: "spec.modules[0]"},
-			composite: composite,
-			want:      want{src: v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: manifestRef}}},
+			reason: "Field paths may index into arrays.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.modules[0]"}, policy: fenced, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
 		},
 		"HTTPFrom": {
-			reason:    "An HTTP source object carries its own digest.",
-			src:       v1beta1.ModuleSource{HTTPFrom: "spec.url"},
-			composite: composite,
-			want:      want{src: v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: "https://example.com/fn.wasm", Digest: moduleDigest}}},
+			reason: "An HTTP source object carries its own digest.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/"}}, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://example.com/fn.wasm", Digest: moduleDigest}}},
+		},
+		"HTTPFromRepositoryAllowed": {
+			reason: "The repository allow list applies to a URL as a prefix.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/"}}, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://example.com/fn.wasm", Digest: moduleDigest}}},
+		},
+		"HTTPFromRepositoryRefused": {
+			reason: "A URL outside the allow list is refused.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://modules.example.com/"}}, composite: composite},
+			want:   want{err: `module.from: spec.url of the composite resource names url "https://example.com/fn.wasm", which policy.repositoryAllowList does not admit`},
 		},
 		"HTTPFromNoDigest": {
-			reason:    "A dynamic http source without a digest is refused like a static one.",
-			src:       v1beta1.ModuleSource{HTTPFrom: "spec.nopin"},
-			composite: composite,
-			want:      want{err: "module.httpFrom: spec.nopin of the composite resource: module.http.digest is required"},
+			reason: "A dynamic http source without a digest is refused like a static one.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.nopin"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/"}}, composite: composite},
+			want:   want{err: "module.from: spec.nopin of the composite resource: module.http.digest is required"},
 		},
 		"PathFrom": {
-			reason:    "A string under spec becomes the path.",
-			src:       v1beta1.ModuleSource{PathFrom: "spec.path"},
-			composite: composite,
-			want:      want{src: v1beta1.ModuleSource{Path: "fn.wasm"}},
+			reason: "A string under spec becomes the path.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec.path"}, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
+		},
+		"PathFromIgnoresRepositories": {
+			reason: "A served file has no repository; the allow list does not apply.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec.path"}, policy: fenced, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
 		},
 		"Missing": {
-			reason:    "A field the composite does not have is an error naming it.",
-			src:       v1beta1.ModuleSource{OCIFrom: "status.other"},
-			composite: composite,
-			want:      want{err: "module.ociFrom: cannot read status.other from the composite resource"},
+			reason: "A field the composite does not have is an error naming it.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.other"}, composite: composite},
+			want:   want{err: "module.from: cannot read status.other from the composite resource"},
 		},
 		"WrongShape": {
-			reason:    "A value that does not decode into the source type is an error.",
-			src:       v1beta1.ModuleSource{OCIFrom: "spec.path"},
-			composite: composite,
-			want:      want{err: "module.ociFrom: spec.path of the composite resource is not a {ref} object"},
+			reason: "A value that does not decode into the source type is an error.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.path"}, composite: composite},
+			want:   want{err: "module.from: spec.path of the composite resource is not a {ref, credentials} object"},
+		},
+		"WrongShapeHTTP": {
+			reason: "The type decides what the field must hold.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.module"}, composite: composite},
+			want:   want{err: `module.from: spec.module of the composite resource is not a {url, digest} object: json: unknown field "ref"`},
 		},
 		"UnknownField": {
-			reason:    "A typo in the object is refused rather than ignored.",
-			src:       v1beta1.ModuleSource{OCIFrom: "spec.typo"},
-			composite: composite,
-			want:      want{err: `is not a {ref} object: json: unknown field "reference"`},
+			reason: "A typo in the object is refused rather than ignored.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.typo"}, composite: composite},
+			want:   want{err: `is not a {ref, credentials} object: json: unknown field "reference"`},
 		},
 		"PathNotString": {
-			reason:    "pathFrom must point at a string.",
-			src:       v1beta1.ModuleSource{PathFrom: "spec.number"},
-			composite: composite,
-			want:      want{err: "module.pathFrom: spec.number of the composite resource is not a string"},
+			reason: "A Path source read from the composite must be a string.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec.number"}, composite: composite},
+			want:   want{err: "module.from: spec.number of the composite resource is not a string"},
 		},
 		"NoComposite": {
-			reason:    "Without an observed composite nothing can be read.",
-			src:       v1beta1.ModuleSource{OCIFrom: "spec.module"},
-			composite: nil,
-			want:      want{err: "module.ociFrom spec.module: no observed composite resource to read it from"},
+			reason: "Without an observed composite nothing can be read.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, composite: nil},
+			want:   want{err: "module.from spec.module: no observed composite resource to read it from"},
 		},
 		"Invalid": {
-			reason:    "Validation runs first.",
-			src:       v1beta1.ModuleSource{OCIFrom: "metadata.name"},
-			composite: composite,
-			want:      want{err: "must be a field under spec or status"},
+			reason: "Validation runs first.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "metadata.name"}, composite: composite},
+			want:   want{err: "must be a field under spec or status"},
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := FromComposite(tc.src, tc.composite)
+			got, err := FromComposite(tc.args.src, tc.args.policy, tc.args.composite)
 			if tc.want.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.want.err) {
 					t.Fatalf("\n%s\nFromComposite(): want error containing %q, got %v", tc.reason, tc.want.err, err)
@@ -238,14 +349,14 @@ func TestResolvePath(t *testing.T) {
 		src    v1beta1.ModuleSource
 		want   want
 	}{
-		"Served":    {reason: "A file under the module directory resolves to its digest.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Path: "fn.wasm"}, want: want{digest: moduleDigest}},
-		"Nested":    {reason: "Subdirectories are fine.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Path: "sub/../fn.wasm"}, want: want{digest: moduleDigest}},
-		"NoDir":     {reason: "Without --module-dir path sources are refused.", src: v1beta1.ModuleSource{Path: "fn.wasm"}, want: want{err: "started without --module-dir"}},
-		"Absolute":  {reason: "Absolute paths are refused.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Path: filepath.Join(dir, "fn.wasm")}, want: want{err: "must be relative"}},
-		"Escape":    {reason: "Paths escaping the directory are refused.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Path: "../fn.wasm"}, want: want{err: "escapes the module directory"}},
-		"Missing":   {reason: "A missing file is an error.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Path: "nope.wasm"}, want: want{err: "cannot stat module file"}},
-		"Directory": {reason: "A directory is not a module.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Path: "sub"}, want: want{err: "is a directory"}},
-		"TooLarge":  {reason: "The size limit is checked before hashing.", opts: Options{Dir: dir, MaxSize: 32}, src: v1beta1.ModuleSource{Path: "sub/big.wasm"}, want: want{err: "the limit is 32"}},
+		"Served":    {reason: "A file under the module directory resolves to its digest.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}, want: want{digest: moduleDigest}},
+		"Nested":    {reason: "Subdirectories are fine.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "sub/../fn.wasm"}, want: want{digest: moduleDigest}},
+		"NoDir":     {reason: "Without --module-dir path sources are refused.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}, want: want{err: "started without --module-dir"}},
+		"Absolute":  {reason: "Absolute paths are refused.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: filepath.Join(dir, "fn.wasm")}, want: want{err: "must be relative"}},
+		"Escape":    {reason: "Paths escaping the directory are refused.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "../fn.wasm"}, want: want{err: "escapes the module directory"}},
+		"Missing":   {reason: "A missing file is an error.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "nope.wasm"}, want: want{err: "cannot stat module file"}},
+		"Directory": {reason: "A directory is not a module.", opts: Options{Dir: dir}, src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "sub"}, want: want{err: "is a directory"}},
+		"TooLarge":  {reason: "The size limit is checked before hashing.", opts: Options{Dir: dir, MaxSize: 32}, src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "sub/big.wasm"}, want: want{err: "the limit is 32"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -287,7 +398,7 @@ func TestResolvePathChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := r.Resolve(context.Background(), v1beta1.ModuleSource{Path: "fn.wasm"}, nil)
+	first, err := r.Resolve(context.Background(), v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +406,7 @@ func TestResolvePathChange(t *testing.T) {
 	if err := os.WriteFile(path, append(module, '!'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	second, err := r.Resolve(context.Background(), v1beta1.ModuleSource{Path: "fn.wasm"}, nil)
+	second, err := r.Resolve(context.Background(), v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,39 +443,39 @@ func TestResolveHTTP(t *testing.T) {
 	}{
 		"Download": {
 			reason: "The module is downloaded and verified against the digest.",
-			src:    v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}},
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}},
 			fetch:  1,
 			want:   want{hits: 1},
 		},
 		"NotFound": {
 			reason: "A non-200 status is an error.",
-			src:    v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/missing.wasm", Digest: moduleDigest}},
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/missing.wasm", Digest: moduleDigest}},
 			fetch:  1,
 			want:   want{err: "404 Not Found", hits: 1},
 		},
 		"DigestMismatch": {
 			reason: "Content that does not match the digest is rejected.",
-			src:    v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/other.wasm", Digest: moduleDigest}},
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/other.wasm", Digest: moduleDigest}},
 			fetch:  1,
 			want:   want{err: "module content is sha256:", hits: 1},
 		},
 		"TooLarge": {
 			reason: "Downloads stop at the size limit.",
 			opts:   Options{MaxSize: 4},
-			src:    v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}},
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}},
 			fetch:  1,
 			want:   want{err: "exceeds the size limit of 4 bytes", hits: 1},
 		},
 		"BlobStore": {
 			reason: "With a blob store the second fetch does not touch the network.",
 			opts:   Options{Blobs: cache.New(afero.NewMemMapFs(), true)},
-			src:    v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}},
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}},
 			fetch:  2,
 			want:   want{hits: 1},
 		},
 		"NoBlobStore": {
 			reason: "Without a blob store every fetch downloads.",
-			src:    v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}},
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}},
 			fetch:  2,
 			want:   want{hits: 2},
 		},
@@ -525,7 +636,7 @@ func TestResolveOCI(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewResolver(): %v", err)
 			}
-			ref, err := r.Resolve(context.Background(), v1beta1.ModuleSource{OCI: &tc.src}, nil)
+			ref, err := r.Resolve(context.Background(), v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &tc.src}, nil)
 			if err != nil {
 				t.Fatalf("\n%s\nResolve(): unexpected error %v", tc.reason, err)
 			}
@@ -638,7 +749,7 @@ func TestResolveOCIAuth(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := r.Resolve(context.Background(), v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: ref}}, auth)
+			got, err := r.Resolve(context.Background(), v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: ref}}, auth)
 			if err != nil {
 				t.Fatalf("\n%s\nResolve(): unexpected error %v", tc.reason, err)
 			}
@@ -679,7 +790,7 @@ func TestFetchMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref, err := r.Resolve(context.Background(), v1beta1.ModuleSource{HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}}, nil)
+	ref, err := r.Resolve(context.Background(), v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

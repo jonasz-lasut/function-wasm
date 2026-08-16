@@ -117,7 +117,7 @@ func TestCache(t *testing.T) {
 				}
 				if err == nil {
 					// Whatever tier served it, it runs.
-					got, err := e.Run(context.Background(), m, request(), &recorder{})
+					got, err := e.Run(context.Background(), m, request(), &recorder{}, RunOptions{})
 					m.Release()
 					if err != nil {
 						t.Fatalf("\n%s\nRun(): %v", tc.reason, err)
@@ -388,7 +388,7 @@ func TestCacheMapsArtifactsFromDisk(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := e.Run(context.Background(), m, request(), &recorder{})
+		got, err := e.Run(context.Background(), m, request(), &recorder{}, RunOptions{})
 		m.Release()
 		if err != nil {
 			t.Fatal(err)

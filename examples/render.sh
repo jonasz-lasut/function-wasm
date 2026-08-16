@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Renders <example dir>/example/ with the function-wasm runtime from this
-# repository serving that directory (module.path: fn.wasm), the way the
+# repository serving that directory (module.type: Path, path: fn.wasm), the way the
 # scaffold README describes. The guest must already be built to fn.wasm —
 # each example's Makefile does that, whatever its toolchain. With --check the
 # rendered output is asserted instead of printed, which is what CI runs: it

@@ -20,20 +20,38 @@ import (
 // call is the per-Run state host functions reach through the store data.
 type call struct {
 	log logging.Logger
+
+	// HTTP egress (sandbox.egress): what answers wasmfn.http, the Run's
+	// context and its deadline, so a request never outlives the run.
+	http     HTTPRequester
+	ctx      context.Context
+	deadline time.Time
+	// noGrantLogged throttles the audit line of a guest that calls
+	// wasmfn.http without a grant to one info line per run.
+	noGrantLogged bool
 }
 
-// Run instantiates m and hands it req. The returned response is whatever the
-// guest produced; an error means the guest could not be run to completion
-// (instantiation failure, trap, exit, deadline, memory limit or an ABI
-// violation) and carries no response.
-func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionRequest, log logging.Logger) (rsp *fnv1.RunFunctionResponse, err error) {
+// Run instantiates m and hands it req, within the engine's ceilings narrowed
+// by opts. The returned response is whatever the guest produced; an error
+// means the guest could not be run to completion (instantiation failure,
+// trap, exit, deadline, memory limit or an ABI violation) and carries no
+// response. When the Engine bounds concurrent runs, Run first waits for a
+// slot under ctx; a wait cut short by ctx is an error too, and such a Run
+// is neither timed nor counted — it never ran.
+func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionRequest, log logging.Logger, opts RunOptions) (rsp *fnv1.RunFunctionResponse, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	release, err := e.slot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	start := time.Now()
 	defer func() {
 		metrics.RunDuration.WithLabelValues(outcome(err)).Observe(time.Since(start).Seconds())
 	}()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	in, err := proto.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot encode request: %w", err)
@@ -43,17 +61,31 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 	}
 
 	defer e.running()()
-	store := wasmtime.NewStoreWithData(e.engine, &call{log: log})
+	// The private /tmp outlives the store (deferred first, so it runs last):
+	// the guest's descriptors into it are closed before it is removed.
+	tmpDir, err := privateTmp(opts)
+	if err != nil {
+		return nil, err
+	}
+	defer removePrivateTmp(tmpDir, log)
+
+	limits := e.effective(opts)
+	ticks, budget := deadlineTicks(ctx, limits.Timeout)
+	c := &call{log: log, http: opts.HTTP, ctx: ctx, deadline: time.Now().Add(budget)}
+	store := wasmtime.NewStoreWithData(e.engine, c)
 	defer store.Close()
 
-	ticks, budget := e.deadlineTicks(ctx)
 	store.SetEpochDeadline(ticks)
-	store.Limiter(e.cfg.MemoryLimit, -1, -1, -1, -1)
+	store.Limiter(limits.MemoryLimit, -1, -1, -1, -1)
 
 	wasi := wasmtime.NewWasiConfig()
 	wasi.SetArgv([]string{argv0})
 	wasi.InheritStdout()
 	wasi.InheritStderr()
+	if err := configureSandbox(wasi, opts, tmpDir); err != nil {
+		wasi.Close()
+		return nil, err
+	}
 	store.SetWasi(wasi)
 
 	inst, err := e.linker.Instantiate(store, m.module)
