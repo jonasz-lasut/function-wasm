@@ -1,8 +1,10 @@
 // Package module resolves the ModuleSource of a function-wasm Input to module
 // bytes: OCI artifacts, HTTP URLs and files under a served directory, named
-// statically or read from a field of the composite resource. Every module is
-// identified by its content digest, which is what the compiled-module cache
-// is keyed by, and every fetch is verified against it.
+// statically or read from a field of the composite resource. Every remote
+// module is pinned by a digest the Input states — the manifest digest of an
+// OCI reference, the module digest of an HTTP source — every fetch is
+// verified against it, and both caches are keyed by it, so resolution itself
+// never touches the network.
 package module
 
 import (
@@ -18,16 +20,15 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
 )
 
-// Defaults applied for zero Options fields.
-const (
-	DefaultMaxSize = 128 << 20
-	DefaultTagTTL  = 5 * time.Minute
-)
+// DefaultMaxSize applies when Options.MaxSize is zero.
+const DefaultMaxSize = 128 << 20
 
 var (
 	digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
@@ -41,31 +42,27 @@ type Options struct {
 	Dir string
 	// MaxSize caps the size of a module in bytes. Zero means DefaultMaxSize.
 	MaxSize int64
-	// TagTTL is how long an OCI tag's resolution to a digest is reused. Zero
-	// means DefaultTagTTL.
-	TagTTL time.Duration
-	// BlobDir enables a content-addressed on-disk cache of fetched modules
-	// (OCI and HTTP), so restarts and registry outages do not need the
-	// network. Empty disables it.
-	BlobDir string
-	// HTTPClient is used for HTTP sources and registry access. Nil means
-	// http.DefaultClient with a transport-level default timeout.
+	// Blobs stores fetched blobs — OCI layers as delivered, HTTP modules —
+	// on disk by content digest, so each is downloaded once per digest and a
+	// restart needs no download. Nil disables the store (tests).
+	Blobs *cache.Store
+	// HTTPClient is used for HTTP sources and registry access. Nil means a
+	// client with a five-minute timeout.
 	HTTPClient *http.Client
 	// Keychain resolves registry credentials when the Input names none. Nil
 	// means authn.DefaultKeychain (Docker config from DOCKER_CONFIG).
 	Keychain authn.Keychain
-	// Now is the clock; nil means time.Now.
-	Now func() time.Time
 	// Verifier, when set, requires every module to be an OCI artifact
 	// carrying a cosign signature it accepts; http and path sources are
 	// refused, having no signature to check.
 	Verifier *Verifier
 }
 
-// A Ref is a resolved module: its content digest and how to fetch it.
+// A Ref is a resolved module: the digest that pins it and how to fetch it.
 type Ref struct {
-	// Digest is the module's content digest, sha256:<hex>. Modules with the
-	// same digest are the same module wherever they came from.
+	// Digest pins the module and keys the caches, sha256:<hex>: the manifest
+	// digest of an OCI artifact (the manifest names the layer's digest, and
+	// the layer is the module), otherwise the module's own content digest.
 	Digest string
 	// Description names the source for logs and error messages.
 	Description string
@@ -73,7 +70,7 @@ type Ref struct {
 	fetch func(ctx context.Context) ([]byte, error)
 }
 
-// Fetch returns the module bytes, verified against Digest.
+// Fetch returns the module bytes, verified along the chain Digest pins.
 func (r *Ref) Fetch(ctx context.Context) ([]byte, error) {
 	return r.fetch(ctx)
 }
@@ -82,9 +79,6 @@ func (r *Ref) Fetch(ctx context.Context) ([]byte, error) {
 type Resolver struct {
 	opts   Options
 	client *http.Client
-	blobs  *blobStore
-	tags   *tagCache
-	layers *layerCache
 	files  sync.Map // path → fileStamp
 }
 
@@ -93,12 +87,6 @@ func NewResolver(o Options) (*Resolver, error) {
 	if o.MaxSize <= 0 {
 		o.MaxSize = DefaultMaxSize
 	}
-	if o.TagTTL <= 0 {
-		o.TagTTL = DefaultTagTTL
-	}
-	if o.Now == nil {
-		o.Now = time.Now
-	}
 	if o.Keychain == nil {
 		o.Keychain = authn.DefaultKeychain
 	}
@@ -106,15 +94,7 @@ func NewResolver(o Options) (*Resolver, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
-	r := &Resolver{opts: o, client: client, tags: newTagCache(o.TagTTL, o.Now), layers: newLayerCache()}
-	if o.BlobDir != "" {
-		blobs, err := newBlobStore(o.BlobDir)
-		if err != nil {
-			return nil, err
-		}
-		r.blobs = blobs
-	}
-	return r, nil
+	return &Resolver{opts: o, client: client}, nil
 }
 
 // Validate reports whether src names exactly one usable source. Sources read
@@ -130,31 +110,46 @@ func Validate(src v1beta1.ModuleSource) error {
 	if set != 1 {
 		return errors.New("module must set exactly one of oci, http, path, ociFrom, httpFrom and pathFrom")
 	}
-	for name, from := range map[string]string{"ociFrom": src.OCIFrom, "httpFrom": src.HTTPFrom, "pathFrom": src.PathFrom} {
+	for field, from := range map[string]string{"ociFrom": src.OCIFrom, "httpFrom": src.HTTPFrom, "pathFrom": src.PathFrom} {
 		if from != "" && !fromPattern.MatchString(from) {
-			return fmt.Errorf("module.%s %q must be a field under spec or status of the composite resource, e.g. status.module", name, from)
+			return fmt.Errorf("module.%s %q must be a field under spec or status of the composite resource, e.g. status.module", field, from)
 		}
 	}
-	if src.Digest != "" && !digestPattern.MatchString(src.Digest) {
-		return fmt.Errorf("module.digest %q is not sha256:<64 hex characters>", src.Digest)
-	}
-	if src.OCI != nil && src.OCI.Ref == "" {
-		return errors.New("module.oci.ref is required")
+	if src.OCI != nil {
+		if src.OCI.Ref == "" {
+			return errors.New("module.oci.ref is required")
+		}
+		if _, err := name.NewDigest(src.OCI.Ref); err != nil {
+			return fmt.Errorf("module.oci.ref %q must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported", src.OCI.Ref)
+		}
 	}
 	if src.HTTP != nil {
 		if src.HTTP.URL == "" {
 			return errors.New("module.http.url is required")
 		}
-		if src.Digest == "" {
-			return errors.New("module.digest is required for an http source")
+		if err := checkDigest("module.http.digest", src.HTTP.Digest); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func checkDigest(field, digest string) error {
+	if digest == "" {
+		return fmt.Errorf("%s is required: the sha256 of the module, as guestfn push prints it", field)
+	}
+	if !digestPattern.MatchString(digest) {
+		return fmt.Errorf("%s %q is not sha256:<64 hex characters>", field, digest)
 	}
 	return nil
 }
 
 // Resolve resolves a concrete src — one whose *From fields have been
 // materialised by FromComposite. auth authenticates OCI pulls; nil falls back
-// to the resolver's keychain.
+// to the resolver's keychain. Resolving does no I/O: the digest comes from
+// the Input (or, for a served file, from the file), and fetching is deferred
+// to Ref.Fetch, which the caller only invokes when no compiled artifact of
+// the module is at hand.
 func (r *Resolver) Resolve(ctx context.Context, src v1beta1.ModuleSource, auth authn.Authenticator) (*Ref, error) {
 	if err := Validate(src); err != nil {
 		return nil, err
@@ -175,14 +170,6 @@ func (r *Resolver) Resolve(ctx context.Context, src v1beta1.ModuleSource, auth a
 	}
 }
 
-// pin checks a digest the source reports against the one the Input pinned.
-func pin(want, got string) (string, error) {
-	if want != "" && want != got {
-		return "", fmt.Errorf("module.digest %s does not match the source's %s", want, got)
-	}
-	return got, nil
-}
-
 // readCapped reads at most limit bytes and reports when the source held more.
 func readCapped(rd io.Reader, limit int64) ([]byte, error) {
 	b, err := io.ReadAll(io.LimitReader(rd, limit+1))
@@ -200,30 +187,39 @@ func digestOf(b []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// verified wraps a fetch so its bytes are checked against digest and, when a
-// blob store is configured, served from and saved to it. source names the
-// source kind for metrics.
-func (r *Resolver) verified(source, digest string, fetch func(ctx context.Context) ([]byte, error)) func(ctx context.Context) ([]byte, error) {
+// timed wraps a fetch so its duration is observed for source, the source
+// kind label of the fetch metric.
+func timed(source string, fetch func(ctx context.Context) ([]byte, error)) func(ctx context.Context) ([]byte, error) {
 	return func(ctx context.Context) ([]byte, error) {
 		start := time.Now()
 		defer func() { metrics.FetchDuration.WithLabelValues(source).Observe(time.Since(start).Seconds()) }()
-		if r.blobs != nil {
-			if b, ok := r.blobs.get(digest); ok {
-				metrics.CacheEvents.WithLabelValues(metrics.CacheBlob, metrics.EventHit).Inc()
-				return b, nil
-			}
-			metrics.CacheEvents.WithLabelValues(metrics.CacheBlob, metrics.EventMiss).Inc()
-		}
-		b, err := fetch(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if got := digestOf(b); got != digest {
-			return nil, fmt.Errorf("module content is %s, want %s", got, digest)
-		}
-		if r.blobs != nil {
-			r.blobs.put(digest, b)
-		}
-		return b, nil
+		return fetch(ctx)
 	}
+}
+
+// verified returns the blob with the given content digest: from the blob
+// store when one is configured and holds it, otherwise from fetch, checked
+// against digest and saved to the store. what names the blob in the mismatch
+// error.
+func (r *Resolver) verified(ctx context.Context, what, digest string, fetch func(ctx context.Context) ([]byte, error)) ([]byte, error) {
+	if r.opts.Blobs != nil {
+		if b, ok := r.opts.Blobs.Get(digest); ok {
+			metrics.CacheEvents.WithLabelValues(metrics.CacheBlob, metrics.EventHit).Inc()
+			return b, nil
+		}
+		metrics.CacheEvents.WithLabelValues(metrics.CacheBlob, metrics.EventMiss).Inc()
+	}
+	b, err := fetch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if got := digestOf(b); got != digest {
+		return nil, fmt.Errorf("%s content is %s, want %s", what, got, digest)
+	}
+	if r.opts.Blobs != nil {
+		// A full cache is not a reason to fail the request; the blob is
+		// simply fetched again next time.
+		_ = r.opts.Blobs.Put(digest, b)
+	}
+	return b, nil
 }

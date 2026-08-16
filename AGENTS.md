@@ -29,10 +29,12 @@ Crossplane RunFunctionRequest
 │  2. module.FromComposite(input.module, observed XR)      *From → concrete    │
 │  3. registryAuth(req, module) → authn.Authenticator      (step credential)   │
 │  4. resolver.Resolve(module) → module.Ref{Digest, Fetch}   internal/module   │
-│       *From fields read from the observed XR (spec./status.) first;          │
-│       oci | http | path → content digest (tag→digest cached, TTL)            │
-│  5. modules.Get(digest, fetch+engine.Compile)              engine.Cache LRU  │
-│       fetch verified against digest, optional on-disk blob cache             │
+│       no I/O: oci manifest digest from the ref, http.digest from the Input,  │
+│       path hashed by size+mtime                                              │
+│  5. modules.Get(digest, fetch)                             engine.Cache      │
+│       memory (idle TTL) → compiled artifact on disk → fetch (oci: manifest   │
+│       GET → layer digest; blob store on disk → source, verified against the  │
+│       blob digest; tar layer extracted) + Compile + Serialize to disk        │
 │  6. engine.Run(ctx, module, req, log)                      internal/engine   │
 │       fresh Store: WASI argv=["function"], no env/fs/net, epoch deadline,    │
 │       memory limiter; _initialize → wasmfn_alloc → copy req → wasmfn_run     │
@@ -50,19 +52,18 @@ Inside the module (a Go guest built with `wasmfn`): `wasmfn_run` looks up the bu
 ### Key Components
 
 ```
-cmd/function/main.go        kong CLI → engine.New, module.NewResolver, engine.NewCache → function.Serve(&Function{})
+cmd/function/main.go        kong CLI → engine.New, openCaches (afero stores under /tmp/function-wasm-cache), module.NewResolver, engine.NewCache → function.Serve(&Function{})
 cmd/function/fn.go          Function.RunFunction: the seven steps above; registryAuth for OCI step credentials
 internal/engine             wasmtime wrapper — the ONLY importer of github.com/bytecodealliance/wasmtime-go/vNN
   engine.go                   Engine (config, epoch ticker, linker with WASI + wasmfn.log), Compile + checkABI
   run.go                      Run: store per call, deadline/limiter, ABI calls, guestError/trapText
   hostlog.go                  wasmfn.log import → logging.Logger
-  cache.go                    Cache: LRU of compiled modules by digest, single-flight loads
+  cache.go                    Cache: memory (idle TTL) over the compiled-artifact store, single-flight loads; Serialize/Deserialize/Version in engine.go
+internal/cache              afero content-addressed Store (verify on read for blobs), Subdir, RemoveOthers; DefaultDir /tmp/function-wasm-cache
 internal/module             ModuleSource → Ref{Digest, Description, Fetch}
-  module.go                   Resolver, Options, Validate, verified() (digest check + blob store)
-  oci.go / http.go / path.go  one source each
+  module.go                   Resolver, Options (Blobs *cache.Store), Validate (digest-pinned oci refs, required http digest), verified() (blob store + digest check), timed() (fetch metric)
+  oci.go / http.go / path.go  one source each; oci keys on the manifest digest, fetches the manifest only inside Fetch and stores the layer by its digest
   from.go                     FromComposite: ociFrom/httpFrom/pathFrom → the field of the observed XR (spec./status. only), decoded strictly
-  cache.go                    tagCache (TTL), layerCache (manifest → wasm layer)
-  blob.go                     content-addressed on-disk cache of fetched modules
   auth.go                     AuthFor: step credential (.dockerconfigjson | username/password) → authn.Authenticator
   signature.go                Verifier: cosign key-based signature check (<repo>:sha256-<digest>.sig, simple-signing payload; ECDSA/RSA/ed25519); no sigstore dependency
 internal/testwasm           WAT fixtures implementing ABI v1 (testwasm.Fixed) and BuildGuest (go build of a Go guest)
@@ -108,7 +109,7 @@ The function receives an `Input` (`wasm.fn.crossplane.io/v1beta1`) — a KRM-lik
 type Input struct {
     metav1.TypeMeta   `json:",inline"`
     metav1.ObjectMeta `json:"metadata,omitempty"`
-    Module ModuleSource         `json:"module"`           // exactly one of OCI, HTTP, Path, OCIFrom, HTTPFrom, PathFrom (+ Digest)
+    Module ModuleSource         `json:"module"`           // exactly one of OCI{Ref, Credentials}, HTTP{URL, Digest}, Path, OCIFrom, HTTPFrom, PathFrom
     Config *runtime.RawExtension `json:"config,omitempty"` // opaque; the guest reads it via wasmfn.GetConfig
 }
 ```
@@ -125,7 +126,19 @@ A guest's returned `error` becomes a fatal result on a fresh response (what a gR
 
 ### Caches
 
-Compiled modules: `engine.Cache` LRU by content digest, `--module-cache-size`. Fetched bytes: `internal/module` blob store under `--cache-dir/modules` (content-addressed, immutable). wasmtime compiled code: `--cache-dir/wasmtime`. Tag → manifest digest: TTL `--module-tag-ttl`. Manifest → layer: forever. Served files: digest cached by size+mtime.
+Two on-disk stores under `/tmp/function-wasm-cache` (fixed; `internal/cache`, afero): `modules/<digest>` — every fetched blob (an OCI layer as delivered, tar included; an HTTP module), verified on read, never held in memory; `compiled/<engine.Version()>/<digest>` — wasmtime artifacts (`Module.Serialize`), other version dirs removed at startup. In memory: compiled modules only, idle TTL 10 min (`engine.DefaultIdleTTL`), single-flight loads, or nothing at all with `--disable-memory-cache` (`engine.CacheOptions.NoMemory`; large Go modules). Keys are digests stated in the Input — the manifest digest of `oci.ref` (the manifest pins the layer; the blob store keeps the layer under its own digest, so a lost artifact costs one manifest GET and no download), `http.digest` (required) — or hashed for served files. Full design: `docs/one-pager-cache.md`.
+
+### One-pagers
+
+Design documents under `docs/one-pager-*.md` follow one pattern: the H1 is the feature name (`# WASM Sandbox`, `# Module and Compiled Artifacts Cache`), immediately followed by
+
+```
+* Owner: First Last (@github-handle)
+* Reviewers: Function WASM Maintainers
+* Status: Draft | Implemented, revision x.y
+```
+
+then the body. Bump the revision when the design changes; flip Draft → Implemented when the code lands.
 
 ### Signatures
 
@@ -271,7 +284,8 @@ By hand: `go run ./cmd/function --insecure --debug --module-dir=examples/hello-g
 - **Transparent proxy**: the host forwards the whole request and returns the whole response; requirements/extra-resource round trips work with no runtime knowledge. The host adds `meta` only when the guest omitted it.
 - **Guest error → fatal result** instead of a gRPC error: crossplane treats both as a failed step, fatal results are visible in `crossplane render --include-function-results`, and the wire stays one message (no envelope proto).
 - **Memory-export ABI, not stdin/stdout**: wasmtime-go's WASI config only offers files or inherited descriptors for stdio, so a stream ABI would need temp files per call.
-- **Fresh instance per request** (~10 ms): hermetic, no reentrancy, no leaks; the expensive part (compile, ~2.4 s for a 75 MB Go guest) is cached by content digest.
+- **Fresh instance per request** (~10 ms): hermetic, no reentrancy, no leaks; the expensive part (compile, ~2.4 s for a 75 MB Go guest) is cached by content digest in memory and as a wasmtime artifact on disk.
+- **Digests are stated, not discovered** (Jonasz, 2026-08-16): OCI refs must be `@sha256:` pinned (`repo:tag@sha256:…` is fine, the tag is context) and `http.digest` is required — no tags alone, no request-time resolution, no tag TTL; the caches key on the stated digest and every fetch is verified against it. An OCI source carries no separate module digest: the manifest digest already pins the layer, and duplicating it would only be one more thing to get wrong. Fetched modules always go to disk and never stay in memory; compiled modules stay in memory ten minutes idle. No cache flags.
 - **Guest scaffold is wasm-only**: only the runtime is a gRPC server; the guest's tests run natively because `Register`/`NewLogger` are portable.
 - **`pkg/wasmfn` is a nested module** (importable, hence under `pkg/`), never depends on the root module, and re-implements the two `response` helpers it needs (`to`, `fatal`) rather than importing `function-sdk-go/response`, so raw-proto guests stay ~20 MB; `guestfn` and `wasmfn` are tagged in lockstep so a released CLI pins the matching SDK.
 - **WASI argv is always `["function"]`**: an empty argv traps at `_initialize` because klog's `init` indexes `os.Args[0]` — every function-sdk-go guest imports klog transitively.
@@ -281,6 +295,8 @@ By hand: `go run ./cmd/function --insecure --debug --module-dir=examples/hello-g
 
 - `README.md` — user-facing behaviour, the Input reference, runtime flags, trust model
 - `docs/abi.md` — the host/guest contract
+- `docs/one-pager-cache.md` — the two on-disk caches and the memory tier
+- `docs/one-pager-sandbox.md` — design sketch (not implemented) for granting modules filesystem, HTTP egress or environment access
 - `input/v1beta1/input.go` — authoritative Input schema
 - `.claude/skills/cut-release/SKILL.md` — cutting a minor/major release (`release-X.Y` branch, tag, package publish); one release branch is kept at a time
 - `.claude/skills/remediate-cves/SKILL.md` — patch releases for Grype/code-scanning findings against the latest release
@@ -297,6 +313,7 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 - **Fatal `_initialize failed: trap` from a Go guest**: the guest panicked during package init; its stack is in the function pod's stderr. An empty WASI argv is one cause (host bug — the runtime always sets it).
 - **`module imports X.Y, which the host does not provide`**: the module needs an import outside `wasi_snapshot_preview1` and `wasmfn.log`; it was built for another host or uses sockets/threads.
 - **`does not export "wasmfn_run"`**: not built as a reactor with the exports — for Go, `-buildmode=c-shared` and `wasmfn.Register` in an `init`.
-- **First request slow, then fast**: expected — compile is per digest; add `--cache-dir` on a volume to survive restarts.
+- **First request slow, then fast**: expected — compile is per digest; the artifact under `/tmp/function-wasm-cache/compiled` makes the next process fast too if that path is on a volume.
+- **`module.oci.ref … tags are not supported`**: pin the reference to the manifest digest — `repo@sha256:…` or `repo:tag@sha256:…`, as `guestfn push` prints it.
 - **`module.path is refused`**: the runtime was started without `--module-dir`.
-- **Tag changes not picked up**: tags are re-resolved every `--module-tag-ttl` (5m); pin digests for determinism.
+- **Cannot create /tmp/function-wasm-cache at startup**: the pod's filesystem is read-only there — mount an emptyDir (or a volume) at that path through a `DeploymentRuntimeConfig`.
