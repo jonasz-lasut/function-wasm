@@ -12,9 +12,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
+	"path"
+	"reflect"
+	"runtime"
 	"strings"
 	"time"
 
@@ -55,9 +55,6 @@ type Config struct {
 	// MemoryLimit caps a guest's linear memory in bytes. Zero means
 	// DefaultMemoryLimit.
 	MemoryLimit int64
-	// CacheDir enables wasmtime's on-disk compiled-code cache in that
-	// directory so restarts do not recompile modules. Empty disables it.
-	CacheDir string
 }
 
 // Defaults applied for zero Config fields.
@@ -89,15 +86,6 @@ func New(cfg Config) (*Engine, error) {
 
 	wc := wasmtime.NewConfig()
 	wc.SetEpochInterruption(true)
-	if cfg.CacheDir != "" {
-		path, err := writeCacheConfig(cfg.CacheDir)
-		if err != nil {
-			return nil, err
-		}
-		if err := wc.CacheConfigLoad(path); err != nil {
-			return nil, fmt.Errorf("cannot enable wasmtime cache in %q: %w", cfg.CacheDir, err)
-		}
-	}
 	engine := wasmtime.NewEngineWithConfig(wc)
 
 	linker := wasmtime.NewLinker(engine)
@@ -155,6 +143,40 @@ func (e *Engine) Compile(wasm []byte) (*Module, error) {
 		return nil, err
 	}
 	return &Module{module: m}, nil
+}
+
+// Serialize returns wasmtime's compiled artifact for m: machine code that
+// this engine — same wasmtime version, same host — can load again with
+// Deserialize instead of recompiling.
+func (e *Engine) Serialize(m *Module) ([]byte, error) {
+	b, err := m.module.Serialize()
+	if err != nil {
+		return nil, fmt.Errorf("cannot serialize module: %w", err)
+	}
+	return b, nil
+}
+
+// Deserialize loads an artifact Serialize produced. wasmtime refuses
+// artifacts from another version or host, and the ABI is checked again, so a
+// stale or foreign artifact is an error the caller treats as a cache miss.
+func (e *Engine) Deserialize(artifact []byte) (*Module, error) {
+	m, err := wasmtime.NewModuleDeserialize(e.engine, artifact)
+	if err != nil {
+		return nil, fmt.Errorf("cannot load compiled module: %s", firstLine(err.Error()))
+	}
+	if err := checkABI(m); err != nil {
+		return nil, err
+	}
+	return &Module{module: m}, nil
+}
+
+// Version identifies the wasmtime-go major and the host that compiled
+// artifacts are only valid for, e.g. "v47-linux-arm64" — the compiled cache
+// is namespaced by it. The major comes from the import path, so a bump that
+// changes the path changes the namespace without anyone remembering to.
+func Version() string {
+	pkg := reflect.TypeOf(wasmtime.Engine{}).PkgPath()
+	return path.Base(pkg) + "-" + runtime.GOOS + "-" + runtime.GOARCH
 }
 
 // checkABI verifies the exports and imports ABI v1 requires before a module
@@ -271,23 +293,4 @@ func (e *Engine) deadlineTicks(ctx context.Context) (uint64, time.Duration) {
 		ticks = 1
 	}
 	return ticks, budget
-}
-
-// writeCacheConfig writes the TOML file wasmtime loads its compiled-code cache
-// settings from. Only the directory is customised, so wasmtime's defaults for
-// size limits and cleanup apply.
-func writeCacheConfig(dir string) (string, error) {
-	dir, err := filepath.Abs(dir)
-	if err != nil {
-		return "", fmt.Errorf("cannot resolve wasmtime cache directory: %w", err)
-	}
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", fmt.Errorf("cannot create wasmtime cache directory: %w", err)
-	}
-	path := filepath.Join(dir, "wasmtime-cache.toml")
-	toml := "[cache]\ndirectory = " + strconv.Quote(dir) + "\n"
-	if err := os.WriteFile(path, []byte(toml), 0o600); err != nil {
-		return "", fmt.Errorf("cannot write wasmtime cache config: %w", err)
-	}
-	return path, nil
 }
