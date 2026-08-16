@@ -91,7 +91,7 @@ func digestRef(t *testing.T, ref string) name.Digest {
 }
 
 func oci(ref string) v1beta1.ModuleSource {
-	return v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: ref}}
+	return v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: ref}}
 }
 
 func TestVerifier(t *testing.T) {
@@ -175,7 +175,7 @@ func TestVerifier(t *testing.T) {
 		"PathRefused": {
 			reason: "With a verifier configured only OCI sources are accepted.",
 			keys:   [][]byte{pemPublic(t, &ecKey.PublicKey)},
-			src:    v1beta1.ModuleSource{Path: "fn.wasm"},
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"},
 			want:   "only cosign-signed oci modules are accepted",
 		},
 	}

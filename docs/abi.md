@@ -24,10 +24,14 @@ The host provides these imports:
 
 | module | name | type | purpose |
 |---|---|---|---|
-| `wasi_snapshot_preview1` | * | | WASI preview 1 as implemented by wasmtime, with `argv = ["function"]`, no environment variables, no pre-opened directories, no sockets; the clock and randomness work; stdout and stderr are the host process's, so a guest's prints and panics land in the pod log |
+| `wasi_snapshot_preview1` | * | | WASI preview 1 as implemented by wasmtime, with `argv = ["function"]`, no sockets; no environment variables and no pre-opened directories unless the Composition's `sandbox` grants them (see [Sandbox](#sandbox)); the clock and randomness work; stdout and stderr are the host process's, so a guest's prints and panics land in the pod log |
 | `wasmfn` | `log` | `(level: i32, ptr: i32, len: i32)` | structured logging through the host logger; optional |
+| `wasmfn` | `http` | `(req_ptr: i32, req_len: i32) -> i64` | one HTTP(S) request performed by the host within the Composition's `sandbox.egress` grant; optional — see [HTTP egress](#http-egress) |
 
-A module importing anything else is refused at load.
+A module importing anything else is refused at load. Both `wasmfn` imports
+are always provided and type-checked at load; a module imports the ones it
+uses. Whether a `wasmfn.http` call is *performed* is decided per request by
+the grant, never at load.
 
 ## One request
 
@@ -78,13 +82,104 @@ the guest omitted one.
 record through its own logger with the module reference and digest attached.
 A malformed record is logged verbatim rather than dropped.
 
+## Sandbox
+
+By default a guest sees no filesystem and no environment. A Composition may
+grant some through the Input's `sandbox` (within what the operator enabled;
+`docs/one-pager-sandbox.md`), and the grant reaches the guest through WASI
+alone — no new import, nothing language-specific:
+
+| grant | what the guest sees |
+|---|---|
+| `sandbox.filesystem.privateTmp: true` | an empty, writable directory pre-opened at `/tmp` — where Go's `os.TempDir()` and Rust's `env::temp_dir()` point on WASI — created for this request and removed after it, whatever the outcome. Nothing written there survives to the next request or is visible to another. It is the only directory a guest is ever given: host directories are not mountable, a path that would leave `/tmp` (`/tmp/../etc/passwd`) never reaches the host filesystem — wasmtime resolves paths inside the pre-open and answers `EPERM` — and language runtimes that clean absolute paths against the pre-opens fail even earlier (Go: `EBADF`, no pre-open matches `/etc/passwd`) |
+| `sandbox.env {KEY: value}` | exactly those variables through `environ_sizes_get`/`environ_get` (`os.Getenv`, `std::env::var`); the host's environment is never inherited |
+
+The private `/tmp` is pre-opened as descriptor 3, but that number is not
+part of the contract: a guest that talks to WASI directly should discover
+pre-opens with `fd_prestat_get` / `fd_prestat_dir_name`, as language
+runtimes do. Nothing else changes: the same request/response exchange, the
+same deadline and memory limit.
+
+## HTTP egress
+
+`wasmfn.http(req_ptr, req_len) -> i64` asks the host to perform one HTTP(S)
+request. The guest never opens a socket: the host resolves the name, refuses
+addresses its policy blocks, terminates TLS with its own roots, checks the
+host, method and path against the `sandbox.egress.http` rules of the
+Composition running the module, follows redirects within them, enforces the
+operator's budgets and returns the response. The import exists on every
+runtime; without a grant (or with egress disabled by the operator) every call
+is answered with a refusal — never a trap.
+
+Memory protocol, in the order it happens:
+
+1. The guest writes a UTF-8 JSON **request** anywhere in its memory and calls
+   `wasmfn.http(ptr, len)`. The host copies it out at once — nothing the host
+   does later reads that buffer again.
+2. The host performs (or refuses) the request, then calls the guest's own
+   `wasmfn_alloc(n)` for the JSON **response** of `n` bytes, writes it there
+   and returns `(ptr << 32) | n`. **`wasmfn_alloc` is therefore called
+   re-entrantly, while `wasmfn_run` and `wasmfn.http` are on the stack**; it
+   must be callable then (a bump allocator, a Go `//go:wasmexport`, a Rust
+   `Vec` all are), and it may grow the memory — the host re-reads the memory
+   base after the call. Like the request, the response is in a
+   `wasmfn_alloc` buffer, so a guest may look it up rather than trust the
+   pointer.
+3. A trap or exit *inside* the re-entered `wasmfn_alloc`, or an invalid
+   buffer from it, ends the run like any other trap. `0` is reserved for "no
+   response" — a guest treats it as an error; the host does not return it
+   today.
+
+The request:
+
+```json
+{"method": "POST", "url": "https://api.example.com/v1/items?limit=1",
+ "headers": {"Accept": ["application/json"]}, "body": "eyJuYW1lIjoieCJ9"}
+```
+
+`method` defaults to `GET`; `url` is absolute, `http` or `https`; `headers`
+maps names to lists of values (`Host`, `Content-Length` and hop-by-hop
+headers are dropped — the host owns the connection; the host adds its own
+`User-Agent` and `Accept-Encoding: gzip`, transparently decoded, unless the
+guest sets them); `body` is base64, optional — the standard alphabet with
+padding (RFC 4648 §4), no line breaks, in both directions.
+
+The response:
+
+```json
+{"status": 200, "headers": {"Content-Type": ["application/json"]}, "body": "eyJvayI6dHJ1ZX0="}
+{"status": 0, "error": "sandbox.egress: no rule admits host \"evil.example.com\""}
+```
+
+`status` is the server's status code, whatever it is (a 503 is a response,
+not an error), with the server's `headers` (names canonicalised as Go's
+`net/http` does: `Content-Type`) and base64 `body`; `status` 0 with an
+`error` means the host did not perform the request: it was refused by the
+grant or the operator's policy (`sandbox.egress: …` — the guest is told that
+the policy refused, not which address or block-list entry did; that stays in
+the operator's audit line), a budget was hit (request count, response bytes,
+response headers, redirects, the request timeout), the payload was
+malformed, or the transport failed (DNS, TLS, connection). A request is also
+cut short at the run's deadline; the run itself then ends as a timeout, so
+the guest does not get to act on that error. Redirects are followed within
+the grant, each hop re-checked and audited; as in Go's `net/http`,
+`Authorization` and `Cookie` headers survive a redirect to the same host and
+are dropped on a redirect elsewhere. A refused request is never a trap.
+
+The Go SDK's `wasmfn.HTTPClient()` returns an `*http.Client` whose transport
+speaks this protocol; the TinyGo and Rust scaffolds carry `http.go` and
+`src/http.rs` — the same protocol over their own allocator export, about a
+hundred lines each — the reference for other languages.
+
 ## Compatibility
 
 Payload evolution rides on protobuf: the host and the guest may be built
 against different `function-sdk-go` versions, unknown fields survive a round
 trip and new fields default. A change to the mechanics above (export names,
 signatures, the packing) would be a new ABI with new export names; the host
-would keep serving v1 modules.
+would keep serving v1 modules. Host imports are added within ABI v1 as
+optional imports (`wasmfn.http` was): a module that does not import one is
+unaffected, and their JSON payloads may gain fields.
 
 ## Examples
 
@@ -92,8 +187,8 @@ would keep serving v1 modules.
 (TinyGo, protobuf-go types + vtprotobuf codecs) and `examples/hello-rust`
 (Rust, prost) implement this contract for the same function — they are what
 `guestfn init --lang go|tinygo|rust` scaffolds; the last two carry the ABI
-glue in the open — about forty lines each — and are the reference for other
-languages.
+glue in the open — about forty lines each, plus the `wasmfn.http` helper —
+and are the reference for other languages.
 
 ## Go guests
 

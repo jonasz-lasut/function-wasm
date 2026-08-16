@@ -54,15 +54,17 @@ jobs:
           go-version-file: go.mod
 
       # Tidies every Go module (root, the wasmfn guest SDK, the Go example
-      # guests), regenerates the Input CRD (package/input) and the guestfn
-      # scaffold goldens; all of it must be committed. The TinyGo example's
-      # generated protobuf code is checked by the render-tinygo job.
+      # guests, the httpguest test fixture), regenerates the Input CRD
+      # (package/input) and the guestfn scaffold goldens; all of it must be
+      # committed. The TinyGo example's generated protobuf code is checked by
+      # the render-tinygo job.
       - name: Check Diff
         run: |
           go mod tidy
           (cd pkg/wasmfn && go mod tidy)
           (cd examples/hello-go && go mod tidy)
           (cd examples/hello-tinygo && go mod tidy)
+          (cd internal/testwasm/testdata/httpguest && go mod tidy)
           go generate ./...
           if [ -n "$(git status --porcelain)" ]; then
             echo "There are uncommitted changes after running go mod tidy and go generate ./...; commit all generated files:"

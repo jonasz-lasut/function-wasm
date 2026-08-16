@@ -42,7 +42,7 @@ func (r *Resolver) resolvePath(src v1beta1.ModuleSource) (*Ref, error) {
 		Digest:      digest,
 		Description: "module file " + src.Path,
 		// Served files are on disk already; the blob store is skipped.
-		fetch: func(context.Context) ([]byte, error) {
+		fetch: timed("path", func(context.Context) ([]byte, error) {
 			f, err := os.Open(full) //nolint:gosec // full is confined to the module directory above.
 			if err != nil {
 				return nil, fmt.Errorf("cannot read module file: %w", err)
@@ -59,7 +59,7 @@ func (r *Resolver) resolvePath(src v1beta1.ModuleSource) (*Ref, error) {
 				return nil, fmt.Errorf("module file changed while being read: content is %s, expected %s", got, digest)
 			}
 			return b, nil
-		},
+		}),
 	}, nil
 }
 

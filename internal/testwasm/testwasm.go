@@ -65,7 +65,9 @@ func Fixture(raw []byte, o Options) string {
 	if o.Initialize != "" {
 		fmt.Fprintf(&b, "  (func (export \"_initialize\") %s)\n", o.Initialize)
 	}
-	b.WriteString(`  (func (export "wasmfn_alloc") (param $size i32) (result i32)
+	// The allocator carries a name so a Body can call it — the way the host
+	// does through wasmfn.http.
+	b.WriteString(`  (func $wasmfn_alloc (export "wasmfn_alloc") (param $size i32) (result i32)
     (local $p i32)
     (local.set $p (global.get $next))
     (global.set $next (i32.add (local.get $p) (local.get $size)))

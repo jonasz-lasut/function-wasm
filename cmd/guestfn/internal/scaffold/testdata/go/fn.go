@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"strings"
 
 	"github.com/crossplane/function-sdk-go/errors"
 	"github.com/crossplane/function-sdk-go/logging"
@@ -18,6 +21,10 @@ import (
 type Config struct {
 	// Greeting is written into the ConfigMap; defaults to "hello".
 	Greeting string `json:"greeting,omitempty"`
+	// GreetingURL, when set, is fetched through the host and its body used
+	// as the greeting — the Composition's sandbox.egress grant decides
+	// whether the request is allowed.
+	GreetingURL string `json:"greetingUrl,omitempty"`
 }
 
 // Function composes a ConfigMap greeting the composite resource.
@@ -25,11 +32,14 @@ type Function struct {
 	fnv1.UnimplementedFunctionRunnerServiceServer
 
 	log logging.Logger
+	// http performs requests through the host (wasmfn.HTTPClient()); a
+	// native test injects an httptest client instead.
+	http *http.Client
 }
 
 // RunFunction adds a ConfigMap named after the composite resource to the
 // desired state.
-func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
+func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
 	f.log.Info("Running function", "tag", req.GetMeta().GetTag())
 	rsp := response.To(req, response.DefaultTTL)
 
@@ -37,6 +47,14 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	if _, err := wasmfn.GetConfig(req, &cfg); err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot read config"))
 		return rsp, nil
+	}
+	if cfg.GreetingURL != "" {
+		greeting, err := f.fetchGreeting(ctx, cfg.GreetingURL)
+		if err != nil {
+			response.Fatal(rsp, errors.Wrap(err, "cannot fetch greeting"))
+			return rsp, nil
+		}
+		cfg.Greeting = greeting
 	}
 
 	xr, err := request.GetObservedCompositeResource(req)
@@ -66,4 +84,26 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	response.Normal(rsp, "greeted "+xr.Resource.GetName())
 	response.ConditionTrue(rsp, "FunctionSuccess", "Success").TargetCompositeAndClaim()
 	return rsp, nil
+}
+
+// fetchGreeting GETs url through the host and returns the body of a 200,
+// trimmed; a request the host refuses surfaces as *wasmfn.HTTPError.
+func (f *Function) fetchGreeting(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	rsp, err := f.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer rsp.Body.Close() //nolint:errcheck // Nothing to do about a close error on a fully read body.
+	body, err := io.ReadAll(rsp.Body)
+	if err != nil {
+		return "", err
+	}
+	if rsp.StatusCode != http.StatusOK {
+		return "", errors.Errorf("GET %s: status %d", url, rsp.StatusCode)
+	}
+	return strings.TrimSpace(string(body)), nil
 }

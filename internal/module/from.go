@@ -11,55 +11,58 @@ import (
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 )
 
-// FromComposite materialises the *From fields of src: the named field of the
-// composite resource (its object form, as observed) is read and must decode
-// into the matching source — an OCISource object for ociFrom, an HTTPSource
-// object for httpFrom, a string for pathFrom. The returned source is concrete
-// and can be resolved; a src without *From fields is returned unchanged.
-// composite may be nil when nothing is to be read from it.
+// FromComposite materialises src.From: the named field of the composite
+// resource (its object form, as observed) is read and must decode into the
+// source src.Type names — an OCISource object for OCI, an HTTPSource object
+// for HTTP, a string for Path. The returned source is concrete and can be
+// resolved; a src without From is returned unchanged. composite may be nil
+// when nothing is to be read from it.
 //
-// A source read from the composite resource may not name a pipeline-step
-// credential: the credential belongs to the Composition, the registry host
-// would be the XR author's, and a registry that answers with a Basic
-// challenge receives the secret. Modules the XR chooses are pulled with the
-// runtime's own Docker config or anonymously.
-func FromComposite(src v1beta1.ModuleSource, composite map[string]any) (v1beta1.ModuleSource, error) {
+// policy fences what the composite resource may choose and is read from the
+// Input only, never from the composite: an XR-chosen ref (or url) must start
+// with one of policy.repositoryAllowList's prefixes when the list is set, and
+// an XR-chosen OCI object may name a pipeline-step credential only when
+// policy.credentialsAllowList lists it — the credential belongs to the
+// Composition, the registry host would be the XR author's, and a registry
+// that answers with a Basic challenge receives the secret. Without such a
+// policy, modules the XR chooses are pulled with the runtime's own Docker
+// config or anonymously. A static source is not subject to policy; its shape
+// is still validated.
+func FromComposite(src v1beta1.ModuleSource, policy *v1beta1.Policy, composite map[string]any) (v1beta1.ModuleSource, error) {
 	if err := Validate(src); err != nil {
 		return src, err
 	}
-	var name, from string
-	var into any
-	switch {
-	case src.OCIFrom != "":
-		name, from = "ociFrom", src.OCIFrom
-		into = &src.OCI
-	case src.HTTPFrom != "":
-		name, from = "httpFrom", src.HTTPFrom
-		into = &src.HTTP
-	case src.PathFrom != "":
-		name, from = "pathFrom", src.PathFrom
-		into = &src.Path
-	default:
+	if err := ValidatePolicy(policy); err != nil {
+		return src, err
+	}
+	if src.From == "" {
 		return src, nil
 	}
+	from := src.From
+	var into any
+	switch src.Type {
+	case v1beta1.ModuleTypeOCI:
+		into = &src.OCI
+	case v1beta1.ModuleTypeHTTP:
+		into = &src.HTTP
+	case v1beta1.ModuleTypePath:
+		into = &src.Path
+	}
 	if composite == nil {
-		return src, fmt.Errorf("module.%s %s: no observed composite resource to read it from", name, from)
+		return src, fmt.Errorf("module.from %s: no observed composite resource to read it from", from)
 	}
 	value, err := fieldpath.Pave(composite).GetValue(from)
 	if err != nil {
-		return src, fmt.Errorf("module.%s: cannot read %s from the composite resource: %w", name, from, err)
+		return src, fmt.Errorf("module.from: cannot read %s from the composite resource: %w", from, err)
 	}
 	if err := decodeStrict(value, into); err != nil {
-		return src, fmt.Errorf("module.%s: %s of the composite resource is not a %s: %w", name, from, kindOf(name), err)
+		return src, fmt.Errorf("module.from: %s of the composite resource is not a %s: %w", from, kindOf(src.Type), err)
 	}
-	src.OCIFrom, src.HTTPFrom, src.PathFrom = "", "", ""
+	src.From = ""
 	if err := Validate(src); err != nil {
-		return src, fmt.Errorf("module.%s: %s of the composite resource: %w", name, from, err)
+		return src, fmt.Errorf("module.from: %s of the composite resource: %w", from, err)
 	}
-	if src.OCI != nil && src.OCI.Credentials != "" {
-		return src, fmt.Errorf("module.%s: %s of the composite resource names credentials %q, but a module chosen by the composite resource cannot use the step's credentials (the registry host would be its author's); pull it with the runtime's Docker config or anonymously", name, from, src.OCI.Credentials)
-	}
-	return src, nil
+	return src, admit(from, src, policy)
 }
 
 // decodeStrict casts an unstructured value into a source through JSON,
@@ -81,13 +84,14 @@ func decodeStrict(value any, into any) error {
 	return nil
 }
 
-func kindOf(name string) string {
-	switch name {
-	case "ociFrom":
-		return "{ref} object"
-	case "httpFrom":
+func kindOf(t v1beta1.ModuleType) string {
+	switch t {
+	case v1beta1.ModuleTypeOCI:
+		return "{ref, credentials} object"
+	case v1beta1.ModuleTypeHTTP:
 		return "{url, digest} object"
-	default:
+	case v1beta1.ModuleTypePath:
 		return "string"
 	}
+	return string(t)
 }

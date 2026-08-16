@@ -37,6 +37,9 @@ const (
 	HostModule = "wasmfn"
 	// HostLog is the structured logging import: log(level u32, ptr u32, len u32).
 	HostLog = "log"
+	// HostHTTP is the egress import: http(req_ptr u32, req_len u32) -> u64,
+	// answered within the Run's sandbox.egress grant (hosthttp.go).
+	HostHTTP = "http"
 
 	wasiModule = "wasi_snapshot_preview1"
 
@@ -50,7 +53,7 @@ const (
 	epochTick = 10 * time.Millisecond
 )
 
-// Config bounds what a single Run may consume.
+// Config bounds what a single Run may consume, and how many may run at once.
 type Config struct {
 	// Timeout is the wall-clock budget of one Run, applied on top of the
 	// request context's deadline. Zero means DefaultTimeout.
@@ -58,6 +61,11 @@ type Config struct {
 	// MemoryLimit caps a guest's linear memory in bytes. Zero means
 	// DefaultMemoryLimit.
 	MemoryLimit int64
+	// MaxConcurrentRuns bounds how many Runs execute at once on the whole
+	// Engine; a further Run waits for a slot under its own context and
+	// fails, having consumed nothing, when that ends first. Zero or less
+	// means no bound: concurrency is the caller's.
+	MaxConcurrentRuns int
 }
 
 // Defaults applied for zero Config fields.
@@ -65,6 +73,37 @@ const (
 	DefaultTimeout     = 30 * time.Second
 	DefaultMemoryLimit = 512 << 20
 )
+
+// RunOptions narrow one Run's budget below the Engine's Config — what a
+// Composition asks for through the Input's limits — and carry the sandbox
+// grants the Run gets. A zero budget field means the Config's value; a larger
+// one is capped to it, so the Config stays the ceiling whatever a caller
+// passes.
+type RunOptions struct {
+	// Timeout is this Run's wall-clock budget; the request context's
+	// deadline still applies if shorter.
+	Timeout time.Duration
+	// MemoryLimit caps this Run's linear memory in bytes.
+	MemoryLimit int64
+
+	// Sandbox grants — filesystem and environment (docs/one-pager-sandbox.md,
+	// "Filesystem" and "Environment"). Their zero values are the default
+	// sandbox: no pre-opened directories, no environment variables. Host
+	// directories are never pre-opened: the private /tmp is the only
+	// filesystem a guest can be given.
+
+	// PrivateTmp gives the guest a fresh, empty, writable /tmp for this Run
+	// alone: a directory created under os.TempDir() before the instance
+	// exists and removed after it is gone, whatever the outcome.
+	PrivateTmp bool
+	// Env are the guest's environment variables (WASI environ).
+	Env map[string]string
+
+	// HTTP egress (sandbox.egress): what answers the wasmfn.http import
+	// for this Run. Nil is no grant — every call gets a refusal, never a
+	// trap.
+	HTTP HTTPRequester
+}
 
 // ErrTimeout reports that a guest exceeded its Run deadline.
 var ErrTimeout = errors.New("module exceeded its execution deadline")
@@ -74,6 +113,7 @@ type Engine struct {
 	cfg       Config
 	engine    *wasmtime.Engine
 	linker    *wasmtime.Linker
+	runs      chan struct{}
 	active    atomic.Int64
 	wake      chan struct{}
 	stop      chan struct{}
@@ -108,8 +148,14 @@ func New(cfg Config) (*Engine, error) {
 	if err := linker.FuncWrap(HostModule, HostLog, hostLog); err != nil {
 		return nil, fmt.Errorf("cannot define %s.%s import: %w", HostModule, HostLog, err)
 	}
+	if err := linker.FuncWrap(HostModule, HostHTTP, hostHTTP); err != nil {
+		return nil, fmt.Errorf("cannot define %s.%s import: %w", HostModule, HostHTTP, err)
+	}
 
 	e := &Engine{cfg: cfg, engine: engine, linker: linker, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	if cfg.MaxConcurrentRuns > 0 {
+		e.runs = make(chan struct{}, cfg.MaxConcurrentRuns)
+	}
 	go e.tick()
 	return e, nil
 }
@@ -140,15 +186,41 @@ func (e *Engine) tick() {
 	}
 }
 
-// running marks a Run in flight for the epoch ticker; the returned func
-// marks it done.
+// running marks a Run in flight for the epoch ticker and the in-flight
+// gauge; the returned func marks it done.
 func (e *Engine) running() func() {
 	e.active.Add(1)
+	metrics.RunsInFlight.Inc()
 	select {
 	case e.wake <- struct{}{}:
 	default:
 	}
-	return func() { e.active.Add(-1) }
+	return func() {
+		e.active.Add(-1)
+		metrics.RunsInFlight.Dec()
+	}
+}
+
+// slot waits for a run slot when the Engine bounds concurrent Runs and
+// returns the func that gives it back. The wait is bounded by ctx alone — a
+// request that cannot run before its deadline has nothing to gain from a
+// slot afterwards — and a Run that never got one has consumed nothing.
+func (e *Engine) slot(ctx context.Context) (release func(), err error) {
+	if e.runs == nil {
+		return func() {}, nil
+	}
+	select {
+	case e.runs <- struct{}{}:
+		return func() { <-e.runs }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("waiting for a run slot: %w", ctx.Err())
+	}
+}
+
+// Config returns the engine's ceilings with defaults applied — what a Run
+// gets without RunOptions and the most it can get with them.
+func (e *Engine) Config() Config {
+	return e.cfg
 }
 
 // Close stops the epoch ticker; calling it again is harmless. Compiled
@@ -303,13 +375,26 @@ func checkABI(m *wasmtime.Module) error {
 		switch {
 		case im.Module() == wasiModule:
 		case im.Module() == HostModule && name == HostLog:
-			ft := im.Type().FuncType()
-			if ft == nil || !kindsEqual(ft.Params(), []wasmtime.ValKind{wasmtime.KindI32, wasmtime.KindI32, wasmtime.KindI32}) || len(ft.Results()) != 0 {
-				return fmt.Errorf("module imports %s.%s with the wrong type, ABI v1 requires %s", HostModule, HostLog, signatureKinds([]wasmtime.ValKind{wasmtime.KindI32, wasmtime.KindI32, wasmtime.KindI32}, nil))
+			if err := checkImport(im, HostLog, []wasmtime.ValKind{wasmtime.KindI32, wasmtime.KindI32, wasmtime.KindI32}, nil); err != nil {
+				return err
+			}
+		case im.Module() == HostModule && name == HostHTTP:
+			if err := checkImport(im, HostHTTP, []wasmtime.ValKind{wasmtime.KindI32, wasmtime.KindI32}, []wasmtime.ValKind{wasmtime.KindI64}); err != nil {
+				return err
 			}
 		default:
 			return fmt.Errorf("module imports %s.%s, which the host does not provide", im.Module(), name)
 		}
+	}
+	return nil
+}
+
+// checkImport verifies a host import's type at load, so a mismatch is one
+// line once rather than wasmtime's causes at every instantiate.
+func checkImport(im *wasmtime.ImportType, name string, params, results []wasmtime.ValKind) error {
+	ft := im.Type().FuncType()
+	if ft == nil || !kindsEqual(ft.Params(), params) || !kindsEqual(ft.Results(), results) {
+		return fmt.Errorf("module imports %s.%s with the wrong type, ABI v1 requires %s", HostModule, name, signatureKinds(params, results))
 	}
 	return nil
 }
@@ -372,10 +457,23 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// deadlineTicks converts the effective budget of a Run — the smaller of the
-// engine timeout and the context deadline — into epoch ticks.
-func (e *Engine) deadlineTicks(ctx context.Context) (uint64, time.Duration) {
-	budget := e.cfg.Timeout
+// effective returns the budget of one Run: the engine's ceilings narrowed
+// by opts where opts asks for less.
+func (e *Engine) effective(opts RunOptions) Config {
+	cfg := e.cfg
+	if opts.Timeout > 0 && opts.Timeout < cfg.Timeout {
+		cfg.Timeout = opts.Timeout
+	}
+	if opts.MemoryLimit > 0 && opts.MemoryLimit < cfg.MemoryLimit {
+		cfg.MemoryLimit = opts.MemoryLimit
+	}
+	return cfg
+}
+
+// deadlineTicks converts the effective budget of a Run — the smaller of
+// timeout and the context deadline — into epoch ticks.
+func deadlineTicks(ctx context.Context, timeout time.Duration) (uint64, time.Duration) {
+	budget := timeout
 	if d, ok := ctx.Deadline(); ok {
 		if until := time.Until(d); until < budget {
 			budget = until

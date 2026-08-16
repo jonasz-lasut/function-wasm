@@ -276,7 +276,7 @@ func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	if _, ok := ref.(name.Digest); !ok {
 		pinned += "@" + manifest.String()
 	}
-	_, _ = fmt.Fprintf(stdout, "Pushed %s\n\nmodule:\n  oci:\n    ref: %s\n", pinned, pinned)
+	_, _ = fmt.Fprintf(stdout, "Pushed %s\n\nmodule:\n  type: OCI\n  oci:\n    ref: %s\n", pinned, pinned)
 	return nil
 }
 
