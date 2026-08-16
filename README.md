@@ -692,3 +692,10 @@ make -C examples/hello-go render-check                      # crossplane render 
 The root tests build `examples/hello-go` to WebAssembly and run it through the
 host; `go test -short` skips that. See [AGENTS.md](AGENTS.md) for the layout
 and conventions.
+
+Design documents live under `docs/` as one-pagers: the implemented ones
+(cache, module source schema, trust model, resource governance, sandbox)
+and the drafts of what comes next — admission and inspection tooling, the
+module manifest, the local loop, request-sourced secrets, governance and
+performance phases, guest language support, a Nix development environment.
+[AGENTS.md](AGENTS.md#key-reference-documents) lists them.

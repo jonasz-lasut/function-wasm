@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.1
+* Status: Implemented, revision 1.2
 
 How the sandbox grants a module *some* filesystem, network or environment
 access without giving up what makes it safe to run other people's modules.
@@ -165,6 +165,15 @@ before a `wasip3` target lands), `wasi:http` can replace the import for
 those guests, with the same host policy in front of it. Raw sockets stay
 out: they move TLS and address policy into the guest, where the host cannot
 see them.
+Extism's built-in `http_request` was evaluated as a replacement for this
+import (2026-08-16, probes against `extism/go-sdk` v1.7.1): its
+`allowed_hosts` is a hostname glob checked once before the request, on a
+hard-coded `http.DefaultClient` — no method or path, no judgment of the
+resolved addresses (a name resolving to loopback was dialled), redirects to
+other hosts followed, `HTTP_PROXY` honoured, refusal by failing the guest
+call — and the host function cannot be replaced without forking the SDK. It
+does not meet the requirements above; the decision to keep this import is
+recorded in AGENTS.md ("Not Extism").
 
 **Environment — `SetEnv` from the grant (implemented).** `sandbox.env`
 becomes `WasiConfig.SetEnv(keys, values)` on the run's store, sorted by key;
