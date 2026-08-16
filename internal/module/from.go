@@ -17,6 +17,12 @@ import (
 // object for httpFrom, a string for pathFrom. The returned source is concrete
 // and can be resolved; a src without *From fields is returned unchanged.
 // composite may be nil when nothing is to be read from it.
+//
+// A source read from the composite resource may not name a pipeline-step
+// credential: the credential belongs to the Composition, the registry host
+// would be the XR author's, and a registry that answers with a Basic
+// challenge receives the secret. Modules the XR chooses are pulled with the
+// runtime's own Docker config or anonymously.
 func FromComposite(src v1beta1.ModuleSource, composite map[string]any) (v1beta1.ModuleSource, error) {
 	if err := Validate(src); err != nil {
 		return src, err
@@ -50,6 +56,9 @@ func FromComposite(src v1beta1.ModuleSource, composite map[string]any) (v1beta1.
 	if err := Validate(src); err != nil {
 		return src, fmt.Errorf("module.%s: %s of the composite resource: %w", name, from, err)
 	}
+	if src.OCI != nil && src.OCI.Credentials != "" {
+		return src, fmt.Errorf("module.%s: %s of the composite resource names credentials %q, but a module chosen by the composite resource cannot use the step's credentials (the registry host would be its author's); pull it with the runtime's Docker config or anonymously", name, from, src.OCI.Credentials)
+	}
 	return src, nil
 }
 
@@ -75,7 +84,7 @@ func decodeStrict(value any, into any) error {
 func kindOf(name string) string {
 	switch name {
 	case "ociFrom":
-		return "{ref, digest, credentials} object"
+		return "{ref} object"
 	case "httpFrom":
 		return "{url, digest} object"
 	default:

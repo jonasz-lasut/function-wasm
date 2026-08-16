@@ -80,8 +80,11 @@ For everything else, Grype scans the built ghcr image, so the fix is one of:
   the single source of truth: `ci.yml` sets up Go from it and
   `publish-pkg.yml` reads it to pick the `golang:<version>` image the runtime
   is built with, so nothing else needs editing.
-- **Base image CVE** (`gcr.io/distroless/static-debian12:nonroot` in the
-  Dockerfile) → bump the pinned base image tag/digest.
+- **Base image CVE** (`cgr.dev/chainguard/glibc-dynamic:latest@sha256:…` in
+  the Dockerfile) → bump the pinned digest to the current `latest`
+  (`docker buildx imagetools inspect cgr.dev/chainguard/glibc-dynamic:latest`;
+  Renovate opens these bumps too). Its glibc must stay at least as new as
+  the one `golang:<version>` builds against.
 
 Then run what CI runs, in this order:
 

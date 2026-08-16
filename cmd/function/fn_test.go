@@ -2,8 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +26,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/static"
+	"github.com/spf13/afero"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -30,6 +36,7 @@ import (
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
 
+	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
 	"github.com/jonasz-lasut/function-wasm/internal/testwasm"
@@ -99,6 +106,14 @@ func privateRegistry(t *testing.T) (host string) {
 	return strings.TrimPrefix(srv.URL, "http://")
 }
 
+// publicRegistry serves an in-memory registry open to anonymous pulls.
+func publicRegistry(t *testing.T) (host string) {
+	t.Helper()
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+	return strings.TrimPrefix(srv.URL, "http://")
+}
+
 // push publishes wasm as <ref> and returns its digest reference.
 func push(t *testing.T, ref string, wasm []byte) string {
 	t.Helper()
@@ -133,9 +148,11 @@ func TestRunFunction(t *testing.T) {
 	}
 	registryHost := privateRegistry(t)
 	ociRef := push(t, registryHost+"/fn:v1", okModule)
+	publicRef := push(t, publicRegistry(t)+"/fn:v1", okModule)
 
-	// An XR whose status names modules, for the *From sources.
-	xr := resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"},"spec":{"module":"fn.wasm"},"status":{"module":{"ref":"` + ociRef + `","credentials":"registry"}}}`)
+	// An XR whose status names modules, for the *From sources: a public one,
+	// and a private one that tries to spend the step's credentials.
+	xr := resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"},"spec":{"module":"fn.wasm"},"status":{"module":{"ref":"` + publicRef + `"},"private":{"ref":"` + ociRef + `","credentials":"registry"}}}`)
 	credentials := map[string]*fnv1.Credentials{
 		"registry": {Source: &fnv1.Credentials_CredentialData{CredentialData: &fnv1.CredentialData{
 			Data: map[string][]byte{"username": []byte("robot"), "password": []byte("s3cret")},
@@ -204,14 +221,23 @@ func TestRunFunction(t *testing.T) {
 			want: want{rsp: fatal(`cannot get credentials "registry" for module.oci: registry: credential not found`)},
 		},
 		"OCIFromStatus": {
-			reason: "ociFrom reads the OCI source, credentials name included, from the observed XR.",
+			reason: "ociFrom reads the OCI source from the observed XR and pulls it anonymously.",
+			args: args{req: &fnv1.RunFunctionRequest{
+				Meta:     &fnv1.RequestMeta{Tag: "hello"},
+				Input:    input(t, map[string]any{"ociFrom": "status.module"}),
+				Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: xr}},
+			}},
+			want: want{rsp: guestResponse()},
+		},
+		"OCIFromCredentialsRefused": {
+			reason: "A module the XR chooses cannot spend the step's credentials: the XR author would pick the registry host they are sent to.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:        &fnv1.RequestMeta{Tag: "hello"},
-				Input:       input(t, map[string]any{"ociFrom": "status.module"}),
+				Input:       input(t, map[string]any{"ociFrom": "status.private"}),
 				Observed:    &fnv1.State{Composite: &fnv1.Resource{Resource: xr}},
 				Credentials: credentials,
 			}},
-			want: want{rsp: guestResponse()},
+			want: want{rsp: fatal(`cannot resolve module: module.ociFrom: status.private of the composite resource names credentials "registry", but a module chosen by the composite resource cannot use the step's credentials (the registry host would be its author's); pull it with the runtime's Docker config or anonymously`)},
 		},
 		"PathFromSpec": {
 			reason: "pathFrom reads the module path from the observed XR.",
@@ -280,6 +306,13 @@ func TestRunFunction(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			rsp, err := f.RunFunction(context.Background(), tc.args.req)
 
+			// function-sdk-go decodes the Input with json/v2, whose semantic
+			// errors say "cannot" or "unable to" — chosen once per process,
+			// deliberately, so nobody depends on the wording. We only care
+			// that the message is the decoder's.
+			for _, r := range rsp.GetResults() {
+				r.Message = strings.ReplaceAll(r.GetMessage(), "unable to ", "cannot ")
+			}
 			if diff := cmp.Diff(tc.want.rsp, rsp, protocmp.Transform()); diff != "" {
 				t.Errorf("\n%s\nRunFunction(): -want rsp, +got rsp:\n%s", tc.reason, diff)
 			}
@@ -287,5 +320,91 @@ func TestRunFunction(t *testing.T) {
 				t.Errorf("\n%s\nRunFunction(): -want err, +got err:\n%s", tc.reason, diff)
 			}
 		})
+	}
+}
+
+// TestRunFunctionVerifiesBeforeServing pins that a compiled artifact left on
+// disk by a runtime without a key is not served by one with a key: signature
+// verification is a precondition of running, not of fetching.
+func TestRunFunctionVerifiesBeforeServing(t *testing.T) {
+	okModule := testwasm.Fixed(t, guestResponse(), testwasm.Options{})
+	ref := push(t, publicRegistry(t)+"/fn:v1", okModule)
+	req := &fnv1.RunFunctionRequest{
+		Meta:  &fnv1.RequestMeta{Tag: "hello"},
+		Input: input(t, map[string]any{"oci": map[string]any{"ref": ref}}),
+	}
+
+	eng, err := engine.New(engine.Config{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	disk := cache.New(afero.NewMemMapFs(), false)
+
+	unkeyed, err := module.NewResolver(module.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{Disk: disk}), resolver: unkeyed}
+	rsp, _ := f.RunFunction(context.Background(), req)
+	if diff := cmp.Diff(guestResponse(), rsp, protocmp.Transform()); diff != "" {
+		t.Fatalf("unkeyed runtime: -want, +got:\n%s", diff)
+	}
+	if disk.Len() != 1 {
+		t.Fatalf("want the compiled artifact on disk, have %d entries", disk.Len())
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := module.NewVerifier(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyed, err := module.NewResolver(module.Options{Verifier: verifier})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f = &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{Disk: disk}), resolver: keyed}
+	rsp, _ = f.RunFunction(context.Background(), req)
+	want := fatal("cannot verify module oci " + ref + ": " + ref + " carries no cosign signature (" + strings.SplitN(ref, "@", 2)[0] + ":sha256-" + strings.TrimPrefix(strings.SplitN(ref, "@", 2)[1], "sha256:") + ".sig not found)")
+	if diff := cmp.Diff(want, rsp, protocmp.Transform()); diff != "" {
+		t.Errorf("keyed runtime must refuse the unsigned module even with its artifact on disk: -want, +got:\n%s", diff)
+	}
+}
+
+// TestRunFunctionRecoversPanics pins that a host-side panic is a fatal
+// result, not the end of the process: gRPC does not recover handler panics.
+func TestRunFunctionRecoversPanics(t *testing.T) {
+	eng, err := engine.New(engine.Config{Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "fn.wasm"), testwasm.Fixed(t, guestResponse(), testwasm.Options{}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := module.NewResolver(module.Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A nil cache makes the load path dereference nil — a stand-in for any
+	// bug on the host side of a request.
+	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: nil, resolver: resolver}
+	rsp, err := f.RunFunction(context.Background(), &fnv1.RunFunctionRequest{
+		Meta:  &fnv1.RequestMeta{Tag: "hello"},
+		Input: input(t, map[string]any{"path": "fn.wasm"}),
+	})
+	if err != nil {
+		t.Fatalf("RunFunction() must not return a gRPC error for a panic: %v", err)
+	}
+	if len(rsp.GetResults()) != 1 || rsp.GetResults()[0].GetSeverity() != fnv1.Severity_SEVERITY_FATAL || !strings.HasPrefix(rsp.GetResults()[0].GetMessage(), "internal error while running the module: ") {
+		t.Errorf("want one fatal result naming an internal error, got %v", rsp.GetResults())
 	}
 }

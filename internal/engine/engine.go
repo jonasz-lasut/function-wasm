@@ -15,7 +15,10 @@ import (
 	"path"
 	"reflect"
 	"runtime"
+	"runtime/debug"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytecodealliance/wasmtime-go/v47"
@@ -68,11 +71,14 @@ var ErrTimeout = errors.New("module exceeded its execution deadline")
 
 // Engine compiles and runs guest modules. It is safe for concurrent use.
 type Engine struct {
-	cfg    Config
-	engine *wasmtime.Engine
-	linker *wasmtime.Linker
-	stop   chan struct{}
-	done   chan struct{}
+	cfg       Config
+	engine    *wasmtime.Engine
+	linker    *wasmtime.Linker
+	active    atomic.Int64
+	wake      chan struct{}
+	stop      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // New creates an Engine. Close it when done to stop its epoch ticker.
@@ -86,6 +92,13 @@ func New(cfg Config) (*Engine, error) {
 
 	wc := wasmtime.NewConfig()
 	wc.SetEpochInterruption(true)
+	// Native unwind info (.eh_frame) only serves host-side profilers such as
+	// perf; wasmtime's own unwinder produces wasm traps and backtraces
+	// without it. Leaving it out makes artifacts about 5% smaller and, on
+	// macOS, turns freeing a large module from seconds (each frame entry is
+	// deregistered with the system unwinder under a global lock) into a
+	// millisecond.
+	wc.SetNativeUnwindInfo(false)
 	engine := wasmtime.NewEngineWithConfig(wc)
 
 	linker := wasmtime.NewLinker(engine)
@@ -96,37 +109,91 @@ func New(cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("cannot define %s.%s import: %w", HostModule, HostLog, err)
 	}
 
-	e := &Engine{cfg: cfg, engine: engine, linker: linker, stop: make(chan struct{}), done: make(chan struct{})}
+	e := &Engine{cfg: cfg, engine: engine, linker: linker, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	go e.tick()
 	return e, nil
 }
 
 // tick advances the engine epoch so stores with a deadline get interrupted.
+// The ticker only runs while a Run is in flight: an idle runtime costs no
+// wakeups, and a deadline is measured from the moment it is set, so a
+// pause between runs never counts against one.
 func (e *Engine) tick() {
 	defer close(e.done)
-	t := time.NewTicker(epochTick)
-	defer t.Stop()
 	for {
 		select {
-		case <-t.C:
-			e.engine.IncrementEpoch()
+		case <-e.wake:
 		case <-e.stop:
+			return
+		}
+		t := time.NewTicker(epochTick)
+		for e.active.Load() > 0 {
+			select {
+			case <-t.C:
+				e.engine.IncrementEpoch()
+			case <-e.stop:
+				t.Stop()
+				return
+			}
+		}
+		t.Stop()
+	}
+}
+
+// running marks a Run in flight for the epoch ticker; the returned func
+// marks it done.
+func (e *Engine) running() func() {
+	e.active.Add(1)
+	select {
+	case e.wake <- struct{}{}:
+	default:
+	}
+	return func() { e.active.Add(-1) }
+}
+
+// Close stops the epoch ticker; calling it again is harmless. Compiled
+// modules and running stores stay valid until garbage collected.
+func (e *Engine) Close() {
+	e.closeOnce.Do(func() { close(e.stop) })
+	<-e.done
+}
+
+// Module is a compiled, ABI-checked guest module. It is safe for concurrent
+// Runs. A Module is reference-counted: whoever obtains one — from Compile,
+// Deserialize or a Cache — holds one lease and returns it with Release; the
+// last Release frees wasmtime's code memory at once instead of when the
+// garbage collector eventually notices a tiny Go wrapper.
+type Module struct {
+	module *wasmtime.Module
+	leases atomic.Int64
+}
+
+// acquire adds a lease.
+func (m *Module) acquire() { m.leases.Add(1) }
+
+// Release returns a lease; the last one frees the module. Releasing more
+// often than acquired is a bug that would free a module in use, so it is
+// refused: the count never goes below zero.
+func (m *Module) Release() {
+	for {
+		n := m.leases.Load()
+		if n <= 0 {
+			return
+		}
+		if m.leases.CompareAndSwap(n, n-1) {
+			if n == 1 {
+				m.module.Close()
+			}
 			return
 		}
 	}
 }
 
-// Close stops the epoch ticker. Compiled modules and running stores stay
-// valid until garbage collected.
-func (e *Engine) Close() {
-	close(e.stop)
-	<-e.done
-}
-
-// Module is a compiled, ABI-checked guest module. It is safe for concurrent
-// Runs.
-type Module struct {
-	module *wasmtime.Module
+// newModule wraps a checked wasmtime module with the caller's lease.
+func newModule(m *wasmtime.Module) *Module {
+	out := &Module{module: m}
+	out.leases.Store(1)
+	return out
 }
 
 // Compile compiles wasm bytes and verifies they export ABI v1.
@@ -140,9 +207,10 @@ func (e *Engine) Compile(wasm []byte) (*Module, error) {
 		return nil, fmt.Errorf("cannot compile module: %s", firstLine(err.Error()))
 	}
 	if err := checkABI(m); err != nil {
+		m.Close()
 		return nil, err
 	}
-	return &Module{module: m}, nil
+	return newModule(m), nil
 }
 
 // Serialize returns wasmtime's compiled artifact for m: machine code that
@@ -164,19 +232,46 @@ func (e *Engine) Deserialize(artifact []byte) (*Module, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot load compiled module: %s", firstLine(err.Error()))
 	}
-	if err := checkABI(m); err != nil {
-		return nil, err
-	}
-	return &Module{module: m}, nil
+	return e.checked(m)
 }
 
-// Version identifies the wasmtime-go major and the host that compiled
-// artifacts are only valid for, e.g. "v47-linux-arm64" — the compiled cache
-// is namespaced by it. The major comes from the import path, so a bump that
-// changes the path changes the namespace without anyone remembering to.
+// DeserializeFile is Deserialize over an artifact file: wasmtime maps the
+// file, so the code stays file-backed — shared with the page cache and
+// between processes — instead of being copied into the Go heap first. That
+// is milliseconds and no allocation for the largest Go guest.
+func (e *Engine) DeserializeFile(path string) (*Module, error) {
+	m, err := wasmtime.NewModuleDeserializeFile(e.engine, path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot load compiled module: %s", firstLine(err.Error()))
+	}
+	return e.checked(m)
+}
+
+func (e *Engine) checked(m *wasmtime.Module) (*Module, error) {
+	if err := checkABI(m); err != nil {
+		m.Close()
+		return nil, err
+	}
+	return newModule(m), nil
+}
+
+// Version identifies the wasmtime-go release and the host that compiled
+// artifacts are only valid for, e.g. "v47.0.0-linux-arm64" — the compiled
+// cache is namespaced by it. The version comes from the build's module
+// information (falling back to the major in the import path), so a bump
+// changes the namespace without anyone remembering to; wasmtime itself
+// refuses artifacts it did not produce, this just keeps them apart.
 func Version() string {
 	pkg := reflect.TypeOf(wasmtime.Engine{}).PkgPath()
-	return path.Base(pkg) + "-" + runtime.GOOS + "-" + runtime.GOARCH
+	version := path.Base(pkg)
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range info.Deps {
+			if dep.Path == pkg {
+				version = dep.Version
+			}
+		}
+	}
+	return version + "-" + runtime.GOOS + "-" + runtime.GOARCH
 }
 
 // checkABI verifies the exports and imports ABI v1 requires before a module
@@ -208,6 +303,10 @@ func checkABI(m *wasmtime.Module) error {
 		switch {
 		case im.Module() == wasiModule:
 		case im.Module() == HostModule && name == HostLog:
+			ft := im.Type().FuncType()
+			if ft == nil || !kindsEqual(ft.Params(), []wasmtime.ValKind{wasmtime.KindI32, wasmtime.KindI32, wasmtime.KindI32}) || len(ft.Results()) != 0 {
+				return fmt.Errorf("module imports %s.%s with the wrong type, ABI v1 requires %s", HostModule, HostLog, signatureKinds([]wasmtime.ValKind{wasmtime.KindI32, wasmtime.KindI32, wasmtime.KindI32}, nil))
+			}
 		default:
 			return fmt.Errorf("module imports %s.%s, which the host does not provide", im.Module(), name)
 		}
@@ -259,14 +358,11 @@ func signatureKinds(params, results []wasmtime.ValKind) string {
 }
 
 func kinds(ks []wasmtime.ValKind) string {
-	s := ""
+	names := make([]string, len(ks))
 	for i, k := range ks {
-		if i > 0 {
-			s += ", "
-		}
-		s += k.String()
+		names[i] = k.String()
 	}
-	return s
+	return strings.Join(names, ", ")
 }
 
 func firstLine(s string) string {

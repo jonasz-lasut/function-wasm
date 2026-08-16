@@ -101,9 +101,12 @@ spec:
               ociFrom:
                 description: |-
                   OCIFrom names a field of the observed composite resource, under spec
-                  or status, that holds an OCI source — an object with ref, digest and
-                  optionally credentials — e.g. "status.module". The value is read on
-                  every request, so each composite resource can pick its own module.
+                  or status, that holds an OCI source — an object with ref — e.g.
+                  "status.module". The value is read on every request, so each composite
+                  resource can pick its own module. It may not name credentials: the
+                  module is pulled with the runtime's Docker config or anonymously, since
+                  the composite resource's author would otherwise choose the registry a
+                  step credential is sent to.
                 pattern: ^(spec|status)\..+
                 type: string
               path:
@@ -120,6 +123,11 @@ spec:
                 pattern: ^(spec|status)\..+
                 type: string
             type: object
+            x-kubernetes-validations:
+            - message: exactly one of oci, http, path, ociFrom, httpFrom and pathFrom
+                must be set
+              rule: '[has(self.oci), has(self.http), has(self.path), has(self.ociFrom),
+                has(self.httpFrom), has(self.pathFrom)].filter(x, x).size() == 1'
         required:
         - module
         type: object

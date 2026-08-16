@@ -1,6 +1,7 @@
 package wasmfn
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -46,7 +47,7 @@ func TestGetConfig(t *testing.T) {
 			var cfg config
 			ok, err := GetConfig(req, &cfg)
 			if tc.want.err != "" {
-				if err == nil || !cmp.Equal(true, contains(err.Error(), tc.want.err)) {
+				if err == nil || !cmp.Equal(true, strings.Contains(err.Error(), tc.want.err)) {
 					t.Fatalf("\n%s\nGetConfig(): want error containing %q, got %v", tc.reason, tc.want.err, err)
 				}
 			} else if err != nil {
@@ -62,17 +63,4 @@ func TestGetConfig(t *testing.T) {
 			}
 		})
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(sub) == 0 || (len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0))
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }

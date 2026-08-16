@@ -67,12 +67,25 @@ type Ref struct {
 	// Description names the source for logs and error messages.
 	Description string
 
-	fetch func(ctx context.Context) ([]byte, error)
+	fetch  func(ctx context.Context) ([]byte, error)
+	verify func(ctx context.Context) error
 }
 
 // Fetch returns the module bytes, verified along the chain Digest pins.
 func (r *Ref) Fetch(ctx context.Context) ([]byte, error) {
 	return r.fetch(ctx)
+}
+
+// Verify checks the module's signature when the resolver has a Verifier
+// and is a no-op otherwise. It is a precondition of running the module —
+// not of fetching it — so it must be called before any cache is consulted:
+// a compiled artifact on disk may predate the key, and a signature is only
+// known to be good for the lifetime of the process that checked it.
+func (r *Ref) Verify(ctx context.Context) error {
+	if r.verify == nil {
+		return nil
+	}
+	return r.verify(ctx)
 }
 
 // Resolver resolves module sources. It is safe for concurrent use.
