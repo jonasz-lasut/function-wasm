@@ -2,6 +2,15 @@
 
 [![CI](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml)
 
+> [!CAUTION]
+> **Highly experimental.** function-wasm is a pre-1.0 project exploring
+> WebAssembly as a composition function runtime. The Input schema, the guest
+> ABI and the runtime flags can still change between minor releases without
+> a deprecation period, the sandbox has not had an independent security
+> review, and nothing here has run in production yet. Try it, break it and
+> [open an issue](https://github.com/jonasz-lasut/function-wasm/issues), but
+> do not build a platform on it.
+
 A [Crossplane](https://crossplane.io) composition function that runs a
 WebAssembly module in a [wasmtime](https://wasmtime.dev) sandbox. The module
 implements the same contract as a native composition function —
@@ -111,7 +120,7 @@ kind: Function
 metadata:
   name: function-wasm
 spec:
-  package: ghcr.io/jonasz-lasut/function-wasm:v0.1.0   # the first release; nothing is published yet
+  package: ghcr.io/jonasz-lasut/function-wasm:v0.1.0
 ```
 
 Also mirrored to `xpkg.upbound.io/jonasz-lasut/function-wasm`.
