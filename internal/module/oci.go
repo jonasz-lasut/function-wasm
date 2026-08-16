@@ -28,16 +28,16 @@ var wasmLayerTypes = map[types.MediaType]bool{
 	"application/vnd.module.wasm.content.layer.v1+wasm": true,
 }
 
-// layerInfo is what a manifest resolves to: the one layer holding the module.
-type layerInfo struct {
-	digest    string
-	mediaType types.MediaType
-}
-
+// resolveOCI resolves without touching the registry: the reference pins the
+// manifest, the manifest pins its layer, and the layer is the module. The
+// manifest digest keys the caches; the manifest is fetched only when the
+// module has to be, inside Fetch, and the layer is stored in the blob store
+// under its own digest, so a module whose compiled artifact is gone costs one
+// manifest read and no download.
 func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, auth authn.Authenticator) (*Ref, error) {
-	ref, err := name.ParseReference(src.OCI.Ref)
+	ref, err := name.NewDigest(src.OCI.Ref)
 	if err != nil {
-		return nil, fmt.Errorf("module.oci.ref is not a valid reference: %w", err)
+		return nil, fmt.Errorf("module.oci.ref is not a valid digest reference: %w", err)
 	}
 	opts := []remote.Option{remote.WithContext(ctx)}
 	if r.client.Transport != nil {
@@ -48,98 +48,70 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 	} else {
 		opts = append(opts, remote.WithAuthFromKeychain(r.opts.Keychain))
 	}
-
-	manifestDigest, err := r.manifestDigest(ref, opts)
-	if err != nil {
-		return nil, err
-	}
-	pinned := ref.Context().Digest(manifestDigest)
-	if r.opts.Verifier != nil {
-		if err := r.opts.Verifier.Verify(ctx, pinned, opts); err != nil {
-			return nil, err
-		}
-	}
-	layer, err := r.layers.get(manifestDigest, func() (layerInfo, error) {
-		return moduleLayer(pinned, opts)
-	})
-	if err != nil {
-		return nil, err
-	}
-	digest, err := pin(src.Digest, layer.digest)
-	if err != nil {
-		return nil, err
-	}
-	description := "oci " + src.OCI.Ref
-	if _, isTag := ref.(name.Tag); isTag {
-		description += " (" + manifestDigest + ")"
-	}
-	blob := ref.Context().Digest(layer.digest)
-	fetch := r.verified("oci", digest, func(ctx context.Context) ([]byte, error) {
-		l, err := remote.Layer(blob, append(opts, remote.WithContext(ctx))...)
-		if err != nil {
-			return nil, fmt.Errorf("cannot fetch module layer: %w", err)
-		}
-		rc, err := l.Compressed()
-		if err != nil {
-			return nil, fmt.Errorf("cannot read module layer: %w", err)
-		}
-		defer func() { _ = rc.Close() }()
-		return readCapped(rc, r.opts.MaxSize)
-	})
 	return &Ref{
-		Digest:      digest,
-		Description: description,
-		fetch: func(ctx context.Context) ([]byte, error) {
-			b, err := fetch(ctx)
+		Digest:      ref.DigestStr(),
+		Description: "oci " + src.OCI.Ref,
+		fetch: timed("oci", func(ctx context.Context) ([]byte, error) {
+			opts := append(opts, remote.WithContext(ctx))
+			if r.opts.Verifier != nil {
+				if err := r.opts.Verifier.Verify(ctx, ref, opts); err != nil {
+					return nil, err
+				}
+			}
+			layer, err := moduleLayer(ref, opts)
 			if err != nil {
 				return nil, err
 			}
-			if isTarLayer(layer.mediaType) {
+			b, err := r.verified(ctx, "module layer", layer.Digest.String(), func(_ context.Context) ([]byte, error) {
+				l, err := remote.Layer(ref.Context().Digest(layer.Digest.String()), opts...)
+				if err != nil {
+					return nil, fmt.Errorf("cannot fetch module layer: %w", err)
+				}
+				rc, err := l.Compressed()
+				if err != nil {
+					return nil, fmt.Errorf("cannot read module layer: %w", err)
+				}
+				defer func() { _ = rc.Close() }()
+				b, err := readCapped(rc, r.opts.MaxSize)
+				if err != nil {
+					return nil, fmt.Errorf("cannot read module layer: %w", err)
+				}
+				return b, nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			if isTarLayer(layer.MediaType) {
 				return extractWasm(b, r.opts.MaxSize)
 			}
 			return b, nil
-		},
+		}),
 	}, nil
-}
-
-// manifestDigest resolves a reference to its manifest digest: a digest
-// reference is its own answer, a tag is looked up and cached for TagTTL.
-func (r *Resolver) manifestDigest(ref name.Reference, opts []remote.Option) (string, error) {
-	if d, ok := ref.(name.Digest); ok {
-		return d.DigestStr(), nil
-	}
-	return r.tags.get(ref.String(), func() (string, error) {
-		desc, err := remote.Head(ref, opts...)
-		if err != nil {
-			return "", fmt.Errorf("cannot resolve %s: %w", ref, err)
-		}
-		return desc.Digest.String(), nil
-	})
 }
 
 // moduleLayer fetches a manifest and picks the layer holding the module: a
 // wasm-typed layer if there is one, otherwise the only layer.
-func moduleLayer(ref name.Digest, opts []remote.Option) (layerInfo, error) {
+func moduleLayer(ref name.Digest, opts []remote.Option) (v1.Descriptor, error) {
 	desc, err := remote.Get(ref, opts...)
 	if err != nil {
-		return layerInfo{}, fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
+		return v1.Descriptor{}, fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
 	}
 	if desc.MediaType.IsIndex() {
-		return layerInfo{}, fmt.Errorf("%s is an image index; reference the manifest holding the module", ref)
+		return v1.Descriptor{}, fmt.Errorf("%s is an image index; reference the manifest holding the module", ref)
 	}
 	m, err := v1.ParseManifest(bytes.NewReader(desc.Manifest))
 	if err != nil {
-		return layerInfo{}, fmt.Errorf("cannot parse manifest %s: %w", ref, err)
+		return v1.Descriptor{}, fmt.Errorf("cannot parse manifest %s: %w", ref, err)
 	}
 	for _, l := range m.Layers {
 		if wasmLayerTypes[l.MediaType] {
-			return layerInfo{digest: l.Digest.String(), mediaType: l.MediaType}, nil
+			return l, nil
 		}
 	}
 	if len(m.Layers) == 1 {
-		return layerInfo{digest: m.Layers[0].Digest.String(), mediaType: m.Layers[0].MediaType}, nil
+		return m.Layers[0], nil
 	}
-	return layerInfo{}, fmt.Errorf("%s has %d layers and none is a wasm layer", ref, len(m.Layers))
+	return v1.Descriptor{}, fmt.Errorf("%s has %d layers and none is a wasm layer", ref, len(m.Layers))
 }
 
 func isTarLayer(mt types.MediaType) bool {

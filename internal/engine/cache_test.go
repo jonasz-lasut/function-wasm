@@ -1,117 +1,241 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/spf13/afero"
+	"google.golang.org/protobuf/testing/protocmp"
 
+	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
+	"github.com/jonasz-lasut/function-wasm/internal/testwasm"
 )
 
 func TestCache(t *testing.T) {
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	wasm := testwasm.Fixed(t, cannedResponse(), testwasm.Options{})
+
 	type step struct {
-		digest string
-		err    error
+		digest  string
+		advance time.Duration
+		err     error
 	}
 	type want struct {
-		loads map[string]int
-		len   int
+		fetches map[string]int
+		len     int
+		onDisk  int
 	}
 	cases := map[string]struct {
-		reason string
-		size   int
-		steps  []step
-		want   want
+		reason   string
+		disk     bool
+		noMemory bool
+		steps    []step
+		want     want
 	}{
-		"HitAfterMiss": {
-			reason: "The second Get for a digest does not load again.",
-			size:   2,
-			steps:  []step{{digest: "a"}, {digest: "a"}},
-			want:   want{loads: map[string]int{"a": 1}, len: 1},
+		"NoMemoryTier": {
+			reason:   "With the memory tier off nothing is retained; every request loads the artifact from disk and the module is fetched once.",
+			disk:     true,
+			noMemory: true,
+			steps:    []step{{digest: "a"}, {digest: "a"}, {digest: "a"}},
+			want:     want{fetches: map[string]int{"a": 1}, len: 0, onDisk: 1},
 		},
-		"EvictsLeastRecentlyUsed": {
-			reason: "Touching a keeps it hot; b is evicted when c arrives, so b loads twice.",
-			size:   2,
-			steps:  []step{{digest: "a"}, {digest: "b"}, {digest: "a"}, {digest: "c"}, {digest: "b"}},
-			want:   want{loads: map[string]int{"a": 1, "b": 2, "c": 1}, len: 2},
+		"MemoryHit": {
+			reason: "The second Get for a digest within the TTL neither fetches nor touches disk.",
+			steps:  []step{{digest: "a"}, {digest: "a"}},
+			want:   want{fetches: map[string]int{"a": 1}, len: 1},
+		},
+		"IdleExpiry": {
+			reason: "A module idle for longer than the TTL leaves memory; without a disk store it is fetched again.",
+			steps:  []step{{digest: "a"}, {digest: "a", advance: 2 * time.Minute}},
+			want:   want{fetches: map[string]int{"a": 2}, len: 1},
+		},
+		"IdleExpiryServedFromDisk": {
+			reason: "With the disk store, an expired module is deserialized, not fetched.",
+			disk:   true,
+			steps:  []step{{digest: "a"}, {digest: "a", advance: 2 * time.Minute}},
+			want:   want{fetches: map[string]int{"a": 1}, len: 1, onDisk: 1},
+		},
+		"TouchExtendsLife": {
+			reason: "Each use restarts the idle clock.",
+			steps:  []step{{digest: "a"}, {digest: "a", advance: 40 * time.Second}, {digest: "a", advance: 40 * time.Second}},
+			want:   want{fetches: map[string]int{"a": 1}, len: 1},
 		},
 		"FailedLoadNotCached": {
-			reason: "A load error is returned but the digest is retried next time.",
-			size:   2,
+			reason: "A fetch error is returned and retried next time.",
+			disk:   true,
 			steps:  []step{{digest: "a", err: errors.New("boom")}, {digest: "a"}},
-			want:   want{loads: map[string]int{"a": 2}, len: 1},
+			want:   want{fetches: map[string]int{"a": 2}, len: 1, onDisk: 1},
 		},
-		"MinimumSizeOne": {
-			reason: "A size below one still caches one module.",
-			size:   0,
-			steps:  []step{{digest: "a"}, {digest: "a"}},
-			want:   want{loads: map[string]int{"a": 1}, len: 1},
+		"TwoModules": {
+			reason: "Digests are independent entries.",
+			disk:   true,
+			steps:  []step{{digest: "a"}, {digest: "b"}, {digest: "a"}},
+			want:   want{fetches: map[string]int{"a": 1, "b": 1}, len: 2, onDisk: 2},
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := NewCache(tc.size)
-			loads := map[string]int{}
+			var disk *cache.Store
+			if tc.disk {
+				disk = cache.New(afero.NewMemMapFs(), false)
+			}
+			c := NewCache(e, CacheOptions{Disk: disk, IdleTTL: time.Minute, NoMemory: tc.noMemory})
+			now := time.Unix(1_700_000_000, 0)
+			c.now = func() time.Time { return now }
+			fetches := map[string]int{}
 			for _, s := range tc.steps {
-				_, err := c.Get(s.digest, func() (*Module, error) {
-					loads[s.digest]++
+				now = now.Add(s.advance)
+				m, err := c.Get(s.digest, func() ([]byte, error) {
+					fetches[s.digest]++
 					if s.err != nil {
 						return nil, s.err
 					}
-					return &Module{}, nil
+					return wasm, nil
 				})
 				if !errors.Is(err, s.err) {
 					t.Fatalf("\n%s\nGet(%q): want error %v, got %v", tc.reason, s.digest, s.err, err)
 				}
+				if err == nil {
+					// Whatever tier served it, it runs.
+					got, err := e.Run(context.Background(), m, request(), &recorder{})
+					if err != nil {
+						t.Fatalf("\n%s\nRun(): %v", tc.reason, err)
+					}
+					if diff := cmp.Diff(cannedResponse(), got, protocmp.Transform()); diff != "" {
+						t.Errorf("\n%s\nRun(): -want, +got:\n%s", tc.reason, diff)
+					}
+				}
 			}
-			if diff := cmp.Diff(tc.want.loads, loads); diff != "" {
-				t.Errorf("\n%s\nloads: -want, +got:\n%s", tc.reason, diff)
+			if diff := cmp.Diff(tc.want.fetches, fetches); diff != "" {
+				t.Errorf("\n%s\nfetches: -want, +got:\n%s", tc.reason, diff)
 			}
 			if diff := cmp.Diff(tc.want.len, c.Len()); diff != "" {
 				t.Errorf("\n%s\nLen(): -want, +got:\n%s", tc.reason, diff)
 			}
+			if disk != nil {
+				if diff := cmp.Diff(tc.want.onDisk, disk.Len()); diff != "" {
+					t.Errorf("\n%s\nartifacts on disk: -want, +got:\n%s", tc.reason, diff)
+				}
+			}
 		})
+	}
+}
+
+func TestCacheStaleArtifactIsRecompiled(t *testing.T) {
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	disk := cache.New(afero.NewMemMapFs(), false)
+	if err := disk.Put("a", []byte("not a wasmtime artifact")); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCache(e, CacheOptions{Disk: disk, IdleTTL: time.Minute})
+	fetched := 0
+	if _, err := c.Get("a", func() ([]byte, error) {
+		fetched++
+		return testwasm.Fixed(t, cannedResponse(), testwasm.Options{}), nil
+	}); err != nil {
+		t.Fatalf("Get(): %v", err)
+	}
+	if fetched != 1 {
+		t.Errorf("a stale artifact should have caused a fetch, got %d fetches", fetched)
+	}
+	if b, ok := disk.Get("a"); !ok || string(b) == "not a wasmtime artifact" {
+		t.Error("the stale artifact was not replaced by a fresh one")
 	}
 }
 
 func TestCacheMetrics(t *testing.T) {
-	hits, _ := metrics.Sample("function_wasm_module_cache_events_total", map[string]string{"cache": metrics.CacheCompiled, "event": metrics.EventHit})
-	misses, _ := metrics.Sample("function_wasm_module_cache_events_total", map[string]string{"cache": metrics.CacheCompiled, "event": metrics.EventMiss})
-	c := NewCache(2)
-	for _, d := range []string{"a", "a", "b"} {
-		_, _ = c.Get(d, func() (*Module, error) { return &Module{}, nil })
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got, _ := metrics.Sample("function_wasm_module_cache_events_total", map[string]string{"cache": metrics.CacheCompiled, "event": metrics.EventHit}); got != hits+1 {
-		t.Errorf("compiled cache hits: want %v, got %v", hits+1, got)
+	defer e.Close()
+	sample := func(cacheName, event string) float64 {
+		v, _ := metrics.Sample("function_wasm_module_cache_events_total", map[string]string{"cache": cacheName, "event": event})
+		return v
 	}
-	if got, _ := metrics.Sample("function_wasm_module_cache_events_total", map[string]string{"cache": metrics.CacheCompiled, "event": metrics.EventMiss}); got != misses+2 {
-		t.Errorf("compiled cache misses: want %v, got %v", misses+2, got)
+	memHits, memMisses := sample(metrics.CacheCompiled, metrics.EventHit), sample(metrics.CacheCompiled, metrics.EventMiss)
+	diskHits, diskMisses := sample(metrics.CacheCompiledDisk, metrics.EventHit), sample(metrics.CacheCompiledDisk, metrics.EventMiss)
+
+	c := NewCache(e, CacheOptions{Disk: cache.New(afero.NewMemMapFs(), false), IdleTTL: time.Minute})
+	now := time.Unix(1_700_000_000, 0)
+	c.now = func() time.Time { return now }
+	wasm := testwasm.Fixed(t, cannedResponse(), testwasm.Options{})
+	fetch := func() ([]byte, error) { return wasm, nil }
+	_, _ = c.Get("a", fetch) // memory miss, disk miss, compile
+	_, _ = c.Get("a", fetch) // memory hit
+	now = now.Add(2 * time.Minute)
+	_, _ = c.Get("a", fetch) // memory miss, disk hit
+
+	if got := sample(metrics.CacheCompiled, metrics.EventHit); got != memHits+1 {
+		t.Errorf("compiled hits: want %v, got %v", memHits+1, got)
+	}
+	if got := sample(metrics.CacheCompiled, metrics.EventMiss); got != memMisses+2 {
+		t.Errorf("compiled misses: want %v, got %v", memMisses+2, got)
+	}
+	if got := sample(metrics.CacheCompiledDisk, metrics.EventHit); got != diskHits+1 {
+		t.Errorf("compiled-disk hits: want %v, got %v", diskHits+1, got)
+	}
+	if got := sample(metrics.CacheCompiledDisk, metrics.EventMiss); got != diskMisses+1 {
+		t.Errorf("compiled-disk misses: want %v, got %v", diskMisses+1, got)
 	}
 }
 
 func TestCacheSingleFlight(t *testing.T) {
-	c := NewCache(4)
-	var loads atomic.Int32
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c := NewCache(e, CacheOptions{IdleTTL: time.Minute})
+	wasm := testwasm.Fixed(t, cannedResponse(), testwasm.Options{})
+	var fetches atomic.Int32
 	release := make(chan struct{})
 	var wg sync.WaitGroup
 	for range 16 {
 		wg.Go(func() {
-			_, _ = c.Get("a", func() (*Module, error) {
-				loads.Add(1)
+			_, _ = c.Get("a", func() ([]byte, error) {
+				fetches.Add(1)
 				<-release
-				return &Module{}, nil
+				return wasm, nil
 			})
 		})
 	}
 	// Give every goroutine the chance to arrive before the load completes.
-	for c.Len() == 0 && loads.Load() == 0 {
+	for c.Len() == 0 && fetches.Load() == 0 {
 	}
 	close(release)
 	wg.Wait()
-	if got := loads.Load(); got != 1 {
-		t.Errorf("concurrent Get() for one digest loaded %d times, want 1", got)
+	if got := fetches.Load(); got != 1 {
+		t.Errorf("concurrent Get() for one digest fetched %d times, want 1", got)
 	}
+}
+
+func TestVersion(t *testing.T) {
+	v := Version()
+	if !contains(v, "v47-") {
+		t.Errorf("Version() = %q, want the wasmtime-go major from the import path", v)
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }
