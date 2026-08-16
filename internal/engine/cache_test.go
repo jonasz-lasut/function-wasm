@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,11 +38,12 @@ func TestCache(t *testing.T) {
 		onDisk  int
 	}
 	cases := map[string]struct {
-		reason   string
-		disk     bool
-		noMemory bool
-		steps    []step
-		want     want
+		reason     string
+		disk       bool
+		noMemory   bool
+		maxEntries int
+		steps      []step
+		want       want
 	}{
 		"NoMemoryTier": {
 			reason:   "With the memory tier off nothing is retained; every request loads the artifact from disk and the module is fetched once.",
@@ -82,6 +85,13 @@ func TestCache(t *testing.T) {
 			steps:  []step{{digest: "a"}, {digest: "b"}, {digest: "a"}},
 			want:   want{fetches: map[string]int{"a": 1, "b": 1}, len: 2, onDisk: 2},
 		},
+		"BoundedTier": {
+			reason:     "Past MaxEntries the least recently used module leaves memory and comes back from disk when asked for again.",
+			disk:       true,
+			maxEntries: 2,
+			steps:      []step{{digest: "a"}, {digest: "b", advance: time.Second}, {digest: "a", advance: time.Second}, {digest: "c", advance: time.Second}, {digest: "b", advance: time.Second}},
+			want:       want{fetches: map[string]int{"a": 1, "b": 1, "c": 1}, len: 2, onDisk: 3},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -89,13 +99,13 @@ func TestCache(t *testing.T) {
 			if tc.disk {
 				disk = cache.New(afero.NewMemMapFs(), false)
 			}
-			c := NewCache(e, CacheOptions{Disk: disk, IdleTTL: time.Minute, NoMemory: tc.noMemory})
+			c := NewCache(e, CacheOptions{Disk: disk, IdleTTL: time.Minute, NoMemory: tc.noMemory, MaxEntries: tc.maxEntries})
 			now := time.Unix(1_700_000_000, 0)
 			c.now = func() time.Time { return now }
 			fetches := map[string]int{}
 			for _, s := range tc.steps {
 				now = now.Add(s.advance)
-				m, err := c.Get(s.digest, func() ([]byte, error) {
+				m, err := c.Get(context.Background(), s.digest, func(context.Context) ([]byte, error) {
 					fetches[s.digest]++
 					if s.err != nil {
 						return nil, s.err
@@ -108,6 +118,7 @@ func TestCache(t *testing.T) {
 				if err == nil {
 					// Whatever tier served it, it runs.
 					got, err := e.Run(context.Background(), m, request(), &recorder{})
+					m.Release()
 					if err != nil {
 						t.Fatalf("\n%s\nRun(): %v", tc.reason, err)
 					}
@@ -143,7 +154,7 @@ func TestCacheStaleArtifactIsRecompiled(t *testing.T) {
 	}
 	c := NewCache(e, CacheOptions{Disk: disk, IdleTTL: time.Minute})
 	fetched := 0
-	if _, err := c.Get("a", func() ([]byte, error) {
+	if _, err := c.Get(context.Background(), "a", func(context.Context) ([]byte, error) {
 		fetched++
 		return testwasm.Fixed(t, cannedResponse(), testwasm.Options{}), nil
 	}); err != nil {
@@ -174,11 +185,11 @@ func TestCacheMetrics(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	c.now = func() time.Time { return now }
 	wasm := testwasm.Fixed(t, cannedResponse(), testwasm.Options{})
-	fetch := func() ([]byte, error) { return wasm, nil }
-	_, _ = c.Get("a", fetch) // memory miss, disk miss, compile
-	_, _ = c.Get("a", fetch) // memory hit
+	fetch := func(context.Context) ([]byte, error) { return wasm, nil }
+	_, _ = c.Get(context.Background(), "a", fetch) // memory miss, disk miss, compile
+	_, _ = c.Get(context.Background(), "a", fetch) // memory hit
 	now = now.Add(2 * time.Minute)
-	_, _ = c.Get("a", fetch) // memory miss, disk hit
+	_, _ = c.Get(context.Background(), "a", fetch) // memory miss, disk hit
 
 	if got := sample(metrics.CacheCompiled, metrics.EventHit); got != memHits+1 {
 		t.Errorf("compiled hits: want %v, got %v", memHits+1, got)
@@ -207,15 +218,19 @@ func TestCacheSingleFlight(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 16 {
 		wg.Go(func() {
-			_, _ = c.Get("a", func() ([]byte, error) {
+			m, err := c.Get(context.Background(), "a", func(context.Context) ([]byte, error) {
 				fetches.Add(1)
 				<-release
 				return wasm, nil
 			})
+			if err == nil {
+				m.Release()
+			}
 		})
 	}
 	// Give every goroutine the chance to arrive before the load completes.
 	for c.Len() == 0 && fetches.Load() == 0 {
+		runtime.Gosched()
 	}
 	close(release)
 	wg.Wait()
@@ -224,18 +239,175 @@ func TestCacheSingleFlight(t *testing.T) {
 	}
 }
 
-func TestVersion(t *testing.T) {
-	v := Version()
-	if !contains(v, "v47-") {
-		t.Errorf("Version() = %q, want the wasmtime-go major from the import path", v)
+func TestCacheLoadPanicDoesNotWedge(t *testing.T) {
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c := NewCache(e, CacheOptions{IdleTTL: time.Minute})
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = c.Get(context.Background(), "a", func(context.Context) ([]byte, error) { panic("boom") })
+	}()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m, err := c.Get(context.Background(), "a", func(context.Context) ([]byte, error) {
+			return testwasm.Fixed(t, cannedResponse(), testwasm.Options{}), nil
+		})
+		if err != nil {
+			t.Errorf("Get() after a panicking load: %v", err)
+			return
+		}
+		m.Release()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a load that panicked left its digest loading forever")
 	}
 }
 
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
+func TestCacheWaiterCancel(t *testing.T) {
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c := NewCache(e, CacheOptions{IdleTTL: time.Minute})
+	wasm := testwasm.Fixed(t, cannedResponse(), testwasm.Options{})
+	release := make(chan struct{})
+	started := make(chan struct{})
+	leaderDone := make(chan error, 1)
+	go func() {
+		m, err := c.Get(context.Background(), "a", func(context.Context) ([]byte, error) {
+			close(started)
+			<-release
+			return wasm, nil
+		})
+		if err == nil {
+			m.Release()
+		}
+		leaderDone <- err
+	}()
+	<-started
+	// A waiter whose own deadline passes gives up without waiting for the
+	// leader's fetch, and without disturbing it.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := c.Get(ctx, "a", func(context.Context) ([]byte, error) { return wasm, nil }); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waiter: want %v, got %v", context.DeadlineExceeded, err)
+	}
+	close(release)
+	if err := <-leaderDone; err != nil {
+		t.Fatalf("leader: %v", err)
+	}
+	if c.Len() != 1 {
+		t.Errorf("the load should have completed and been kept, Len() = %d", c.Len())
+	}
+}
+
+func TestCacheLoadOutlivesRequester(t *testing.T) {
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c := NewCache(e, CacheOptions{IdleTTL: time.Minute})
+	wasm := testwasm.Fixed(t, cannedResponse(), testwasm.Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// The requester's context is already gone; the load runs under the
+	// cache's own and succeeds for whoever asks next.
+	m, err := c.Get(ctx, "a", func(ctx context.Context) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return wasm, nil
+	})
+	if err != nil {
+		t.Fatalf("Get() with a cancelled requester: %v", err)
+	}
+	m.Release()
+}
+
+func TestCacheCompileSlots(t *testing.T) {
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c := NewCache(e, CacheOptions{IdleTTL: time.Minute, MaxConcurrentCompiles: 1})
+	wasm := testwasm.Fixed(t, cannedResponse(), testwasm.Options{})
+	// Hold the only slot from outside, then ask for a module: it must wait
+	// for the slot, not compile alongside.
+	c.compiles <- struct{}{}
+	got := make(chan error, 1)
+	go func() {
+		m, err := c.Get(context.Background(), "a", func(context.Context) ([]byte, error) { return wasm, nil })
+		if err == nil {
+			m.Release()
+		}
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		t.Fatalf("Get() finished while the compile slot was taken (err %v)", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	<-c.compiles
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatalf("Get(): %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Get() did not proceed once the compile slot was free")
+	}
+}
+
+func TestCacheMapsArtifactsFromDisk(t *testing.T) {
+	e, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	disk, err := cache.OpenDir(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewCache(e, CacheOptions{Disk: disk, IdleTTL: time.Minute, NoMemory: true})
+	wasm := testwasm.Fixed(t, cannedResponse(), testwasm.Options{})
+	fetches := 0
+	for range 3 {
+		m, err := c.Get(context.Background(), "a", func(context.Context) ([]byte, error) {
+			fetches++
+			return wasm, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := e.Run(context.Background(), m, request(), &recorder{})
+		m.Release()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff(cannedResponse(), got, protocmp.Transform()); diff != "" {
+			t.Errorf("Run(): -want, +got:\n%s", diff)
 		}
 	}
-	return false
+	if fetches != 1 {
+		t.Errorf("want one fetch, the artifact on disk serving the rest, got %d", fetches)
+	}
+	if _, ok := disk.Path("a"); !ok {
+		t.Error("the artifact should be on disk with a path to map")
+	}
+}
+
+func TestVersion(t *testing.T) {
+	v := Version()
+	if !strings.HasPrefix(v, "v") || !strings.HasSuffix(v, "-"+runtime.GOOS+"-"+runtime.GOARCH) {
+		t.Errorf("Version() = %q, want <wasmtime-go major from the import path>-<GOOS>-<GOARCH>", v)
+	}
 }

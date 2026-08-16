@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -48,16 +49,12 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 	} else {
 		opts = append(opts, remote.WithAuthFromKeychain(r.opts.Keychain))
 	}
-	return &Ref{
+	opts = slices.Clip(opts)
+	out := &Ref{
 		Digest:      ref.DigestStr(),
 		Description: "oci " + src.OCI.Ref,
 		fetch: timed("oci", func(ctx context.Context) ([]byte, error) {
 			opts := append(opts, remote.WithContext(ctx))
-			if r.opts.Verifier != nil {
-				if err := r.opts.Verifier.Verify(ctx, ref, opts); err != nil {
-					return nil, err
-				}
-			}
 			layer, err := moduleLayer(ref, opts)
 			if err != nil {
 				return nil, err
@@ -86,7 +83,13 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 			}
 			return b, nil
 		}),
-	}, nil
+	}
+	if r.opts.Verifier != nil {
+		out.verify = func(ctx context.Context) error {
+			return r.opts.Verifier.Verify(ctx, ref, append(opts, remote.WithContext(ctx)))
+		}
+	}
+	return out, nil
 }
 
 // moduleLayer fetches a manifest and picks the layer holding the module: a
@@ -119,7 +122,9 @@ func isTarLayer(mt types.MediaType) bool {
 }
 
 // extractWasm returns the first .wasm file of a (possibly gzipped) tar layer,
-// which is how a `FROM scratch; COPY fn.wasm /` image stores a module.
+// which is how a `FROM scratch; COPY fn.wasm /` image stores a module. The
+// archive may expand to at most eight times the module size limit before the
+// .wasm entry is found: a gzip bomb costs bounded work, not the process.
 func extractWasm(b []byte, limit int64) ([]byte, error) {
 	var rd io.Reader = bytes.NewReader(b)
 	if bytes.HasPrefix(b, []byte{0x1f, 0x8b}) {
@@ -130,6 +135,7 @@ func extractWasm(b []byte, limit int64) ([]byte, error) {
 		defer func() { _ = zr.Close() }()
 		rd = zr
 	}
+	rd = &cappedReader{r: rd, left: 8 * limit}
 	tr := tar.NewReader(rd)
 	for {
 		h, err := tr.Next()
@@ -143,4 +149,22 @@ func extractWasm(b []byte, limit int64) ([]byte, error) {
 			return readCapped(tr, limit)
 		}
 	}
+}
+
+// cappedReader fails once more than its budget has been read.
+type cappedReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.left <= 0 {
+		return 0, errors.New("module layer archive exceeds the size limit before any .wasm file")
+	}
+	if int64(len(p)) > c.left {
+		p = p[:c.left]
+	}
+	n, err := c.r.Read(p)
+	c.left -= int64(n)
+	return n, err
 }

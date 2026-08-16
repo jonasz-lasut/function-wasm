@@ -33,11 +33,14 @@ func hostLog(caller *wasmtime.Caller, level, ptr, size int32) {
 		return
 	}
 	data := memory.Memory().UnsafeData(caller)
-	if ptr < 0 || size < 0 || checkBounds(uintptr(len(data)), uint32(ptr), uint32(size)) != nil {
-		c.log.Info("guest log record out of bounds", "ptr", ptr, "len", size)
+	// wasm i32 values carry unsigned pointers and lengths: reinterpret, then
+	// slice in two steps so nothing is added in a type that can overflow.
+	p, n := uint32(ptr), uint32(size) //nolint:gosec // i32 reinterpreted as u32.
+	if checkBounds(uintptr(len(data)), p, n) != nil {
+		c.log.Info("guest log record out of bounds", "ptr", p, "len", n)
 		return
 	}
-	payload := data[ptr : ptr+size]
+	payload := data[p:][:n]
 
 	rec := logRecord{}
 	if err := json.Unmarshal(payload, &rec); err != nil {

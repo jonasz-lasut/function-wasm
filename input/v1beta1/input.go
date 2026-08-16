@@ -34,7 +34,11 @@ type Input struct {
 }
 
 // ModuleSource locates a module. Exactly one of OCI, HTTP, Path, OCIFrom,
-// HTTPFrom and PathFrom must be set.
+// HTTPFrom and PathFrom must be set — the CEL rule below lets schema-aware
+// tooling (crossplane beta validate, admission with the CRD installed)
+// reject a Composition that sets none or several before it reconciles; the
+// runtime checks the same at every request.
+// +kubebuilder:validation:XValidation:rule="[has(self.oci), has(self.http), has(self.path), has(self.ociFrom), has(self.httpFrom), has(self.pathFrom)].filter(x, x).size() == 1",message="exactly one of oci, http, path, ociFrom, httpFrom and pathFrom must be set"
 type ModuleSource struct {
 	// OCI pulls the module from an OCI registry.
 	// +optional
@@ -52,9 +56,12 @@ type ModuleSource struct {
 	Path string `json:"path,omitempty"`
 
 	// OCIFrom names a field of the observed composite resource, under spec
-	// or status, that holds an OCI source — an object with ref, digest and
-	// optionally credentials — e.g. "status.module". The value is read on
-	// every request, so each composite resource can pick its own module.
+	// or status, that holds an OCI source — an object with ref — e.g.
+	// "status.module". The value is read on every request, so each composite
+	// resource can pick its own module. It may not name credentials: the
+	// module is pulled with the runtime's Docker config or anonymously, since
+	// the composite resource's author would otherwise choose the registry a
+	// step credential is sent to.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^(spec|status)\..+`
 	OCIFrom string `json:"ociFrom,omitempty"`

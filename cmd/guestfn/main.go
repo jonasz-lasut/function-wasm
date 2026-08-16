@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,7 +226,7 @@ func buildGuest(ctx context.Context, lang, dir, out string, stdout io.Writer) er
 		if len(matches) != 1 {
 			return fmt.Errorf("expected one .wasm under target/wasm32-wasip1/release, found %d", len(matches))
 		}
-		wasm, err := os.ReadFile(matches[0]) //nolint:gosec // cargo's own output directory.
+		wasm, err := os.ReadFile(matches[0])
 		if err != nil {
 			return err
 		}
@@ -256,7 +257,11 @@ func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("cannot parse reference: %w", err)
 	}
-	img, err := artifact(wasm, time.Now())
+	// A fixed creation time makes the artifact — and so the manifest digest
+	// a Composition pins and the caches key on — a function of the module
+	// bytes alone: pushing the same fn.wasm twice yields the same reference.
+	// SOURCE_DATE_EPOCH overrides it, as for any reproducible build.
+	img, err := artifact(wasm, creationTime())
 	if err != nil {
 		return err
 	}
@@ -273,6 +278,17 @@ func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	}
 	_, _ = fmt.Fprintf(stdout, "Pushed %s\n\nmodule:\n  oci:\n    ref: %s\n", pinned, pinned)
 	return nil
+}
+
+// creationTime is SOURCE_DATE_EPOCH when set and valid, the Unix epoch
+// otherwise.
+func creationTime() time.Time {
+	if v := os.Getenv("SOURCE_DATE_EPOCH"); v != "" {
+		if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return time.Unix(secs, 0).UTC()
+		}
+	}
+	return time.Unix(0, 0).UTC()
 }
 
 // artifact wraps a module in the CNCF wasm OCI artifact layout.

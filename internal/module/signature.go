@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -181,13 +182,15 @@ func checkPayload(payload []byte, digest string) error {
 }
 
 // verifies checks sig over payload with any key, using each key type's
-// cosign default: SHA-256 with ECDSA (ASN.1) or RSA PKCS#1 v1.5, raw ed25519.
+// cosign default (sigstore's LoadDefaultVerifier): ECDSA (ASN.1) hashed to
+// the curve's size — SHA-256 for P-256, SHA-384 for P-384, SHA-512 for
+// P-521 — RSA PKCS#1 v1.5 over SHA-256, raw ed25519.
 func (v *Verifier) verifies(payload, sig []byte) bool {
 	sum := sha256.Sum256(payload)
 	for _, key := range v.keys {
 		switch k := key.(type) {
 		case *ecdsa.PublicKey:
-			if ecdsa.VerifyASN1(k, sum[:], sig) {
+			if ecdsa.VerifyASN1(k, curveDigest(k, payload), sig) {
 				return true
 			}
 		case *rsa.PublicKey:
@@ -201,4 +204,20 @@ func (v *Verifier) verifies(payload, sig []byte) bool {
 		}
 	}
 	return false
+}
+
+// curveDigest hashes payload with the digest cosign pairs with the key's
+// curve.
+func curveDigest(k *ecdsa.PublicKey, payload []byte) []byte {
+	switch k.Curve.Params().BitSize {
+	case 384:
+		sum := sha512.Sum384(payload)
+		return sum[:]
+	case 521:
+		sum := sha512.Sum512(payload)
+		return sum[:]
+	default:
+		sum := sha256.Sum256(payload)
+		return sum[:]
+	}
 }

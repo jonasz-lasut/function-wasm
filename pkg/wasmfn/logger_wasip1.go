@@ -2,7 +2,10 @@
 
 package wasmfn
 
-import "unsafe"
+import (
+	"runtime"
+	"unsafe"
+)
 
 //go:wasmimport wasmfn log
 func hostLog(level int32, ptr, size uint32)
@@ -20,4 +23,5 @@ func hostSink(level int32, payload []byte) {
 		return
 	}
 	hostLog(level, uint32(uintptr(unsafe.Pointer(unsafe.SliceData(payload)))), uint32(len(payload)))
+	runtime.KeepAlive(payload)
 }

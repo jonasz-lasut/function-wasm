@@ -18,7 +18,7 @@
 //
 // The package deliberately imports only function-sdk-go's proto types and
 // crossplane-runtime's logging interface: a guest that speaks raw protobuf
-// stays small (about 15 MB), while one using function-sdk-go's request,
+// stays small (about 20 MB), while one using function-sdk-go's request,
 // response and resource packages inherits their Kubernetes dependencies
 // (about 75 MB), exactly as a native function binary does.
 package wasmfn

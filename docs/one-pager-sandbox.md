@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.1
+* Status: Draft, revision 0.2
 
 How the sandbox could grant a module *some* filesystem, network or
 environment access without giving up what makes it safe to run other people's
@@ -44,9 +44,10 @@ from a volume, calling an external system, or reading a file a sidecar wrote.
 ```yaml
 apiVersion: wasm.fn.crossplane.io/v1beta1
 kind: Input
-module:
-  oci: {ref: ghcr.io/example/greeter@sha256:…}
-sandbox:
+module:                          # the module-source-schema one-pager's shape; today: module.oci
+  type: OCI
+  oci: {ref: ghcr.io/example/greeter:v1@sha256:…}
+sandbox:                         # a top-level sibling of module, policy and limits
   filesystem:
     mounts:
     - name: templates            # an operator-provided mount, --guest-mount templates=/etc/wasm/templates:ro

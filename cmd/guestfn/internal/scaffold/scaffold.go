@@ -130,7 +130,7 @@ func Write(dir string, files map[string][]byte) error {
 		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 			return fmt.Errorf("cannot create %s: %w", filepath.Dir(full), err)
 		}
-		if err := os.WriteFile(full, content, 0o600); err != nil {
+		if err := os.WriteFile(full, content, 0o644); err != nil { //nolint:gosec // Project sources the user asked for, readable like any checkout.
 			return fmt.Errorf("cannot write %s: %w", full, err)
 		}
 	}

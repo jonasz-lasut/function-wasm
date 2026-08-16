@@ -46,9 +46,14 @@ RUN --mount=target=. \
     GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w" -o /function ./cmd/function
 
 # Produce the Function image. The binary links glibc dynamically (wasmtime's
-# static library needs libm, libdl, libpthread and libgcc_s), which
-# distroless/cc provides and distroless/static does not.
-FROM gcr.io/distroless/cc-debian12:nonroot AS image
+# static library needs libm, libdl, libpthread and libgcc_s), so the base
+# must ship glibc, libgcc_s and libstdc++: Chainguard's glibc-dynamic does
+# (Wolfi glibc, rebuilt daily — it scanned clean where distroless/cc-debian13
+# carried a dozen won't-fix libc6 CVEs) with a nonroot user (65532), CA
+# certificates and a writable /tmp for the caches. Its glibc must not be older
+# than the one golang:${GO_VERSION} builds against (Debian trixie, 2.41);
+# Wolfi tracks upstream closely, and Renovate pins and bumps the digest.
+FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:df4e22a4b5dcd8e15a51fe9b04e16717d411dd9f4fe4b3844c1bf425b14be303 AS image
 WORKDIR /
 COPY --from=build /function /function
 EXPOSE 9443

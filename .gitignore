@@ -2,3 +2,8 @@
 /guestfn
 *.xpkg
 *.wasm
+# Native builds of the example guests (`go build` in their directories names
+# the binary after the directory); only their fn.wasm is meaningful.
+/examples/hello-go/hello
+/examples/hello-tinygo/hello-tinygo
+/examples/hello-rust/hello-rust

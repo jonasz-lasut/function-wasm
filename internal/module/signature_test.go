@@ -201,19 +201,22 @@ func TestVerifier(t *testing.T) {
 				}
 				t.Fatalf("\n%s\nResolve(): unexpected error %v", tc.reason, err)
 			}
-			_, err = ref.Fetch(context.Background())
+			err = ref.Verify(context.Background())
 			if tc.want != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.want) {
-					t.Fatalf("\n%s\nFetch(): want error containing %q, got %v", tc.reason, tc.want, err)
+					t.Fatalf("\n%s\nVerify(): want error containing %q, got %v", tc.reason, tc.want, err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("\n%s\nFetch(): %v", tc.reason, err)
+				t.Fatalf("\n%s\nVerify(): %v", tc.reason, err)
 			}
-			// The second fetch is served from the verified set.
+			// The second check is served from the verified set.
+			if err := ref.Verify(context.Background()); err != nil {
+				t.Fatalf("\n%s\nsecond Verify(): %v", tc.reason, err)
+			}
 			if _, err := ref.Fetch(context.Background()); err != nil {
-				t.Fatalf("\n%s\nsecond Fetch(): %v", tc.reason, err)
+				t.Fatalf("\n%s\nFetch(): %v", tc.reason, err)
 			}
 		})
 	}
