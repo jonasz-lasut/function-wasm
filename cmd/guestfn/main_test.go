@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -243,13 +241,21 @@ func TestPush(t *testing.T) {
 	if err := (&PushCmd{Ref: host + "/greeter:v1", File: file}).Run(context.Background(), &out); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[1], host+"/greeter@sha256:") {
-		t.Fatalf("push output should end with the digest reference:\n%s", out.String())
+	// The output is the module block a Composition needs, verbatim: the
+	// pushed tag kept for readability, pinned to the manifest digest.
+	var refLine string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "ref: ") {
+			refLine = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "ref: "))
+		}
 	}
+	if !strings.HasPrefix(refLine, host+"/greeter:v1@sha256:") {
+		t.Fatalf("push output should show the tag pinned to the manifest digest:\n%s", out.String())
+	}
+	wantDigest := refLine[strings.Index(refLine, "@")+1:]
 
 	// The artifact has the CNCF layout...
-	ref, err := name.ParseReference(lines[1])
+	ref, err := name.ParseReference(refLine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,12 +279,11 @@ func TestPush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := r.Resolve(context.Background(), v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: lines[1]}}, nil)
+	got, err := r.Resolve(context.Background(), v1beta1.ModuleSource{OCI: &v1beta1.OCISource{Ref: refLine}}, nil)
 	if err != nil {
 		t.Fatalf("resolve pushed artifact: %v", err)
 	}
-	sum := sha256.Sum256(wasm)
-	if diff := cmp.Diff("sha256:"+hex.EncodeToString(sum[:]), got.Digest); diff != "" {
+	if diff := cmp.Diff(wantDigest, got.Digest); diff != "" {
 		t.Errorf("digest: -want, +got:\n%s", diff)
 	}
 	b, err := got.Fetch(context.Background())

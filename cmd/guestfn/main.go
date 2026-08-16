@@ -244,8 +244,9 @@ type PushCmd struct {
 	File string `short:"f" help:"Module to push." default:"fn.wasm" type:"existingfile"`
 }
 
-// Run pushes the module as a single-layer OCI artifact and prints the digest
-// reference to pin in Compositions.
+// Run pushes the module as a single-layer OCI artifact and prints what a
+// Composition needs: the reference pinned to the manifest digest, with the
+// tag it was pushed to kept for readability.
 func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	wasm, err := os.ReadFile(c.File)
 	if err != nil {
@@ -262,11 +263,15 @@ func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	if err := remote.Write(ref, img, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx)); err != nil {
 		return fmt.Errorf("cannot push %s: %w", ref, err)
 	}
-	digest, err := img.Digest()
+	manifest, err := img.Digest()
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(stdout, "Pushed %s\n%s\n", ref, ref.Context().Digest(digest.String()))
+	pinned := ref.String()
+	if _, ok := ref.(name.Digest); !ok {
+		pinned += "@" + manifest.String()
+	}
+	_, _ = fmt.Fprintf(stdout, "Pushed %s\n\nmodule:\n  oci:\n    ref: %s\n", pinned, pinned)
 	return nil
 }
 

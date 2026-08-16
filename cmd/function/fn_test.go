@@ -99,7 +99,8 @@ func privateRegistry(t *testing.T) (host string) {
 	return strings.TrimPrefix(srv.URL, "http://")
 }
 
-func push(t *testing.T, ref string, wasm []byte) {
+// push publishes wasm as <ref> and returns its digest reference.
+func push(t *testing.T, ref string, wasm []byte) string {
 	t.Helper()
 	img, err := mutate.AppendLayers(empty.Image, static.NewLayer(wasm, "application/wasm"))
 	if err != nil {
@@ -112,6 +113,11 @@ func push(t *testing.T, ref string, wasm []byte) {
 	if err := remote.Write(parsed, img, remote.WithAuth(&authn.Basic{Username: "robot", Password: "s3cret"})); err != nil {
 		t.Fatalf("cannot push %s: %v", ref, err)
 	}
+	d, err := img.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed.Context().Digest(d.String()).String()
 }
 
 func TestRunFunction(t *testing.T) {
@@ -126,10 +132,10 @@ func TestRunFunction(t *testing.T) {
 		}
 	}
 	registryHost := privateRegistry(t)
-	push(t, registryHost+"/fn:v1", okModule)
+	ociRef := push(t, registryHost+"/fn:v1", okModule)
 
 	// An XR whose status names modules, for the *From sources.
-	xr := resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"},"spec":{"module":"fn.wasm"},"status":{"module":{"ref":"` + registryHost + `/fn:v1","credentials":"registry"}}}`)
+	xr := resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"},"spec":{"module":"fn.wasm"},"status":{"module":{"ref":"` + ociRef + `","credentials":"registry"}}}`)
 	credentials := map[string]*fnv1.Credentials{
 		"registry": {Source: &fnv1.Credentials_CredentialData{CredentialData: &fnv1.CredentialData{
 			Data: map[string][]byte{"username": []byte("robot"), "password": []byte("s3cret")},
@@ -176,16 +182,24 @@ func TestRunFunction(t *testing.T) {
 			reason: "An OCI module is pulled with the pipeline step's credentials.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:        &fnv1.RequestMeta{Tag: "hello"},
-				Input:       input(t, map[string]any{"oci": map[string]any{"ref": registryHost + "/fn:v1", "credentials": "registry"}}),
+				Input:       input(t, map[string]any{"oci": map[string]any{"ref": ociRef, "credentials": "registry"}}),
 				Credentials: credentials,
 			}},
 			want: want{rsp: guestResponse()},
+		},
+		"OCITagRefused": {
+			reason: "A tag reference is a fatal result: only digest-pinned references are accepted.",
+			args: args{req: &fnv1.RunFunctionRequest{
+				Meta:  &fnv1.RequestMeta{Tag: "hello"},
+				Input: input(t, map[string]any{"oci": map[string]any{"ref": registryHost + "/fn:v1"}}),
+			}},
+			want: want{rsp: fatal(`cannot resolve module: module.oci.ref "` + registryHost + `/fn:v1" must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported`)},
 		},
 		"OCIModuleMissingCredentials": {
 			reason: "Naming a credential the step does not carry is a fatal result.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: input(t, map[string]any{"oci": map[string]any{"ref": registryHost + "/fn:v1", "credentials": "registry"}}),
+				Input: input(t, map[string]any{"oci": map[string]any{"ref": ociRef, "credentials": "registry"}}),
 			}},
 			want: want{rsp: fatal(`cannot get credentials "registry" for module.oci: registry: credential not found`)},
 		},
@@ -260,7 +274,7 @@ func TestRunFunction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(4), resolver: resolver}
+	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
