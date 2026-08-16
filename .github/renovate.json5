@@ -1,0 +1,122 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    // Workflows pin every action to a commit SHA with a `# vX.Y.Z` comment;
+    // keep it that way and resolve the comment to a full semver tag.
+    'helpers:pinGitHubActionDigestsToSemver',
+    // The repo uses conventional commits; a routine bump is a chore, not a fix.
+    ':semanticCommitTypeAll(chore)',
+  ],
+  // The dependency surfaces: the go.mod files (root, pkg/wasmfn, the Go
+  // examples), the Rust example's Cargo.toml, the workflows (actions and the
+  // CLI versions in their env), and the Function package refs under the
+  // examples' render files.
+  // go.mod is the single source of truth for the Go version (workflows read
+  // it), and the Dockerfile floats on golang:1 + distroless:nonroot by design.
+  enabledManagers: ['gomod', 'cargo', 'github-actions', 'crossplane', 'custom.regex'],
+  // CI's check-diff runs `go mod tidy` and fails on a dirty tree, so tidy in
+  // the same commit; update import paths on /vN major bumps.
+  postUpdateOptions: ['gomodTidy', 'gomodUpdateImportPaths'],
+  osvVulnerabilityAlerts: true,
+  crossplane: {
+    // Function package refs in the example guest's render files.
+    managerFilePatterns: ['/^examples/.*\\.ya?ml$/'],
+  },
+  customManagers: [
+    {
+      // golangci-lint version pinned in the CI workflow env.
+      customType: 'regex',
+      description: 'GOLANGCI_VERSION in .github/workflows',
+      managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/'],
+      matchStrings: ["GOLANGCI_VERSION: '(?<currentValue>v[^']+)'"],
+      depNameTemplate: 'golangci/golangci-lint',
+      datasourceTemplate: 'github-releases',
+    },
+    {
+      // Crossplane CLI version installed by install.sh in the release workflows.
+      // Since v2.3.0 the CLI is released from crossplane/cli (XP_CHANNEL=stable).
+      customType: 'regex',
+      description: 'XP_VERSION in .github/workflows',
+      managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/'],
+      matchStrings: ["XP_VERSION: '(?<currentValue>v[^']+)'"],
+      depNameTemplate: 'crossplane/cli',
+      datasourceTemplate: 'github-releases',
+    },
+    {
+      // up CLI version downloaded from cli.upbound.io in the release workflows.
+      customType: 'regex',
+      description: 'UP_VERSION in .github/workflows',
+      managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/'],
+      matchStrings: ['UP_VERSION: (?<currentValue>v\\S+)'],
+      depNameTemplate: 'upbound/up',
+      datasourceTemplate: 'github-releases',
+    },
+  ],
+  // Rules are evaluated in order; later rules win.
+  packageRules: [
+    // Catch-all: every remaining Go module lands in one PR.
+    { matchManagers: ['gomod'], groupName: 'go modules' },
+
+    // Kubernetes staging modules and controller-tools move together. Their
+    // minor version follows what crossplane-runtime / function-sdk-go pull in,
+    // so only patches flow freely; minors and majors wait for approval on the
+    // dependency dashboard.
+    {
+      matchManagers: ['gomod'],
+      matchPackageNames: ['k8s.io/**', 'sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools'],
+      groupName: 'kubernetes',
+    },
+    {
+      matchManagers: ['gomod'],
+      matchPackageNames: ['k8s.io/**', 'sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools'],
+      matchUpdateTypes: ['major', 'minor'],
+      dependencyDashboardApproval: true,
+    },
+
+    // Crossplane SDK modules are released together and depend on each other.
+    {
+      matchManagers: ['gomod'],
+      matchPackageNames: ['github.com/crossplane/**'],
+      groupName: 'crossplane',
+    },
+
+    // wasmtime-go tracks wasmtime: every release is a new Go major with a
+    // new import path (/v47 → /v48; gomodUpdateImportPaths rewrites the one
+    // importer, internal/engine). Keep it out of the catch-all so the diff
+    // and the guest end-to-end tests are judged on their own.
+    {
+      matchManagers: ['gomod'],
+      matchPackageNames: ['github.com/bytecodealliance/wasmtime-go/**'],
+      groupName: 'wasmtime',
+    },
+
+    // The go directive is the Go version CI builds and tests with (setup-go and
+    // the runtime image read go.mod), so bump it — Go patch releases carry the
+    // toolchain security fixes. Renovate leaves it alone unless told to bump.
+    {
+      matchManagers: ['gomod'],
+      matchDepNames: ['go'],
+      matchDepTypes: ['golang'],
+      rangeStrategy: 'bump',
+      groupName: 'go',
+    },
+
+    // GitHub Actions: let a release settle before pulling its digest, batch
+    // non-major bumps into one PR, and keep majors as separate PRs since they
+    // tend to need workflow changes.
+    { matchManagers: ['github-actions'], minimumReleaseAge: '3 days' },
+    {
+      matchManagers: ['github-actions'],
+      matchUpdateTypes: ['minor', 'patch', 'digest', 'pin', 'pinDigest'],
+      groupName: 'github-actions',
+    },
+
+    // The Rust example's crates move together (prost, prost-types, prost-build
+    // share a version line).
+    { matchManagers: ['cargo'], groupName: 'rust' },
+
+    // Package refs in the render examples.
+    { matchManagers: ['crossplane'], groupName: 'examples' },
+  ],
+}

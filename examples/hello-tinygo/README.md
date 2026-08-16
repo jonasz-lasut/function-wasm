@@ -1,0 +1,51 @@
+# hello-tinygo
+
+A [Crossplane](https://crossplane.io) composition function built with
+[TinyGo](https://tinygo.org) and run as a WebAssembly module by
+[function-wasm](https://github.com/jonasz-lasut/function-wasm) — about 1.3 MB,
+without function-sdk-go.
+
+- `fn.go` — `RunFunction` over the raw `RunFunctionRequest`/`RunFunctionResponse`
+  messages and `structpb` values; edit this, keep `fn_test.go` passing.
+- `internal/fnv1` — generated from the vendored `proto/run_function.proto` with
+  `protoc-gen-go` **and** `protoc-gen-go-vtproto`: protobuf-go's own codec needs
+  `reflect.New`, which TinyGo does not implement, so the guest calls the
+  reflection-free `MarshalVT`/`UnmarshalVT`. `go generate ./...` regenerates it
+  (needs `protoc`; the plugins are built from `go.mod`'s tool directives).
+- `abi_wasip1.go` — the function-wasm [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md)
+  in forty lines: `wasmfn_alloc`, `wasmfn_run`, and the `wasmfn.log` import.
+
+```shell
+# Unit tests run natively with the Go toolchain.
+go test ./...
+
+# Compile to a wasip1 module with TinyGo.
+guestfn build                       # tinygo build -target=wasip1 -buildmode=c-shared -no-debug -o fn.wasm .
+
+# Publish it as an OCI artifact and pin the digest it prints.
+guestfn push ghcr.io/example/hello-tinygo:v0.1.0
+```
+
+Reference the module from a Composition step of function-wasm:
+
+```yaml
+- step: hello-tinygo
+  functionRef:
+    name: function-wasm
+  input:
+    apiVersion: wasm.fn.crossplane.io/v1beta1
+    kind: Input
+    module:
+      oci:
+        ref: ghcr.io/example/hello-tinygo@sha256:<digest printed by guestfn push>
+    config:
+      greeting: hi
+```
+
+`example/` renders locally with the function-wasm runtime serving this
+directory (`--module-dir`) and `crossplane render`:
+
+```shell
+guestfn build
+crossplane render example/xr.yaml example/composition.yaml example/functions.yaml
+```

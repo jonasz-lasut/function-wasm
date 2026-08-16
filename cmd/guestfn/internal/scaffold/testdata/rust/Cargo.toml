@@ -1,0 +1,23 @@
+[package]
+name = "my-fn"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A function-wasm guest: a Crossplane composition function compiled to a wasip1 module with prost"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+prost = "0.14"
+prost-types = "0.14"
+
+[build-dependencies]
+prost-build = "0.14"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
