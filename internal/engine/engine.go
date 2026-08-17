@@ -77,6 +77,12 @@ type Config struct {
 	// execute. Zero means metered but unbounded (the histogram observes,
 	// nothing is capped). Only meaningful when Fuel is true.
 	InstructionLimit int64
+	// MaxTotalRunMemory bounds the aggregate linear-memory reservation
+	// of all running modules (bytes). A Run reserves its effective limit
+	// (limits.memory or the ceiling) from this pool before it starts and
+	// returns it after; a Run that cannot fit waits under its context.
+	// Zero means no bound.
+	MaxTotalRunMemory int64
 }
 
 // Defaults applied for zero Config fields.
@@ -133,6 +139,7 @@ type Engine struct {
 	engine    *wasmtime.Engine
 	linker    *wasmtime.Linker
 	runs      chan struct{}
+	mem       *memPool
 	active    atomic.Int64
 	wake      chan struct{}
 	stop      chan struct{}
@@ -184,6 +191,9 @@ func New(cfg Config) (*Engine, error) {
 	e := &Engine{cfg: cfg, engine: engine, linker: linker, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	if cfg.MaxConcurrentRuns > 0 {
 		e.runs = make(chan struct{}, cfg.MaxConcurrentRuns)
+	}
+	if cfg.MaxTotalRunMemory > 0 {
+		e.mem = newMemPool(cfg.MaxTotalRunMemory)
 	}
 	go e.tick()
 	return e, nil
