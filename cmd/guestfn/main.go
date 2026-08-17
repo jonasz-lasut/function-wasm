@@ -1,9 +1,13 @@
-// Package main implements guestfn, the CLI that scaffolds, builds and
-// publishes guest modules for function-wasm.
+// Package main implements guestfn, the CLI that scaffolds, builds, inspects
+// and publishes guest modules for function-wasm. It checks modules with the
+// runtime's own engine (wasmtime), so its verdicts are the runtime's; that
+// makes it a CGo binary like the runtime.
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,8 +24,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/empty"
-	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/partial"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
@@ -29,6 +32,7 @@ import (
 	"golang.org/x/mod/semver"
 
 	"github.com/jonasz-lasut/function-wasm/cmd/guestfn/internal/scaffold"
+	"github.com/jonasz-lasut/function-wasm/internal/engine"
 )
 
 const (
@@ -46,9 +50,10 @@ const (
 
 // CLI is the guestfn command line.
 type CLI struct {
-	Init  InitCmd  `cmd:"" help:"Scaffold a new guest project."`
-	Build BuildCmd `cmd:"" help:"Compile a guest project to a wasip1 module."`
-	Push  PushCmd  `cmd:"" help:"Push a module to an OCI registry as a wasm artifact."`
+	Init    InitCmd    `cmd:"" help:"Scaffold a new guest project."`
+	Build   BuildCmd   `cmd:"" help:"Compile a guest project to a wasip1 module and check its ABI."`
+	Push    PushCmd    `cmd:"" help:"Push a module to an OCI registry as a wasm artifact; a module the runtime would refuse is not pushed."`
+	Inspect InspectCmd `cmd:"" help:"Show what a module (or an artifact in a registry) is made of, as the runtime sees it: size, ABI verdict, exports, imports, memories."`
 
 	Version kong.VersionFlag `help:"Print the version and exit."`
 }
@@ -169,12 +174,52 @@ func (c *BuildCmd) Run(ctx context.Context, stdout io.Writer) error {
 			return err
 		}
 	}
-	st, err := os.Stat(out)
+	// The runtime's own load-time check, so a module it would refuse is
+	// refused here, with the same words, before it is pushed anywhere.
+	wasm, err := os.ReadFile(out) //nolint:gosec // The file the build just wrote.
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(stdout, "Built %s (%.1f MB)\n", out, float64(st.Size())/(1<<20))
+	shape, err := checkModule(wasm)
+	if err != nil {
+		return fmt.Errorf("built %s, but the runtime would refuse it: %w", out, err)
+	}
+	_, _ = fmt.Fprintf(stdout, "Built %s (%s, ABI v1%s)\n", out, humanBytes(int64(len(wasm))), importsSuffix(shape))
 	return nil
+}
+
+// checkModule compiles wasm with the runtime's own engine — wasmtime is the
+// only reader of a module, and a compile is what its verdict costs — and
+// returns the shape, or the refusal the runtime would give at load.
+func checkModule(wasm []byte) (*engine.Shape, error) {
+	shape, err := inspectModule(wasm)
+	if err != nil {
+		return nil, err
+	}
+	if shape.ABIError != nil {
+		return nil, shape.ABIError
+	}
+	return shape, nil
+}
+
+// inspectModule compiles wasm with a throwaway engine and reports its shape,
+// ABI verdict included.
+func inspectModule(wasm []byte) (*engine.Shape, error) {
+	eng, err := engine.New(engine.Config{})
+	if err != nil {
+		return nil, err
+	}
+	defer eng.Close()
+	return eng.Inspect(wasm)
+}
+
+// importsSuffix names the host imports a module uses, for the build line.
+func importsSuffix(shape *engine.Shape) string {
+	imports := shape.HostImports()
+	if len(imports) == 0 {
+		return ""
+	}
+	return ", imports " + strings.Join(imports, " ")
 }
 
 // detectLang tells the language of a project from its files: a Cargo.toml is
@@ -253,6 +298,12 @@ func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// A module the runtime would refuse at load is not published: pushing it
+	// only moves the refusal into an XR condition. Modules for other hosts
+	// are oras push's business.
+	if _, err := checkModule(wasm); err != nil {
+		return fmt.Errorf("%s would be refused by the runtime and is not pushed: %w (guestfn push publishes function-wasm modules; use oras push for other artifacts)", c.File, err)
+	}
 	ref, err := name.ParseReference(c.Ref)
 	if err != nil {
 		return fmt.Errorf("cannot parse reference: %w", err)
@@ -291,19 +342,75 @@ func creationTime() time.Time {
 	return time.Unix(0, 0).UTC()
 }
 
-// artifact wraps a module in the CNCF wasm OCI artifact layout.
+// wasmConfig is the artifact's config as the CNCF wasm OCI artifact
+// specification lists it: created, architecture, os and the digests of the
+// layers.
+type wasmConfig struct {
+	Created      string   `json:"created"`
+	Architecture string   `json:"architecture"`
+	OS           string   `json:"os"`
+	LayerDigests []string `json:"layerDigests"`
+}
+
+// artifact wraps a module in the CNCF wasm OCI artifact layout: one
+// application/wasm layer and a wasm config naming it in layerDigests. The
+// manifest is a function of the module bytes and created alone.
 func artifact(wasm []byte, created time.Time) (v1.Image, error) {
-	img, err := mutate.ConfigFile(empty.Image, &v1.ConfigFile{
+	layer := static.NewLayer(wasm, wasmLayerMediaType)
+	layerDigest, err := layer.Digest()
+	if err != nil {
+		return nil, err
+	}
+	layerSize, err := layer.Size()
+	if err != nil {
+		return nil, err
+	}
+	config, err := json.Marshal(wasmConfig{
+		Created:      created.UTC().Format(time.RFC3339),
 		Architecture: "wasm",
 		OS:           "wasip1",
-		Created:      v1.Time{Time: created},
+		LayerDigests: []string{layerDigest.String()},
 	})
 	if err != nil {
 		return nil, err
 	}
-	img = mutate.ConfigMediaType(img, wasmConfigMediaType)
-	img = mutate.MediaType(img, types.OCIManifestSchema1)
-	return mutate.AppendLayers(img, static.NewLayer(wasm, wasmLayerMediaType))
+	configDigest, configSize, err := v1.SHA256(bytes.NewReader(config))
+	if err != nil {
+		return nil, err
+	}
+	manifest, err := json.Marshal(v1.Manifest{
+		SchemaVersion: 2,
+		MediaType:     types.OCIManifestSchema1,
+		Config:        v1.Descriptor{MediaType: wasmConfigMediaType, Size: configSize, Digest: configDigest},
+		Layers:        []v1.Descriptor{{MediaType: wasmLayerMediaType, Size: layerSize, Digest: layerDigest}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return partial.CompressedToImage(&wasmArtifact{config: config, manifest: manifest, layer: layer})
+}
+
+// wasmArtifact is the minimal image core the artifact needs: raw config and
+// manifest bytes written as they are, and the one layer.
+type wasmArtifact struct {
+	config   []byte
+	manifest []byte
+	layer    v1.Layer
+}
+
+func (a *wasmArtifact) RawConfigFile() ([]byte, error)      { return a.config, nil }
+func (a *wasmArtifact) MediaType() (types.MediaType, error) { return types.OCIManifestSchema1, nil }
+func (a *wasmArtifact) RawManifest() ([]byte, error)        { return a.manifest, nil }
+
+func (a *wasmArtifact) LayerByDigest(h v1.Hash) (partial.CompressedLayer, error) {
+	d, err := a.layer.Digest()
+	if err != nil {
+		return nil, err
+	}
+	if d != h {
+		return nil, fmt.Errorf("no layer %s in the artifact", h)
+	}
+	return a.layer, nil
 }
 
 func run(ctx context.Context, dir string, stdout io.Writer, name string, args ...string) error {
