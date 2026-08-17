@@ -17,8 +17,12 @@ must export:
 | `wasmfn_run` | `(ptr: i32, len: i32) -> i64` | run the function; see below |
 | `_initialize` | `() -> ()` | optional; if present the host calls it once per instance before anything else (WASI reactor convention — Go's `-buildmode=c-shared` emits it) |
 
-Export names and signatures are checked when a module is loaded; a mismatch
-is reported once, at load, rather than on every request.
+Export names and signatures are checked when a module is loaded — from
+wasmtime's own decoded types, once it is compiled; a mismatch is reported
+once, at load, rather than on every request. `guestfn build` prints the same
+verdict (it compiles the module with the same engine), `guestfn push`
+refuses a module that fails it, and `guestfn inspect fn.wasm` shows exactly
+what the runtime sees: exports, imports and memories with their types.
 
 The host provides these imports:
 
