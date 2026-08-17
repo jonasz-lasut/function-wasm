@@ -616,14 +616,14 @@ The full host/guest contract is in [docs/abi.md](docs/abi.md).
 
 ## Runtime flags
 
-The binary has two subcommands: `serve` — the default, so `function
+The binary has three subcommands: `serve` - the default, so `function
 --insecure --module-dir=.` and a `DeploymentRuntimeConfig`'s `args` need no
-subcommand — and [`validate`](#validate-a-composition), which takes the
-ceiling flags below (`--module-dir`, `--max-module-size`,
-`--module-timeout`, `--module-memory-limit`, `--cosign-key`, the
-`--enable-sandbox-*` flags and `--sandbox-egress-policy`) with the same
-defaults and environment variables, so a Composition is validated against
-exactly what a runtime started with those flags would admit.
+subcommand - [`validate`](#validate-a-composition), which takes the
+ceiling flags below with the same defaults and environment variables, so a
+Composition is validated against exactly what a runtime started with those
+flags would admit, and `precompile`, which compiles named modules into
+the cache volume ahead of time (an init container or a Job over the shared
+volume) and exits non-zero when any entry fails.
 
 | flag | env | default | purpose |
 |---|---|---|---|
@@ -636,6 +636,8 @@ exactly what a runtime started with those flags would admit.
 | `--max-concurrent-compiles` | `MAX_CONCURRENT_COMPILES` | `1` | modules compiled at once. One compile already uses every core (~25 CPU-seconds and ~1 GB for a large Go module); further first requests wait their turn instead of multiplying that |
 | `--max-cache-size` | `MAX_CACHE_SIZE` | `0` (unbounded) | MB the two on-disk caches may hold together; past it the least recently used entries (fetched modules and artifacts alike, ~230 MB per Go module version) are removed, at startup and every ten minutes. Size the volume, or set this below its size |
 | `--cosign-key` | `COSIGN_KEY` | unset | PEM file of cosign public key(s); when set only OCI modules with a matching `cosign sign --key` signature run, and `http`/`path` sources are refused |
+| `--registry-mirror` | `REGISTRY_MIRROR` | unset | rewrite the fetch location of OCI sources: `--registry-mirror ghcr.io=registry.internal/ghcr` fetches `ghcr.io/repo@sha256:...` from `registry.internal/ghcr/repo@sha256:...` instead. Policy, cache keys, audit and description see the stated ref. Auth for the mirror uses the runtime's Docker config, not a step credential. The cosign `.sig` lookup goes to the mirror too. Repeatable |
+| `--oci-layout-dir` | `OCI_LAYOUT_DIR` | unset | OCI image-layout directory (`index.json`, `blobs/sha256/...`, as `crane pull --format=oci` or `oras copy --to-oci-layout` writes it) consulted before the network for OCI sources. The stated manifest digest names a blob regardless of any repository name; the manifest names its layer. With `--cosign-key` the `.sig` manifest is looked up in the layout's index by its ref-name annotation, so verification works offline |
 | `--max-concurrent-runs` | `MAX_CONCURRENT_RUNS` | `0` (unbounded) | module runs executing at once; a further request waits for a slot under its own deadline and, if that passes first, is a fatal result (`waiting for a run slot: context deadline exceeded`) without having run. Unbounded, concurrency is the caller's — Crossplane's reconcile workers |
 | `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | total linear-memory budget in MB across all running modules; a run reserves its effective limit (`limits.memory` or `--module-memory-limit`) from the pool before it starts and waits under its deadline when the pool is full. A step that states a small `limits.memory` gets more parallelism |
 | `--warm-modules` | `WARM_MODULES` | unset | modules loaded before the health service reports Serving — resolved, verified (`--cosign-key` applies), then compiled or mapped through the same caches a request uses: OCI references pinned to their manifest digest (`repo[:tag]@sha256:…`, pulled with the runtime's Docker config) and, with `--module-dir`, `path:<file>` entries. Repeatable or comma-separated. An entry that fails to load is logged with the reason and does not stop the pod from serving; that module is loaded on its first request as usual |
