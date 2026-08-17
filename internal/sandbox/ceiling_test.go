@@ -56,13 +56,33 @@ func TestGrant(t *testing.T) {
 		want   Grant
 		err    string
 	}{
-		"Nil":                {reason: "No sandbox is the default sandbox.", args: args{ceiling: all}},
-		"NilCeiling":         {reason: "A nil ceiling allows nothing but the default sandbox.", args: args{ceiling: nil, sandbox: &v1beta1.Sandbox{}}},
-		"Empty":              {reason: "An empty sandbox is the default sandbox whatever the ceiling.", args: args{ceiling: nil, sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{}, Env: map[string]string{}}}},
-		"PrivateTmp":         {reason: "The private /tmp is granted when enabled.", args: args{ceiling: all, sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}}, want: Grant{PrivateTmp: true}},
-		"PrivateTmpDisabled": {reason: "The private /tmp when not enabled names the flag.", args: args{ceiling: none, sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}}, err: "sandbox.filesystem.privateTmp is refused: the runtime was started without --enable-sandbox-private-tmp"},
-		"Env":                {reason: "The environment is granted when enabled.", args: args{ceiling: all, sandbox: &v1beta1.Sandbox{Env: map[string]string{"GREETING": "hello"}}}, want: Grant{Env: map[string]string{"GREETING": "hello"}}},
-		"EnvDisabled":        {reason: "Environment variables when not enabled name the flag.", args: args{ceiling: none, sandbox: &v1beta1.Sandbox{Env: map[string]string{"GREETING": "hello"}}}, err: "sandbox.env is refused: the runtime was started without --enable-sandbox-env"},
+		"Nil":        {reason: "No sandbox is the default sandbox.", args: args{ceiling: all}},
+		"NilCeiling": {reason: "A nil ceiling allows nothing but the default sandbox.", args: args{ceiling: nil, sandbox: &v1beta1.Sandbox{}}},
+		"Empty":      {reason: "An empty sandbox is the default sandbox whatever the ceiling.", args: args{ceiling: nil, sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{}}}},
+		"PrivateTmp": {reason: "The private /tmp is granted when enabled.", args: args{ceiling: all, sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}}, want: Grant{PrivateTmp: true}},
+		"PrivateTmpDisabled": {
+			reason: "The private /tmp when not enabled names the flag.",
+			args:   args{ceiling: none, sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}},
+			err:    "sandbox.filesystem.privateTmp is refused: the runtime was started without --enable-sandbox-private-tmp",
+		},
+		"Env": {
+			reason: "Env entries pass the ceiling check when enabled.",
+			args:   args{ceiling: all, sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "GREETING", Value: new("hello")}}}},
+		},
+		"EnvDisabled": {
+			reason: "Environment variables when not enabled name the flag.",
+			args:   args{ceiling: none, sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "GREETING", Value: new("hello")}}}},
+			err:    "sandbox.env is refused: the runtime was started without --enable-sandbox-env",
+		},
+		"EnvFromDisabled": {
+			reason: "EnvFrom when not enabled names the flag.",
+			args:   args{ceiling: none, sandbox: &v1beta1.Sandbox{EnvFrom: []v1beta1.EnvFromSource{{Credential: &v1beta1.CredentialRef{Name: "vault"}}}}},
+			err:    "sandbox.envFrom is refused: the runtime was started without --enable-sandbox-env",
+		},
+		"EnvFrom": {
+			reason: "EnvFrom passes the ceiling check when enabled.",
+			args:   args{ceiling: all, sandbox: &v1beta1.Sandbox{EnvFrom: []v1beta1.EnvFromSource{{Credential: &v1beta1.CredentialRef{Name: "vault"}}}}},
+		},
 		"EgressIgnored": {
 			reason: "Egress is not this method's business: it neither grants nor refuses it.",
 			args:   args{ceiling: nil, sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}},

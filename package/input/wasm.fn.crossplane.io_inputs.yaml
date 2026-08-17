@@ -278,15 +278,89 @@ spec:
                     type: array
                 type: object
               env:
-                additionalProperties:
-                  type: string
                 description: |-
-                  Env sets the environment variables the module sees — exactly these,
-                  never the runtime's (--enable-sandbox-env). Non-secret configuration
-                  only: secrets keep coming through step credentials, so nothing the
-                  guest might log or write to its private /tmp carries them. Keys are
-                  identifiers ([A-Za-z_][A-Za-z0-9_]*); values may not contain NUL.
-                type: object
+                  Env sets the environment variables the module sees - exactly these,
+                  never the runtime's (--enable-sandbox-env). Each entry names one
+                  variable with a literal value or a reference to a step credential's
+                  key. A name set twice (across Env and every EnvFrom import) is
+                  refused.
+                items:
+                  description: EnvVar sets one environment variable from a literal
+                    or a step credential.
+                  properties:
+                    name:
+                      description: 'Name of the variable: an identifier, [A-Za-z_][A-Za-z0-9_]*.'
+                      pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                      type: string
+                    value:
+                      description: Value is a literal string. Non-secret configuration
+                        only.
+                      type: string
+                    valueFrom:
+                      description: ValueFrom reads the value from a source in the
+                        request.
+                      properties:
+                        credential:
+                          description: Credential reads one key of a pipeline-step
+                            credential.
+                          properties:
+                            key:
+                              description: Key within the credential's data.
+                              minLength: 1
+                              type: string
+                            name:
+                              description: Name of the step credential.
+                              minLength: 1
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                      type: object
+                      x-kubernetes-validations:
+                      - message: exactly one source must be set (credential)
+                        rule: has(self.credential)
+                  required:
+                  - name
+                  type: object
+                  x-kubernetes-validations:
+                  - message: exactly one of value and valueFrom must be set
+                    rule: has(self.value) != has(self.valueFrom)
+                type: array
+              envFrom:
+                description: |-
+                  EnvFrom bulk-imports every key of a step credential as an environment
+                  variable, optionally with a prefix. A key that is not a valid
+                  variable name (after prefixing) refuses the run - use Env with
+                  valueFrom to select specific keys instead.
+                items:
+                  description: |-
+                    EnvFromSource bulk-imports a step credential's keys as environment
+                    variables. Exactly one source member is set.
+                  properties:
+                    credential:
+                      description: Credential names the step credential whose keys
+                        become variables.
+                      properties:
+                        name:
+                          description: Name of the step credential.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    prefix:
+                      description: |-
+                        Prefix is prepended to each imported key, e.g. "VAULT_" turns
+                        "TOKEN" into "VAULT_TOKEN". Must be a valid identifier prefix
+                        ([A-Za-z_][A-Za-z0-9_]*) or empty.
+                      pattern: ^([A-Za-z_][A-Za-z0-9_]*)?$
+                      type: string
+                  type: object
+                  x-kubernetes-validations:
+                  - message: exactly one source must be set (credential)
+                    rule: has(self.credential)
+                type: array
               filesystem:
                 description: |-
                   Filesystem grants a private /tmp. Host directories are deliberately
@@ -297,7 +371,7 @@ spec:
                     description: |-
                       PrivateTmp pre-opens a private, empty, writable /tmp for the duration
                       of the request, created under the runtime's $TMPDIR before the module
-                      runs and removed when the run ends whatever its outcome — systemd's
+                      runs and removed when the run ends whatever its outcome - systemd's
                       PrivateTmp (--enable-sandbox-private-tmp).
                     type: boolean
                 type: object

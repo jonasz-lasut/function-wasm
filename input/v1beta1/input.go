@@ -211,7 +211,7 @@ type Limits struct {
 	Memory *resource.Quantity `json:"memory,omitempty"`
 }
 
-// Sandbox grants a module access beyond the default sandbox — nothing but
+// Sandbox grants a module access beyond the default sandbox - nothing but
 // the request. The operator sets the ceiling with runtime flags, the
 // Composition asks for what its module needs, the module gets the
 // intersection; a grant outside the ceiling is a fatal result before the
@@ -228,22 +228,87 @@ type Sandbox struct {
 	// +optional
 	Egress *SandboxEgress `json:"egress,omitempty"`
 
-	// Env sets the environment variables the module sees — exactly these,
-	// never the runtime's (--enable-sandbox-env). Non-secret configuration
-	// only: secrets keep coming through step credentials, so nothing the
-	// guest might log or write to its private /tmp carries them. Keys are
-	// identifiers ([A-Za-z_][A-Za-z0-9_]*); values may not contain NUL.
+	// Env sets the environment variables the module sees - exactly these,
+	// never the runtime's (--enable-sandbox-env). Each entry names one
+	// variable with a literal value or a reference to a step credential's
+	// key. A name set twice (across Env and every EnvFrom import) is
+	// refused.
 	// +optional
-	Env map[string]string `json:"env,omitempty"`
+	Env []EnvVar `json:"env,omitempty"`
+
+	// EnvFrom bulk-imports every key of a step credential as an environment
+	// variable, optionally with a prefix. A key that is not a valid
+	// variable name (after prefixing) refuses the run - use Env with
+	// valueFrom to select specific keys instead.
+	// +optional
+	EnvFrom []EnvFromSource `json:"envFrom,omitempty"`
+}
+
+// EnvVar sets one environment variable from a literal or a step credential.
+// +kubebuilder:validation:XValidation:rule="has(self.value) != has(self.valueFrom)",message="exactly one of value and valueFrom must be set"
+type EnvVar struct {
+	// Name of the variable: an identifier, [A-Za-z_][A-Za-z0-9_]*.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]*$`
+	Name string `json:"name"`
+
+	// Value is a literal string. Non-secret configuration only.
+	// +optional
+	Value *string `json:"value,omitempty"`
+
+	// ValueFrom reads the value from a source in the request.
+	// +optional
+	ValueFrom *ValueSource `json:"valueFrom,omitempty"`
+}
+
+// ValueSource reads a value from the request. Exactly one member is set;
+// new kinds (composite, context) are added as members - never a break.
+// +kubebuilder:validation:XValidation:rule="has(self.credential)",message="exactly one source must be set (credential)"
+type ValueSource struct {
+	// Credential reads one key of a pipeline-step credential.
+	// +optional
+	Credential *CredentialKeyRef `json:"credential,omitempty"`
+}
+
+// CredentialKeyRef selects one key of a step credential.
+type CredentialKeyRef struct {
+	// Name of the step credential.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// Key within the credential's data.
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
+}
+
+// EnvFromSource bulk-imports a step credential's keys as environment
+// variables. Exactly one source member is set.
+// +kubebuilder:validation:XValidation:rule="has(self.credential)",message="exactly one source must be set (credential)"
+type EnvFromSource struct {
+	// Credential names the step credential whose keys become variables.
+	// +optional
+	Credential *CredentialRef `json:"credential,omitempty"`
+
+	// Prefix is prepended to each imported key, e.g. "VAULT_" turns
+	// "TOKEN" into "VAULT_TOKEN". Must be a valid identifier prefix
+	// ([A-Za-z_][A-Za-z0-9_]*) or empty.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^([A-Za-z_][A-Za-z0-9_]*)?$`
+	Prefix string `json:"prefix,omitempty"`
+}
+
+// CredentialRef names a step credential.
+type CredentialRef struct {
+	// Name of the step credential.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 }
 
 // SandboxFilesystem is what a module gets of a filesystem beyond nothing: a
 // private, empty, writable /tmp for the duration of the request. Host
-// directories are not mountable — that boundary stays closed.
+// directories are not mountable - that boundary stays closed.
 type SandboxFilesystem struct {
 	// PrivateTmp pre-opens a private, empty, writable /tmp for the duration
 	// of the request, created under the runtime's $TMPDIR before the module
-	// runs and removed when the run ends whatever its outcome — systemd's
+	// runs and removed when the run ends whatever its outcome - systemd's
 	// PrivateTmp (--enable-sandbox-private-tmp).
 	// +optional
 	PrivateTmp bool `json:"privateTmp,omitempty"`

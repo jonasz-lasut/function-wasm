@@ -108,6 +108,24 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	if err != nil {
 		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
 	}
+
+	// Resolve env[] and envFrom[] against the request's credentials, after
+	// registryAuth: the pull credential is known and withheld as a source.
+	var pullCred string
+	if src.OCI != nil && src.OCI.Credentials != "" {
+		pullCred = src.OCI.Credentials
+	}
+	if sandbox.RequestsEnv(in.Sandbox) {
+		env, err := sandbox.Materialize(in.Sandbox, sandbox.Sources{
+			Credentials: req.GetCredentials(),
+			Withheld:    pullCred,
+		})
+		if err != nil {
+			return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
+		}
+		limits.Env = env
+	}
+
 	// The credential that pulls the module is the host's business: the guest
 	// sees every other step credential, as a native function would, but not
 	// the one that fetched it.

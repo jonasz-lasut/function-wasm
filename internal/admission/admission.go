@@ -84,7 +84,9 @@ func Admit(in *v1beta1.Input, c Ceilings) (Admitted, error) {
 		return out, err
 	}
 	opts.PrivateTmp = grant.PrivateTmp
-	opts.Env = grant.Env
+	// Env is populated by sandbox.Materialize after the pull credential is
+	// known, not here: valueFrom references need the request's credentials
+	// and the withheld pull credential name, neither of which Admit has.
 	out.Options, out.Grant = opts, grant
 	if err := module.Validate(in.Module); err != nil {
 		return out, fmt.Errorf("cannot resolve module: %w", err)

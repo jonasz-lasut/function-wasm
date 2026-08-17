@@ -28,7 +28,8 @@ spec:
             methods: [GET]
             pathPrefix: /v1/
         env:
-          GREETING_STYLE: formal
+        - name: GREETING_STYLE
+          value: formal
         filesystem:
           privateTmp: true
   - step: labeler
