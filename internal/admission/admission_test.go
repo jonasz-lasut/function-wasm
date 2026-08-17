@@ -37,10 +37,11 @@ func TestAdmit(t *testing.T) {
 		c  Ceilings
 	}
 	type want struct {
-		options engine.RunOptions
-		grant   sandbox.Grant
-		http    bool
-		err     string
+		options     engine.RunOptions
+		grant       sandbox.Grant
+		http        bool
+		concurrency int
+		err         string
 	}
 	cases := map[string]struct {
 		reason string
@@ -151,6 +152,30 @@ func TestAdmit(t *testing.T) {
 			},
 			want: want{options: engine.RunOptions{Instructions: 10_000_000}},
 		},
+		"ConcurrencySet": {
+			reason: "A concurrency limit is passed through.",
+			args: args{
+				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(4))}},
+				c:  all,
+			},
+			want: want{concurrency: 4},
+		},
+		"ConcurrencyCapped": {
+			reason: "Concurrency above --max-concurrent-runs is silently capped.",
+			args: args{
+				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(10))}},
+				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, MaxConcurrentRuns: 5}, Sandbox: open, Egress: fenced},
+			},
+			want: want{concurrency: 5},
+		},
+		"ConcurrencyNoBound": {
+			reason: "Concurrency without --max-concurrent-runs is uncapped.",
+			args: args{
+				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(100))}},
+				c:  all,
+			},
+			want: want{concurrency: 100},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -172,6 +197,9 @@ func TestAdmit(t *testing.T) {
 			}
 			if (got.HTTP != nil) != tc.want.http {
 				t.Errorf("\n%s\nAdmit() HTTP grant present: %v, want %v", tc.reason, got.HTTP != nil, tc.want.http)
+			}
+			if got.Concurrency != tc.want.concurrency {
+				t.Errorf("\n%s\nAdmit() concurrency: got %d, want %d", tc.reason, got.Concurrency, tc.want.concurrency)
 			}
 		})
 	}

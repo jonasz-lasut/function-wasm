@@ -50,7 +50,10 @@ Crossplane RunFunctionRequest
 │       the manifests/<digest> store; none for path/http) held against the     │
 │       admitted grants and the Input's config — narrowing only, a miss is a   │
 │       fatal "module <desc> requires …" / "config does not match …"          │
-│  6. engine.Run(ctx, module, req, log, limits)              internal/engine   │
+│  6. stepSlots.Acquire(ctx, digest, concurrency)   limits.concurrency        │
+│       per-step semaphore (0 = skip); waited under ctx; a timeout is fatal  │
+│       "waiting for one of this step's N run slots (limits.concurrency)"    │
+│  7. engine.Run(ctx, module, req, log, limits)              internal/engine   │
 │       run slot first when --max-concurrent-runs bounds them (waits under    │
 │       ctx; deadline while waiting → fatal "waiting for a run slot: …");     │
 │       fresh Store: WASI argv=["function"], no net; fs and env only as        │
@@ -63,7 +66,7 @@ Crossplane RunFunctionRequest
 │       host import wasmfn.http → RunOptions.HTTP (egress.Client: grant,      │
 │       block list, budgets, audit line) or a refusal; answer written via the │
 │       guest's wasmfn_alloc                                                   │
-│  7. return the guest's response verbatim (meta filled if the guest omitted it)│
+│  8. return the guest's response verbatim (meta filled if the guest omitted it)│
 │     trap / timeout / OOM / bad ABI / fetch / compile → response.Fatal        │
 └──────────────────────────────────────────────────────────────────────────────┘
     ↓
@@ -77,7 +80,7 @@ Inside the module (a Go guest built with `wasmfn`): `wasmfn_run` looks up the bu
 ```
 cmd/function/main.go        kong CLI: CLI{Debug, Serve (default:"withargs" — every existing invocation and a DeploymentRuntimeConfig's args keep working), Validate}; CeilingFlags embedded in both (module-dir, max-module-size, module-timeout, module-memory-limit, cosign-key, enable-sandbox-*, sandbox-egress-policy, enable-fuel, module-instruction-limit) with ceilings() (sandbox.NewCeiling checked at startup, egress.LoadPolicy/New only with --enable-sandbox-egress → admission.Ceilings) and resolver(); engineConfig() wires Fuel and InstructionLimit into engine.Config; ServeCmd.Run → engine.New, openCaches(fuel) (afero stores under /tmp/function-wasm-cache, Version(fuel) namespaces the compiled store), engine.NewCache → health NOT_SERVING → function.Serve(&Function{}) with warm-up (below) flipping it to SERVING; main maps validate's exitError to the exit code
 cmd/function/validate.go    ValidateCmd: files (multi-doc YAML/JSON, - stdin) → Composition pipeline[].input of kind Input (wasm.fn.crossplane.io/v1beta1) or bare Input docs → per step: strict decode (unknown fields → warnings), admission.Admit, --xr → module.FromComposite / else module.ValidateFrom, --resolve → resolver + Verify + Fetch + engine.Inspect; text (one line per step, warnings indented) or --output json (one object per step per line); exit 0 admitted / 1 refused / 2 tool failure
-cmd/function/fn.go          Function.RunFunction: the seven steps above; ceilings() → admission.Ceilings; load (cache Get + fetch log, shared with warm-up); checkManifest/manifestFor (memory → manifests store → Ref.Manifest; parsed once per digest); registryAuth for OCI step credentials; egress grant → per-run HTTP client on RunOptions
+cmd/function/fn.go          Function.RunFunction: the eight steps above; ceilings() → admission.Ceilings; load (cache Get + fetch log, shared with warm-up); checkManifest/manifestFor (memory → manifests store → Ref.Manifest; parsed once per digest); registryAuth for OCI step credentials; egress grant → per-run HTTP client on RunOptions; stepSlots.Acquire for limits.concurrency before engine.Run
 cmd/function/warm.go        --warm-modules: warmSource (path:<file> | OCI ref) → resolve → Verify → load → Release, at most --max-concurrent-compiles at once, failures logged per entry (recover included), never fatal
 internal/engine             wasmtime wrapper — the only production importer of github.com/bytecodealliance/wasmtime-go/vNN (internal/testwasm uses its Wat2Wasm)
   engine.go                   Engine (config incl. MaxConcurrentRuns → run slots, Fuel + InstructionLimit → fuel metering, on-demand epoch ticker + runs_in_flight gauge, linker with WASI + wasmfn.log + wasmfn.http; native unwind info off; SetConsumeFuel when Fuel is on), Compile + checkABI (exports, both imports' types), Module leases; RunOptions (limits + Instructions + PrivateTmp/Env + HTTP); Config.WithDefaults; Version(fuel) appends -fuel when fuel is on — artifacts are not interchangeable; ErrFuel sentinel
@@ -86,9 +89,10 @@ internal/engine             wasmtime wrapper — the only production importer of
   sandbox.go                  privateTmp/removePrivateTmp (os.MkdirTemp under os.TempDir(), removed after the store), configureSandbox (/tmp pre-opened read-write — the only pre-open a guest ever gets, host directories are not mountable — SetEnv sorted)
   hostlog.go                  wasmfn.log import → logging.Logger
   hosthttp.go                 wasmfn.http import → RunOptions.HTTP (engine.HTTPRequester, nil = refuse); JSON in, JSON out through the guest's wasmfn_alloc (re-entrant); the run's deadline bounds the request
+  concurrency.go              StepSlots: per-module-digest semaphore for limits.concurrency; Acquire(ctx, key, n) → release func, waited under ctx; SweepIdle removes entries idle > 10 min; NewStepSlots
   cache.go                    Cache: memory (idle TTL, LRU bound, leases) over the compiled-artifact store (mapped), single-flight loads with compile slots; Serialize/Deserialize/DeserializeFile/Version in engine.go
 internal/manifest           the module manifest (docs/one-pager-module-manifest.md): Manifest{ABI, Name, Version, Source, Description, Requires{Egress{HTTP []SandboxHTTPRule}, Filesystem} — env is deliberately not a requirement (values the Composition sets, one day the request), Config{Schema}, MinRuntime}; Load (wasmfn.yaml, strict), Parse (the artifact layer: unknown top-level fields ignored, unknown requires refused, ≤ MaxSize), Validate (rules via sandbox.ValidateRules, semver, schema compiled once — jsonschema/v6, draft 2020-12, $ref to URLs refused), Check(Grants, config, runtimeVersion) with the fixed refusal strings, ValidateConfig, Sandbox() (the Composition block that satisfies requires), Summary, JSON, RuntimeVersion; LayerMediaType application/vnd.wasmfn.manifest.v1+json, FileName wasmfn.yaml
-internal/admission          Admit(in, Ceilings{Engine engine.Config, Sandbox *sandbox.Ceiling, Egress *egress.Egress}) → Admitted{Options engine.RunOptions, Grant, HTTP *egress.Grant}: RunFunction's step 1 — sandbox shape, grants within the ceilings, egress within the policy, limits, module + policy shape — one function RunFunction and function validate share, refusal strings unchanged
+internal/admission          Admit(in, Ceilings{Engine engine.Config, Sandbox *sandbox.Ceiling, Egress *egress.Egress}) → Admitted{Options engine.RunOptions, Grant, HTTP *egress.Grant, Concurrency int}: RunFunction's step 1 — sandbox shape, grants within the ceilings, egress within the policy, limits (incl. concurrency capped to MaxConcurrentRuns), module + policy shape — one function RunFunction and function validate share, refusal strings unchanged
 internal/cache              afero content-addressed Store (verify on read for blobs), Subdir, RemoveOthers; DefaultDir /tmp/function-wasm-cache
 internal/module             ModuleSource → Ref{Digest, Description, Fetch}
   module.go                   Resolver, Options (Blobs *cache.Store), Validate (type + exactly one of its object or from, no foreign object; digest-pinned oci refs, required http digest), Resolve switches on type, verified() (blob store + digest check), timed() (fetch metric)
@@ -146,7 +150,7 @@ type Input struct {
     metav1.ObjectMeta `json:"metadata,omitempty"`
     Module  ModuleSource         `json:"module"`            // Type OCI|HTTP|Path (required) + exactly one of OCI{Ref, Credentials}, HTTP{URL, Digest}, Path, or From (the XR field holding that object)
     Policy  *Policy              `json:"policy,omitempty"`  // RepositoryAllowList, CredentialsAllowList — fences From sources only; never read from the XR
-    Limits  *Limits              `json:"limits,omitempty"`  // Timeout (metav1.Duration), Memory (resource.Quantity), Instructions (int64, fuel) — each ≤ the runtime's ceiling flag
+    Limits  *Limits              `json:"limits,omitempty"`  // Timeout (metav1.Duration), Memory (resource.Quantity), Instructions (int64, fuel), Concurrency (int32, per-step) — each ≤ the runtime's ceiling flag (concurrency silently capped)
     Sandbox *Sandbox             `json:"sandbox,omitempty"` // Filesystem{PrivateTmp}, Env[]EnvVar{Name,Value|ValueFrom}, EnvFrom[]EnvFromSource{Credential,Prefix}, Egress{HTTP} - all granted within the --enable-sandbox-* flags; host directories are not mountable
     Config  *runtime.RawExtension `json:"config,omitempty"` // opaque; the guest reads it via wasmfn.GetConfig
 }
@@ -414,5 +418,6 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 - **`limits.instructions is refused: the runtime was started without --enable-fuel`**: the Composition sets `limits.instructions` but the operator did not enable fuel counting; start the runtime with `--enable-fuel`.
 - **`limits.instructions N exceeds the runtime's --module-instruction-limit of M`**: the Composition asks for more than the operator allows; lower the limit or raise `--module-instruction-limit`.
 - **`module … failed: waiting for a run slot: context deadline exceeded`**: `--max-concurrent-runs` is set and the request's deadline passed while other runs held every slot; nothing ran. Raise the bound, shorten the modules that hold slots (`limits.timeout`), or read `function_wasm_module_runs_in_flight` to see the queue.
+- **`module … failed: waiting for one of this step's N run slots (limits.concurrency): context deadline exceeded`**: the Composition sets `limits.concurrency` and all N slots for this module are held; the request's deadline passed while waiting. Lower the concurrency limit, shorten runs (`limits.timeout`), or raise the limit.
 - **`Cannot warm module` at startup**: a `--warm-modules` entry did not load — the log line carries the entry and the reason (a tag instead of `@sha256:`, a `path:` without `--module-dir`, a missing file, a registry error, a `--cosign-key` refusal). The pod serves anyway; that module is loaded on its first request.
 - **Readiness probe fails for a while after start**: the pod is warming `--warm-modules` (`Warming modules` … `Warmed modules` in the log, one compile per cold entry); a gRPC liveness probe on the same port must outlast it, a TCP one is unaffected.

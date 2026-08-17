@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, Phases 1-2 Implemented
+* Status: Draft, Phases 1-2 and limits.concurrency (Phase 3) Implemented
 
 The resource-governance one-pager bounds a run by wall clock and linear
 memory, the runtime by compiles, resident modules, disk and (optionally)
@@ -115,14 +115,15 @@ queue everyone's behind them (the resource-governance one-pager says so),
 and without it `runs × --module-memory-limit` is the caller's number. Four
 small additions, all in `internal/engine` and `cmd/function`, all optional:
 
-- **`limits.concurrency`** (int, ≥ 1): at most N runs of *this step* at
-  once — a semaphore keyed by `sha256(canonical Input) ‖ module digest`
-  (bounded by Compositions × steps, idle-expired), taken after the module
-  is loaded and before the global slot, waited under the request context:
+- **`limits.concurrency`** (int32, ≥ 1): at most N runs of *this step* at
+  once - a semaphore keyed by the module's content digest
+  (bounded by the set of served digests, idle-expired every ten minutes),
+  taken after the module is loaded and before the global slot, waited under
+  the request context:
   `waiting for one of this step's 2 run slots (limits.concurrency): context
-  deadline exceeded` — a fatal result that consumed nothing, not a run. No
+  deadline exceeded` - a fatal result that consumed nothing, not a run. No
   ceiling: a Composition can only lower; a value above
-  `--max-concurrent-runs` is capped silently. S.
+  `--max-concurrent-runs` is capped silently. **Implemented.**
 - **Fair queueing** when `--max-concurrent-runs` is set: the slot channel
   becomes per-digest queues served round-robin, so one hot module takes at
   most its share of the slots and a request's wait is bounded by the number

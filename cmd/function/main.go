@@ -208,6 +208,7 @@ func (c *ServeCmd) Run(cli *CLI) error {
 		resolver:  resolver,
 		sandbox:   ceilings.Sandbox,
 		manifests: manifests,
+		stepSlots: engine.NewStepSlots(),
 	}
 	// Readiness: the caches are open, the engine is up and the modules named
 	// by --warm-modules are loaded. It is answered twice — by the gRPC health
