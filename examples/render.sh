@@ -27,8 +27,16 @@ fi
 work=$(mktemp -d)
 trap 'kill "${fn_pid:-}" 2>/dev/null || true; rm -rf "$work"' EXIT
 
-echo "==> building and starting the runtime" >&2
+echo "==> building the runtime" >&2
 (cd "$root" && go build -o "$work/function" ./cmd/function)
+
+# The runtime's own admission over the example Composition, offline, before
+# anything is served: the same flags the runtime is started with below, and
+# --resolve reads fn.wasm's ABI the way the runtime will.
+echo "==> function validate" >&2
+"$work/function" validate "$here/example/composition.yaml" --module-dir="$here" --resolve >&2
+
+echo "==> starting the runtime" >&2
 "$work/function" --insecure --module-dir="$here" >"$work/function.log" 2>&1 &
 fn_pid=$!
 for _ in $(seq 1 40); do

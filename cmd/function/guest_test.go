@@ -94,6 +94,18 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 		t.Fatal(err)
 	}
 	defer eng.Close()
+	// What guestfn inspect and validate --resolve report: every guest is
+	// ABI v1 and imports both host functions.
+	shape, err := eng.Inspect(wasm)
+	if err != nil {
+		t.Fatalf("Inspect(): %v", err)
+	}
+	if shape.ABIError != nil {
+		t.Fatalf("Inspect(): %v", shape.ABIError)
+	}
+	if imports := shape.HostImports(); !slices.Contains(imports, "wasmfn.log") || !slices.Contains(imports, "wasmfn.http") {
+		t.Fatalf("guest imports %v, want wasmfn.log and wasmfn.http", imports)
+	}
 	resolver, err := module.NewResolver(module.Options{Dir: dir})
 	if err != nil {
 		t.Fatal(err)

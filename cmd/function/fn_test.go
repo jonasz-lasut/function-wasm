@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -600,26 +600,43 @@ func TestRunFunctionSandboxCeiling(t *testing.T) {
 
 // TestSandboxFlags pins the shape of the sandbox flags: each capability has
 // its --enable-sandbox-<feature> switch, off by default, readable from the
-// environment; there is no flag that mounts a host directory.
+// environment; there is no flag that mounts a host directory. serve is the
+// default command, so the flags need no subcommand and a
+// DeploymentRuntimeConfig's args keep working; validate takes the same
+// ceiling flags.
 func TestSandboxFlags(t *testing.T) {
 	t.Setenv("ENABLE_SANDBOX_ENV", "true")
 	var c CLI
-	parser, err := kong.New(&c)
+	p := parser(&c, io.Discard)
+	ctx, err := p.Parse([]string{"--enable-sandbox-private-tmp", "--insecure"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"--enable-sandbox-private-tmp"}); err != nil {
-		t.Fatal(err)
+	if ctx.Command() != "serve" {
+		t.Errorf("flags without a subcommand select %q, want serve", ctx.Command())
 	}
-	if _, err := parser.Parse([]string{"--enable-sandbox-mounts"}); err == nil {
+	if _, err := p.Parse([]string{"--enable-sandbox-mounts"}); err == nil {
 		t.Fatal("--enable-sandbox-mounts must not exist: host directories are not mountable into modules")
 	}
-	want := CLI{
-		Network: "tcp", Address: ":9443", MaxRecvMessageSize: 4, MaxModuleSize: 128, ModuleTimeout: 30 * time.Second, EnableMemoryCache: true, MaxConcurrentCompiles: 1, ModuleMemoryLimit: 512, HealthAddress: ":8081",
-		EnableSandboxPrivateTmp: true, EnableSandboxEnv: true,
+	ceilings := CeilingFlags{MaxModuleSize: 128, ModuleTimeout: 30 * time.Second, ModuleMemoryLimit: 512, EnableSandboxPrivateTmp: true, EnableSandboxEnv: true}
+	want := ServeCmd{
+		CeilingFlags: ceilings,
+		Network:      "tcp", Address: ":9443", Insecure: true, MaxRecvMessageSize: 4, EnableMemoryCache: true, MaxConcurrentCompiles: 1, HealthAddress: ":8081",
 	}
-	if diff := cmp.Diff(want, c); diff != "" {
-		t.Errorf("kong.Parse(): -want, +got:\n%s", diff)
+	if diff := cmp.Diff(want, c.Serve); diff != "" {
+		t.Errorf("serve flags: -want, +got:\n%s", diff)
+	}
+
+	c = CLI{}
+	ctx, err = parser(&c, io.Discard).Parse([]string{"validate", "composition.yaml", "--enable-sandbox-private-tmp", "--output", "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Command() != "validate <file>" {
+		t.Errorf("validate selects %q", ctx.Command())
+	}
+	if diff := cmp.Diff(ValidateCmd{CeilingFlags: ceilings, Files: []string{"composition.yaml"}, Output: "json"}, c.Validate, cmpopts.IgnoreUnexported(ValidateCmd{})); diff != "" {
+		t.Errorf("validate flags: -want, +got:\n%s", diff)
 	}
 }
 
