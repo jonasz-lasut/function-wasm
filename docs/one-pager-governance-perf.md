@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, Phases 1-2 and limits.concurrency + --max-total-run-memory (Phase 3) Implemented
+* Status: Draft, Phases 1-3 (except fair queueing) Implemented
 
 The resource-governance one-pager bounds a run by wall clock and linear
 memory, the runtime by compiles, resident modules, disk and (optionally)
@@ -140,13 +140,13 @@ small additions, all in `internal/engine` and `cmd/function`, all optional:
   states a small `limits.memory` gets more parallelism, an incentive to
   state it honestly. Acquisition order is fixed — per-Input slot, global
   slot, memory — so no cycle exists. S. **Implemented.**
-- **`--metrics-label-input-name`** (bool, off): adds an `input` label — the
-  Input's `metadata.name`, empty when unset — to `requests_total`,
+- **`--metrics-label-input-name`** (bool, off): adds an `input` label - the
+  Input's `metadata.name`, empty when unset - to `requests_total`,
   `run_duration_seconds`, `http_requests_total` and `run_instructions`. It
   is Composition-authored and bounded by the operator's own Compositions,
   never a digest, ref or host; the risk (hundreds of Inputs) is documented
   next to the flag. `internal/metrics` builds its vectors at startup with
-  or without the label (`metrics.Init`). S.
+  or without the label (`metrics.Init`). S. **Implemented.**
 
 Interactions: the resource-governance table gains a row per addition;
 `run_duration_seconds` keeps measuring runs (every wait is outside it);

@@ -125,6 +125,11 @@ type RunOptions struct {
 	// for this Run. Nil is no grant — every call gets a refusal, never a
 	// trap.
 	HTTP HTTPRequester
+
+	// InputName is the Input's metadata.name, threaded here so the
+	// run-duration and run-instructions metrics carry it when the
+	// --metrics-label-input-name flag is on. Empty is fine.
+	InputName string
 }
 
 // ErrTimeout reports that a guest exceeded its Run deadline.

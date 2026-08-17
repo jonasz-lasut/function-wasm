@@ -62,7 +62,7 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 	// how many instructions the run consumed; it stays zero otherwise.
 	var fuelBefore uint64
 	defer func() {
-		metrics.RunDuration.WithLabelValues(outcome(err)).Observe(time.Since(start).Seconds())
+		metrics.ObserveRun(outcome(err), opts.InputName, time.Since(start).Seconds())
 	}()
 	in, err := proto.Marshal(req)
 	if err != nil {
@@ -149,7 +149,7 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 
 	ret, err = run.Call(store, int32(ptr), size) //nolint:gosec // Pointer passed back as i32.
 	if fuelBefore > 0 {
-		observeFuel(store, fuelBefore, limits.InstructionLimit)
+		observeFuel(store, fuelBefore, limits.InstructionLimit, opts.InputName)
 	}
 	if err != nil {
 		return nil, guestError(ExportRun+" failed", err, budget, limits.InstructionLimit, log)
@@ -190,7 +190,7 @@ func outcome(err error) string {
 // observeFuel records how many instructions the run consumed in the
 // histogram. It is called right after wasmfn_run returns (success or trap)
 // while the store is still alive.
-func observeFuel(store *wasmtime.Store, before uint64, limit int64) {
+func observeFuel(store *wasmtime.Store, before uint64, limit int64, inputName string) {
 	after, err := store.GetFuel()
 	if err != nil {
 		return
@@ -201,7 +201,7 @@ func observeFuel(store *wasmtime.Store, before uint64, limit int64) {
 	if limit == 0 && consumed > 1e15 {
 		return
 	}
-	metrics.RunInstructions.Observe(float64(consumed))
+	metrics.ObserveInstructions(float64(consumed), inputName)
 }
 
 func checkBounds(size uintptr, ptr, n uint32) error {
