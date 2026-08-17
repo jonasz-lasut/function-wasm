@@ -66,6 +66,9 @@ type CeilingFlags struct {
 
 	EnableFuel             bool  `help:"Count wasm instructions executed per run (wasmtime fuel). When on, the run_instructions histogram is populated and limits.instructions is admitted. The codegen changes: compiled artifacts are not interchangeable with those without fuel, so the compiled cache gains a separate namespace." env:"ENABLE_FUEL"`
 	ModuleInstructionLimit int64 `help:"Maximum wasm instructions one module run may execute (wasmtime fuel). Zero means metered but unbounded - the histogram observes, nothing is capped. Only meaningful with --enable-fuel." env:"MODULE_INSTRUCTION_LIMIT"`
+
+	RegistryMirror map[string]string `help:"Rewrite the fetch location of OCI sources: --registry-mirror ghcr.io=registry.internal/ghcr fetches ghcr.io/repo@sha256:... from registry.internal/ghcr/repo@sha256:... instead. Policy, cache keys, audit and description see the stated ref. Auth for the mirror uses the runtime's Docker config, not a step credential. The cosign .sig lookup goes to the mirror too. Repeatable." env:"REGISTRY_MIRROR" mapsep:","`
+	OCILayoutDir   string            `help:"OCI image-layout directory (index.json, blobs/sha256/...) consulted before the network for OCI sources. The stated manifest digest names a blob regardless of any repository name; the manifest names its layer. With --cosign-key the .sig manifest is looked up in the layout's index by its ref-name annotation, so verification works offline." env:"OCI_LAYOUT_DIR" type:"existingdir"`
 }
 
 // engineConfig is the run budget the flags name; MaxConcurrentRuns is
@@ -131,10 +134,12 @@ func (c *CeilingFlags) resolver(blobs *cache.Store) (*module.Resolver, error) {
 		verifier = v
 	}
 	return module.NewResolver(module.Options{
-		Dir:      c.ModuleDir,
-		MaxSize:  int64(c.MaxModuleSize) << 20,
-		Blobs:    blobs,
-		Verifier: verifier,
+		Dir:       c.ModuleDir,
+		MaxSize:   int64(c.MaxModuleSize) << 20,
+		Blobs:     blobs,
+		Verifier:  verifier,
+		Mirrors:   c.RegistryMirror,
+		LayoutDir: c.OCILayoutDir,
 	})
 }
 
