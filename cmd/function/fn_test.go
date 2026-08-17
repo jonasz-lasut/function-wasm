@@ -491,9 +491,37 @@ func TestRunFunction(t *testing.T) {
 			reason: "The environment the Composition grants is what the guest sees.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: inputWith(t, map[string]any{"module": pathModule("environ.wasm"), "sandbox": map[string]any{"env": map[string]any{"GREETING": "hello"}}}),
+				Input: inputWith(t, map[string]any{"module": pathModule("environ.wasm"), "sandbox": map[string]any{"env": []any{map[string]any{"name": "GREETING", "value": "hello"}}}}),
 			}},
 			want: want{rsp: sandboxed("GREETING=hello\x00")},
+		},
+		"SandboxEnvValueFrom": {
+			reason: "A valueFrom reads the value from a step credential.",
+			args: args{req: &fnv1.RunFunctionRequest{
+				Meta:        &fnv1.RequestMeta{Tag: "hello"},
+				Input:       inputWith(t, map[string]any{"module": pathModule("environ.wasm"), "sandbox": map[string]any{"env": []any{map[string]any{"name": "PASSWORD", "valueFrom": map[string]any{"credential": map[string]any{"name": "registry", "key": "password"}}}}}}),
+				Credentials: credentials,
+			}},
+			want: want{rsp: sandboxed("PASSWORD=s3cret\x00")},
+		},
+		"SandboxEnvFrom": {
+			reason: "EnvFrom imports every key of a credential as environment variables.",
+			args: args{req: &fnv1.RunFunctionRequest{
+				Meta:        &fnv1.RequestMeta{Tag: "hello"},
+				Input:       inputWith(t, map[string]any{"module": pathModule("environ.wasm"), "sandbox": map[string]any{"envFrom": []any{map[string]any{"credential": map[string]any{"name": "registry"}, "prefix": "REG_"}}}}),
+				Credentials: credentials,
+			}},
+			// The environ guest returns sorted key=value pairs.
+			want: want{rsp: sandboxed("REG_password=s3cret\x00REG_username=robot\x00")},
+		},
+		"SandboxEnvPullCredentialRefused": {
+			reason: "The pull credential is withheld from env sources: a Composition cannot leak the module's registry secret into its environment.",
+			args: args{req: &fnv1.RunFunctionRequest{
+				Meta:        &fnv1.RequestMeta{Tag: "hello"},
+				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "oci": map[string]any{"ref": ociRef, "credentials": "registry"}}, "sandbox": map[string]any{"env": []any{map[string]any{"name": "X", "valueFrom": map[string]any{"credential": map[string]any{"name": "registry", "key": "password"}}}}}}),
+				Credentials: credentials,
+			}},
+			want: want{rsp: fatal(`sandbox.env[0].valueFrom.credential: credential "registry" is the pull credential and cannot be used as a source`)},
 		},
 		"SandboxDefaultIsClosed": {
 			reason: "Without a grant a guest has no pre-opened directory: the same guest exits with EBADF (8) at path_open.",
@@ -580,7 +608,7 @@ func TestRunFunctionSandboxCeiling(t *testing.T) {
 		want    string
 	}{
 		"PrivateTmp": {reason: "The private /tmp needs --enable-sandbox-private-tmp.", sandbox: map[string]any{"filesystem": map[string]any{"privateTmp": true}}, want: "sandbox.filesystem.privateTmp is refused: the runtime was started without --enable-sandbox-private-tmp"},
-		"Env":        {reason: "Environment variables need --enable-sandbox-env.", sandbox: map[string]any{"env": map[string]any{"GREETING": "hello"}}, want: "sandbox.env is refused: the runtime was started without --enable-sandbox-env"},
+		"Env":        {reason: "Environment variables need --enable-sandbox-env.", sandbox: map[string]any{"env": []any{map[string]any{"name": "GREETING", "value": "hello"}}}, want: "sandbox.env is refused: the runtime was started without --enable-sandbox-env"},
 	}
 
 	eng, err := engine.New(engine.Config{})
