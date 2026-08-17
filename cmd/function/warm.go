@@ -82,10 +82,20 @@ func (f *Function) warmOne(ctx context.Context, entry string) error {
 	if err := ref.Verify(ctx); err != nil {
 		return errors.Wrapf(err, "cannot verify module %s", ref.Description)
 	}
-	mod, err := f.load(ctx, ref, f.log.WithValues("module", ref.Description, "digest", ref.Digest))
+	log := f.log.WithValues("module", ref.Description, "digest", ref.Digest)
+	mod, err := f.load(ctx, ref, log)
 	if err != nil {
 		return err
 	}
-	mod.Release()
+	defer mod.Release()
+	// A warmed module's manifest is read and parsed now too, so its first
+	// request pays neither; what it requires is worth a line at debug.
+	m, err := f.manifestFor(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if m != nil {
+		log.Debug("Warmed module has a manifest", "manifest", m.Summary())
+	}
 	return nil
 }

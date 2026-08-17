@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -17,8 +18,10 @@ import (
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/admission"
+	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
 	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
@@ -40,6 +43,16 @@ type Function struct {
 	// egress is the operator's HTTP egress ceiling (--enable-sandbox-egress,
 	// --sandbox-egress-policy); nil refuses every sandbox.egress grant.
 	egress *egress.Egress
+
+	// manifests is the on-disk store of module manifests by digest, kept
+	// beside the compiled artifacts so an artifact hit — a warm volume, a
+	// restart — needs no registry read to learn what a module requires; nil
+	// (tests) means every process reads it from the source once. An empty
+	// entry records that a module has none.
+	manifests *cache.Store
+	// parsed caches each digest's parsed manifest (nil for a module without
+	// one) so its schema is compiled once per process, like the module.
+	parsed sync.Map // digest → *manifest.Manifest
 }
 
 // ceilings are what every request's Input is admitted against.
@@ -119,6 +132,13 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	}
 	defer mod.Release()
 
+	// The module's own requirements — its manifest — are checked against
+	// what the Composition granted and the operator admitted: a manifest can
+	// refuse a run earlier, never make one possible.
+	if err := f.checkManifest(ctx, ref, in, admitted); err != nil {
+		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
+	}
+
 	// The per-run client logs every request with the
 	// module's reference and digest.
 	if admitted.HTTP != nil {
@@ -152,6 +172,65 @@ func (f *Function) fatal(rsp *fnv1.RunFunctionResponse, log logging.Logger, outc
 	log.Info("Request ended with a fatal result", "outcome", outcome, "reason", err.Error())
 	response.Fatal(rsp, err)
 	return rsp
+}
+
+// checkManifest applies the module's manifest, if it has one, to what the
+// Composition was granted: an unmet requirement or a config outside the
+// module's schema is a refusal naming the module. The parsed manifest and
+// its compiled schema are cached per digest.
+func (f *Function) checkManifest(ctx context.Context, ref *module.Ref, in *v1beta1.Input, admitted admission.Admitted) error {
+	m, err := f.manifestFor(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if m == nil {
+		return nil
+	}
+	grants := manifest.Grants{PrivateTmp: admitted.Grant.PrivateTmp}
+	if admitted.HTTP != nil && in.Sandbox != nil && in.Sandbox.Egress != nil {
+		grants.HTTP = in.Sandbox.Egress.HTTP
+	}
+	if err := m.Check(grants, in.Config, manifest.RuntimeVersion()); err != nil {
+		return errors.Errorf("module %s %v", ref.Description, err)
+	}
+	return nil
+}
+
+// manifestFor returns a module's parsed manifest, nil when it carries none:
+// from memory, then the on-disk store, then the source (the artifact's
+// manifest layer), read once per digest per volume and parsed once per
+// process. A manifest that does not parse or validate refuses the module.
+func (f *Function) manifestFor(ctx context.Context, ref *module.Ref) (*manifest.Manifest, error) {
+	if v, ok := f.parsed.Load(ref.Digest); ok {
+		m, _ := v.(*manifest.Manifest)
+		return m, nil
+	}
+	raw, ok := []byte(nil), false
+	if f.manifests != nil {
+		raw, ok = f.manifests.Get(ref.Digest)
+	}
+	if !ok {
+		var err error
+		if raw, _, err = ref.Manifest(ctx); err != nil {
+			return nil, errors.Wrapf(err, "cannot read the manifest of module %s", ref.Description)
+		}
+		if f.manifests != nil {
+			// An empty entry records "no manifest": the next process asks
+			// the registry nothing. A full or read-only store only costs
+			// the next process the read.
+			_ = f.manifests.Put(ref.Digest, raw)
+		}
+	}
+	var m *manifest.Manifest
+	if len(raw) > 0 {
+		parsed, err := manifest.Parse(raw)
+		if err != nil {
+			return nil, errors.Wrapf(err, "module %s has an invalid manifest", ref.Description)
+		}
+		m = parsed
+	}
+	f.parsed.Store(ref.Digest, m)
+	return m, nil
 }
 
 // load returns the compiled module ref pins, leased from the cache — from

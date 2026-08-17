@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -39,6 +40,7 @@ import (
 
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
 	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
 	"github.com/jonasz-lasut/function-wasm/internal/testwasm"
@@ -134,7 +136,18 @@ func publicRegistry(t *testing.T) (host string) {
 // push publishes wasm as <ref> and returns its digest reference.
 func push(t *testing.T, ref string, wasm []byte) string {
 	t.Helper()
-	img, err := mutate.AppendLayers(empty.Image, static.NewLayer(wasm, "application/wasm"))
+	return pushLayers(t, ref, static.NewLayer(wasm, "application/wasm"))
+}
+
+// pushWithManifest publishes wasm with a module-manifest layer beside it.
+func pushWithManifest(t *testing.T, ref string, wasm []byte, manifestJSON string) string {
+	t.Helper()
+	return pushLayers(t, ref, static.NewLayer(wasm, "application/wasm"), static.NewLayer([]byte(manifestJSON), manifest.LayerMediaType))
+}
+
+func pushLayers(t *testing.T, ref string, layers ...v1.Layer) string {
+	t.Helper()
+	img, err := mutate.AppendLayers(empty.Image, layers...)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -304,3 +304,60 @@ spec:
 		t.Errorf("second JSON object: %+v", second)
 	}
 }
+
+// TestValidateResolveManifest pins that --resolve reads a module's manifest
+// from the artifact and holds it against the step's grants as the runtime
+// would: the summary on the resolved line, and the runtime's refusal when a
+// requirement is not granted.
+func TestValidateResolveManifest(t *testing.T) {
+	wasm := testwasm.Fixed(t, &fnv1.RunFunctionResponse{}, testwasm.Options{})
+	ref := pushWithManifest(t, publicRegistry(t)+"/greeter:v1", wasm, `{"abi":1,"name":"greeter","version":"0.1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}`)
+	dir := t.TempDir()
+	composition := filepath.Join(dir, "composition.yaml")
+	if err := os.WriteFile(composition, []byte(`apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: manifest
+spec:
+  pipeline:
+  - step: granted
+    functionRef: {name: function-wasm}
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module: {type: OCI, oci: {ref: `+ref+`}}
+      sandbox: {egress: {http: [{host: api.example.com, methods: [GET]}]}}
+  - step: ungranted
+    functionRef: {name: function-wasm}
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module: {type: OCI, oci: {ref: `+ref+`}}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cli := &CLI{}
+	cli.Validate.stderr = &stderr
+	ctx, err := parser(cli, &stdout).Parse([]string{"validate", composition, "--resolve", "--enable-sandbox-egress"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ctx.Run(cli)
+	var e exitError
+	if !errors.As(err, &e) || e.code != 1 {
+		t.Errorf("Run(): want exit 1, got %v", err)
+	}
+	digest := ref[strings.Index(ref, "@")+1:]
+	resolved := "  module: " + digest + ", " + humanBytes(len(wasm)) + ", ABI v1; manifest: greeter 0.1.0, requires egress api.example.com\n"
+	want := composition + ": Composition/manifest pipeline[0] granted: OK (oci " + ref + ", egress api.example.com)\n" + resolved +
+		"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n" +
+		composition + ": Composition/manifest pipeline[1] ungranted: refused: module oci " + ref + " requires sandbox.egress.http host api.example.com methods [GET], which the Composition does not grant\n" + resolved
+	if diff := cmp.Diff(want, stdout.String()); diff != "" {
+		t.Errorf("stdout: -want, +got:\n%s", diff)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("unexpected stderr:\n%s", stderr.String())
+	}
+}

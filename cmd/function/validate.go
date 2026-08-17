@@ -19,6 +19,7 @@ import (
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/admission"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
 )
 
@@ -98,6 +99,8 @@ type resolvedModule struct {
 	Size    int      `json:"size"`
 	ABI     string   `json:"abi"`
 	Imports []string `json:"imports,omitempty"`
+	// Manifest is the module's manifest, when it carries one.
+	Manifest *manifest.Manifest `json:"manifest,omitempty"`
 }
 
 // Run validates the files and prints the verdicts to stdout; tool failures go
@@ -200,6 +203,9 @@ func (c *ValidateCmd) print(w io.Writer, r stepResult) error {
 		line := fmt.Sprintf("  module: %s, %s, ABI %s", r.Resolved.Digest, humanBytes(r.Resolved.Size), r.Resolved.ABI)
 		if len(r.Resolved.Imports) > 0 {
 			line += ", imports " + strings.Join(r.Resolved.Imports, " ")
+		}
+		if r.Resolved.Manifest != nil {
+			line += "; manifest: " + r.Resolved.Manifest.Summary()
 		}
 		_, _ = fmt.Fprintln(w, line)
 	}
@@ -371,6 +377,26 @@ func (v *validator) validate(ctx context.Context, s step) stepResult {
 		return refuse(errors.Wrapf(shape.ABIError, "cannot load module %s", ref.Description))
 	}
 	r.Resolved = &resolvedModule{Digest: ref.Digest, Size: len(wasm), ABI: "v1", Imports: shape.HostImports()}
+	// The module's manifest, held against the grants the step was admitted
+	// with — the check the runtime makes between load and run.
+	raw, found, err := ref.Manifest(ctx)
+	if err != nil {
+		return refuse(errors.Wrapf(err, "cannot read the manifest of module %s", ref.Description))
+	}
+	if found {
+		m, err := manifest.Parse(raw)
+		if err != nil {
+			return refuse(errors.Wrapf(err, "module %s has an invalid manifest", ref.Description))
+		}
+		r.Resolved.Manifest = m
+		grants := manifest.Grants{PrivateTmp: admitted.Grant.PrivateTmp}
+		if admitted.HTTP != nil && in.Sandbox != nil && in.Sandbox.Egress != nil {
+			grants.HTTP = in.Sandbox.Egress.HTTP
+		}
+		if err := m.Check(grants, in.Config, manifest.RuntimeVersion()); err != nil {
+			return refuse(errors.Errorf("module %s %v", ref.Description, err))
+		}
+	}
 	return r
 }
 
