@@ -156,6 +156,7 @@ type ServeCmd struct {
 
 	// Readiness and the concurrent-runs bound.
 	MaxConcurrentRuns int      `help:"Most module runs executing at once; a further request waits for a slot until its deadline, then fails with a fatal result. 0 leaves concurrency to the caller." default:"0" env:"MAX_CONCURRENT_RUNS"`
+	MaxTotalRunMemory int      `help:"Total linear-memory budget in MB across all running modules; a run reserves its effective limit (limits.memory or --module-memory-limit) before it starts and waits under its deadline when the pool is full. 0 means no bound." default:"0" env:"MAX_TOTAL_RUN_MEMORY"`
 	HealthAddress     string   `help:"Address of the plain-HTTP health endpoints /livez and /readyz (ready once the caches are open and --warm-modules are loaded); empty disables them. The gRPC health service on the function port answers too, but speaks mTLS." default:":8081" env:"HEALTH_ADDRESS"`
 	WarmModules       []string `help:"Modules loaded — resolved, verified, compiled or mapped from the artifact cache — before the health service reports Serving: OCI references pinned to their manifest digest (repo[:tag]@sha256:...) and, with --module-dir, path:<file> entries. Repeatable or comma-separated. One that fails to load is logged and loaded on its first request instead." env:"WARM_MODULES" sep:"," placeholder:"REF"`
 }
@@ -173,6 +174,7 @@ func (c *ServeCmd) Run(cli *CLI) error {
 
 	cfg := c.engineConfig()
 	cfg.MaxConcurrentRuns = c.MaxConcurrentRuns
+	cfg.MaxTotalRunMemory = int64(c.MaxTotalRunMemory) << 20
 	eng, err := engine.New(cfg)
 	if err != nil {
 		return err

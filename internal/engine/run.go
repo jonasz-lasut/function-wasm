@@ -48,6 +48,15 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 	}
 	defer release()
 
+	if e.mem != nil {
+		mem := e.effective(opts).MemoryLimit
+		releaseMem, err := e.mem.reserve(ctx, mem)
+		if err != nil {
+			return nil, err
+		}
+		defer releaseMem()
+	}
+
 	start := time.Now()
 	// fuelBefore is set when fuel is enabled so the defer can observe
 	// how many instructions the run consumed; it stays zero otherwise.
