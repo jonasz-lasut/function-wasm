@@ -41,8 +41,9 @@ const sweepInterval = 10 * time.Minute
 type CLI struct {
 	Debug bool `short:"d" help:"Emit debug logs in addition to info logs."`
 
-	Serve    ServeCmd    `cmd:"" default:"withargs" help:"Serve the function over gRPC (the default)."`
-	Validate ValidateCmd `cmd:"" help:"Validate the function-wasm Inputs of Compositions against these flags, offline: the checks a request passes before its module is resolved, in the runtime's own words."`
+	Serve      ServeCmd      `cmd:"" default:"withargs" help:"Serve the function over gRPC (the default)."`
+	Validate   ValidateCmd   `cmd:"" help:"Validate the function-wasm Inputs of Compositions against these flags, offline: the checks a request passes before its module is resolved, in the runtime's own words."`
+	Precompile PrecompileCmd `cmd:"" help:"Compile modules ahead of time into the cache volume so the serving pods map the artifacts on startup. Exits non-zero when any entry fails."`
 }
 
 // CeilingFlags are the operator's ceilings — what a Composition's Input is
