@@ -19,6 +19,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 )
 
 // Media types recognised as a raw wasm module layer: the CNCF wasm OCI
@@ -85,12 +86,73 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 			return b, nil
 		}),
 	}
+	// The manifest layer, when the artifact has one: fetched through the
+	// same manifest, verified against its own digest, bounded to
+	// manifest.MaxSize; the caller stores it beside the compiled artifact so
+	// this runs once per digest per volume.
+	out.manifest = func(ctx context.Context) ([]byte, bool, error) {
+		opts := append(opts, remote.WithContext(ctx))
+		layer, found, err := manifestLayer(ref, opts)
+		if err != nil || !found {
+			return nil, false, err
+		}
+		b, err := r.verified(ctx, "manifest layer", layer.Digest.String(), func(_ context.Context) ([]byte, error) {
+			l, err := remote.Layer(ref.Context().Digest(layer.Digest.String()), opts...)
+			if err != nil {
+				return nil, fmt.Errorf("cannot fetch manifest layer: %w", err)
+			}
+			rc, err := l.Compressed()
+			if err != nil {
+				return nil, fmt.Errorf("cannot read manifest layer: %w", err)
+			}
+			defer func() { _ = rc.Close() }()
+			b, err := readCapped(rc, manifest.MaxSize)
+			if err != nil {
+				return nil, fmt.Errorf("cannot read manifest layer: %w", err)
+			}
+			return b, nil
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		return b, true, nil
+	}
 	if r.opts.Verifier != nil {
 		out.verify = func(ctx context.Context) error {
 			return r.opts.Verifier.Verify(ctx, ref, append(opts, remote.WithContext(ctx)))
 		}
 	}
 	return out, nil
+}
+
+// manifestLayer fetches an artifact's manifest and picks its module-manifest
+// layer, if it has one.
+func manifestLayer(ref name.Digest, opts []remote.Option) (v1.Descriptor, bool, error) {
+	desc, err := remote.Get(ref, opts...)
+	if err != nil {
+		return v1.Descriptor{}, false, fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
+	}
+	if desc.MediaType.IsIndex() {
+		return v1.Descriptor{}, false, fmt.Errorf("%s is an image index; reference the manifest holding the module", ref)
+	}
+	m, err := v1.ParseManifest(bytes.NewReader(desc.Manifest))
+	if err != nil {
+		return v1.Descriptor{}, false, fmt.Errorf("cannot parse manifest %s: %w", ref, err)
+	}
+	l, ok := ManifestLayer(m)
+	return l, ok, nil
+}
+
+// ManifestLayer picks the module-manifest layer of an artifact's manifest —
+// the layer of media type manifest.LayerMediaType — if there is one; the
+// rule guestfn inspect and the resolver share.
+func ManifestLayer(m *v1.Manifest) (v1.Descriptor, bool) {
+	for _, l := range m.Layers {
+		if string(l.MediaType) == manifest.LayerMediaType {
+			return l, true
+		}
+	}
+	return v1.Descriptor{}, false
 }
 
 // moduleLayer fetches a manifest and picks the layer holding the module.
@@ -114,16 +176,21 @@ func moduleLayer(ref name.Digest, opts []remote.Option) (v1.Descriptor, error) {
 }
 
 // WasmLayer picks the layer of a manifest that holds the module: a
-// wasm-typed layer if there is one, otherwise the only layer — the rule the
-// resolver applies to every OCI source, shared with guestfn inspect.
+// wasm-typed layer if there is one, otherwise the only layer that is not the
+// module-manifest layer — the rule the resolver applies to every OCI source,
+// shared with guestfn inspect.
 func WasmLayer(m *v1.Manifest) (v1.Descriptor, error) {
+	var candidates []v1.Descriptor
 	for _, l := range m.Layers {
 		if wasmLayerTypes[l.MediaType] {
 			return l, nil
 		}
+		if string(l.MediaType) != manifest.LayerMediaType {
+			candidates = append(candidates, l)
+		}
 	}
-	if len(m.Layers) == 1 {
-		return m.Layers[0], nil
+	if len(candidates) == 1 {
+		return candidates[0], nil
 	}
 	return v1.Descriptor{}, fmt.Errorf("has %d layers and none is a wasm layer", len(m.Layers))
 }

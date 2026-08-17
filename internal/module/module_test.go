@@ -29,6 +29,7 @@ import (
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
 )
 
@@ -847,6 +848,73 @@ func TestValidateFrom(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("\n%s\nValidateFrom(): want error containing %q, got %v", tc.reason, tc.want, err)
+			}
+		})
+	}
+}
+
+// TestRefManifest pins how a module's manifest reaches the runtime: the
+// artifact's manifest layer, verified and bounded, or nothing at all — an
+// artifact without one, a path or http source.
+func TestRefManifest(t *testing.T) {
+	reg := httptest.NewServer(registry.New())
+	defer reg.Close()
+	host := strings.TrimPrefix(reg.URL, "http://")
+	wasm := static.NewLayer(module, "application/wasm")
+	declared := []byte(`{"abi":1,"name":"greeter"}`)
+	manifestLayer := static.NewLayer(declared, manifest.LayerMediaType)
+	withRef := artifact(t, host, "with", wasm, manifestLayer)
+	withoutRef := artifact(t, host, "without", wasm)
+	// The manifest layer beside a module layer of no wasm media type still
+	// leaves one candidate for the module.
+	plainRef := artifact(t, host, "plain", static.NewLayer(module, "application/octet-stream"), manifestLayer)
+	hugeRef := artifact(t, host, "huge", wasm, static.NewLayer(bytes.Repeat([]byte("x"), manifest.MaxSize+1), manifest.LayerMediaType))
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "fn.wasm"), module, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewResolver(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		reason string
+		src    v1beta1.ModuleSource
+		want   string
+		found  bool
+		err    string
+	}{
+		"Layer":    {reason: "The manifest layer is the manifest.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: withRef}}, want: string(declared), found: true},
+		"NoLayer":  {reason: "An artifact without one has nothing to declare.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: withoutRef}}},
+		"Untyped":  {reason: "The manifest layer does not count as the module's only layer.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: plainRef}}, want: string(declared), found: true},
+		"TooLarge": {reason: "The layer is bounded to manifest.MaxSize.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: hugeRef}}, err: "exceeds the size limit"},
+		"Path":     {reason: "A path source carries no manifest.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
+		"HTTP":     {reason: "Neither does an http source.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://example.com/fn.wasm", Digest: moduleDigest}}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ref, err := r.Resolve(context.Background(), tc.src, nil)
+			if err != nil {
+				t.Fatalf("\n%s\nResolve(): %v", tc.reason, err)
+			}
+			if tc.src.Type == v1beta1.ModuleTypeOCI {
+				if b, err := ref.Fetch(context.Background()); err != nil || !bytes.Equal(b, module) {
+					t.Fatalf("\n%s\nFetch(): %q %v", tc.reason, b, err)
+				}
+			}
+			got, found, err := ref.Manifest(context.Background())
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("\n%s\nManifest(): want error containing %q, got %v", tc.reason, tc.err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("\n%s\nManifest(): %v", tc.reason, err)
+			}
+			if found != tc.found || string(got) != tc.want {
+				t.Errorf("\n%s\nManifest() = %q, %v; want %q, %v", tc.reason, got, found, tc.want, tc.found)
 			}
 		})
 	}
