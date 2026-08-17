@@ -1,0 +1,21 @@
+# The module manifest: what this module declares about itself. guestfn build
+# validates it, guestfn push publishes it beside the module as the artifact's
+# manifest layer, and the runtime holds it against the Composition's grant
+# before every run - a manifest can refuse a run earlier and say why, never
+# make one possible.
+abi: 1
+name: hello-go
+version: 0.1.0
+# requires: the sandbox grants the module cannot run without, in the Input's
+# own shape (egress.http rules, filesystem.privateTmp). This guest fetches a
+# greeting only when config.greetingUrl is set, so it requires nothing and
+# renders without any grant.
+config:
+  # The JSON Schema (draft 2020-12) of the Input's config; the runtime refuses
+  # a request whose config does not match, naming the field.
+  schema:
+    type: object
+    properties:
+      greeting: {type: string}
+      greetingUrl: {type: string, format: uri}
+    additionalProperties: false

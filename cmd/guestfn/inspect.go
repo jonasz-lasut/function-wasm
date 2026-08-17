@@ -16,6 +16,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
 )
 
@@ -50,6 +51,12 @@ type referenceInfo struct {
 	ModuleLayer *descriptorInfo `json:"moduleLayer,omitempty"`
 	// ModuleLayerError says why no layer would do.
 	ModuleLayerError string `json:"moduleLayerError,omitempty"`
+	// Manifest is the module manifest the artifact carries as its
+	// application/vnd.wasmfn.manifest.v1+json layer (guestfn push writes it),
+	// read without pulling the module; ManifestError says why it would be
+	// refused.
+	Manifest      *manifest.Manifest `json:"manifest,omitempty"`
+	ManifestError string             `json:"manifestError,omitempty"`
 }
 
 type descriptorInfo struct {
@@ -132,29 +139,18 @@ func (c *InspectCmd) Run(ctx context.Context, stdout io.Writer) error {
 		d := descriptor(layer)
 		info.ModuleLayer = &d
 	}
+	if ml, ok := manifestLayer(m); ok {
+		if parsed, err := fetchManifest(ref, ml, opts); err != nil {
+			info.ManifestError = err.Error()
+		} else {
+			info.Manifest = parsed
+		}
+	}
 	out.Reference = info
 	if c.Pull && info.ModuleLayer != nil {
-		l, err := remote.Layer(ref.Context().Digest(layer.Digest.String()), opts...)
+		wasm, err := pullLayer(ref, layer, opts, int64(c.MaxSize)<<20)
 		if err != nil {
-			return fmt.Errorf("cannot fetch module layer: %w", err)
-		}
-		rc, err := l.Compressed()
-		if err != nil {
-			return fmt.Errorf("cannot read module layer: %w", err)
-		}
-		defer func() { _ = rc.Close() }()
-		limit := int64(c.MaxSize) << 20
-		wasm, err := io.ReadAll(io.LimitReader(rc, limit+1))
-		if err != nil {
-			return fmt.Errorf("cannot read module layer: %w", err)
-		}
-		if int64(len(wasm)) > limit {
-			return fmt.Errorf("module layer exceeds --max-size (%d MB)", c.MaxSize)
-		}
-		if module.IsTarLayer(layer.MediaType) {
-			if wasm, err = module.ExtractWasm(wasm, limit); err != nil {
-				return err
-			}
+			return err
 		}
 		if out.Module, err = describeModule(wasm); err != nil {
 			return fmt.Errorf("%s: %w", ref, err)
@@ -212,6 +208,14 @@ func (c *InspectCmd) print(w io.Writer, out inspection) error {
 		default:
 			_, _ = fmt.Fprintf(w, "  module layer: none — the runtime would refuse it: %s\n", r.ModuleLayerError)
 		}
+		switch {
+		case r.Manifest != nil:
+			_, _ = fmt.Fprintf(w, "  manifest: %s\n", manifestText(r.Manifest))
+		case r.ManifestError != "":
+			_, _ = fmt.Fprintf(w, "  manifest: invalid - the runtime would refuse the module: %s\n", r.ManifestError)
+		default:
+			_, _ = fmt.Fprintln(w, "  manifest: none")
+		}
 	}
 	if m := out.Module; m != nil {
 		verdict := "ABI " + m.ABI
@@ -242,6 +246,15 @@ func (c *InspectCmd) print(w io.Writer, out inspection) error {
 		}
 	}
 	return nil
+}
+
+// manifestText is a manifest's one-line summary, or "declares nothing" for
+// an empty one.
+func manifestText(m *manifest.Manifest) string {
+	if s := m.Summary(); s != "" {
+		return s
+	}
+	return "declares nothing"
 }
 
 func externsText(xs []externInfo) string {
