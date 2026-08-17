@@ -121,8 +121,8 @@ type ModuleSource struct {
 
 // OCISource is a module stored as an OCI artifact: a manifest whose single
 // layer (media type application/wasm or a vnd.wasm content layer) is the
-// module, as produced by guestfn push or oras push. A tar layer holding a
-// .wasm file (a FROM scratch image) is accepted too.
+// module, as produced by guestfn push or oras push. A tar layer (a FROM
+// scratch image) is accepted when it holds the module at exactly /fn.wasm.
 type OCISource struct {
 	// Ref is the artifact reference pinned to its manifest digest,
 	// registry/repository@sha256:<hex>, as guestfn push prints it. The
