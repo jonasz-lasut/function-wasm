@@ -92,11 +92,14 @@ func TestNew(t *testing.T) {
 		policy Policy
 		want   string
 	}{
-		"Defaults":       {reason: "An empty policy compiles to the defaults."},
-		"BadHost":        {reason: "A host entry is a name.", policy: Policy{Hosts: []string{"*.example.com"}}, want: `hosts entry "*.example.com" is not a host name`},
-		"BadPattern":     {reason: "A pattern has one leading wildcard label.", policy: Policy{HostPatterns: []string{"api.*.example.com"}}, want: `hostPatterns entry "api.*.example.com" must be a host name with one leading wildcard label`},
-		"BadCIDR":        {reason: "CIDRs are CIDRs.", policy: Policy{BlockedCIDRs: []string{"10.0.0.0"}}, want: `blockedCIDRs: "10.0.0.0" is not a CIDR`},
-		"NegativeBudget": {reason: "Budgets are not negative.", policy: Policy{MaxRequests: -1}, want: "budgets must not be negative"},
+		"Defaults":          {reason: "An empty policy compiles to the defaults."},
+		"BadHost":           {reason: "A host entry is a name.", policy: Policy{Hosts: []string{"*.example.com"}}, want: `hosts entry "*.example.com" is not a host name`},
+		"BadPattern":        {reason: "A pattern has one leading wildcard label.", policy: Policy{HostPatterns: []string{"api.*.example.com"}}, want: `hostPatterns entry "api.*.example.com" must be a host name with one leading wildcard label`},
+		"BadCIDR":           {reason: "CIDRs are CIDRs.", policy: Policy{BlockedCIDRs: []string{"10.0.0.0"}}, want: `blockedCIDRs: "10.0.0.0" is not a CIDR`},
+		"NegativeBudget":    {reason: "Budgets are not negative.", policy: Policy{MaxRequests: -1}, want: "budgets must not be negative"},
+		"RateLimitZero":     {reason: "A rate limit with zero rate is refused.", policy: Policy{RateLimit: &RateLimitPolicy{RequestsPerMinute: 0}}, want: "rateLimit.requestsPerMinute must be positive"},
+		"RateLimitNegative": {reason: "A negative rate is refused.", policy: Policy{RateLimit: &RateLimitPolicy{RequestsPerMinute: -1}}, want: "rateLimit.requestsPerMinute must be positive"},
+		"RateLimitValid":    {reason: "A valid rate limit compiles."},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -318,5 +321,109 @@ func TestPatternUnder(t *testing.T) {
 				t.Errorf("PatternUnder(%q, %q) = %v, want %v", tc.pattern, tc.granted, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRateLimit(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		rpm    float64
+		burst  int
+		calls  int
+		want   int // how many should be allowed
+	}{
+		"BurstAllowed": {
+			reason: "All requests within the burst are allowed.",
+			rpm:    60, burst: 5,
+			calls: 5,
+			want:  5,
+		},
+		"BurstExceeded": {
+			reason: "Requests past the burst are refused.",
+			rpm:    60, burst: 3,
+			calls: 5,
+			want:  3,
+		},
+		"DefaultBurst": {
+			reason: "A zero burst defaults to the rate.",
+			rpm:    2, burst: 0,
+			calls: 5,
+			want:  2,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := rateLimitPolicy{requestsPerMinute: tc.rpm, burst: tc.burst}
+			if cfg.burst <= 0 {
+				cfg.burst = max(1, int(cfg.requestsPerMinute))
+			}
+			rl := newRateLimiters(cfg)
+			got := 0
+			for range tc.calls {
+				if rl.allow("sha256:abc") {
+					got++
+				}
+			}
+			if got != tc.want {
+				t.Errorf("\n%s\nallow(): %d of %d allowed, want %d", tc.reason, got, tc.calls, tc.want)
+			}
+		})
+	}
+}
+
+func TestRateLimitPerDigest(t *testing.T) {
+	cfg := rateLimitPolicy{requestsPerMinute: 60, burst: 2}
+	rl := newRateLimiters(cfg)
+
+	// Each digest gets its own bucket.
+	if !rl.allow("sha256:aaa") {
+		t.Fatal("first call for digest aaa should be allowed")
+	}
+	if !rl.allow("sha256:aaa") {
+		t.Fatal("second call for digest aaa should be allowed")
+	}
+	if rl.allow("sha256:aaa") {
+		t.Fatal("third call for digest aaa should be refused")
+	}
+	// A different digest is independent.
+	if !rl.allow("sha256:bbb") {
+		t.Fatal("first call for digest bbb should be allowed")
+	}
+}
+
+func TestRateLimitSweep(t *testing.T) {
+	cfg := rateLimitPolicy{requestsPerMinute: 60, burst: 5}
+	rl := newRateLimiters(cfg)
+	rl.allow("sha256:stale")
+
+	// Backdate the entry to trigger expiry.
+	rl.mu.Lock()
+	rl.entries["sha256:stale"].lastSeen = time.Now().Add(-idleExpiry - time.Second)
+	rl.mu.Unlock()
+
+	rl.sweep()
+
+	rl.mu.Lock()
+	_, exists := rl.entries["sha256:stale"]
+	rl.mu.Unlock()
+	if exists {
+		t.Error("sweep should have removed the stale entry")
+	}
+}
+
+func TestNewRateLimit(t *testing.T) {
+	p := Policy{RateLimit: &RateLimitPolicy{RequestsPerMinute: 120, Burst: 10}}
+	e, err := New(p)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	if e.rateLimits == nil {
+		t.Fatal("New(): rateLimits should be non-nil with a rateLimit policy")
+	}
+	if e.rateLimit.requestsPerMinute != 120 {
+		t.Errorf("requestsPerMinute = %f, want 120", e.rateLimit.requestsPerMinute)
+	}
+	if e.rateLimit.burst != 10 {
+		t.Errorf("burst = %d, want 10", e.rateLimit.burst)
 	}
 }

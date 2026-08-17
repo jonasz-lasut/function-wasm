@@ -287,7 +287,7 @@ func TestRun(t *testing.T) {
 		"FuelExhausted": {
 			reason: "A guest that exceeds its instruction budget is stopped with ErrFuel.",
 			args: args{
-				cfg: Config{Fuel: true, InstructionLimit: 100},
+				cfg:  Config{Fuel: true, InstructionLimit: 100},
 				opts: testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"},
 			},
 			want: want{errIs: ErrFuel, err: "instruction budget"},
@@ -303,8 +303,8 @@ func TestRun(t *testing.T) {
 		"FuelRunLimit": {
 			reason: "A per-run instruction limit below the ceiling applies.",
 			args: args{
-				cfg: Config{Fuel: true, InstructionLimit: 100_000_000},
-				run: RunOptions{Instructions: 100},
+				cfg:  Config{Fuel: true, InstructionLimit: 100_000_000},
+				run:  RunOptions{Instructions: 100},
 				opts: testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"},
 			},
 			want: want{errIs: ErrFuel, err: "instruction budget"},
@@ -312,8 +312,8 @@ func TestRun(t *testing.T) {
 		"FuelRunLimitCapped": {
 			reason: "A per-run instruction limit above the ceiling is capped.",
 			args: args{
-				cfg: Config{Fuel: true, InstructionLimit: 100},
-				run: RunOptions{Instructions: 100_000_000},
+				cfg:  Config{Fuel: true, InstructionLimit: 100},
+				run:  RunOptions{Instructions: 100_000_000},
 				opts: testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"},
 			},
 			want: want{errIs: ErrFuel, err: "instruction budget"},

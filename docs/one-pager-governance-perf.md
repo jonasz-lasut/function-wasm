@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, Phase 1 Implemented
+* Status: Draft, Phases 1-2 Implemented
 
 The resource-governance one-pager bounds a run by wall clock and linear
 memory, the runtime by compiles, resident modules, disk and (optionally)
@@ -87,47 +87,26 @@ and the caches are unaffected beyond the version namespace. Effort S.
 Deferred: charging fuel for host calls (a way to price egress), per-Input
 fuel accounting over time, `fuel_async_yield` (not in the Go binding).
 
-## Phase 2 — Egress economy: response cache and per-module rate limits
+## Phase 2 — Egress economy: per-module rate limits
 
-A module called once per XR against the same endpoint — pricing, IPAM, a
-catalogue — makes one request per reconcile per XR: a thousand XRs are a
-thousand identical GETs per sweep, and with `maxRequests` 16 per run,
-sixteen thousand at the worst. Two additions in `internal/egress`, both
-behind the operator's policy file:
-
-**Response cache** (`sandbox.egress.http[].cache: {ttl}`). A rule may ask
-that `GET`/`HEAD` responses be memoised for `ttl` (a duration, `Type=string`
-+ pattern like `limits.timeout`), within the policy's new `cache` section
-(`maxTTL`, `maxBytes` default 64 MiB, `maxEntryBytes` default 1 MiB, ≤
-`maxResponseBytes`); a `cache` on a rule with no `cache.maxTTL` in the
-policy is `sandbox.egress.http[0].cache is refused: the runtime's egress
-policy sets no cache.maxTTL`, a `ttl` above it `sandbox.egress.http[0]
-.cache.ttl 1h0m0s exceeds the egress policy's cache.maxTTL of 10m0s` — both
-in `Egress.Grant`, before the module runs. The key is `sha256(module
-digest ‖ method ‖ URL with query ‖ canonical request headers ‖ body)`: one
-module's cache is never another's, and two requests differing in
-`Authorization` or `Accept` never share an entry, so a cached answer is one
-the same code with the same credentials would have obtained. Stored only
-for status 2xx, no `Set-Cookie`, no `Cache-Control: no-store|no-cache|
-private`, and for `min(ttl, max-age)` when the origin states one; in memory
-only (`Egress` holds an LRU by bytes), never on disk — bodies may carry
-secrets — and gone with the process. A hit is served through the same JSON
-`Response` (with an `Age` header, as a proxy would), costs no request
-against `maxRequests`, is audited (`outcome=cached`, throttled like the
-over-budget line for a looping guest) and counted
-(`http_requests_total{outcome=cached}`). Redirects are followed host-side,
-so the entry is the final answer keyed by the original URL. Effort S–M.
+A module called once per XR against the same endpoint makes one request per
+reconcile per XR: a thousand XRs are a thousand identical GETs per sweep.
+One addition in `internal/egress`, behind the operator's policy file:
 
 **Per-module rate limits** (policy `rateLimit: {requestsPerMinute, burst}`).
 A token bucket per module digest in `Egress` (a bounded, idle-expiring map:
 the set of digests in use is the memory tier's size, not a metric label),
 consulted in `Client.do` after the per-run `maxRequests` check; over the
-limit the guest reads `sandbox.egress: this module made 600 requests in the
-last minute (the egress policy's rateLimit)` — `outcome=budget`, never a
-trap — and retries next reconcile. Policy file only, like the other
-budgets (revision 0.4's decision); a Composition cannot raise it. Effort S.
-Deferred: a per-host bucket (protects a third party across modules — needs
+limit the guest reads `sandbox.egress: the module's request rate exceeds
+the egress policy's rateLimit` - `outcome=budget`, never a trap - and
+retries next reconcile. Policy file only, like the other budgets; a
+Composition cannot raise it. Idle entries are swept every ten minutes.
+Deferred: a per-host bucket (protects a third party across modules - needs
 a bounded key set first), a Composition-lowerable `sandbox.egress.rateLimit`.
+
+Response caching was considered and dropped: the invalidation semantics
+(TTL, Cache-Control, key correctness across headers) add complexity out of
+proportion to the benefit when modules already run in milliseconds.
 
 ## Phase 3 — Fairness inside one runtime
 

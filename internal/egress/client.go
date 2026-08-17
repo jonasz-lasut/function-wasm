@@ -34,8 +34,10 @@ var reservedHeaders = []string{"Host", "Content-Length", "Connection", "Transfer
 // Client performs one run's requests within its Grant and the ceiling's
 // budgets, and writes the audit line for each. One per Run.
 type Client struct {
-	grant    *Grant
-	log      logging.Logger
+	grant  *Grant
+	digest string // module digest, for rate limiting
+	log    logging.Logger
+
 	requests atomic.Int64
 	// overBudget remembers that this run's request budget was exhausted, so
 	// the first refusal is an info line and a guest that keeps asking does
@@ -45,9 +47,10 @@ type Client struct {
 }
 
 // Client returns the per-run Client for this grant, logging through log
-// (which carries the module reference and digest).
-func (g *Grant) Client(log logging.Logger) *Client {
-	c := &Client{grant: g, log: log}
+// (which carries the module reference and digest). digest identifies the
+// module for process-wide rate limiting.
+func (g *Grant) Client(log logging.Logger, digest string) *Client {
+	c := &Client{grant: g, digest: digest, log: log}
 	c.http = &http.Client{
 		Transport: g.egress.transport(),
 		// Every hop is checked like the first request: the redirect target
@@ -113,6 +116,9 @@ func (c *Client) do(ctx context.Context, req *Request) (rsp *Response, outcome s
 	budget := c.grant.egress.budget
 	if n := c.requests.Add(1); n > int64(budget.maxRequests) {
 		return &Response{Error: fmt.Sprintf("sandbox.egress: this run already made %d requests (maxRequests)", budget.maxRequests)}, metrics.OutcomeBudget, nil, ""
+	}
+	if rl := c.grant.egress.rateLimits; rl != nil && !rl.allow(c.digest) {
+		return &Response{Error: "sandbox.egress: the module's request rate exceeds the egress policy's rateLimit"}, metrics.OutcomeBudget, nil, ""
 	}
 	u, err := url.Parse(req.URL)
 	if err != nil {
