@@ -30,14 +30,22 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/yaml"
 
 	"github.com/jonasz-lasut/function-wasm/cmd/guestfn/internal/scaffold"
+	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 )
 
 const (
 	sdkModule    = "github.com/crossplane/function-sdk-go"
 	wasmfnModule = "github.com/jonasz-lasut/function-wasm/pkg/wasmfn"
+
+	// The Input's identity in a Composition step.
+	inputAPIVersion = "wasm.fn.crossplane.io/v1beta1"
+	inputKind       = "Input"
 
 	// The CNCF wasm OCI artifact layout: a wasm config and one raw wasm layer.
 	wasmConfigMediaType types.MediaType = "application/vnd.wasm.config.v0+json"
@@ -50,10 +58,12 @@ const (
 
 // CLI is the guestfn command line.
 type CLI struct {
-	Init    InitCmd    `cmd:"" help:"Scaffold a new guest project."`
-	Build   BuildCmd   `cmd:"" help:"Compile a guest project to a wasip1 module and check its ABI."`
-	Push    PushCmd    `cmd:"" help:"Push a module to an OCI registry as a wasm artifact; a module the runtime would refuse is not pushed."`
-	Inspect InspectCmd `cmd:"" help:"Show what a module (or an artifact in a registry) is made of, as the runtime sees it: size, ABI verdict, exports, imports, memories."`
+	Init     InitCmd     `cmd:"" help:"Scaffold a new guest project."`
+	Build    BuildCmd    `cmd:"" help:"Compile a guest project to a wasip1 module, check its ABI and its manifest (wasmfn.yaml)."`
+	Push     PushCmd     `cmd:"" help:"Push a module to an OCI registry as a wasm artifact; a module the runtime would refuse is not pushed."`
+	Inspect  InspectCmd  `cmd:"" help:"Show what a module (or an artifact in a registry) is made of, as the runtime sees it: size, ABI verdict, exports, imports, memories, manifest."`
+	Manifest ManifestCmd `cmd:"" help:"Validate a module manifest (wasmfn.yaml) or print the one an artifact carries."`
+	Scaffold ScaffoldCmd `cmd:"" help:"Print a Composition step (or a Composition) for a module, from its manifest."`
 
 	Version kong.VersionFlag `help:"Print the version and exit."`
 }
@@ -152,7 +162,9 @@ type BuildCmd struct {
 // Run compiles the project as a wasip1 reactor with the toolchain of its
 // language: Go and TinyGo build -buildmode=c-shared, which exports _initialize
 // and lets //go:wasmexport functions be called by the host; Rust builds a
-// cdylib for wasm32-wasip1.
+// cdylib for wasm32-wasip1. The result is checked as the runtime would at
+// load, and the project's wasmfn.yaml, if any, is validated as the manifest
+// guestfn push will publish beside it.
 func (c *BuildCmd) Run(ctx context.Context, stdout io.Writer) error {
 	out := c.Output
 	if !filepath.IsAbs(out) {
@@ -174,18 +186,94 @@ func (c *BuildCmd) Run(ctx context.Context, stdout io.Writer) error {
 			return err
 		}
 	}
-	// The runtime's own load-time check, so a module it would refuse is
-	// refused here, with the same words, before it is pushed anywhere.
 	wasm, err := os.ReadFile(out) //nolint:gosec // The file the build just wrote.
 	if err != nil {
 		return err
 	}
+	// The manifest is checked with the build so a broken wasmfn.yaml fails
+	// here rather than at push time.
+	var m *manifest.Manifest
+	if path := filepath.Join(c.Dir, manifest.FileName); fileExists(path) {
+		if m, err = manifest.Load(path); err != nil {
+			return err
+		}
+	}
+	// The runtime's own load-time check, so a module it would refuse is
+	// refused here, with the same words, before it is pushed anywhere.
 	shape, err := checkModule(wasm)
 	if err != nil {
 		return fmt.Errorf("built %s, but the runtime would refuse it: %w", out, err)
 	}
-	_, _ = fmt.Fprintf(stdout, "Built %s (%s, ABI v1%s)\n", out, humanBytes(int64(len(wasm))), importsSuffix(shape))
+	line := fmt.Sprintf("Built %s (%s, ABI v1%s", out, humanBytes(int64(len(wasm))), importsSuffix(shape))
+	if m != nil {
+		line += "; manifest: " + m.Summary()
+	}
+	_, _ = fmt.Fprintln(stdout, line+")")
+	if m != nil {
+		warnExampleConfig(stdout, c.Dir, m)
+	}
 	return nil
+}
+
+// warnExampleConfig holds the scaffold's example Composition config against
+// the manifest's schema, when both exist: a mismatch is a warning, not a
+// failed build - the example is documentation, the schema is the contract.
+func warnExampleConfig(stdout io.Writer, dir string, m *manifest.Manifest) {
+	path := filepath.Join(dir, "example", "composition.yaml")
+	if !fileExists(path) || m.Config == nil || len(m.Config.Schema) == 0 {
+		return
+	}
+	config, ok, err := exampleConfig(path)
+	if err != nil {
+		_, _ = fmt.Fprintf(stdout, "warning: cannot read %s: %v\n", path, err)
+		return
+	}
+	if !ok {
+		return
+	}
+	if err := m.ValidateConfig(config); err != nil {
+		_, _ = fmt.Fprintf(stdout, "warning: %s: %v\n", path, err)
+	}
+}
+
+// exampleConfig returns the config block of the first function-wasm step of
+// a Composition file, as the runtime receives it; ok is false without such a
+// step.
+func exampleConfig(path string) (config *k8sruntime.RawExtension, ok bool, err error) {
+	raw, err := os.ReadFile(path) //nolint:gosec // The project's own example.
+	if err != nil {
+		return nil, false, err
+	}
+	var doc struct {
+		Spec struct {
+			Pipeline []struct {
+				Input map[string]any `json:"input"`
+			} `json:"pipeline"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, false, err
+	}
+	for _, step := range doc.Spec.Pipeline {
+		if step.Input["apiVersion"] != inputAPIVersion || step.Input["kind"] != inputKind {
+			continue
+		}
+		cfg, ok := step.Input["config"]
+		if !ok {
+			return nil, true, nil
+		}
+		js, err := json.Marshal(cfg)
+		if err != nil {
+			return nil, false, err
+		}
+		return &k8sruntime.RawExtension{Raw: js}, true, nil
+	}
+	return nil, false, nil
+}
+
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 // checkModule compiles wasm with the runtime's own engine — wasmtime is the
@@ -286,13 +374,27 @@ func buildGuest(ctx context.Context, lang, dir, out string, stdout io.Writer) er
 
 // PushCmd publishes a module.
 type PushCmd struct {
-	Ref  string `arg:"" help:"Reference to push to, e.g. ghcr.io/me/my-fn:v0.1.0."`
-	File string `short:"f" help:"Module to push." default:"fn.wasm" type:"existingfile"`
+	Ref           string `arg:"" help:"Reference to push to, e.g. ghcr.io/me/my-fn:v0.1.0."`
+	File          string `short:"f" help:"Module to push." default:"fn.wasm" type:"existingfile"`
+	Manifest      string `help:"The module manifest to publish beside the module as the artifact's second layer; by default the wasmfn.yaml next to the module file, when there is one." placeholder:"wasmfn.yaml"`
+	ModuleVersion string `help:"Module version to record in the published manifest, overriding the file's version."`
+	Revision      string `help:"Source revision to record as org.opencontainers.image.revision on the artifact."`
 }
 
-// Run pushes the module as a single-layer OCI artifact and prints what a
-// Composition needs: the reference pinned to the manifest digest, with the
-// tag it was pushed to kept for readability.
+// OCI annotation keys mirrored from the manifest onto the artifact.
+const (
+	annotationTitle       = "org.opencontainers.image.title"
+	annotationVersion     = "org.opencontainers.image.version"
+	annotationSource      = "org.opencontainers.image.source"
+	annotationDescription = "org.opencontainers.image.description"
+	annotationRevision    = "org.opencontainers.image.revision"
+)
+
+// Run pushes the module as an OCI artifact — the module layer and, when the
+// project has a wasmfn.yaml, the manifest layer beside it — and prints what
+// a Composition needs: the reference pinned to the OCI manifest digest, with
+// the tag it was pushed to kept for readability, and the sandbox block the
+// module's manifest requires, if any.
 func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	wasm, err := os.ReadFile(c.File)
 	if err != nil {
@@ -304,31 +406,114 @@ func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	if _, err := checkModule(wasm); err != nil {
 		return fmt.Errorf("%s would be refused by the runtime and is not pushed: %w (guestfn push publishes function-wasm modules; use oras push for other artifacts)", c.File, err)
 	}
+	m, err := c.manifest()
+	if err != nil {
+		return err
+	}
 	ref, err := name.ParseReference(c.Ref)
 	if err != nil {
 		return fmt.Errorf("cannot parse reference: %w", err)
 	}
+	var manifestJSON []byte
+	if m != nil {
+		if manifestJSON, err = m.JSON(); err != nil {
+			return err
+		}
+	}
 	// A fixed creation time makes the artifact — and so the manifest digest
 	// a Composition pins and the caches key on — a function of the module
-	// bytes alone: pushing the same fn.wasm twice yields the same reference.
-	// SOURCE_DATE_EPOCH overrides it, as for any reproducible build.
-	img, err := artifact(wasm, creationTime())
+	// bytes, the manifest and the annotations alone: pushing the same
+	// fn.wasm twice yields the same reference. SOURCE_DATE_EPOCH overrides
+	// it, as for any reproducible build.
+	img, err := artifact(wasm, creationTime(), manifestJSON, manifestAnnotations(m, c.Revision))
 	if err != nil {
 		return err
 	}
 	if err := remote.Write(ref, img, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx)); err != nil {
 		return fmt.Errorf("cannot push %s: %w", ref, err)
 	}
-	manifest, err := img.Digest()
+	digest, err := img.Digest()
 	if err != nil {
 		return err
 	}
 	pinned := ref.String()
 	if _, ok := ref.(name.Digest); !ok {
-		pinned += "@" + manifest.String()
+		pinned += "@" + digest.String()
 	}
 	_, _ = fmt.Fprintf(stdout, "Pushed %s\n\nmodule:\n  type: OCI\n  oci:\n    ref: %s\n", pinned, pinned)
+	if m != nil {
+		block, err := sandboxBlock(m)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprint(stdout, block)
+	}
 	return nil
+}
+
+// manifest loads the manifest to publish: --manifest, or the wasmfn.yaml
+// next to the module file when there is one; nil without either. The
+// version override applies before it is published.
+func (c *PushCmd) manifest() (*manifest.Manifest, error) {
+	path := c.Manifest
+	if path == "" {
+		candidate := filepath.Join(filepath.Dir(c.File), manifest.FileName)
+		if !fileExists(candidate) {
+			if c.ModuleVersion != "" {
+				return nil, fmt.Errorf("--module-version needs a manifest: no %s next to %s and no --manifest", manifest.FileName, c.File)
+			}
+			return nil, nil //nolint:nilnil // No manifest is the common case, not an error.
+		}
+		path = candidate
+	}
+	m, err := manifest.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if c.ModuleVersion != "" {
+		m.Version = c.ModuleVersion
+	}
+	return m, nil
+}
+
+// manifestAnnotations maps the manifest onto the standard OCI image
+// annotations of the artifact; revision comes from the flag. Nil when there
+// is nothing to record. The manifest itself is a layer, not an annotation.
+func manifestAnnotations(m *manifest.Manifest, revision string) map[string]string {
+	annotations := map[string]string{}
+	if m != nil {
+		for key, value := range map[string]string{
+			annotationTitle: m.Name, annotationVersion: m.Version, annotationSource: m.Source, annotationDescription: m.Description,
+		} {
+			if value != "" {
+				annotations[key] = value
+			}
+		}
+	}
+	if revision != "" {
+		annotations[annotationRevision] = revision
+	}
+	if len(annotations) == 0 {
+		return nil
+	}
+	return annotations
+}
+
+// sandboxBlock renders the sandbox a Composition must grant for the
+// manifest's requirements, as the YAML fragment that follows the module
+// block; empty when the module requires nothing.
+func sandboxBlock(m *manifest.Manifest) (string, error) {
+	sb := m.Sandbox()
+	if sb == nil {
+		return "", nil
+	}
+	out, err := yaml.Marshal(struct {
+		Sandbox *v1beta1.Sandbox `json:"sandbox"`
+	}{sb})
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // creationTime is SOURCE_DATE_EPOCH when set and valid, the Unix epoch
@@ -352,24 +537,40 @@ type wasmConfig struct {
 	LayerDigests []string `json:"layerDigests"`
 }
 
-// artifact wraps a module in the CNCF wasm OCI artifact layout: one
-// application/wasm layer and a wasm config naming it in layerDigests. The
-// manifest is a function of the module bytes and created alone.
-func artifact(wasm []byte, created time.Time) (v1.Image, error) {
-	layer := static.NewLayer(wasm, wasmLayerMediaType)
-	layerDigest, err := layer.Digest()
-	if err != nil {
-		return nil, err
+// artifact wraps a module in the CNCF wasm OCI artifact layout: the
+// application/wasm layer, then — when manifestJSON is set — the module
+// manifest as a second layer of manifest.LayerMediaType, a wasm config naming
+// every layer in layerDigests, and the OCI annotations. The OCI manifest is
+// a function of the module bytes, the manifest, created and annotations
+// alone.
+func artifact(wasm []byte, created time.Time, manifestJSON []byte, annotations map[string]string) (v1.Image, error) {
+	layers := []v1.Layer{static.NewLayer(wasm, wasmLayerMediaType)}
+	if len(manifestJSON) > 0 {
+		layers = append(layers, static.NewLayer(manifestJSON, types.MediaType(manifest.LayerMediaType)))
 	}
-	layerSize, err := layer.Size()
-	if err != nil {
-		return nil, err
+	descriptors := make([]v1.Descriptor, 0, len(layers))
+	digests := make([]string, 0, len(layers))
+	for _, l := range layers {
+		digest, err := l.Digest()
+		if err != nil {
+			return nil, err
+		}
+		size, err := l.Size()
+		if err != nil {
+			return nil, err
+		}
+		mediaType, err := l.MediaType()
+		if err != nil {
+			return nil, err
+		}
+		descriptors = append(descriptors, v1.Descriptor{MediaType: mediaType, Size: size, Digest: digest})
+		digests = append(digests, digest.String())
 	}
 	config, err := json.Marshal(wasmConfig{
 		Created:      created.UTC().Format(time.RFC3339),
 		Architecture: "wasm",
 		OS:           "wasip1",
-		LayerDigests: []string{layerDigest.String()},
+		LayerDigests: digests,
 	})
 	if err != nil {
 		return nil, err
@@ -378,24 +579,25 @@ func artifact(wasm []byte, created time.Time) (v1.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	manifest, err := json.Marshal(v1.Manifest{
+	rawManifest, err := json.Marshal(v1.Manifest{
 		SchemaVersion: 2,
 		MediaType:     types.OCIManifestSchema1,
 		Config:        v1.Descriptor{MediaType: wasmConfigMediaType, Size: configSize, Digest: configDigest},
-		Layers:        []v1.Descriptor{{MediaType: wasmLayerMediaType, Size: layerSize, Digest: layerDigest}},
+		Layers:        descriptors,
+		Annotations:   annotations,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return partial.CompressedToImage(&wasmArtifact{config: config, manifest: manifest, layer: layer})
+	return partial.CompressedToImage(&wasmArtifact{config: config, manifest: rawManifest, layers: layers})
 }
 
 // wasmArtifact is the minimal image core the artifact needs: raw config and
-// manifest bytes written as they are, and the one layer.
+// manifest bytes written as they are, and the layers.
 type wasmArtifact struct {
 	config   []byte
 	manifest []byte
-	layer    v1.Layer
+	layers   []v1.Layer
 }
 
 func (a *wasmArtifact) RawConfigFile() ([]byte, error)      { return a.config, nil }
@@ -403,14 +605,16 @@ func (a *wasmArtifact) MediaType() (types.MediaType, error) { return types.OCIMa
 func (a *wasmArtifact) RawManifest() ([]byte, error)        { return a.manifest, nil }
 
 func (a *wasmArtifact) LayerByDigest(h v1.Hash) (partial.CompressedLayer, error) {
-	d, err := a.layer.Digest()
-	if err != nil {
-		return nil, err
+	for _, l := range a.layers {
+		d, err := l.Digest()
+		if err != nil {
+			return nil, err
+		}
+		if d == h {
+			return l, nil
+		}
 	}
-	if d != h {
-		return nil, fmt.Errorf("no layer %s in the artifact", h)
-	}
-	return a.layer, nil
+	return nil, fmt.Errorf("no layer %s in the artifact", h)
 }
 
 func run(ctx context.Context, dir string, stdout io.Writer, name string, args ...string) error {
