@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, Phases 1-3 Implemented
+* Status: Draft, Phases 1-4 Implemented
 
 The resource-governance one-pager bounds a run by wall clock and linear
 memory, the runtime by compiles, resident modules, disk and (optionally)
@@ -169,6 +169,7 @@ additions keep them portable:
   the mirror is the runtime's own keychain (`DOCKER_CONFIG`) — the mirror is
   the operator's; a step credential was declared for the stated registry
   and is not sent to a host the Composition author did not name. S.
+  **Implemented.**
 - **`--oci-layout-dir /modules`** (`OCI_LAYOUT_DIR`): a directory in OCI
   image-layout form (`index.json`, `blobs/sha256/…`, as `crane pull
   --format=oci`, `oras copy --to-oci-layout` or a `guestfn save` write it),
@@ -180,7 +181,7 @@ additions keep them portable:
   come from. With `--cosign-key`, the `.sig` manifest is looked up in the
   layout's index by the ref-name annotation the layout tools write
   (`cosign save` keeps signatures next to the image), so verification works
-  offline. M.
+  offline. M. **Implemented.**
 - **`function precompile <ref|path:…>…`**: the runtime binary gains kong
   subcommands (`serve` as the default so the bare invocation Crossplane uses
   is unchanged); `precompile` runs the warm path (`cmd/function/warm.go`:
@@ -190,6 +191,7 @@ additions keep them portable:
   `--registry-mirror`/`--oci-layout-dir`/`--cosign-key`, and — unlike
   warm-up — exits non-zero when an entry failed. The "AOT is cache, never
   source" stance stands: publisher-shipped `.cwasm` remains a non-goal. S.
+  **Implemented.**
 
 ## Phase 5 — Raw-bytes gRPC codec
 
