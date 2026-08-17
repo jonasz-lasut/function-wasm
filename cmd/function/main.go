@@ -171,11 +171,11 @@ func (c *ServeCmd) Run(cli *CLI) error {
 	}
 	defer eng.Close()
 
-	blobs, compiled, err := openCaches()
+	blobs, compiled, manifests, err := openCaches()
 	if err != nil {
 		return err
 	}
-	go sweepCaches(log, []*cache.Store{blobs, compiled}, int64(c.MaxCacheSize)<<20)
+	go sweepCaches(log, []*cache.Store{blobs, compiled, manifests}, int64(c.MaxCacheSize)<<20)
 
 	resolver, err := c.resolver(blobs)
 	if err != nil {
@@ -197,8 +197,9 @@ func (c *ServeCmd) Run(cli *CLI) error {
 			MaxEntries:            c.MaxCachedModules,
 			MaxConcurrentCompiles: c.MaxConcurrentCompiles,
 		}),
-		resolver: resolver,
-		sandbox:  ceilings.Sandbox,
+		resolver:  resolver,
+		sandbox:   ceilings.Sandbox,
+		manifests: manifests,
 	}
 	// Readiness: the caches are open, the engine is up and the modules named
 	// by --warm-modules are loaded. It is answered twice — by the gRPC health
@@ -275,45 +276,53 @@ func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64) {
 	}
 }
 
-// openCaches prepares the two on-disk caches under cache.DefaultDir before
-// the function serves: fetched modules by digest, and wasmtime artifacts
-// under a directory named after the wasmtime version and host so an upgrade
-// never loads foreign code; artifacts of other versions are removed once
-// nothing has written them for a day (a rolling upgrade shares the volume
-// between versions). Both directories are created if missing — the function
-// never runs without them.
-func openCaches() (blobs, compiled *cache.Store, err error) {
+// openCaches prepares the three on-disk caches under cache.DefaultDir before
+// the function serves: fetched modules by digest; wasmtime artifacts under a
+// directory named after the wasmtime version and host so an upgrade never
+// loads foreign code — artifacts of other versions are removed once nothing
+// has written them for a day (a rolling upgrade shares the volume between
+// versions); and the module manifests, kilobytes per digest, kept beside the
+// artifacts so a warm volume needs no registry read to learn what a module
+// requires. The directories are created if missing — the function never
+// runs without them.
+func openCaches() (blobs, compiled, manifests *cache.Store, err error) {
 	engineVersion := engine.Version()
 
 	modulesDir := filepath.Join(cache.DefaultDir, cache.ModulesDir)
 	compiledDir := filepath.Join(cache.DefaultDir, cache.CompiledDir)
 	versionDir := filepath.Join(compiledDir, engineVersion)
+	manifestsDir := filepath.Join(cache.DefaultDir, cache.ManifestsDir)
 	for _, d := range []struct{ path, what string }{
 		{cache.DefaultDir, "cache"},
 		{modulesDir, "modules cache"},
 		{compiledDir, "compiled cache"},
 		{versionDir, "compiled cache"},
+		{manifestsDir, "manifests cache"},
 	} {
 		if _, err := os.Stat(d.path); os.IsNotExist(err) {
 			err = os.Mkdir(d.path, 0750)
 			if err != nil {
-				return nil, nil, errors.Wrapf(err, "failed to create %s dir", d.what)
+				return nil, nil, nil, errors.Wrapf(err, "failed to create %s dir", d.what)
 			}
 		}
 	}
 	base := afero.NewBasePathFs(afero.NewOsFs(), cache.DefaultDir)
 	if err := cache.RemoveOthers(base, cache.CompiledDir, engineVersion, time.Now()); err != nil {
-		return nil, nil, errors.Wrapf(err, "cannot clean %s", compiledDir)
+		return nil, nil, nil, errors.Wrapf(err, "cannot clean %s", compiledDir)
 	}
 	blobs, err = cache.OpenDir(modulesDir, true)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	compiled, err = cache.OpenDir(versionDir, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return blobs, compiled, nil
+	manifests, err = cache.OpenDir(manifestsDir, false)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return blobs, compiled, manifests, nil
 }
 
 // parser builds the kong parser main and the tests share.
