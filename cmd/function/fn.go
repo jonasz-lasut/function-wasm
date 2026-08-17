@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/crossplane/function-sdk-go/errors"
 	"github.com/crossplane/function-sdk-go/logging"
@@ -17,8 +17,11 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/admission"
+	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
 	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
@@ -40,6 +43,21 @@ type Function struct {
 	// egress is the operator's HTTP egress ceiling (--enable-sandbox-egress,
 	// --sandbox-egress-policy); nil refuses every sandbox.egress grant.
 	egress *egress.Egress
+
+	// manifests is the on-disk store of module manifests by digest, kept
+	// beside the compiled artifacts so an artifact hit — a warm volume, a
+	// restart — needs no registry read to learn what a module requires; nil
+	// (tests) means every process reads it from the source once. An empty
+	// entry records that a module has none.
+	manifests *cache.Store
+	// parsed caches each digest's parsed manifest (nil for a module without
+	// one) so its schema is compiled once per process, like the module.
+	parsed sync.Map // digest → *manifest.Manifest
+}
+
+// ceilings are what every request's Input is admitted against.
+func (f *Function) ceilings() admission.Ceilings {
+	return admission.Ceilings{Engine: f.engine.Config(), Sandbox: f.sandbox, Egress: f.egress}
 }
 
 // RunFunction resolves, loads and runs the module and returns its response
@@ -62,37 +80,15 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		return f.fatal(rsp, log, metrics.OutcomeRefused, errors.Wrapf(err, "cannot get function input from %T", req)), nil
 	}
 
-	// What the Composition asks of the runtime — sandbox grants and limits
-	// — is settled before any module is resolved, fetched or compiled:
-	// nothing will run if it is refused.
-	if err := sandbox.Validate(in.Sandbox); err != nil {
-		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
-	}
-	// Filesystem (the private /tmp) and environment: what the
-	// Composition asks for, within the operator's ceiling, or a fatal result
-	// naming the grant and the flag.
-	grant, err := f.sandbox.Grant(in.Sandbox)
+	// What the Composition asks of the runtime — sandbox grants, egress and
+	// limits — is settled before any module is resolved, fetched or compiled:
+	// nothing will run if it is refused. The same admission runs offline as
+	// function validate.
+	admitted, err := admission.Admit(in, f.ceilings())
 	if err != nil {
 		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
 	}
-	// The Composition's HTTP rules must fit the operator's ceiling; the
-	// intersection is this run's grant, settled before anything is resolved.
-	// Without the flag the capability does not exist.
-	var httpGrant *egress.Grant
-	if sandbox.RequestsEgress(in.Sandbox) {
-		if f.egress == nil {
-			return f.fatal(rsp, log, metrics.OutcomeRefused, errors.New("sandbox.egress is refused: the runtime was started without --enable-sandbox-egress")), nil
-		}
-		httpGrant, err = f.egress.Grant(in.Sandbox.Egress.HTTP)
-		if err != nil {
-			return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
-		}
-	}
-	limits, err := runOptions(in.Limits, f.engine.Config())
-	if err != nil {
-		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
-	}
-	limits = withSandbox(limits, grant)
+	limits := admitted.Options
 
 	// A module.from source names a field of the composite resource; it is
 	// read from the observed XR on every request (converting the XR is not
@@ -136,10 +132,17 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	}
 	defer mod.Release()
 
+	// The module's own requirements — its manifest — are checked against
+	// what the Composition granted and the operator admitted: a manifest can
+	// refuse a run earlier, never make one possible.
+	if err := f.checkManifest(ctx, ref, in, admitted); err != nil {
+		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
+	}
+
 	// The per-run client logs every request with the
 	// module's reference and digest.
-	if httpGrant != nil {
-		limits.HTTP = httpGrant.Client(log)
+	if admitted.HTTP != nil {
+		limits.HTTP = admitted.HTTP.Client(log)
 	}
 	// A run slot, when --max-concurrent-runs bounds them, is waited for
 	// inside Run under the request context; a wait the deadline cuts short
@@ -171,6 +174,65 @@ func (f *Function) fatal(rsp *fnv1.RunFunctionResponse, log logging.Logger, outc
 	return rsp
 }
 
+// checkManifest applies the module's manifest, if it has one, to what the
+// Composition was granted: an unmet requirement or a config outside the
+// module's schema is a refusal naming the module. The parsed manifest and
+// its compiled schema are cached per digest.
+func (f *Function) checkManifest(ctx context.Context, ref *module.Ref, in *v1beta1.Input, admitted admission.Admitted) error {
+	m, err := f.manifestFor(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if m == nil {
+		return nil
+	}
+	grants := manifest.Grants{PrivateTmp: admitted.Grant.PrivateTmp}
+	if admitted.HTTP != nil && in.Sandbox != nil && in.Sandbox.Egress != nil {
+		grants.HTTP = in.Sandbox.Egress.HTTP
+	}
+	if err := m.Check(grants, in.Config, manifest.RuntimeVersion()); err != nil {
+		return errors.Errorf("module %s %v", ref.Description, err)
+	}
+	return nil
+}
+
+// manifestFor returns a module's parsed manifest, nil when it carries none:
+// from memory, then the on-disk store, then the source (the artifact's
+// manifest layer), read once per digest per volume and parsed once per
+// process. A manifest that does not parse or validate refuses the module.
+func (f *Function) manifestFor(ctx context.Context, ref *module.Ref) (*manifest.Manifest, error) {
+	if v, ok := f.parsed.Load(ref.Digest); ok {
+		m, _ := v.(*manifest.Manifest)
+		return m, nil
+	}
+	raw, ok := []byte(nil), false
+	if f.manifests != nil {
+		raw, ok = f.manifests.Get(ref.Digest)
+	}
+	if !ok {
+		var err error
+		if raw, _, err = ref.Manifest(ctx); err != nil {
+			return nil, errors.Wrapf(err, "cannot read the manifest of module %s", ref.Description)
+		}
+		if f.manifests != nil {
+			// An empty entry records "no manifest": the next process asks
+			// the registry nothing. A full or read-only store only costs
+			// the next process the read.
+			_ = f.manifests.Put(ref.Digest, raw)
+		}
+	}
+	var m *manifest.Manifest
+	if len(raw) > 0 {
+		parsed, err := manifest.Parse(raw)
+		if err != nil {
+			return nil, errors.Wrapf(err, "module %s has an invalid manifest", ref.Description)
+		}
+		m = parsed
+	}
+	f.parsed.Store(ref.Digest, m)
+	return m, nil
+}
+
 // load returns the compiled module ref pins, leased from the cache — from
 // memory, the artifact on disk, or fetched and compiled — with the fetch
 // timed in the debug log. The error names the module: it is the fatal result
@@ -190,46 +252,6 @@ func (f *Function) load(ctx context.Context, ref *module.Ref, log logging.Logger
 		return nil, errors.Wrapf(err, "cannot load module %s", ref.Description)
 	}
 	return mod, nil
-}
-
-// runOptions turns the Input's limits into the run's budget, checked against
-// the runtime's ceilings: a Composition may ask for less than the operator
-// allows, never more, and the refusal names both values so either author can
-// act on it.
-func runOptions(l *v1beta1.Limits, ceiling engine.Config) (engine.RunOptions, error) {
-	var opts engine.RunOptions
-	if l == nil {
-		return opts, nil
-	}
-	if l.Timeout != nil {
-		timeout := l.Timeout.Duration
-		if timeout <= 0 {
-			return opts, errors.Errorf("limits.timeout %s must be positive", timeout)
-		}
-		if timeout > ceiling.Timeout {
-			return opts, errors.Errorf("limits.timeout %s exceeds the runtime's --module-timeout of %s", timeout, ceiling.Timeout)
-		}
-		opts.Timeout = timeout
-	}
-	if l.Memory != nil {
-		memory := l.Memory.Value()
-		if memory <= 0 {
-			return opts, errors.Errorf("limits.memory %s must be positive", l.Memory)
-		}
-		if memory > ceiling.MemoryLimit {
-			return opts, errors.Errorf("limits.memory %s exceeds the runtime's --module-memory-limit of %s", l.Memory, resource.NewQuantity(ceiling.MemoryLimit, resource.BinarySI))
-		}
-		opts.MemoryLimit = memory
-	}
-	return opts, nil
-}
-
-// withSandbox adds the run's sandbox grant — its pre-opens, private /tmp and
-// environment — to the options the engine applies to the store.
-func withSandbox(opts engine.RunOptions, g sandbox.Grant) engine.RunOptions {
-	opts.PrivateTmp = g.PrivateTmp
-	opts.Env = g.Env
-	return opts
 }
 
 // registryAuth returns the authenticator for an OCI source that names a

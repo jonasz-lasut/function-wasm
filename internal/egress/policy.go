@@ -283,6 +283,31 @@ func NormalizedPath(p string) bool {
 	return normalizedPath(p)
 }
 
+// PatternCovers reports whether host is under pattern the way a rule's
+// hostPattern admits it: "*.example.com" covers "api.example.com" and
+// "a.b.example.com", not "example.com" itself. Both sides are normalized;
+// an invalid pattern covers nothing.
+func PatternCovers(pattern, host string) bool {
+	suffix, ok := patternSuffix(pattern)
+	return ok && matchesSuffix(normalizeHost(host), suffix)
+}
+
+// PatternUnder reports whether pattern sits at or under granted - the rule
+// the ceiling applies between a Composition's pattern and the policy's:
+// "*.a.example.com" is under "*.example.com", and a pattern is under itself.
+// An invalid pattern on either side is not.
+func PatternUnder(pattern, granted string) bool {
+	suffix, ok := patternSuffix(pattern)
+	if !ok {
+		return false
+	}
+	over, ok := patternSuffix(granted)
+	if !ok {
+		return false
+	}
+	return suffix == over || strings.HasSuffix(suffix, over)
+}
+
 // patternSuffix turns "*.example.com" into ".example.com".
 func patternSuffix(pattern string) (string, bool) {
 	pattern = normalizeHost(pattern)

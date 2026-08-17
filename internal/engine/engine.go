@@ -41,7 +41,10 @@ const (
 	// answered within the Run's sandbox.egress grant (hosthttp.go).
 	HostHTTP = "http"
 
-	wasiModule = "wasi_snapshot_preview1"
+	// WASIModule is the WASI preview 1 import module the host provides in
+	// full.
+	WASIModule = "wasi_snapshot_preview1"
+	wasiModule = WASIModule
 
 	// argv0 is what a guest sees as os.Args[0]. WASI guests written in Go
 	// (via klog's init) index os.Args[0], so an empty argv traps at
@@ -121,14 +124,21 @@ type Engine struct {
 	closeOnce sync.Once
 }
 
+// WithDefaults returns c with DefaultTimeout and DefaultMemoryLimit applied
+// for zero fields — the ceilings an Engine built from c would report.
+func (c Config) WithDefaults() Config {
+	if c.Timeout <= 0 {
+		c.Timeout = DefaultTimeout
+	}
+	if c.MemoryLimit <= 0 {
+		c.MemoryLimit = DefaultMemoryLimit
+	}
+	return c
+}
+
 // New creates an Engine. Close it when done to stop its epoch ticker.
 func New(cfg Config) (*Engine, error) {
-	if cfg.Timeout <= 0 {
-		cfg.Timeout = DefaultTimeout
-	}
-	if cfg.MemoryLimit <= 0 {
-		cfg.MemoryLimit = DefaultMemoryLimit
-	}
+	cfg = cfg.WithDefaults()
 
 	wc := wasmtime.NewConfig()
 	wc.SetEpochInterruption(true)

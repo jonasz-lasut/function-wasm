@@ -154,14 +154,55 @@ logs through the runtime. Your function knows nothing about WebAssembly, and
 
 ```shell
 go test ./...                                   # unit tests run natively
-guestfn build                                   # fn.wasm (wasip1)
-guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact; prints the module block for the Composition
+guestfn build                                   # fn.wasm (wasip1); prints the ABI verdict and the manifest summary
+guestfn inspect fn.wasm                         # size, ABI verdict, exports, imports, memory
+guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest; prints the module and sandbox blocks for the Composition
 ```
 
-`guestfn push` produces a CNCF wasm OCI artifact (one `application/wasm`
-layer); `oras push ghcr.io/example/greeter:v0.1.0 fn.wasm:application/wasm`
-gives the same result, and a `FROM scratch` image that `COPY`s the module
-works too. Any language with a wasip1 toolchain can target the
+`guestfn build` ends with the verdict the runtime reaches when it loads the
+module — `Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http wasmfn.log)`
+— and fails, in the runtime's words, on a module the runtime would refuse
+(`module does not export "wasmfn_run"`); `guestfn push` refuses to publish
+such a module for the same reason. The check is the runtime's own: `guestfn`
+compiles the module with the same wasmtime engine (a couple of seconds for a
+large Go module), so what it prints is what a load says — which also makes
+`guestfn` a CGo binary like the runtime (`go install` needs a C compiler).
+`guestfn inspect fn.wasm` shows what the runtime sees — size, verdict,
+exports, imports with their types, memory limits — and `guestfn inspect
+ghcr.io/example/greeter:v0.1.0` describes an artifact from its manifest
+(media types, layer, annotations) without pulling, `--pull` reading the
+module too; `--output json` for scripts.
+
+The scaffold also has a **`wasmfn.yaml`** — the module's manifest: what it
+declares about itself (`name`, `version`, `abi: 1`), the sandbox grants it
+cannot run without (`requires`: egress rules in the Input's own shape,
+`filesystem.privateTmp` — the scaffold requires nothing; environment
+variables are values a Composition sets, not a capability, so they are not
+a requirement) and the
+JSON Schema of its `config` (the scaffold's covers `greeting` and
+`greetingUrl`). `guestfn build` validates it and checks the example
+Composition's `config` against the schema; `guestfn push` publishes it
+beside the module (`--manifest` names another file, `--module-version` and
+`--revision` override the version and set the revision annotation) and
+prints, under the `module:` block, the `sandbox:` block a Composition needs
+to satisfy it; the runtime then refuses a Composition that grants less than
+the module requires, before the module runs (see [Module
+manifests](#module-manifests)). `guestfn manifest validate` checks the
+file, `guestfn manifest show ghcr.io/example/greeter:v0.1.0` prints what a
+published module declares, and `guestfn scaffold composition --from
+ghcr.io/example/greeter:v0.1.0` (or `--from fn.wasm`) writes a Composition
+step — `module` pinned, `sandbox` from `requires`, a `config` skeleton from
+the schema; `--full` for a whole Composition.
+
+`guestfn push` produces a CNCF wasm OCI artifact: one `application/wasm`
+layer, the manifest as an `application/vnd.wasmfn.manifest.v1+json` layer
+when the project has one, a wasm config naming both in `layerDigests`, and
+the standard `org.opencontainers.image.*` annotations from the manifest.
+`oras push ghcr.io/example/greeter:v0.1.0 fn.wasm:application/wasm
+wasmfn.json:application/vnd.wasmfn.manifest.v1+json` gives the same result,
+and a `FROM scratch` image whose only layer `COPY`s the module to `/fn.wasm`
+— that exact path, nothing is guessed from the archive — works too (without
+a manifest). Any language with a wasip1 toolchain can target the
 [ABI](docs/abi.md).
 
 **Module size.** A guest using function-sdk-go's `request`, `response` and
@@ -210,6 +251,46 @@ in `type: OCI` and the `oci` reference for a cluster. In this repository `make -
 does all of the above for the example guest (`render-check` asserts the
 output; CI runs it).
 
+### Validate a Composition
+
+Crossplane never installs a function's Input CRD, so the runtime is the only
+gate a Composition's Input passes — and until now it was reached only by
+reconciling. `function validate` runs that gate offline: the runtime binary
+takes the same ceiling flags as when it serves and applies the same checks
+(`sandbox` grants against `--enable-sandbox-*` and the egress policy,
+`limits` against `--module-timeout`/`--module-memory-limit`, `module` and
+`policy` shape) to every function-wasm step of the Compositions (or bare
+`Input` documents) you give it, printing the runtime's own words:
+
+```shell
+go run github.com/jonasz-lasut/function-wasm/cmd/function@latest validate \
+  example/composition.yaml --module-dir=. --resolve
+# or, with the released image (its entrypoint is the runtime):
+docker run --rm -v "$PWD:/w" ghcr.io/jonasz-lasut/function-wasm:<version> validate /w/composition.yaml \
+  --enable-sandbox-egress --sandbox-egress-policy /w/egress-policy.yaml
+```
+
+```
+composition.yaml: Composition/hello pipeline[0] hello: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, egress api.example.com)
+composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0].host "evil.example.com" is outside the runtime's egress policy (allowed: api.example.com)
+```
+
+`--xr xr.yaml` materialises `module.from` sources against that composite
+resource, as the observed XR would (without it a `from` source is checked
+for the `policy.repositoryAllowList` it requires and reported as the XR's
+choice); `--resolve` goes on to resolve, verify (`--cosign-key`) and fetch
+each module — OCI pulls use the local Docker config, never a step
+credential — and compiles it with wasmtime for the runtime's own verdict
+(size, ABI, host imports; a compile is seconds and about a gigabyte for a
+large Go module); `--function-name` keeps only the steps of one function; `--output json` prints one JSON object per step for
+CI annotations; `-` reads stdin. Warnings (a `Path` source in a
+Composition, egress granted without `--cosign-key`, a limit equal to its
+ceiling, a field the runtime would silently ignore) are printed under the
+step and never change the exit code: 0 when every step is admitted, 1 when
+at least one is refused, 2 when the tool itself failed (unreadable file,
+unparsable YAML, a bad flag). `make -C examples/hello-go render` runs it
+over the example first.
+
 ## Input reference
 
 `apiVersion: wasm.fn.crossplane.io/v1beta1`, `kind: Input`.
@@ -243,7 +324,7 @@ Everything but the source is read from the Input: `policy`, `limits` and
 |---|---|---|
 | `module` | object | **required** — where the module comes from |
 | `module.type` | string | **required** — `OCI`, `HTTP` or `Path`. Exactly one of the object it names (`oci`, `http`, `path`) or `module.from` is set, and no object of another type may be present. The runtime checks it on every request — the Input's CRD (with the same rules as CEL) is never installed by Crossplane; a function input is part of a Composition, not an object, so its schema only serves tooling that validates against it (`crossplane resource validate` with the package's `input/` directory) and IDEs |
-| `module.oci.ref` | string | OCI artifact reference **pinned to its manifest digest**, `registry/repo@sha256:…`, as `guestfn push` prints it. The manifest digest pins the module (the manifest states its layer's digest; both are verified on fetch) and addresses the caches. A tag alone is not accepted (tags can be moved; the runtime resolves nothing at request time); `registry/repo:tag@sha256:…` is fine — the digest is what is fetched, the tag is human-readable context and may even no longer exist. The module is the `application/wasm` (or `vnd.wasm` content) layer, the only layer, or the first `.wasm` file of a single tar layer |
+| `module.oci.ref` | string | OCI artifact reference **pinned to its manifest digest**, `registry/repo@sha256:…`, as `guestfn push` prints it. The manifest digest pins the module (the manifest states its layer's digest; both are verified on fetch) and addresses the caches. A tag alone is not accepted (tags can be moved; the runtime resolves nothing at request time); `registry/repo:tag@sha256:…` is fine — the digest is what is fetched, the tag is human-readable context and may even no longer exist. The module is the `application/wasm` (or `vnd.wasm` content) layer, or the only layer; a tar layer (a `FROM scratch` image) must hold it at exactly `/fn.wasm` |
 | `module.oci.credentials` | string | name of a pipeline-step credential (a Secret with `.dockerconfigjson`, or `username` and `password` keys) used to pull. Without it the runtime's Docker config (`DOCKER_CONFIG`) and anonymous access are tried. An object read through `module.from` may name one only when `policy.credentialsAllowList` lists it (see `policy`) |
 | `module.http.url` | string | download the module over HTTP(S) |
 | `module.http.digest` | string | **required** — `sha256:<hex>` of the module; the download is verified against it |
@@ -334,6 +415,30 @@ mountable into a module, whatever the flags:
 
 A `privateTmp`/`env` grant without its `--enable-sandbox-*` flag is a fatal
 result naming the grant and the flag; the module never runs.
+
+### Module manifests
+
+A module published with `guestfn push` from a project that has a
+`wasmfn.yaml` carries a **manifest** beside it in the same OCI artifact (a
+second layer, `application/vnd.wasmfn.manifest.v1+json`, covered by the
+manifest digest the Composition pins and by a cosign signature): the
+sandbox grants it cannot run without (`requires`: egress rules in the
+Input's own shape and `filesystem.privateTmp` — never `env`: variables are
+values the Composition sets, not a capability), a JSON Schema for
+its `config`, its ABI and the oldest runtime that serves it. The runtime
+reads it once per digest (into `/tmp/function-wasm-cache/manifests`) and,
+after admission and load, holds it against what the Composition granted —
+**narrowing only**: a manifest can make a run fail earlier and say why, it
+can never make a run possible or widen a grant. An unmet requirement is a
+fatal result before the module runs — `module oci ghcr.io/example/greeter@sha256:… requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/, which the Composition does not grant`,
+`… requires sandbox.filesystem.privateTmp, which the Composition does not grant`,
+`… requires runtime v0.3.0 or newer, this is v0.2.1` — and so is a
+`config` outside the schema: `… config does not match the module's schema:
+/greeting: got number, want string`. A module without a manifest, and every
+`path` or `http` source, runs as before. `guestfn push` prints the
+`sandbox:` block a Composition needs under the `module:` block, `guestfn
+inspect <ref>` shows what a module requires, and `function validate
+--resolve` applies the same check offline.
 
 ## HTTP egress
 
@@ -465,9 +570,14 @@ your organisation signed run.
    ten minutes after their last use), then wasmtime artifacts on disk, then
    fetched modules on disk under `/tmp/function-wasm-cache`. Only a module
    never seen by this node is fetched (verified against its digest, written
-   to disk) and compiled — about two seconds for a 75 MB Go module — and its
-   artifact written to disk. Restarts and registry outages need no network.
-   Details in [docs/one-pager-cache.md](docs/one-pager-cache.md).
+   to disk) and compiled — about two seconds for a 75 MB Go module; a
+   module without the ABI's exports, or importing what the host does not
+   provide, is refused here — and its artifact written to disk. Restarts and
+   registry outages need no network. Details in
+   [docs/one-pager-cache.md](docs/one-pager-cache.md). The module's
+   [manifest](#module-manifests), if its artifact carries one, is then held
+   against what step 1 granted: an unmet requirement or a `config` outside
+   the module's schema is a fatal result before anything runs.
 3. Every request gets a fresh instance (about ten milliseconds): WASI with no
    network access, and no filesystem or environment beyond what `sandbox`
    granted — a private `/tmp` created for this request and removed after
@@ -486,6 +596,15 @@ your organisation signed run.
 The full host/guest contract is in [docs/abi.md](docs/abi.md).
 
 ## Runtime flags
+
+The binary has two subcommands: `serve` — the default, so `function
+--insecure --module-dir=.` and a `DeploymentRuntimeConfig`'s `args` need no
+subcommand — and [`validate`](#validate-a-composition), which takes the
+ceiling flags below (`--module-dir`, `--max-module-size`,
+`--module-timeout`, `--module-memory-limit`, `--cosign-key`, the
+`--enable-sandbox-*` flags and `--sandbox-egress-policy`) with the same
+defaults and environment variables, so a Composition is validated against
+exactly what a runtime started with those flags would admit.
 
 | flag | env | default | purpose |
 |---|---|---|---|
@@ -658,7 +777,10 @@ pulled with the runtime's own Docker config (mount one through a
 `DeploymentRuntimeConfig` and set `DOCKER_CONFIG`; credentials there are
 bound to their registry host) or anonymously. `policy`, `limits` and
 `sandbox` are read from the Input only, so an XR author can choose code, not
-widen its permissions, grants or budget. The sandbox protects the runtime
+widen its permissions, grants or budget; every one of these rules is
+enforced by the runtime on every request (Crossplane never installs the
+Input CRD), and [`function validate`](#validate-a-composition) runs the
+same code over a Composition offline. The sandbox protects the runtime
 process — and with it every other Composition sharing the Function — from a
 crashing, looping or memory-hungry module, and gives a module no filesystem,
 environment or network beyond what the Composition granted within the
@@ -695,7 +817,7 @@ go build ./... && go vet ./... && go test -race ./...    # host, CLI, engine (ne
 (cd examples/hello-go && go test ./...)
 golangci-lint run ./...
 go generate ./...                                        # Input CRD, guestfn scaffold golden
-make -C examples/hello-go render-check                      # crossplane render through the real runtime
+make -C examples/hello-go render-check                      # function validate + crossplane render through the real runtime
 ```
 
 The root tests build `examples/hello-go` to WebAssembly and run it through the

@@ -29,6 +29,7 @@ import (
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
 )
 
@@ -539,11 +540,12 @@ func artifact(t *testing.T, reg string, repo string, layers ...v1.Layer) string 
 }
 
 func tarLayer(t *testing.T, gz bool) v1.Layer {
-	return paddedTarLayer(t, gz, []byte("hi"))
+	return paddedTarLayer(t, gz, []byte("hi"), "fn.wasm")
 }
 
-// paddedTarLayer stores the module behind a README of the given content.
-func paddedTarLayer(t *testing.T, gz bool, readme []byte) v1.Layer {
+// paddedTarLayer stores the module under name behind a README of the given
+// content.
+func paddedTarLayer(t *testing.T, gz bool, readme []byte, name string) v1.Layer {
 	t.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -551,7 +553,7 @@ func paddedTarLayer(t *testing.T, gz bool, readme []byte) v1.Layer {
 		t.Fatal(err)
 	}
 	_, _ = tw.Write(readme)
-	if err := tw.WriteHeader(&tar.Header{Name: "fn.wasm", Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(module))}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(module))}); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = tw.Write(module)
@@ -591,7 +593,10 @@ func TestResolveOCI(t *testing.T) {
 	singleRef := artifact(t, host, "single", static.NewLayer(module, "application/octet-stream"))
 	tarRef := artifact(t, host, "tar", tarLayer(t, false))
 	tgzRef := artifact(t, host, "tgz", tarLayer(t, true))
-	bombRef := artifact(t, host, "bomb", paddedTarLayer(t, true, make([]byte, 64<<10)))
+	bombRef := artifact(t, host, "bomb", paddedTarLayer(t, true, make([]byte, 64<<10), "fn.wasm"))
+	dotSlashRef := artifact(t, host, "dotslash", paddedTarLayer(t, false, []byte("hi"), "./fn.wasm"))
+	otherNameRef := artifact(t, host, "othername", paddedTarLayer(t, false, []byte("hi"), "greeter.wasm"))
+	nestedRef := artifact(t, host, "nested", paddedTarLayer(t, false, []byte("hi"), "app/fn.wasm"))
 	ambiguousRef := artifact(t, host, "ambiguous", other, static.NewLayer(module, "application/octet-stream"))
 	missingRef := host + "/wasm@" + otherDigest
 	manifest := wasmRef[strings.Index(wasmRef, "@")+1:]
@@ -617,9 +622,12 @@ func TestResolveOCI(t *testing.T) {
 		"StaleTagAndDigest": {reason: "The tag is context only: a tag that does not exist (or was moved) changes nothing, the digest is what is fetched.", src: v1beta1.OCISource{Ref: staleTagRef}, want: want{manifests: 1, blobs: 1}},
 		"PreferWasmLayer":   {reason: "The wasm-typed layer wins over other layers.", src: v1beta1.OCISource{Ref: spinRef}, want: want{manifests: 1, blobs: 1}},
 		"SingleLayer":       {reason: "A single layer of any type is the module.", src: v1beta1.OCISource{Ref: singleRef}, want: want{manifests: 1, blobs: 1}},
-		"TarLayer":          {reason: "A tar layer yields its .wasm file.", src: v1beta1.OCISource{Ref: tarRef}, want: want{manifests: 1, blobs: 1}},
+		"TarLayer":          {reason: "A tar layer yields /fn.wasm.", src: v1beta1.OCISource{Ref: tarRef}, want: want{manifests: 1, blobs: 1}},
 		"GzipTarLayer":      {reason: "A gzipped tar layer (FROM scratch image) works too.", src: v1beta1.OCISource{Ref: tgzRef}, want: want{manifests: 1, blobs: 1}},
-		"TarBomb":           {reason: "An archive that expands past eight times the size limit before its .wasm entry is refused, not decompressed to the end.", opts: Options{MaxSize: 4 << 10}, src: v1beta1.OCISource{Ref: bombRef}, want: want{err: "exceeds the size limit before any .wasm file", manifests: 1, blobs: 1}},
+		"TarDotSlash":       {reason: "Builders name the root entry fn.wasm, ./fn.wasm or /fn.wasm; all are /fn.wasm.", src: v1beta1.OCISource{Ref: dotSlashRef}, want: want{manifests: 1, blobs: 1}},
+		"TarOtherName":      {reason: "The module must be /fn.wasm exactly: another .wasm file is not guessed at.", src: v1beta1.OCISource{Ref: otherNameRef}, want: want{err: "module layer is a tar archive without /fn.wasm: a FROM scratch image must COPY the module to /fn.wasm", manifests: 1, blobs: 1}},
+		"TarNested":         {reason: "Nor is a fn.wasm anywhere but the root.", src: v1beta1.OCISource{Ref: nestedRef}, want: want{err: "module layer is a tar archive without /fn.wasm", manifests: 1, blobs: 1}},
+		"TarBomb":           {reason: "An archive that expands past eight times the size limit before its .wasm entry is refused, not decompressed to the end.", opts: Options{MaxSize: 4 << 10}, src: v1beta1.OCISource{Ref: bombRef}, want: want{err: "exceeds the size limit before /fn.wasm", manifests: 1, blobs: 1}},
 		"Ambiguous":         {reason: "Several layers with no wasm-typed one cannot be resolved.", src: v1beta1.OCISource{Ref: ambiguousRef}, want: want{err: "has 2 layers and none is a wasm layer", manifests: 1}},
 		"Missing":           {reason: "An unknown manifest is an error at fetch time.", src: v1beta1.OCISource{Ref: missingRef}, want: want{err: "cannot fetch manifest", manifests: 1}},
 		"CorruptLayer":      {reason: "A layer whose bytes do not match the digest the manifest states is refused and not stored.", opts: Options{Blobs: cache.New(afero.NewMemMapFs(), true)}, src: v1beta1.OCISource{Ref: wasmRef}, corrupt: true, want: want{err: "module layer", manifests: 1, blobs: 1}},
@@ -807,5 +815,107 @@ func TestFetchMetrics(t *testing.T) {
 	}
 	if got, _ := metrics.Sample("function_wasm_module_fetch_duration_seconds", map[string]string{"source": "http"}); got != fetches+2 {
 		t.Errorf("fetch_duration_seconds{source=http} count: want %v, got %v", fetches+2, got)
+	}
+}
+
+// TestValidateFrom pins the check a Composition gets without a composite
+// resource: shape, policy shape, and the fence a from source of type OCI or
+// HTTP requires.
+func TestValidateFrom(t *testing.T) {
+	fenced := &v1beta1.Policy{RepositoryAllowList: []string{"example.com/"}}
+	cases := map[string]struct {
+		reason string
+		src    v1beta1.ModuleSource
+		policy *v1beta1.Policy
+		want   string
+	}{
+		"Static":           {reason: "A static source needs only its shape.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
+		"StaticBadShape":   {reason: "Shape errors come first.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI}, want: "module.type OCI needs exactly one of module.oci and module.from"},
+		"StaticBadPolicy":  {reason: "The policy's shape is checked whatever the source.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}, policy: &v1beta1.Policy{CredentialsAllowList: []string{"x"}}, want: "policy.credentialsAllowList requires policy.repositoryAllowList"},
+		"OCIFromFenced":    {reason: "A fenced OCI from source is admitted without reading the XR.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}, policy: fenced},
+		"OCIFromUnfenced":  {reason: "Without a repository allow list an OCI from source is refused, the XR unread.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}, want: "module.from: status.module of the composite resource names a OCI source, but policy.repositoryAllowList is not set"},
+		"HTTPFromUnfenced": {reason: "The same for HTTP.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, want: "module.from: spec.url of the composite resource names a HTTP source, but policy.repositoryAllowList is not set"},
+		"PathFrom":         {reason: "A Path from source has no host to fence.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec.path"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := ValidateFrom(tc.src, tc.policy)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("\n%s\nValidateFrom(): unexpected error %v", tc.reason, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("\n%s\nValidateFrom(): want error containing %q, got %v", tc.reason, tc.want, err)
+			}
+		})
+	}
+}
+
+// TestRefManifest pins how a module's manifest reaches the runtime: the
+// artifact's manifest layer, verified and bounded, or nothing at all — an
+// artifact without one, a path or http source.
+func TestRefManifest(t *testing.T) {
+	reg := httptest.NewServer(registry.New())
+	defer reg.Close()
+	host := strings.TrimPrefix(reg.URL, "http://")
+	wasm := static.NewLayer(module, "application/wasm")
+	declared := []byte(`{"abi":1,"name":"greeter"}`)
+	manifestLayer := static.NewLayer(declared, manifest.LayerMediaType)
+	withRef := artifact(t, host, "with", wasm, manifestLayer)
+	withoutRef := artifact(t, host, "without", wasm)
+	// The manifest layer beside a module layer of no wasm media type still
+	// leaves one candidate for the module.
+	plainRef := artifact(t, host, "plain", static.NewLayer(module, "application/octet-stream"), manifestLayer)
+	hugeRef := artifact(t, host, "huge", wasm, static.NewLayer(bytes.Repeat([]byte("x"), manifest.MaxSize+1), manifest.LayerMediaType))
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "fn.wasm"), module, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewResolver(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		reason string
+		src    v1beta1.ModuleSource
+		want   string
+		found  bool
+		err    string
+	}{
+		"Layer":    {reason: "The manifest layer is the manifest.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: withRef}}, want: string(declared), found: true},
+		"NoLayer":  {reason: "An artifact without one has nothing to declare.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: withoutRef}}},
+		"Untyped":  {reason: "The manifest layer does not count as the module's only layer.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: plainRef}}, want: string(declared), found: true},
+		"TooLarge": {reason: "The layer is bounded to manifest.MaxSize.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: hugeRef}}, err: "exceeds the size limit"},
+		"Path":     {reason: "A path source carries no manifest.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
+		"HTTP":     {reason: "Neither does an http source.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://example.com/fn.wasm", Digest: moduleDigest}}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ref, err := r.Resolve(context.Background(), tc.src, nil)
+			if err != nil {
+				t.Fatalf("\n%s\nResolve(): %v", tc.reason, err)
+			}
+			if tc.src.Type == v1beta1.ModuleTypeOCI {
+				if b, err := ref.Fetch(context.Background()); err != nil || !bytes.Equal(b, module) {
+					t.Fatalf("\n%s\nFetch(): %q %v", tc.reason, b, err)
+				}
+			}
+			got, found, err := ref.Manifest(context.Background())
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("\n%s\nManifest(): want error containing %q, got %v", tc.reason, tc.err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("\n%s\nManifest(): %v", tc.reason, err)
+			}
+			if found != tc.found || string(got) != tc.want {
+				t.Errorf("\n%s\nManifest() = %q, %v; want %q, %v", tc.reason, got, found, tc.want, tc.found)
+			}
+		})
 	}
 }
