@@ -122,6 +122,35 @@ func TestAdmit(t *testing.T) {
 			reason: "A module.from source passes shape checks here; the composite resource is FromComposite's business.",
 			args:   args{in: &v1beta1.Input{Module: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}}, c: all},
 		},
+		"InstructionsWithoutFuel": {
+			reason: "limits.instructions is refused without --enable-fuel.",
+			args:   args{in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Instructions: new(int64(1000000))}}, c: all},
+			want:   want{err: "limits.instructions is refused: the runtime was started without --enable-fuel"},
+		},
+		"InstructionsOverCeiling": {
+			reason: "An instruction limit above the ceiling is refused.",
+			args: args{
+				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Instructions: new(int64(2_000_000))}},
+				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, Fuel: true, InstructionLimit: 1_000_000}, Sandbox: open, Egress: fenced},
+			},
+			want: want{err: "limits.instructions 2000000 exceeds the runtime's --module-instruction-limit of 1000000"},
+		},
+		"InstructionsWithinCeiling": {
+			reason: "An instruction limit within the ceiling sets it on RunOptions.",
+			args: args{
+				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Instructions: new(int64(500_000))}},
+				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, Fuel: true, InstructionLimit: 1_000_000}, Sandbox: open, Egress: fenced},
+			},
+			want: want{options: engine.RunOptions{Instructions: 500_000}},
+		},
+		"InstructionsUnboundedCeiling": {
+			reason: "With fuel on and no ceiling, any instruction limit is accepted.",
+			args: args{
+				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Instructions: new(int64(10_000_000))}},
+				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, Fuel: true}, Sandbox: open, Egress: fenced},
+			},
+			want: want{options: engine.RunOptions{Instructions: 10_000_000}},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

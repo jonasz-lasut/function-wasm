@@ -639,6 +639,82 @@ func TestRunFunctionSandboxCeiling(t *testing.T) {
 	}
 }
 
+// TestRunFunctionFuel pins that --enable-fuel counts instructions and
+// limits.instructions caps the run. A module that runs past the budget is a
+// fatal result; without the flag, limits.instructions is refused.
+func TestRunFunctionFuel(t *testing.T) {
+	loopModule := testwasm.Fixed(t, guestResponse(), testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"})
+	okModule := testwasm.Fixed(t, guestResponse(), testwasm.Options{})
+	moduleDir := t.TempDir()
+	for name, wasm := range map[string][]byte{"loop.wasm": loopModule, "fn.wasm": okModule} {
+		if err := os.WriteFile(filepath.Join(moduleDir, name), wasm, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := map[string]struct {
+		reason       string
+		fuel         bool
+		instructions any
+		moduleName   string
+		want         string
+	}{
+		"InstructionsWithoutFuel": {
+			reason:       "limits.instructions without --enable-fuel is refused.",
+			fuel:         false,
+			instructions: 1000000,
+			moduleName:   "fn.wasm",
+			want:         "limits.instructions is refused: the runtime was started without --enable-fuel",
+		},
+		"FuelExhausted": {
+			reason:       "A looping guest past its instruction budget is a fatal result.",
+			fuel:         true,
+			instructions: 100_000,
+			moduleName:   "loop.wasm",
+			want:         "module module file loop.wasm failed: wasmfn_run failed: module exceeded its instruction budget (100000 instructions)",
+		},
+		"FuelSufficient": {
+			reason:     "A guest within its instruction budget succeeds.",
+			fuel:       true,
+			moduleName: "fn.wasm",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			eng, err := engine.New(engine.Config{Fuel: tc.fuel, InstructionLimit: 100_000_000})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer eng.Close()
+			resolver, err := module.NewResolver(module.Options{Dir: moduleDir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver}
+
+			inputFields := map[string]any{"module": pathModule(tc.moduleName)}
+			if tc.instructions != nil {
+				inputFields["limits"] = map[string]any{"instructions": tc.instructions}
+			}
+			rsp, err := f.RunFunction(context.Background(), &fnv1.RunFunctionRequest{
+				Meta:  &fnv1.RequestMeta{Tag: "hello"},
+				Input: inputWith(t, inputFields),
+			})
+			if err != nil {
+				t.Fatalf("\n%s\nRunFunction(): unexpected error: %v", tc.reason, err)
+			}
+			if tc.want == "" {
+				if diff := cmp.Diff(guestResponse(), rsp, protocmp.Transform()); diff != "" {
+					t.Errorf("\n%s\nRunFunction(): -want, +got:\n%s", tc.reason, diff)
+				}
+				return
+			}
+			if diff := cmp.Diff(fatal(tc.want), rsp, protocmp.Transform()); diff != "" {
+				t.Errorf("\n%s\nRunFunction(): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
 // TestSandboxFlags pins the shape of the sandbox flags: each capability has
 // its --enable-sandbox-<feature> switch, off by default, readable from the
 // environment; there is no flag that mounts a host directory. serve is the

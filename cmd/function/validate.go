@@ -516,6 +516,9 @@ func describeAdmitted(in *v1beta1.Input, a admission.Admitted) []string {
 		if in.Limits.Memory != nil {
 			limits = append(limits, "memory "+in.Limits.Memory.String())
 		}
+		if in.Limits.Instructions != nil {
+			limits = append(limits, fmt.Sprintf("instructions %d", *in.Limits.Instructions))
+		}
 		if len(limits) > 0 {
 			out = append(out, "limits "+strings.Join(limits, " "))
 		}

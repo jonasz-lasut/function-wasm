@@ -209,6 +209,14 @@ type Limits struct {
 	// fail (a Go guest panics), which ends the run as a fatal result.
 	// +optional
 	Memory *resource.Quantity `json:"memory,omitempty"`
+
+	// Instructions caps the number of wasm instructions one run may
+	// execute (wasmtime fuel); at most --module-instruction-limit. The
+	// count is deterministic across nodes and runs. Requires the runtime
+	// to be started with --enable-fuel; without it the field is refused.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	Instructions *int64 `json:"instructions,omitempty"`
 }
 
 // Sandbox grants a module access beyond the default sandbox - nothing but

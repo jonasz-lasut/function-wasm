@@ -284,6 +284,48 @@ func TestRun(t *testing.T) {
 				{Level: "info", Msg: "not json", KV: []any{"wasmfn-log-error", "invalid character 'o' in literal null (expecting 'u')"}},
 			}},
 		},
+		"FuelExhausted": {
+			reason: "A guest that exceeds its instruction budget is stopped with ErrFuel.",
+			args: args{
+				cfg: Config{Fuel: true, InstructionLimit: 100},
+				opts: testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"},
+			},
+			want: want{errIs: ErrFuel, err: "instruction budget"},
+		},
+		"FuelSufficient": {
+			reason: "A guest that finishes within its instruction budget succeeds.",
+			args: args{
+				cfg:  Config{Fuel: true, InstructionLimit: 100_000_000},
+				opts: testwasm.Options{},
+			},
+			want: want{rsp: cannedResponse()},
+		},
+		"FuelRunLimit": {
+			reason: "A per-run instruction limit below the ceiling applies.",
+			args: args{
+				cfg: Config{Fuel: true, InstructionLimit: 100_000_000},
+				run: RunOptions{Instructions: 100},
+				opts: testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"},
+			},
+			want: want{errIs: ErrFuel, err: "instruction budget"},
+		},
+		"FuelRunLimitCapped": {
+			reason: "A per-run instruction limit above the ceiling is capped.",
+			args: args{
+				cfg: Config{Fuel: true, InstructionLimit: 100},
+				run: RunOptions{Instructions: 100_000_000},
+				opts: testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"},
+			},
+			want: want{errIs: ErrFuel, err: "instruction budget"},
+		},
+		"FuelUnbounded": {
+			reason: "Fuel on with no limit meters but does not cap; the guest finishes.",
+			args: args{
+				cfg:  Config{Fuel: true},
+				opts: testwasm.Options{},
+			},
+			want: want{rsp: cannedResponse()},
+		},
 	}
 
 	for name, tc := range cases {
@@ -375,6 +417,45 @@ func TestRunMetrics(t *testing.T) {
 	}
 	if got, _ := metrics.Sample("function_wasm_module_compile_duration_seconds", nil); got != compiles+3 {
 		t.Errorf("compile_duration_seconds count: want %v, got %v", compiles+3, got)
+	}
+}
+
+func TestRunFuelMetrics(t *testing.T) {
+	before, _ := metrics.Sample("function_wasm_module_run_instructions", nil)
+	fuelBefore, _ := metrics.Sample("function_wasm_module_run_duration_seconds", map[string]string{"outcome": metrics.OutcomeFuel})
+
+	e, err := New(Config{Fuel: true, InstructionLimit: 100_000_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+
+	// One successful run to observe instructions.
+	m, err := e.Compile(testwasm.Fixed(t, cannedResponse(), testwasm.Options{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = e.Run(context.Background(), m, request(), &recorder{}, RunOptions{})
+
+	after, ok := metrics.Sample("function_wasm_module_run_instructions", nil)
+	if !ok || after != before+1 {
+		t.Errorf("run_instructions count: want %v, got %v (found %v)", before+1, after, ok)
+	}
+
+	// One fuel-exhausted run.
+	ef, err := New(Config{Fuel: true, InstructionLimit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ef.Close()
+	mf, err := ef.Compile(testwasm.Fixed(t, cannedResponse(), testwasm.Options{Body: "(loop $l (br $l)) (i64.const 0)"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = ef.Run(context.Background(), mf, request(), &recorder{}, RunOptions{})
+	fuelAfter, ok := metrics.Sample("function_wasm_module_run_duration_seconds", map[string]string{"outcome": metrics.OutcomeFuel})
+	if !ok || fuelAfter != fuelBefore+1 {
+		t.Errorf("run_duration_seconds{outcome=fuel} count: want %v, got %v (found %v)", fuelBefore+1, fuelAfter, ok)
 	}
 }
 

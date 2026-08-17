@@ -39,6 +39,10 @@ const (
 	// (requests, response bytes, redirects, the request timeout).
 	OutcomeRefused = "refused"
 	OutcomeBudget  = "budget"
+	// OutcomeFuel is a run that exhausted its instruction budget (wasmtime
+	// fuel); distinct from timeout so an operator can tell compute-bound
+	// from wall-clock-bound runs apart.
+	OutcomeFuel = "fuel"
 )
 
 var (
@@ -107,6 +111,18 @@ var (
 		Name:      "requests_total",
 		Help:      "Requests by outcome: ok, refused (declined before the module ran), error (load or run failed).",
 	}, []string{"outcome"})
+
+	// RunInstructions is the number of wasm instructions one guest run
+	// executed, observed only when --enable-fuel is on. Capacity planning
+	// without a profiler: the buckets span 100k to 10B (log-spaced) and
+	// cover everything from a trivial guest to a 75 MB Go one.
+	RunInstructions = promauto.NewHistogram(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Subsystem: subsystem,
+		Name:      "run_instructions",
+		Help:      "Wasm instructions executed in one module run (wasmtime fuel consumed, observed only when --enable-fuel is on).",
+		Buckets:   []float64{1e5, 3e5, 1e6, 3e6, 1e7, 3e7, 1e8, 3e8, 1e9, 3e9, 1e10},
+	})
 
 	// CacheBytes is the size of each on-disk store, as of the last sweep.
 	CacheBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
