@@ -539,11 +539,12 @@ func artifact(t *testing.T, reg string, repo string, layers ...v1.Layer) string 
 }
 
 func tarLayer(t *testing.T, gz bool) v1.Layer {
-	return paddedTarLayer(t, gz, []byte("hi"))
+	return paddedTarLayer(t, gz, []byte("hi"), "fn.wasm")
 }
 
-// paddedTarLayer stores the module behind a README of the given content.
-func paddedTarLayer(t *testing.T, gz bool, readme []byte) v1.Layer {
+// paddedTarLayer stores the module under name behind a README of the given
+// content.
+func paddedTarLayer(t *testing.T, gz bool, readme []byte, name string) v1.Layer {
 	t.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -551,7 +552,7 @@ func paddedTarLayer(t *testing.T, gz bool, readme []byte) v1.Layer {
 		t.Fatal(err)
 	}
 	_, _ = tw.Write(readme)
-	if err := tw.WriteHeader(&tar.Header{Name: "fn.wasm", Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(module))}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(module))}); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = tw.Write(module)
@@ -591,7 +592,10 @@ func TestResolveOCI(t *testing.T) {
 	singleRef := artifact(t, host, "single", static.NewLayer(module, "application/octet-stream"))
 	tarRef := artifact(t, host, "tar", tarLayer(t, false))
 	tgzRef := artifact(t, host, "tgz", tarLayer(t, true))
-	bombRef := artifact(t, host, "bomb", paddedTarLayer(t, true, make([]byte, 64<<10)))
+	bombRef := artifact(t, host, "bomb", paddedTarLayer(t, true, make([]byte, 64<<10), "fn.wasm"))
+	dotSlashRef := artifact(t, host, "dotslash", paddedTarLayer(t, false, []byte("hi"), "./fn.wasm"))
+	otherNameRef := artifact(t, host, "othername", paddedTarLayer(t, false, []byte("hi"), "greeter.wasm"))
+	nestedRef := artifact(t, host, "nested", paddedTarLayer(t, false, []byte("hi"), "app/fn.wasm"))
 	ambiguousRef := artifact(t, host, "ambiguous", other, static.NewLayer(module, "application/octet-stream"))
 	missingRef := host + "/wasm@" + otherDigest
 	manifest := wasmRef[strings.Index(wasmRef, "@")+1:]
@@ -617,9 +621,12 @@ func TestResolveOCI(t *testing.T) {
 		"StaleTagAndDigest": {reason: "The tag is context only: a tag that does not exist (or was moved) changes nothing, the digest is what is fetched.", src: v1beta1.OCISource{Ref: staleTagRef}, want: want{manifests: 1, blobs: 1}},
 		"PreferWasmLayer":   {reason: "The wasm-typed layer wins over other layers.", src: v1beta1.OCISource{Ref: spinRef}, want: want{manifests: 1, blobs: 1}},
 		"SingleLayer":       {reason: "A single layer of any type is the module.", src: v1beta1.OCISource{Ref: singleRef}, want: want{manifests: 1, blobs: 1}},
-		"TarLayer":          {reason: "A tar layer yields its .wasm file.", src: v1beta1.OCISource{Ref: tarRef}, want: want{manifests: 1, blobs: 1}},
+		"TarLayer":          {reason: "A tar layer yields /fn.wasm.", src: v1beta1.OCISource{Ref: tarRef}, want: want{manifests: 1, blobs: 1}},
 		"GzipTarLayer":      {reason: "A gzipped tar layer (FROM scratch image) works too.", src: v1beta1.OCISource{Ref: tgzRef}, want: want{manifests: 1, blobs: 1}},
-		"TarBomb":           {reason: "An archive that expands past eight times the size limit before its .wasm entry is refused, not decompressed to the end.", opts: Options{MaxSize: 4 << 10}, src: v1beta1.OCISource{Ref: bombRef}, want: want{err: "exceeds the size limit before any .wasm file", manifests: 1, blobs: 1}},
+		"TarDotSlash":       {reason: "Builders name the root entry fn.wasm, ./fn.wasm or /fn.wasm; all are /fn.wasm.", src: v1beta1.OCISource{Ref: dotSlashRef}, want: want{manifests: 1, blobs: 1}},
+		"TarOtherName":      {reason: "The module must be /fn.wasm exactly: another .wasm file is not guessed at.", src: v1beta1.OCISource{Ref: otherNameRef}, want: want{err: "module layer is a tar archive without /fn.wasm: a FROM scratch image must COPY the module to /fn.wasm", manifests: 1, blobs: 1}},
+		"TarNested":         {reason: "Nor is a fn.wasm anywhere but the root.", src: v1beta1.OCISource{Ref: nestedRef}, want: want{err: "module layer is a tar archive without /fn.wasm", manifests: 1, blobs: 1}},
+		"TarBomb":           {reason: "An archive that expands past eight times the size limit before its .wasm entry is refused, not decompressed to the end.", opts: Options{MaxSize: 4 << 10}, src: v1beta1.OCISource{Ref: bombRef}, want: want{err: "exceeds the size limit before /fn.wasm", manifests: 1, blobs: 1}},
 		"Ambiguous":         {reason: "Several layers with no wasm-typed one cannot be resolved.", src: v1beta1.OCISource{Ref: ambiguousRef}, want: want{err: "has 2 layers and none is a wasm layer", manifests: 1}},
 		"Missing":           {reason: "An unknown manifest is an error at fetch time.", src: v1beta1.OCISource{Ref: missingRef}, want: want{err: "cannot fetch manifest", manifests: 1}},
 		"CorruptLayer":      {reason: "A layer whose bytes do not match the digest the manifest states is refused and not stored.", opts: Options{Blobs: cache.New(afero.NewMemMapFs(), true)}, src: v1beta1.OCISource{Ref: wasmRef}, corrupt: true, want: want{err: "module layer", manifests: 1, blobs: 1}},
