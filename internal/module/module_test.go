@@ -816,3 +816,38 @@ func TestFetchMetrics(t *testing.T) {
 		t.Errorf("fetch_duration_seconds{source=http} count: want %v, got %v", fetches+2, got)
 	}
 }
+
+// TestValidateFrom pins the check a Composition gets without a composite
+// resource: shape, policy shape, and the fence a from source of type OCI or
+// HTTP requires.
+func TestValidateFrom(t *testing.T) {
+	fenced := &v1beta1.Policy{RepositoryAllowList: []string{"example.com/"}}
+	cases := map[string]struct {
+		reason string
+		src    v1beta1.ModuleSource
+		policy *v1beta1.Policy
+		want   string
+	}{
+		"Static":           {reason: "A static source needs only its shape.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
+		"StaticBadShape":   {reason: "Shape errors come first.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI}, want: "module.type OCI needs exactly one of module.oci and module.from"},
+		"StaticBadPolicy":  {reason: "The policy's shape is checked whatever the source.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}, policy: &v1beta1.Policy{CredentialsAllowList: []string{"x"}}, want: "policy.credentialsAllowList requires policy.repositoryAllowList"},
+		"OCIFromFenced":    {reason: "A fenced OCI from source is admitted without reading the XR.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}, policy: fenced},
+		"OCIFromUnfenced":  {reason: "Without a repository allow list an OCI from source is refused, the XR unread.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}, want: "module.from: status.module of the composite resource names a OCI source, but policy.repositoryAllowList is not set"},
+		"HTTPFromUnfenced": {reason: "The same for HTTP.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, want: "module.from: spec.url of the composite resource names a HTTP source, but policy.repositoryAllowList is not set"},
+		"PathFrom":         {reason: "A Path from source has no host to fence.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec.path"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := ValidateFrom(tc.src, tc.policy)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("\n%s\nValidateFrom(): unexpected error %v", tc.reason, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("\n%s\nValidateFrom(): want error containing %q, got %v", tc.reason, tc.want, err)
+			}
+		})
+	}
+}

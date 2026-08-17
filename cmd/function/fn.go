@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/crossplane/function-sdk-go/errors"
 	"github.com/crossplane/function-sdk-go/logging"
@@ -17,6 +16,7 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/admission"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
@@ -42,6 +42,11 @@ type Function struct {
 	egress *egress.Egress
 }
 
+// ceilings are what every request's Input is admitted against.
+func (f *Function) ceilings() admission.Ceilings {
+	return admission.Ceilings{Engine: f.engine.Config(), Sandbox: f.sandbox, Egress: f.egress}
+}
+
 // RunFunction resolves, loads and runs the module and returns its response
 // verbatim. Everything that stops the module from running to completion is
 // reported as a fatal result — a host-side panic included: one request must
@@ -62,37 +67,15 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		return f.fatal(rsp, log, metrics.OutcomeRefused, errors.Wrapf(err, "cannot get function input from %T", req)), nil
 	}
 
-	// What the Composition asks of the runtime — sandbox grants and limits
-	// — is settled before any module is resolved, fetched or compiled:
-	// nothing will run if it is refused.
-	if err := sandbox.Validate(in.Sandbox); err != nil {
-		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
-	}
-	// Filesystem (the private /tmp) and environment: what the
-	// Composition asks for, within the operator's ceiling, or a fatal result
-	// naming the grant and the flag.
-	grant, err := f.sandbox.Grant(in.Sandbox)
+	// What the Composition asks of the runtime — sandbox grants, egress and
+	// limits — is settled before any module is resolved, fetched or compiled:
+	// nothing will run if it is refused. The same admission runs offline as
+	// function validate.
+	admitted, err := admission.Admit(in, f.ceilings())
 	if err != nil {
 		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
 	}
-	// The Composition's HTTP rules must fit the operator's ceiling; the
-	// intersection is this run's grant, settled before anything is resolved.
-	// Without the flag the capability does not exist.
-	var httpGrant *egress.Grant
-	if sandbox.RequestsEgress(in.Sandbox) {
-		if f.egress == nil {
-			return f.fatal(rsp, log, metrics.OutcomeRefused, errors.New("sandbox.egress is refused: the runtime was started without --enable-sandbox-egress")), nil
-		}
-		httpGrant, err = f.egress.Grant(in.Sandbox.Egress.HTTP)
-		if err != nil {
-			return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
-		}
-	}
-	limits, err := runOptions(in.Limits, f.engine.Config())
-	if err != nil {
-		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
-	}
-	limits = withSandbox(limits, grant)
+	limits := admitted.Options
 
 	// A module.from source names a field of the composite resource; it is
 	// read from the observed XR on every request (converting the XR is not
@@ -138,8 +121,8 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 
 	// The per-run client logs every request with the
 	// module's reference and digest.
-	if httpGrant != nil {
-		limits.HTTP = httpGrant.Client(log)
+	if admitted.HTTP != nil {
+		limits.HTTP = admitted.HTTP.Client(log)
 	}
 	// A run slot, when --max-concurrent-runs bounds them, is waited for
 	// inside Run under the request context; a wait the deadline cuts short
@@ -190,46 +173,6 @@ func (f *Function) load(ctx context.Context, ref *module.Ref, log logging.Logger
 		return nil, errors.Wrapf(err, "cannot load module %s", ref.Description)
 	}
 	return mod, nil
-}
-
-// runOptions turns the Input's limits into the run's budget, checked against
-// the runtime's ceilings: a Composition may ask for less than the operator
-// allows, never more, and the refusal names both values so either author can
-// act on it.
-func runOptions(l *v1beta1.Limits, ceiling engine.Config) (engine.RunOptions, error) {
-	var opts engine.RunOptions
-	if l == nil {
-		return opts, nil
-	}
-	if l.Timeout != nil {
-		timeout := l.Timeout.Duration
-		if timeout <= 0 {
-			return opts, errors.Errorf("limits.timeout %s must be positive", timeout)
-		}
-		if timeout > ceiling.Timeout {
-			return opts, errors.Errorf("limits.timeout %s exceeds the runtime's --module-timeout of %s", timeout, ceiling.Timeout)
-		}
-		opts.Timeout = timeout
-	}
-	if l.Memory != nil {
-		memory := l.Memory.Value()
-		if memory <= 0 {
-			return opts, errors.Errorf("limits.memory %s must be positive", l.Memory)
-		}
-		if memory > ceiling.MemoryLimit {
-			return opts, errors.Errorf("limits.memory %s exceeds the runtime's --module-memory-limit of %s", l.Memory, resource.NewQuantity(ceiling.MemoryLimit, resource.BinarySI))
-		}
-		opts.MemoryLimit = memory
-	}
-	return opts, nil
-}
-
-// withSandbox adds the run's sandbox grant — its pre-opens, private /tmp and
-// environment — to the options the engine applies to the store.
-func withSandbox(opts engine.RunOptions, g sandbox.Grant) engine.RunOptions {
-	opts.PrivateTmp = g.PrivateTmp
-	opts.Env = g.Env
-	return opts
 }
 
 // registryAuth returns the authenticator for an OCI source that names a
