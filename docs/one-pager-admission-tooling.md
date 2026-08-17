@@ -2,22 +2,20 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft
+* Status: Implemented, revision 1.0
 
 The runtime is the only gate a Composition's Input ever passes — Crossplane
-never installs a function's Input CRD — and today that gate is reached only
-by reconciling. This document adds the same checks as tools: `function
+never installs a function's Input CRD — and until now that gate was reached
+only by reconciling. This document adds the same checks as tools: `function
 validate` runs the runtime's own admission over a Composition against an
-operator's flags and policy; a pure-Go WebAssembly reader
-(`internal/wasmbin`) lets `guestfn inspect`, `guestfn build`, `guestfn push`
-and the runtime's load path see a module's ABI, sections and manifest
-without wasmtime, so a wrong module is refused before it is compiled; and
-`guestfn push` writes the `layerDigests` the CNCF wasm artifact
-specification requires. No new trust surface, no new Input field. Nothing
-here gates v0.1.0.
+operator's flags and policy; `guestfn build`, `guestfn push` and `guestfn
+inspect` read a module's ABI, exports and imports with the runtime's own
+engine, so a module the runtime would refuse is refused before it is
+published; and `guestfn push` writes the `layerDigests` the CNCF wasm
+artifact specification requires. No new trust surface, no new Input field.
 
 
-## Today
+## Before this
 
 Every rule of the Input — `module.Validate`, `module.ValidatePolicy`,
 `sandbox.Validate`, `sandbox.Ceiling.Grant`, `egress.Grant`, `runOptions` —
@@ -33,21 +31,24 @@ found by `engine.checkABI` after `wasmtime.NewModule` returns: for a 75 MB
 Go guest that is 23–28 CPU-seconds, ~1 GB of peak memory and the compile
 slot (`--max-concurrent-compiles`, default 1) spent before the refusal, and
 every request for that digest spends it again (a failed load is not
-cached). `guestfn push` publishes whatever bytes it is given; the artifact
-config it writes carries `architecture`, `os` and `created`, not the
-`layerDigests` the specification lists.
+cached) — a cost this design moves to `guestfn build` and `push`, where a
+wrong module is now stopped before it is published (the runtime's own
+refusal stays as it is; see the decision below). `guestfn push` publishes
+whatever bytes it is given; the artifact config it writes carries
+`architecture`, `os` and `created`, not the `layerDigests` the
+specification lists.
 
 ## Goals and non-goals
 
-Goals: the runtime's checks, callable without a cluster and without a
-compile — same functions, same messages; a module's shape readable in pure
-Go by the CLI and by the runtime before `Compile`; artifacts that conform to
-the specification. Not goals: an admission webhook (a Crossplane-specific
-follow-up that would wrap the same function), tag resolution or any
-resolution at all in `validate` (digests stay stated), validating wasm code
-(wasmtime does that at compile; the reader parses sections, it never
-executes or type-checks function bodies), a second implementation of the
-Input rules — `validate` calls the ones `RunFunction` calls.
+Goals: the runtime's checks, callable without a cluster — same functions,
+same messages; a module's shape as the runtime sees it, readable by the CLI
+and by `validate`; artifacts that conform to the specification. Not goals:
+an admission webhook (a Crossplane-specific follow-up that would wrap the
+same function), tag resolution or any resolution at all in `validate` by
+default (digests stay stated), a second WebAssembly decoder — wasmtime is
+the runtime's reader and the only one (the decision below) — or a second
+implementation of the Input rules: `validate` calls the ones `RunFunction`
+calls.
 
 ## Shape
 
@@ -76,158 +77,177 @@ rule the runtime enforces (`module.from` with `OCI`/`HTTP` requires
 `repositoryAllowList`). One line per step, the runtime's own strings:
 
 ```
-composition.yaml: pipeline[0] greeter: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits 5s/128Mi, egress api.example.com)
-composition.yaml: pipeline[1] labeler: refused: sandbox.egress.http[0].host "evil.example.com" is outside the runtime's egress policy (allowed: api.example.com)
+composition.yaml: Composition/hello pipeline[0] greeter: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, egress api.example.com)
+  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given
+composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0].host "evil.example.com" is outside the runtime's egress policy (allowed: api.example.com)
 ```
 
 `--resolve` goes one step further: `Resolve` + `Verify` (with `--cosign-key`)
-+ fetch through the same resolver, then the reader below — layer media type,
-size, ABI verdict, imports, custom sections and the module manifest
-(`docs/one-pager-module-manifest.md`), checked against the step's grant.
-Pulls use the local Docker config only: a step credential lives in a
-Secret the tool cannot see, so a source naming `credentials` is validated
-for shape and noted, never pulled with anything but the keychain. Exit code
-0 when every step is admitted, 1 when at least one is refused, 2 when the
-tool itself failed (unreadable file, unparsable YAML). `--output json` emits
-one object per step for CI annotations.
++ fetch through the same resolver, then `engine.Inspect` — the module
+compiled with the runtime's own wasmtime engine, its size, ABI verdict and
+host imports reported (the module manifest of
+`docs/one-pager-module-manifest.md`, once it exists, is checked here too).
+Pulls use the local Docker config only: a step credential lives in a Secret
+the tool cannot see, so a source naming `credentials` is validated for
+shape and noted, never pulled with anything but the keychain. Exit code 0
+when every step is admitted, 1 when at least one is refused, 2 when the tool
+itself failed (unreadable file, unparsable YAML). `--output json` emits one
+object per step, one per line, for CI annotations.
 
-**`internal/wasmbin`** — a reader for the wasm binary format, no wasmtime:
+**`engine.Inspect` and `Module.Shape`** — the runtime's view of a module,
+in `internal/engine`:
 
 ```go
-func Parse(wasm []byte) (*Module, error)         // sections walked, bodies skipped
-type Module struct {
-    Sections []Section                              // id, name (custom), offset, size
-    Imports  []Import                               // module, name, kind, func type
-    Exports  []Export                               // name, kind, func type
-    Memories []Memory                               // min, max pages
+func (e *Engine) Inspect(wasm []byte) (*Shape, error)  // compiles, reads, releases
+func (m *Module) Shape() *Shape                        // of a compiled module, no second compile
+type Shape struct {
+    Exports  []Extern         // name, kind, "(i32, i32) -> (i64)"
+    Imports  []Extern         // module, name, kind, type
+    Memories []MemoryLimits   // min, max pages, shared, memory64
+    ABIError error            // checkABI's verdict, nil for ABI v1
 }
-func (m *Module) Custom(name string) ([]byte, bool)   // a custom section's payload
-func (m *Module) HasNames() bool                      // "name" section — readable traps
-func (m *Module) HasDWARF() bool                      // ".debug_*" sections
-func CheckABI(m *Module) error                        // ABI v1 exports and imports
-var ABIv1 = …                                          // the export/import table
+func (s *Shape) HostImports() []string  // "wasmfn.log", "wasmfn.http"
 ```
 
-It parses the type, import, function, memory, export and custom sections
-and skips code and data by their declared sizes, so a 75 MB Go guest is a
-few milliseconds of LEB128 walking. `ABIv1` is the one table of required
-export names and types and admitted imports; `engine.checkABI` compares
-wasmtime's types against it, `wasmbin.CheckABI` the parsed ones, and both
-produce the same strings (`module does not export "wasmfn_run"`, `module
-imports x.y, which the host does not provide`). The engine imports
-`wasmbin`; `wasmbin` imports nothing but the standard library, so `guestfn`
-stays pure Go.
+wasmtime reads a module only by compiling it — its Go binding offers
+`NewModule` (compile), `ModuleValidate` (validity, no shape) and
+`Imports()`/`Exports()` on a compiled module; there is no parse-only API and
+no custom-section access — so `Inspect` costs a compile: seconds and about
+a gigabyte for a large Go guest, sub-second for TinyGo and Rust. That is
+the price of the runtime's exact verdict rather than a second decoder's,
+and it is paid at build, push and inspect time, never on the request path.
+`checkABI` after `Compile` and `Deserialize` stays the one authoritative
+check; `Shape` reports its verdict rather than re-implementing it.
 
-**Pre-compile reject.** `engine.Cache.load` calls `wasmbin.Parse` +
-`CheckABI` on the fetched bytes before taking a compile slot; a refusal is
-the load's error as today (`cannot load module …: module does not export
-"wasmfn_run"`), costing milliseconds instead of a compile. `checkABI` stays
-after `Compile` and `Deserialize` as the authoritative check — wasmtime's
-decoder is the truth about the module — so a disagreement between the two
-readers is a bug in `wasmbin`, never a module that runs.
+**No pre-compile reject.** A module without the ABI still costs the runtime
+a compile before `checkABI` refuses it, as today. A cheaper reject would
+need a decoder other than wasmtime; see the decision below.
 
 **`guestfn inspect <fn.wasm | oci-ref>`** prints size, the ABI verdict,
-exports and imports, memories, custom sections (`name`, `producers`, DWARF
-— and so whether traps will be readable), the module manifest if any; for
-a reference: the manifest digest, media types, layer size and annotations
-without pulling, and with `--pull` the same as for a file. `--output json`.
-**`guestfn build`** runs `CheckABI` on its output and prints the verdict
-(`Built fn.wasm (74.9 MB, ABI v1, imports wasmfn.log wasmfn.http)`);
-**`guestfn push`** refuses to publish a module the runtime would refuse at
-load, with the same message — modules for other hosts are `oras push`'s
-business.
+exports and imports with their types, memory limits; for a reference: the
+manifest digest, media types, layer sizes and annotations without pulling,
+the layer the runtime would take, and with `--pull` the same as for a file.
+`--output json`. **`guestfn build`** runs the check on its output and
+prints the verdict (`Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http
+wasmfn.log)`), failing on a module the runtime would refuse; **`guestfn
+push`** refuses to publish such a module, with the same message — modules
+for other hosts are `oras push`'s business. `guestfn` links the engine and
+is therefore a CGo binary like the runtime.
 
-**`layerDigests`.** `artifact()` in `cmd/guestfn/main.go` adds
-`layerDigests: ["sha256:<layer digest>"]` to the
-`application/vnd.wasm.config.v0+json` config, as the specification requires.
-The manifest digest stays a function of the module bytes alone; it changes
-once — a re-push of the same bytes yields a new pinned reference — and
-nothing already published or pinned becomes invalid: a Composition keeps
-its digest, the registry keeps its manifest. Additive, whenever.
+**`layerDigests`.** `artifact()` in `cmd/guestfn/main.go` writes the
+`application/vnd.wasm.config.v0+json` config the specification lists —
+`created`, `architecture`, `os`, `layerDigests: ["sha256:<layer digest>"]`
+— through a minimal `partial.CompressedImageCore`, since ggcr's
+`v1.ConfigFile` has no such field. The manifest digest stays a function of
+the module bytes alone; it changed once, with this release — a re-push of
+the same bytes yields a new pinned reference — and nothing already published
+or pinned becomes invalid: a Composition keeps its digest, the registry
+keeps its manifest.
+
+**Tar layers.** A `FROM scratch` image stores the module in a tar layer;
+the resolver accepts one only when the archive holds the module at exactly
+`/fn.wasm` (`COPY fn.wasm /`; `fn.wasm`, `./fn.wasm` and `/fn.wasm` name
+the same root entry) — nothing is guessed from the archive's contents and
+the name is not configurable. Raw `application/wasm` layers, as `guestfn
+push` and `oras push` produce, stay the recommended shape.
 
 ## Mechanics
 
 - `internal/admission` (new): `Admit(in *v1beta1.Input, c Ceilings)
   (Admitted, error)` with `Ceilings{Engine engine.Config; Sandbox
-  *sandbox.Ceiling; Egress *egress.Egress}` and `Admitted{Limits
+  *sandbox.Ceiling; Egress *egress.Egress}` and `Admitted{Options
   engine.RunOptions; Grant sandbox.Grant; HTTP *egress.Grant}` — steps 1–2
-  of `RunFunction` moved behind one function `RunFunction` and `function
-  validate` share (`--xr` then runs `FromComposite`, as `RunFunction` does);
-  the refusal messages are unchanged, so `TestRunFunction`'s refusal cases
-  keep passing.
-- `cmd/function/main.go`: kong subcommands — `serve` (marked
-  `default:"withargs"`, so `function --insecure --debug --module-dir=.` and a
-  `DeploymentRuntimeConfig`'s `args` keep working with no subcommand),
-  `validate` (this document), `run` (`docs/one-pager-local-loop.md`); the
-  ceiling flags move into one embedded struct the three commands share, so
-  the flags an operator passes to `serve` are the flags `validate` takes.
-- `cmd/function/validate.go` + `validate_test.go`: goldens under
-  `testdata/validate/` over Compositions that hit each refusal
-  (`--enable-sandbox-*` off, egress outside a policy file, `limits` above a
-  ceiling, `from` without a policy, a tag instead of a digest).
-- `internal/wasmbin/{wasmbin.go,abi.go}` + tests over `testwasm.Fixed`
-  modules (`SkipRun`, `RunSignature`, an `Extra` import of `foo.bar`) and,
-  outside `-short`, the three example guests; a fuzz target over `Parse`.
-- `internal/engine/cache.go` (the pre-compile call), `engine.go` (`checkABI`
-  over `wasmbin.ABIv1`).
-- `cmd/guestfn/inspect.go`, `main.go` (`build`, `push`), `main_test.go`
-  (inspect golden over a fixture; push refusal); `TestRunFunctionGuests`
-  gains an inspect pass over each built guest.
-- CI: `render (go|tinygo|rust)` run `function validate` over the example
-  Composition first — one more line, no new job.
-- Docs: `docs/abi.md` (the runtime reads the ABI from the binary before
-  compiling; `guestfn inspect` shows what it sees), README (a "Validate"
-  paragraph next to "Render locally"; `guestfn inspect` in "Write a module").
+  of `RunFunction` behind one function `RunFunction` and `function
+  validate` share (`--xr` then runs `FromComposite`, as `RunFunction` does;
+  without it `module.ValidateFrom` applies the fence a `from` source
+  requires); the refusal messages are unchanged, so `TestRunFunction`'s
+  refusal cases keep passing. `runOptions` moved there from `cmd/function`.
+- `cmd/function/main.go`: kong subcommands — `serve` (`default:"withargs"`,
+  so `function --insecure --debug --module-dir=.` and a
+  `DeploymentRuntimeConfig`'s `args` keep working with no subcommand) and
+  `validate`; the ceiling flags are one embedded `CeilingFlags` struct
+  (`--module-dir`, `--max-module-size`, `--module-timeout`,
+  `--module-memory-limit`, `--cosign-key`, `--enable-sandbox-*`,
+  `--sandbox-egress-policy`) with `ceilings()` and `resolver()`, so the
+  flags an operator passes to `serve` are the flags `validate` takes.
+  `run` (`docs/one-pager-local-loop.md`) will be a third command.
+- `cmd/function/validate.go` + `validate_test.go`: fixtures under
+  `testdata/validate/` that hit each refusal (`--enable-sandbox-*` off,
+  egress outside a policy file, `limits` above a ceiling, `from` without a
+  policy, a tag instead of a digest, an Input of the wrong shape), the
+  warnings, `--xr`, `--function-name`, stdin, JSON, exit codes, and
+  `--resolve` over fixture modules (an ABI v1 one, one without `wasmfn_run`,
+  bytes that are not wasm, a missing file).
+- `internal/engine/shape.go` (`Inspect`, `Module.Shape`, `Shape`, `Extern`,
+  `MemoryLimits`) + `shape_test.go` over `testwasm.Fixed` modules;
+  `Config.WithDefaults` for a ceiling without an `Engine`.
+- `internal/module`: `ValidateFrom`; `WasmLayer`, `IsTarLayer` and
+  `ExtractWasm` exported for `guestfn inspect`; `ScratchModulePath`.
+- `cmd/guestfn/inspect.go`, `main.go` (`build`, `push`, `artifact`),
+  `main_test.go` (inspect over a file, a reference and `--pull`; push
+  refusal; the config's `layerDigests`; the build verdict) — the fixtures
+  are two hand-assembled modules, so no toolchain is needed;
+  `TestRunFunctionGuests` gains an `Inspect` pass over each built guest.
+- `examples/render.sh`: `function validate --resolve` over the example
+  Composition before the runtime is started — every `render (lang)` job
+  runs it, no new job.
+- Docs: `docs/abi.md`, README ("Validate a Composition" next to "Render
+  locally"; `guestfn inspect`, the build verdict and the push refusal in
+  "Write a module"; the subcommands in "Runtime flags"), AGENTS.md.
 
 ## Trust and threat notes
 
 `validate` is read-only and needs no credential: it reads YAML, and with
 `--resolve` pulls with the local Docker config as `guestfn push` pushes with
-it. The reader parses untrusted bytes: every count is checked against the
-bytes left before anything is allocated (a module may declare 2^32 exports),
-section sizes may not exceed the buffer, custom-section names are bounded,
-and the fuzz target runs in CI; `--max-module-size` bounds the input as it
-bounds a fetch. The pre-compile reject shrinks the cost of a wrong module
-from a compile to a parse; a module with the right exports and invalid code
-still fails at compile as before, and one with the right shape and hostile
-behaviour still meets the sandbox. `guestfn push` refusing a non-ABI module
+it. Untrusted module bytes are decoded by wasmtime alone — `Inspect`
+compiles them, exactly as a load would, so `validate --resolve` and
+`guestfn inspect` carry the compile's cost (bounded by `--max-module-size`
+as a fetch is) and no new parser. `guestfn push` refusing a non-ABI module
 protects the author, not the runtime — the runtime never trusted the
-publisher.
+publisher. A tar layer yields only `/fn.wasm`, so an image cannot smuggle a
+module under a name a reader might guess.
 
 ## Phasing
 
-| phase | what | effort | release |
-|---|---|---|---|
-| 1 | `internal/wasmbin`, pre-compile reject, `guestfn build`/`push` check | S–M | v0.2 |
-| 2 | `guestfn inspect` (file, reference, `--pull`) | S | v0.2 |
-| 3 | `internal/admission`, subcommand split, `function validate` (`--xr`, `--output json`) | M | v0.2 |
-| 4 | `--resolve` with the module manifest; a documented CI recipe (validate in a pipeline; a Kyverno/ValidatingAdmissionPolicy example calling nothing but the CRD for shape) | S | with the manifest |
+| phase | what | release |
+|---|---|---|
+| 1 | `engine.Inspect`/`Shape`, `guestfn build`/`push` check, `layerDigests` | v0.2 |
+| 2 | `guestfn inspect` (file, reference, `--pull`) | v0.2 |
+| 3 | `internal/admission`, subcommand split, `function validate` (`--xr`, `--output json`), `render.sh` | v0.2 |
+| 4 | `--resolve` (resolve, verify, fetch, `Inspect`) | v0.2 — the module-manifest check joins it with `docs/one-pager-module-manifest.md` |
 
-Nice before v0.1.0, not required: `layerDigests` (S). Doing it before the
-first release means no published module ever changes its pinned reference
-on a re-push; doing it later costs exactly that — one new digest per re-push
-of unchanged bytes, old references intact. Nothing here gates v0.1.0.
+## Decisions
 
-## Decisions for Jonasz
-
-- **Where `validate` lives** (open question 1): the runtime binary or
-  `guestfn`? Recommended: the runtime binary. The checks are the operator's
-  — the same kong flags, the same env, the same policy file, the same
-  version as the pod (`docker run ghcr.io/jonasz-lasut/function-wasm:vX
+- **wasmtime, not a pure-Go reader** (Jonasz, 2026-08-17). A pure-Go
+  reader of the binary format was built and rejected in review: it would
+  have made `guestfn` pure Go and given the runtime a pre-compile reject
+  costing milliseconds instead of a compile, at the price of a second
+  WebAssembly decoder in the tree — one that could disagree with wasmtime,
+  had to track the binary format on its own, and needed fuzzing of its own.
+  Compatibility with the runtime and not reinventing wasm support won:
+  every verdict is wasmtime's. Consequences accepted: `guestfn` is CGo (a C
+  compiler to install it, as for the runtime), `build`/`push`/`inspect` and
+  `validate --resolve` pay a compile (seconds for a large Go guest), there
+  is no pre-compile reject, and custom sections (names, DWARF, a future
+  manifest section) are not readable through wasmtime's Go binding — the
+  manifest one-pager has to carry the section through another channel
+  (OCI annotations, or a section walker of its own scoped to that one
+  section) if it wants to read it before a compile.
+- **`FROM scratch` images hold the module at `/fn.wasm`** (Jonasz,
+  2026-08-17): the tar path stays for `COPY fn.wasm /` images, but the
+  entry is that exact root path — the resolver never picks "the first
+  `.wasm` file" — and it is not configurable.
+- **Where `validate` lives**: the runtime binary. The checks are the
+  operator's — the same kong flags, the same env, the same policy file, the
+  same version as the pod (`docker run ghcr.io/jonasz-lasut/function-wasm:vX
   validate …` works: the package image is the runtime image, entrypoint
-  `/function`); `guestfn` stays pure Go for `init`/`build`/`push`/`inspect`
-  (Rust and TinyGo authors install it without a C compiler), and the one
-  CGo edge below `internal/sandbox` (two constants imported from
-  `internal/engine`) is not worth reversing for a `guestfn validate` that
-  would drift from the operator's flags.
-- **`guestfn push` refuses non-ABI modules with no override.** Recommended:
-  refuse. An override invites publishing what the runtime will refuse;
-  `oras push` exists for other artifacts.
-- **Warnings.** Should `validate` warn (exit 0) on Inputs the runtime
-  accepts but that are unwise — a `Path` source in a Composition, egress
-  without `--cosign-key`, `limits` equal to the ceiling? Recommended: yes,
-  a short fixed list, printed after `OK` and never affecting the exit code.
-- **Subcommand split.** `serve` as the default-with-args command keeps every
-  existing invocation working; the alternative — a second binary for
-  `validate`/`run` — doubles the image and the release surface. Recommended:
-  one binary, `serve` default.
+  `/function`).
+- **`guestfn push` refuses non-ABI modules with no override.** An override
+  invites publishing what the runtime will refuse; `oras push` exists for
+  other artifacts.
+- **Warnings**: a short fixed list — a `Path` source in a Composition,
+  egress granted without `--cosign-key`, a limit equal to its ceiling, a
+  field the runtime would silently ignore — printed after `OK`, never
+  affecting the exit code.
+- **Subcommand split**: one binary, `serve` the default with args; a
+  second binary would double the image and the release surface.
