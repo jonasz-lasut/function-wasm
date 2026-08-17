@@ -165,6 +165,7 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		limits.HTTP = admitted.HTTP.Client(log, ref.Digest, in.Name)
 	}
 	limits.InputName = in.Name
+	limits.Key = ref.Digest
 	// A per-step slot, when limits.concurrency is set, is taken before the
 	// engine's global slot: one step does not take every global slot from
 	// every other. The slot is released when the run ends.

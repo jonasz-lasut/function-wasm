@@ -42,7 +42,7 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	release, err := e.slot(ctx)
+	release, err := e.slot(ctx, opts.Key)
 	if err != nil {
 		return nil, err
 	}
