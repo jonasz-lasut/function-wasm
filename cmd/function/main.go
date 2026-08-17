@@ -63,12 +63,20 @@ type CeilingFlags struct {
 	EnableSandboxEnv        bool   `help:"Let Compositions set the environment variables their modules see (sandbox.env); non-secret values only." env:"ENABLE_SANDBOX_ENV"`
 	EnableSandboxEgress     bool   `help:"Let Compositions grant their modules HTTP(S) requests through the host (sandbox.egress.http): the host performs wasmfn.http requests within each Composition's grant and the egress policy. Off, any sandbox.egress grant is a fatal result." env:"ENABLE_SANDBOX_EGRESS"`
 	SandboxEgressPolicy     string `help:"YAML or JSON file with the egress ceiling: hosts and hostPatterns a Composition may grant (any, when both are empty), blockedCIDRs and allowedCIDRs on top of the default block list (loopback, link-local, private, cluster and reserved ranges), and the per-run budgets timeout, maxRequests, maxResponseBytes, maxRedirects. Without it the defaults apply." env:"SANDBOX_EGRESS_POLICY" type:"existingfile"`
+
+	EnableFuel             bool  `help:"Count wasm instructions executed per run (wasmtime fuel). When on, the run_instructions histogram is populated and limits.instructions is admitted. The codegen changes: compiled artifacts are not interchangeable with those without fuel, so the compiled cache gains a separate namespace." env:"ENABLE_FUEL"`
+	ModuleInstructionLimit int64 `help:"Maximum wasm instructions one module run may execute (wasmtime fuel). Zero means metered but unbounded - the histogram observes, nothing is capped. Only meaningful with --enable-fuel." env:"MODULE_INSTRUCTION_LIMIT"`
 }
 
 // engineConfig is the run budget the flags name; MaxConcurrentRuns is
 // serve's alone.
 func (c *CeilingFlags) engineConfig() engine.Config {
-	return engine.Config{Timeout: c.ModuleTimeout, MemoryLimit: int64(c.ModuleMemoryLimit) << 20}
+	return engine.Config{
+		Timeout:          c.ModuleTimeout,
+		MemoryLimit:      int64(c.ModuleMemoryLimit) << 20,
+		Fuel:             c.EnableFuel,
+		InstructionLimit: c.ModuleInstructionLimit,
+	}
 }
 
 // ceilings builds the admission ceilings from the flags, checking them once:
@@ -171,7 +179,7 @@ func (c *ServeCmd) Run(cli *CLI) error {
 	}
 	defer eng.Close()
 
-	blobs, compiled, manifests, err := openCaches()
+	blobs, compiled, manifests, err := openCaches(c.EnableFuel)
 	if err != nil {
 		return err
 	}
@@ -285,8 +293,8 @@ func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64) {
 // artifacts so a warm volume needs no registry read to learn what a module
 // requires. The directories are created if missing — the function never
 // runs without them.
-func openCaches() (blobs, compiled, manifests *cache.Store, err error) {
-	engineVersion := engine.Version()
+func openCaches(fuel bool) (blobs, compiled, manifests *cache.Store, err error) {
+	engineVersion := engine.Version(fuel)
 
 	modulesDir := filepath.Join(cache.DefaultDir, cache.ModulesDir)
 	compiledDir := filepath.Join(cache.DefaultDir, cache.CompiledDir)

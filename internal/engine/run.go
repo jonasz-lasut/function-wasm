@@ -49,6 +49,9 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 	defer release()
 
 	start := time.Now()
+	// fuelBefore is set when fuel is enabled so the defer can observe
+	// how many instructions the run consumed; it stays zero otherwise.
+	var fuelBefore uint64
 	defer func() {
 		metrics.RunDuration.WithLabelValues(outcome(err)).Observe(time.Since(start).Seconds())
 	}()
@@ -77,6 +80,22 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 
 	store.SetEpochDeadline(ticks)
 	store.Limiter(limits.MemoryLimit, -1, -1, -1, -1)
+	if e.cfg.Fuel {
+		fuelBudget := limits.InstructionLimit
+		if fuelBudget > 0 {
+			if err := store.SetFuel(uint64(fuelBudget)); err != nil {
+				return nil, fmt.Errorf("cannot set fuel budget: %w", err)
+			}
+			fuelBefore = uint64(fuelBudget)
+		} else {
+			// Metered but unbounded: give the maximum so the histogram
+			// observes without the guest ever hitting the limit.
+			if err := store.SetFuel(math.MaxUint64); err != nil {
+				return nil, fmt.Errorf("cannot set fuel budget: %w", err)
+			}
+			fuelBefore = math.MaxUint64
+		}
+	}
 
 	wasi := wasmtime.NewWasiConfig()
 	wasi.SetArgv([]string{argv0})
@@ -90,11 +109,11 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 
 	inst, err := e.linker.Instantiate(store, m.module)
 	if err != nil {
-		return nil, guestError("cannot instantiate module", err, budget, log)
+		return nil, guestError("cannot instantiate module", err, budget, limits.InstructionLimit, log)
 	}
 	if initialize := inst.GetFunc(store, ExportInitialize); initialize != nil {
 		if _, err := initialize.Call(store); err != nil {
-			return nil, guestError(ExportInitialize+" failed", err, budget, log)
+			return nil, guestError(ExportInitialize+" failed", err, budget, limits.InstructionLimit, log)
 		}
 	}
 
@@ -107,7 +126,7 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 	size := int32(len(in)) //nolint:gosec // Bounded above.
 	ret, err := alloc.Call(store, size)
 	if err != nil {
-		return nil, guestError(ExportAlloc+" failed", err, budget, log)
+		return nil, guestError(ExportAlloc+" failed", err, budget, limits.InstructionLimit, log)
 	}
 	allocated, ok := ret.(int32)
 	if !ok {
@@ -120,8 +139,11 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 	copy(memory.UnsafeData(store)[ptr:], in)
 
 	ret, err = run.Call(store, int32(ptr), size) //nolint:gosec // Pointer passed back as i32.
+	if fuelBefore > 0 {
+		observeFuel(store, fuelBefore, limits.InstructionLimit)
+	}
 	if err != nil {
-		return nil, guestError(ExportRun+" failed", err, budget, log)
+		return nil, guestError(ExportRun+" failed", err, budget, limits.InstructionLimit, log)
 	}
 	result, ok := ret.(int64)
 	if !ok {
@@ -149,9 +171,28 @@ func outcome(err error) string {
 		return metrics.OutcomeOK
 	case errors.Is(err, ErrTimeout):
 		return metrics.OutcomeTimeout
+	case errors.Is(err, ErrFuel):
+		return metrics.OutcomeFuel
 	default:
 		return metrics.OutcomeError
 	}
+}
+
+// observeFuel records how many instructions the run consumed in the
+// histogram. It is called right after wasmfn_run returns (success or trap)
+// while the store is still alive.
+func observeFuel(store *wasmtime.Store, before uint64, limit int64) {
+	after, err := store.GetFuel()
+	if err != nil {
+		return
+	}
+	consumed := before - after
+	// When metered-but-unbounded the before value is MaxUint64; an
+	// underflow (shouldn't happen) would produce a huge number - skip it.
+	if limit == 0 && consumed > 1e15 {
+		return
+	}
+	metrics.RunInstructions.Observe(float64(consumed))
 }
 
 func checkBounds(size uintptr, ptr, n uint32) error {
@@ -162,15 +203,20 @@ func checkBounds(size uintptr, ptr, n uint32) error {
 }
 
 // guestError turns wasmtime's failure into something an operator can act on
-// from an XR condition: a deadline interrupt becomes ErrTimeout, a WASI exit
-// reports its status and a trap is named by its code. wasmtime's full message
-// carries a wasm backtrace that is only useful next to the guest's own stderr,
-// so it goes to the debug log.
-func guestError(what string, err error, budget time.Duration, log logging.Logger) error {
+// from an XR condition: a deadline interrupt becomes ErrTimeout, a fuel
+// exhaustion becomes ErrFuel, a WASI exit reports its status and a trap is
+// named by its code. wasmtime's full message carries a wasm backtrace that
+// is only useful next to the guest's own stderr, so it goes to the debug log.
+func guestError(what string, err error, budget time.Duration, instructionLimit int64, log logging.Logger) error {
 	var trap *wasmtime.Trap
 	if errors.As(err, &trap) {
-		if code := trap.Code(); code != nil && *code == wasmtime.Interrupt {
-			return fmt.Errorf("%s: %w (%s)", what, ErrTimeout, budget)
+		if code := trap.Code(); code != nil {
+			switch *code {
+			case wasmtime.Interrupt:
+				return fmt.Errorf("%s: %w (%s)", what, ErrTimeout, budget)
+			case wasmtime.OutOfFuel:
+				return fmt.Errorf("%s: %w (%d instructions)", what, ErrFuel, instructionLimit)
+			}
 		}
 		if log != nil {
 			log.Debug("Guest trapped", "trap", trap.Message())

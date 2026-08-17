@@ -52,6 +52,15 @@ spec:
               ceilings (--module-timeout, --module-memory-limit). Asking for more
               than a ceiling is a fatal result naming both. Read from the Input only.
             properties:
+              instructions:
+                description: |-
+                  Instructions caps the number of wasm instructions one run may
+                  execute (wasmtime fuel); at most --module-instruction-limit. The
+                  count is deterministic across nodes and runs. Requires the runtime
+                  to be started with --enable-fuel; without it the field is refused.
+                format: int64
+                minimum: 1
+                type: integer
               memory:
                 anyOf:
                 - type: integer

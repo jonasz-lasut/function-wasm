@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft
+* Status: Draft, Phase 1 Implemented
 
 The resource-governance one-pager bounds a run by wall clock and linear
 memory, the runtime by compiles, resident modules, disk and (optionally)

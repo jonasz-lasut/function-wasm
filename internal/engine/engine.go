@@ -69,6 +69,14 @@ type Config struct {
 	// fails, having consumed nothing, when that ends first. Zero or less
 	// means no bound: concurrency is the caller's.
 	MaxConcurrentRuns int
+	// Fuel enables instruction counting (wasmtime fuel). When true the
+	// engine counts every wasm instruction executed; InstructionLimit is
+	// the ceiling for limits.instructions.
+	Fuel bool
+	// InstructionLimit is the maximum number of instructions one run may
+	// execute. Zero means metered but unbounded (the histogram observes,
+	// nothing is capped). Only meaningful when Fuel is true.
+	InstructionLimit int64
 }
 
 // Defaults applied for zero Config fields.
@@ -102,6 +110,11 @@ type RunOptions struct {
 	// Env are the guest's environment variables (WASI environ).
 	Env map[string]string
 
+	// Instructions caps the wasm instructions this Run may execute
+	// (wasmtime fuel). Zero means the Config's InstructionLimit; a larger
+	// value is capped to it. Only effective when Config.Fuel is true.
+	Instructions int64
+
 	// HTTP egress (sandbox.egress): what answers the wasmfn.http import
 	// for this Run. Nil is no grant — every call gets a refusal, never a
 	// trap.
@@ -110,6 +123,9 @@ type RunOptions struct {
 
 // ErrTimeout reports that a guest exceeded its Run deadline.
 var ErrTimeout = errors.New("module exceeded its execution deadline")
+
+// ErrFuel reports that a guest exhausted its instruction budget.
+var ErrFuel = errors.New("module exceeded its instruction budget")
 
 // Engine compiles and runs guest modules. It is safe for concurrent use.
 type Engine struct {
@@ -142,6 +158,9 @@ func New(cfg Config) (*Engine, error) {
 
 	wc := wasmtime.NewConfig()
 	wc.SetEpochInterruption(true)
+	if cfg.Fuel {
+		wc.SetConsumeFuel(true)
+	}
 	// Native unwind info (.eh_frame) only serves host-side profilers such as
 	// perf; wasmtime's own unwinder produces wasm traps and backtraces
 	// without it. Leaving it out makes artifacts about 5% smaller and, on
@@ -343,7 +362,11 @@ func (e *Engine) checked(m *wasmtime.Module) (*Module, error) {
 // information (falling back to the major in the import path), so a bump
 // changes the namespace without anyone remembering to; wasmtime itself
 // refuses artifacts it did not produce, this just keeps them apart.
-func Version() string {
+//
+// When fuel is true the suffix "-fuel" is appended: fuel changes wasmtime's
+// code generation (it inserts instruction-counting bookkeeping), so
+// artifacts compiled with fuel are not interchangeable with those without.
+func Version(fuel bool) string {
 	pkg := reflect.TypeOf(wasmtime.Engine{}).PkgPath()
 	version := path.Base(pkg)
 	if info, ok := debug.ReadBuildInfo(); ok {
@@ -353,7 +376,11 @@ func Version() string {
 			}
 		}
 	}
-	return version + "-" + runtime.GOOS + "-" + runtime.GOARCH
+	v := version + "-" + runtime.GOOS + "-" + runtime.GOARCH
+	if fuel {
+		v += "-fuel"
+	}
+	return v
 }
 
 // checkABI verifies the exports and imports ABI v1 requires before a module
@@ -476,6 +503,11 @@ func (e *Engine) effective(opts RunOptions) Config {
 	}
 	if opts.MemoryLimit > 0 && opts.MemoryLimit < cfg.MemoryLimit {
 		cfg.MemoryLimit = opts.MemoryLimit
+	}
+	if cfg.InstructionLimit > 0 && opts.Instructions > 0 && opts.Instructions < cfg.InstructionLimit {
+		cfg.InstructionLimit = opts.Instructions
+	} else if opts.Instructions > 0 && cfg.InstructionLimit == 0 {
+		cfg.InstructionLimit = opts.Instructions
 	}
 	return cfg
 }
