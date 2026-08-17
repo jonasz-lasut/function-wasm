@@ -52,3 +52,41 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateRules pins that the rule checks are shared: the same words,
+// under whatever field name the caller gives (a Composition's
+// sandbox.egress.http, a manifest's requires.egress.http).
+func TestValidateRules(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		field  string
+		rules  []v1beta1.SandboxHTTPRule
+		want   string
+	}{
+		"OK":       {reason: "Well-formed rules pass under any field name.", field: "requires.egress.http", rules: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}, PathPrefix: "/v1/"}}},
+		"Manifest": {reason: "A manifest's rule is named as the manifest's.", field: "requires.egress.http", rules: []v1beta1.SandboxHTTPRule{{Host: "api.example.com"}}, want: "requires.egress.http[0].methods must list at least one method"},
+		"Index":    {reason: "The index names the rule.", field: "sandbox.egress.http", rules: []v1beta1.SandboxHTTPRule{{Host: "a.example.com", Methods: []string{"GET"}}, {HostPattern: "nope", Methods: []string{"GET"}}}, want: `sandbox.egress.http[1].hostPattern "nope" must be a host name with one leading wildcard label, e.g. *.example.com`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := ValidateRules(tc.field, tc.rules)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("\n%s\nValidateRules(): unexpected error %v", tc.reason, err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("\n%s\nValidateRules(): want %q, got %v", tc.reason, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestValidEnvKey(t *testing.T) {
+	for key, want := range map[string]bool{"A": true, "_x1": true, "GREETING_STYLE": true, "1x": false, "a-b": false, "": false, "a b": false} {
+		if got := ValidEnvKey(key); got != want {
+			t.Errorf("ValidEnvKey(%q) = %v, want %v", key, got, want)
+		}
+	}
+}
