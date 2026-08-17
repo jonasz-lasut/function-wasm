@@ -199,7 +199,7 @@ then the body. Bump the revision when the design changes; flip Draft → Impleme
 
 ### Metrics
 
-`internal/metrics` registers `function_wasm_module_{compile,fetch,run}_duration_seconds`, `function_wasm_module_runs_in_flight`, `function_wasm_module_cache_events_total`, `function_wasm_module_cache_bytes` and `function_wasm_module_http_requests_total{outcome}` (ok, refused, budget, error — no host label) on the default Prometheus registry (function-sdk-go serves it on `:8080/metrics`). Never add a module/digest/host label — unbounded cardinality. `metrics.Sample` reads a series back for tests (counter or gauge value, histogram sample count).
+`internal/metrics` registers `function_wasm_module_{compile,fetch,run}_duration_seconds`, `function_wasm_module_runs_in_flight`, `function_wasm_module_cache_events_total`, `function_wasm_module_cache_bytes`, `function_wasm_module_http_requests_total{outcome}` (ok, refused, budget, error - no host label) and `function_wasm_module_requests_total{outcome}` on the default Prometheus registry (function-sdk-go serves it on `:8080/metrics`). `metrics.Init(true)` adds an `input` label (the Input's `metadata.name`) to `run_duration_seconds`, `http_requests_total`, `requests_total` and `run_instructions` when `--metrics-label-input-name` is on; callers use the `ObserveRun`, `IncHTTPRequests`, `IncRequests`, `ObserveInstructions` helpers so the label count matches. Never add a module/digest/host label - unbounded cardinality. `metrics.Sample` reads a series back for tests (counter or gauge value, histogram sample count).
 
 ### Guest size
 

@@ -34,9 +34,10 @@ var reservedHeaders = []string{"Host", "Content-Length", "Connection", "Transfer
 // Client performs one run's requests within its Grant and the ceiling's
 // budgets, and writes the audit line for each. One per Run.
 type Client struct {
-	grant  *Grant
-	digest string // module digest, for rate limiting
-	log    logging.Logger
+	grant     *Grant
+	digest    string // module digest, for rate limiting
+	inputName string // for the opt-in metrics label
+	log       logging.Logger
 
 	requests atomic.Int64
 	// overBudget remembers that this run's request budget was exhausted, so
@@ -48,9 +49,10 @@ type Client struct {
 
 // Client returns the per-run Client for this grant, logging through log
 // (which carries the module reference and digest). digest identifies the
-// module for process-wide rate limiting.
-func (g *Grant) Client(log logging.Logger, digest string) *Client {
-	c := &Client{grant: g, digest: digest, log: log}
+// module for process-wide rate limiting; inputName is threaded to the
+// opt-in metrics label.
+func (g *Grant) Client(log logging.Logger, digest, inputName string) *Client {
+	c := &Client{grant: g, digest: digest, inputName: inputName, log: log}
 	c.http = &http.Client{
 		Transport: g.egress.transport(),
 		// Every hop is checked like the first request: the redirect target
@@ -83,7 +85,7 @@ func (g *Grant) Client(log logging.Logger, digest string) *Client {
 func (c *Client) Do(ctx context.Context, req *Request) *Response {
 	start := time.Now()
 	rsp, outcome, u, detail := c.do(ctx, req)
-	metrics.HTTPRequests.WithLabelValues(outcome).Inc()
+	metrics.IncHTTPRequests(outcome, c.inputName)
 	// The audit line: method, host and path (never the query, the headers or
 	// the body), the status, the byte count and the outcome. What the guest
 	// is told is in error; what only the operator should see — the address a
