@@ -3,6 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -111,8 +115,8 @@ func TestInitBuild(t *testing.T) {
 	if !bytes.HasPrefix(wasm, []byte("\x00asm")) {
 		t.Errorf("fn.wasm does not start with the wasm magic: %q", wasm[:4])
 	}
-	if !strings.Contains(out.String(), "Built ") {
-		t.Errorf("unexpected build output:\n%s", out.String())
+	if !strings.Contains(out.String(), "Built ") || !strings.Contains(out.String(), "ABI v1, imports wasmfn.http wasmfn.log") {
+		t.Errorf("build output should carry the ABI verdict and the host imports:\n%s", out.String())
 	}
 }
 
@@ -227,12 +231,34 @@ func assertWasm(t *testing.T, path string) {
 	}
 }
 
+// Two hand-assembled modules, so these tests need no wasm toolchain:
+// abiModule imports wasmfn.log and exports memory, wasmfn_alloc and
+// wasmfn_run; nonABIModule lacks wasmfn_run.
+var (
+	abiModule = []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x12, 0x03, 0x60, 0x03, 0x7f, 0x7f, 0x7f,
+		0x00, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7e, 0x02, 0x0e, 0x01, 0x06,
+		0x77, 0x61, 0x73, 0x6d, 0x66, 0x6e, 0x03, 0x6c, 0x6f, 0x67, 0x00, 0x00, 0x03, 0x03, 0x02, 0x01,
+		0x02, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07, 0x26, 0x03, 0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79,
+		0x02, 0x00, 0x0c, 0x77, 0x61, 0x73, 0x6d, 0x66, 0x6e, 0x5f, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x00,
+		0x01, 0x0a, 0x77, 0x61, 0x73, 0x6d, 0x66, 0x6e, 0x5f, 0x72, 0x75, 0x6e, 0x00, 0x02, 0x0a, 0x0c,
+		0x02, 0x05, 0x00, 0x41, 0x80, 0x08, 0x0b, 0x04, 0x00, 0x42, 0x00, 0x0b, 0x00, 0x0e, 0x09, 0x70,
+		0x72, 0x6f, 0x64, 0x75, 0x63, 0x65, 0x72, 0x73, 0x74, 0x65, 0x73, 0x74,
+	}
+	nonABIModule = []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f,
+		0x03, 0x02, 0x01, 0x00, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07, 0x19, 0x02, 0x06, 0x6d, 0x65, 0x6d,
+		0x6f, 0x72, 0x79, 0x02, 0x00, 0x0c, 0x77, 0x61, 0x73, 0x6d, 0x66, 0x6e, 0x5f, 0x61, 0x6c, 0x6c,
+		0x6f, 0x63, 0x00, 0x00, 0x0a, 0x07, 0x01, 0x05, 0x00, 0x41, 0x80, 0x08, 0x0b,
+	}
+)
+
 func TestPush(t *testing.T) {
 	srv := httptest.NewServer(registry.New())
 	defer srv.Close()
 	host := strings.TrimPrefix(srv.URL, "http://")
 
-	wasm := []byte("\x00asm\x01\x00\x00\x00 module bytes")
+	wasm := abiModule
 	file := filepath.Join(t.TempDir(), "fn.wasm")
 	if err := os.WriteFile(file, wasm, 0o600); err != nil {
 		t.Fatal(err)
@@ -277,6 +303,28 @@ func TestPush(t *testing.T) {
 	if len(m.Layers) != 1 || m.Layers[0].MediaType != wasmLayerMediaType {
 		t.Errorf("want one %s layer, got %+v", wasmLayerMediaType, m.Layers)
 	}
+	// ...with the config the specification lists: layerDigests naming the
+	// layer.
+	configLayer, err := remote.Layer(ref.Context().Digest(m.Config.Digest.String()))
+	if err != nil {
+		t.Fatalf("cannot fetch config: %v", err)
+	}
+	rc, err := configLayer.Compressed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(config, &cfg); err != nil {
+		t.Fatalf("config is not JSON: %v\n%s", err, config)
+	}
+	wantConfig := map[string]any{"created": "1970-01-01T00:00:00Z", "architecture": "wasm", "os": "wasip1", "layerDigests": []any{m.Layers[0].Digest.String()}}
+	if diff := cmp.Diff(wantConfig, cfg); diff != "" {
+		t.Errorf("config: -want, +got:\n%s", diff)
+	}
 
 	// ...and function-wasm resolves it back to the same bytes.
 	r, err := module.NewResolver(module.Options{})
@@ -297,6 +345,204 @@ func TestPush(t *testing.T) {
 	if diff := cmp.Diff(wasm, b); diff != "" {
 		t.Errorf("module bytes: -want, +got:\n%s", diff)
 	}
+}
+
+// TestPushRefusesNonABI pins that a module the runtime would refuse at load
+// is not published, with the runtime's words.
+func TestPushRefusesNonABI(t *testing.T) {
+	srv := httptest.NewServer(registry.New())
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+	cases := map[string]struct {
+		reason string
+		wasm   []byte
+		want   string
+	}{
+		"MissingExport": {reason: "The ABI check runs before anything is pushed.", wasm: nonABIModule, want: `would be refused by the runtime and is not pushed: module does not export "wasmfn_run"`},
+		"NotWasm":       {reason: "So does wasmtime's decoder.", wasm: []byte("not wasm"), want: "would be refused by the runtime and is not pushed: cannot compile module"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "fn.wasm")
+			if err := os.WriteFile(file, tc.wasm, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := (&PushCmd{Ref: host + "/refused:v1", File: file}).Run(context.Background(), &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("\n%s\npush: want error containing %q, got %v", tc.reason, tc.want, err)
+			}
+			if _, err := remote.Get(mustRef(t, host+"/refused:v1")); err == nil {
+				t.Errorf("\n%s\nthe refused module was pushed anyway", tc.reason)
+			}
+		})
+	}
+}
+
+func mustRef(t *testing.T, s string) name.Reference {
+	t.Helper()
+	ref, err := name.ParseReference(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ref
+}
+
+// TestInspect pins guestfn inspect over a file, over a reference described
+// from its manifest alone, and over a reference pulled and read.
+func TestInspect(t *testing.T) {
+	srv := httptest.NewServer(registry.New())
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+	dir := t.TempDir()
+	file := filepath.Join(dir, "fn.wasm")
+	if err := os.WriteFile(file, abiModule, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(dir, "bad.wasm")
+	if err := os.WriteFile(bad, nonABIModule, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var pushOut bytes.Buffer
+	if err := (&PushCmd{Ref: host + "/greeter:v1", File: file}).Run(context.Background(), &pushOut); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	img, err := artifact(abiModule, creationTime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestDigest, err := img.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestSize, err := img.Size()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configDigest, err := img.ConfigName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := img.RawConfigFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	layerDigest := digestOf(abiModule)
+	pinned := host + "/greeter:v1@" + manifestDigest.String()
+
+	moduleText := func(indent string) string {
+		return indent + "exports: memory (memory), wasmfn_alloc (i32) -> (i32), wasmfn_run (i32, i32) -> (i64)\n" +
+			indent + "imports: wasmfn.log (i32, i32, i32) -> ()\n" +
+			indent + "memory: 1 pages (64.0 KB) initial, no maximum\n"
+	}
+	referenceText := func(target string) string {
+		return target + ": manifest " + manifestDigest.String() + " (application/vnd.oci.image.manifest.v1+json, " + humanBytes(manifestSize) + ")\n" +
+			"  config: application/vnd.wasm.config.v0+json " + configDigest.String() + " (" + humanBytes(int64(len(config))) + ")\n" +
+			"  layer: application/wasm " + layerDigest + " (124 B)\n" +
+			"  module layer: application/wasm " + layerDigest + " (124 B)\n"
+	}
+	cases := map[string]struct {
+		reason string
+		args   []string
+		want   string
+		err    string
+	}{
+		"File": {
+			reason: "A file is compiled and described: size, verdict, exports, imports, memory.",
+			args:   []string{file},
+			want:   file + ": 124 B, ABI v1\n" + moduleText("  "),
+		},
+		"FileNotABI": {
+			reason: "A module the runtime would refuse says so in the runtime's words; inspect still describes it.",
+			args:   []string{bad},
+			want: bad + `: 61 B, not ABI v1: module does not export "wasmfn_run"` + "\n" +
+				"  exports: memory (memory), wasmfn_alloc (i32) -> (i32)\n  imports: none\n  memory: 1 pages (64.0 KB) initial, no maximum\n",
+		},
+		"NotWasm": {
+			reason: "A file that is not a module is wasmtime's error.",
+			args:   []string{filepath.Join("testdata", "..", "main.go")},
+			err:    "cannot compile module",
+		},
+		"Reference": {
+			reason: "A pinned reference is described from its manifest: digest, media types, layers, the layer the runtime would take.",
+			args:   []string{pinned},
+			want:   referenceText(pinned),
+		},
+		"Tag": {
+			reason: "A tag is fine for inspection — it resolves to the manifest digest shown.",
+			args:   []string{host + "/greeter:v1"},
+			want:   referenceText(host + "/greeter:v1"),
+		},
+		"Pull": {
+			reason: "--pull reads the module layer as it would a file.",
+			args:   []string{pinned, "--pull"},
+			want:   referenceText(pinned) + "  module: 124 B, ABI v1\n" + moduleText("  "),
+		},
+		"Neither": {
+			reason: "Something that is neither a file nor a reference says so.",
+			args:   []string{"not a ref!"},
+			err:    "is neither a file nor an OCI reference",
+		},
+		"Unknown": {
+			reason: "A reference the registry does not have is a fetch error.",
+			args:   []string{host + "/nope:v1"},
+			err:    "cannot fetch manifest",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var out bytes.Buffer
+			ctx, err := parser(&out).Parse(append([]string{"inspect"}, tc.args...))
+			if err != nil {
+				t.Fatalf("\n%s\nParse(): %v", tc.reason, err)
+			}
+			err = ctx.Run()
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("\n%s\ninspect: want error containing %q, got %v", tc.reason, tc.err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("\n%s\ninspect: %v", tc.reason, err)
+			}
+			if diff := cmp.Diff(tc.want, out.String()); diff != "" {
+				t.Errorf("\n%s\ninspect: -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+
+	// JSON carries the same, structured.
+	var out bytes.Buffer
+	if err := (&InspectCmd{Target: pinned, Pull: true, Output: "json", MaxSize: 128}).Run(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+	var got inspection
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("inspect --output json is not JSON: %v\n%s", err, out.String())
+	}
+	want := inspection{
+		Target: pinned,
+		Reference: &referenceInfo{
+			Digest: manifestDigest.String(), MediaType: "application/vnd.oci.image.manifest.v1+json", Size: manifestSize,
+			Config:      descriptorInfo{MediaType: "application/vnd.wasm.config.v0+json", Digest: configDigest.String(), Size: int64(len(config))},
+			Layers:      []descriptorInfo{{MediaType: "application/wasm", Digest: layerDigest, Size: 124}},
+			ModuleLayer: &descriptorInfo{MediaType: "application/wasm", Digest: layerDigest, Size: 124},
+		},
+		Module: &moduleInfo{
+			Size: 124, ABI: "v1",
+			Exports:  []externInfo{{Name: "memory", Kind: "memory"}, {Name: "wasmfn_alloc", Kind: "func", Type: "(i32) -> (i32)"}, {Name: "wasmfn_run", Kind: "func", Type: "(i32, i32) -> (i64)"}},
+			Imports:  []externInfo{{Module: "wasmfn", Name: "log", Kind: "func", Type: "(i32, i32, i32) -> ()"}},
+			Memories: []memoryInfo{{MinPages: 1}},
+		},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("inspect --output json: -want, +got:\n%s", diff)
+	}
+}
+
+func digestOf(b []byte) string {
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func TestArtifactDeterministic(t *testing.T) {
