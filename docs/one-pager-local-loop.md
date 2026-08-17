@@ -2,7 +2,17 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft
+* Status: Withdrawn
+
+> **Withdrawn** (Jonasz, 2026-08-17): none of this is built, and none of it
+> will be in this form. The local loop is `guestfn build` plus `crossplane
+> render` against `go run ./cmd/function --insecure --module-dir=.` (what
+> `examples/render.sh` and `make -C examples/<guest> render` do), and
+> `function validate` for the admission part; a `function run` replay
+> command, request capture, per-run stderr files, panic headers on results,
+> a per-run summary line, log budgets, `--debug` builds and `guestfn dev`
+> were judged more machinery than the loop needs. The text below is kept as
+> the record of what was considered.
 
 How a module author runs a module without a cluster, how a request that
 failed in a cluster is replayed on a laptop, and what one run tells the
