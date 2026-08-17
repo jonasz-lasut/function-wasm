@@ -154,9 +154,9 @@ logs through the runtime. Your function knows nothing about WebAssembly, and
 
 ```shell
 go test ./...                                   # unit tests run natively
-guestfn build                                   # fn.wasm (wasip1); prints the ABI verdict
-guestfn inspect fn.wasm                         # size, ABI verdict, exports, imports, memory, custom sections
-guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact; prints the module block for the Composition
+guestfn build                                   # fn.wasm (wasip1); prints the ABI verdict and the manifest summary
+guestfn inspect fn.wasm                         # size, ABI verdict, exports, imports, memory
+guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest; prints the module and sandbox blocks for the Composition
 ```
 
 `guestfn build` ends with the verdict the runtime reaches when it loads the
@@ -173,12 +173,36 @@ ghcr.io/example/greeter:v0.1.0` describes an artifact from its manifest
 (media types, layer, annotations) without pulling, `--pull` reading the
 module too; `--output json` for scripts.
 
-`guestfn push` produces a CNCF wasm OCI artifact (one `application/wasm`
-layer and a wasm config naming it in `layerDigests`); `oras push
-ghcr.io/example/greeter:v0.1.0 fn.wasm:application/wasm` gives the same
-result, and a `FROM scratch` image whose only layer `COPY`s the module to
-`/fn.wasm` — that exact path, nothing is guessed from the archive — works
-too. Any language with a wasip1 toolchain can target the
+The scaffold also has a **`wasmfn.yaml`** — the module's manifest: what it
+declares about itself (`name`, `version`, `abi: 1`), the sandbox grants it
+cannot run without (`requires`: egress rules in the Input's own shape,
+`filesystem.privateTmp` — the scaffold requires nothing; environment
+variables are values a Composition sets, not a capability, so they are not
+a requirement) and the
+JSON Schema of its `config` (the scaffold's covers `greeting` and
+`greetingUrl`). `guestfn build` validates it and checks the example
+Composition's `config` against the schema; `guestfn push` publishes it
+beside the module (`--manifest` names another file, `--module-version` and
+`--revision` override the version and set the revision annotation) and
+prints, under the `module:` block, the `sandbox:` block a Composition needs
+to satisfy it; the runtime then refuses a Composition that grants less than
+the module requires, before the module runs (see [Module
+manifests](#module-manifests)). `guestfn manifest validate` checks the
+file, `guestfn manifest show ghcr.io/example/greeter:v0.1.0` prints what a
+published module declares, and `guestfn scaffold composition --from
+ghcr.io/example/greeter:v0.1.0` (or `--from fn.wasm`) writes a Composition
+step — `module` pinned, `sandbox` from `requires`, a `config` skeleton from
+the schema; `--full` for a whole Composition.
+
+`guestfn push` produces a CNCF wasm OCI artifact: one `application/wasm`
+layer, the manifest as an `application/vnd.wasmfn.manifest.v1+json` layer
+when the project has one, a wasm config naming both in `layerDigests`, and
+the standard `org.opencontainers.image.*` annotations from the manifest.
+`oras push ghcr.io/example/greeter:v0.1.0 fn.wasm:application/wasm
+wasmfn.json:application/vnd.wasmfn.manifest.v1+json` gives the same result,
+and a `FROM scratch` image whose only layer `COPY`s the module to `/fn.wasm`
+— that exact path, nothing is guessed from the archive — works too (without
+a manifest). Any language with a wasip1 toolchain can target the
 [ABI](docs/abi.md).
 
 **Module size.** A guest using function-sdk-go's `request`, `response` and
@@ -392,6 +416,30 @@ mountable into a module, whatever the flags:
 A `privateTmp`/`env` grant without its `--enable-sandbox-*` flag is a fatal
 result naming the grant and the flag; the module never runs.
 
+### Module manifests
+
+A module published with `guestfn push` from a project that has a
+`wasmfn.yaml` carries a **manifest** beside it in the same OCI artifact (a
+second layer, `application/vnd.wasmfn.manifest.v1+json`, covered by the
+manifest digest the Composition pins and by a cosign signature): the
+sandbox grants it cannot run without (`requires`: egress rules in the
+Input's own shape and `filesystem.privateTmp` — never `env`: variables are
+values the Composition sets, not a capability), a JSON Schema for
+its `config`, its ABI and the oldest runtime that serves it. The runtime
+reads it once per digest (into `/tmp/function-wasm-cache/manifests`) and,
+after admission and load, holds it against what the Composition granted —
+**narrowing only**: a manifest can make a run fail earlier and say why, it
+can never make a run possible or widen a grant. An unmet requirement is a
+fatal result before the module runs — `module oci ghcr.io/example/greeter@sha256:… requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/, which the Composition does not grant`,
+`… requires sandbox.filesystem.privateTmp, which the Composition does not grant`,
+`… requires runtime v0.3.0 or newer, this is v0.2.1` — and so is a
+`config` outside the schema: `… config does not match the module's schema:
+/greeting: got number, want string`. A module without a manifest, and every
+`path` or `http` source, runs as before. `guestfn push` prints the
+`sandbox:` block a Composition needs under the `module:` block, `guestfn
+inspect <ref>` shows what a module requires, and `function validate
+--resolve` applies the same check offline.
+
 ## HTTP egress
 
 A module can be granted HTTP(S) requests **through the host**: it never
@@ -526,7 +574,10 @@ your organisation signed run.
    module without the ABI's exports, or importing what the host does not
    provide, is refused here — and its artifact written to disk. Restarts and
    registry outages need no network. Details in
-   [docs/one-pager-cache.md](docs/one-pager-cache.md).
+   [docs/one-pager-cache.md](docs/one-pager-cache.md). The module's
+   [manifest](#module-manifests), if its artifact carries one, is then held
+   against what step 1 granted: an unmet requirement or a `config` outside
+   the module's schema is a fatal result before anything runs.
 3. Every request gets a fresh instance (about ten milliseconds): WASI with no
    network access, and no filesystem or environment beyond what `sandbox`
    granted — a private `/tmp` created for this request and removed after
