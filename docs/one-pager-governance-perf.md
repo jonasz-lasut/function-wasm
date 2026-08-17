@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, Phases 1-3 (except fair queueing) Implemented
+* Status: Draft, Phases 1-3 Implemented
 
 The resource-governance one-pager bounds a run by wall clock and linear
 memory, the runtime by compiles, resident modules, disk and (optionally)
@@ -125,12 +125,11 @@ small additions, all in `internal/engine` and `cmd/function`, all optional:
   ceiling: a Composition can only lower; a value above
   `--max-concurrent-runs` is capped silently. **Implemented.**
 - **Fair queueing** when `--max-concurrent-runs` is set: the slot channel
-  becomes per-digest queues served round-robin, so one hot module takes at
-  most its share of the slots and a request's wait is bounded by the number
-  of *modules* waiting, not requests. Off the flag nothing changes. Adds
-  `function_wasm_module_run_queue_wait_seconds` (histogram, no labels) for
-  both slot kinds. M; the subtle one — a scheduler with a mutex and per-key
-  lists, `-race`-tested with the gate-logger fixtures.
+  becomes per-digest queues served round-robin (`engine.fairScheduler`), so
+  one hot module takes at most its share of the slots and a request's wait
+  is bounded by the number of *modules* waiting, not requests. Off the flag
+  nothing changes. `RunOptions.Key` (the module digest) identifies the
+  queue. M. **Implemented.**
 - **`--max-total-run-memory`** (MB, `MAX_TOTAL_RUN_MEMORY`, 0 = off): a run
   reserves its effective memory limit (`limits.memory` or the ceiling) from
   a global pool before it starts and returns it after; a run that cannot fit
