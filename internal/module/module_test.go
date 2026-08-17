@@ -21,6 +21,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/layout"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/static"
@@ -853,8 +854,245 @@ func TestValidateFrom(t *testing.T) {
 	}
 }
 
+func TestMirrorOf(t *testing.T) {
+	cases := map[string]struct {
+		reason  string
+		mirrors map[string]string
+		ref     string
+		want    string
+		found   bool
+	}{
+		"NoMirrors": {
+			reason: "Without mirrors no rewrite happens.",
+			ref:    "ghcr.io/org/repo@" + otherDigest,
+		},
+		"Match": {
+			reason: "A matching registry rewrites the fetch ref.",
+			mirrors: map[string]string{
+				"ghcr.io": "registry.internal/ghcr",
+			},
+			ref:   "ghcr.io/org/repo@" + otherDigest,
+			want:  "registry.internal/ghcr/org/repo@" + otherDigest,
+			found: true,
+		},
+		"NoMatch": {
+			reason: "A registry without a mirror is left alone.",
+			mirrors: map[string]string{
+				"ghcr.io": "registry.internal/ghcr",
+			},
+			ref: "quay.io/org/repo@" + otherDigest,
+		},
+		"DockerHub": {
+			reason: "docker.io is normalized to index.docker.io.",
+			mirrors: map[string]string{
+				"docker.io": "registry.internal/docker",
+			},
+			ref:   "index.docker.io/library/hello@" + otherDigest,
+			want:  "registry.internal/docker/library/hello@" + otherDigest,
+			found: true,
+		},
+	}
+	for tname, tc := range cases {
+		t.Run(tname, func(t *testing.T) {
+			r, err := NewResolver(Options{Mirrors: tc.mirrors})
+			if err != nil {
+				t.Fatalf("NewResolver(): %v", err)
+			}
+			ref, err := name.NewDigest(tc.ref)
+			if err != nil {
+				t.Fatalf("NewDigest(%s): %v", tc.ref, err)
+			}
+			got, found := r.mirrorOf(ref)
+			if found != tc.found {
+				t.Fatalf("\n%s\nmirrorOf() found = %v, want %v", tc.reason, found, tc.found)
+			}
+			if found {
+				if diff := cmp.Diff(tc.want, got.String()); diff != "" {
+					t.Errorf("\n%s\nmirrorOf() -want, +got:\n%s", tc.reason, diff)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveOCIMirror(t *testing.T) {
+	// Two registries: the "upstream" holds the artifact but requires auth
+	// the resolver does not have; the "mirror" serves the same artifact and
+	// the resolver uses its keychain for it.
+	upstreamHandler := registry.New()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v2/" {
+			if _, _, ok := req.BasicAuth(); !ok {
+				w.Header().Set("WWW-Authenticate", `Basic realm="upstream"`)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		upstreamHandler.ServeHTTP(w, req)
+	}))
+	defer upstream.Close()
+
+	mirrorHandler := registry.New()
+	mirror := httptest.NewServer(mirrorHandler)
+	defer mirror.Close()
+
+	upstreamHost := strings.TrimPrefix(upstream.URL, "http://")
+	mirrorHost := strings.TrimPrefix(mirror.URL, "http://")
+
+	// Push the artifact to the mirror (crane copy in real life).
+	wasm := static.NewLayer(module, "application/wasm")
+	mirrorRef := artifact(t, mirrorHost, "ghcr/org/mod", wasm)
+	// The upstream ref uses the same digest but the upstream registry.
+	mirrorDigest := mirrorRef[strings.Index(mirrorRef, "@")+1:]
+	statedRef := upstreamHost + "/org/mod@" + mirrorDigest
+
+	r, err := NewResolver(Options{
+		Mirrors: map[string]string{upstreamHost: mirrorHost + "/ghcr"},
+		// An empty keychain so the resolver has no auth for upstream.
+		Keychain: authn.NewMultiKeychain(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := r.Resolve(context.Background(), v1beta1.ModuleSource{
+		Type: v1beta1.ModuleTypeOCI,
+		OCI:  &v1beta1.OCISource{Ref: statedRef},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Resolve(): %v", err)
+	}
+	// The description and digest are the stated ref, not the mirror.
+	if diff := cmp.Diff("oci "+statedRef, ref.Description); diff != "" {
+		t.Errorf("Description: -want, +got:\n%s", diff)
+	}
+	if diff := cmp.Diff(mirrorDigest, ref.Digest); diff != "" {
+		t.Errorf("Digest: -want, +got:\n%s", diff)
+	}
+	// Fetch goes to the mirror.
+	got, err := ref.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch(): %v", err)
+	}
+	if diff := cmp.Diff(module, got); diff != "" {
+		t.Errorf("Fetch(): -want, +got:\n%s", diff)
+	}
+}
+
+func TestResolveOCILayout(t *testing.T) {
+	// A registry holds the artifact; we also write it to a layout dir. The
+	// resolver should fetch from the layout without any registry access.
+	reg := httptest.NewServer(registry.New())
+	defer reg.Close()
+	host := strings.TrimPrefix(reg.URL, "http://")
+
+	wasm := static.NewLayer(module, "application/wasm")
+	wasmRef := artifact(t, host, "mod", wasm)
+	wasmDigest := wasmRef[strings.Index(wasmRef, "@")+1:]
+
+	// Build an OCI layout from the same image.
+	layoutDir := t.TempDir()
+	ref, err := name.NewDigest(wasmRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := remote.Image(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lp, err := layout.Write(layoutDir, empty.Index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lp.AppendImage(img); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stop the registry so any network access would fail.
+	reg.Close()
+
+	r, err := NewResolver(Options{LayoutDir: layoutDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := r.Resolve(context.Background(), v1beta1.ModuleSource{
+		Type: v1beta1.ModuleTypeOCI,
+		OCI:  &v1beta1.OCISource{Ref: wasmRef},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Resolve(): %v", err)
+	}
+	if diff := cmp.Diff(wasmDigest, resolved.Digest); diff != "" {
+		t.Errorf("Digest: -want, +got:\n%s", diff)
+	}
+	got, err := resolved.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch(): %v", err)
+	}
+	if diff := cmp.Diff(module, got); diff != "" {
+		t.Errorf("Fetch(): -want, +got:\n%s", diff)
+	}
+}
+
+func TestResolveOCILayoutManifest(t *testing.T) {
+	// An artifact with a manifest layer served from a layout.
+	reg := httptest.NewServer(registry.New())
+	defer reg.Close()
+	host := strings.TrimPrefix(reg.URL, "http://")
+
+	wasm := static.NewLayer(module, "application/wasm")
+	declared := []byte(`{"abi":1,"name":"greeter"}`)
+	manifestL := static.NewLayer(declared, manifest.LayerMediaType)
+	artRef := artifact(t, host, "withmanifest", wasm, manifestL)
+
+	// Write to layout.
+	layoutDir := t.TempDir()
+	ref, err := name.NewDigest(artRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := remote.Image(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lp, err := layout.Write(layoutDir, empty.Index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lp.AppendImage(img); err != nil {
+		t.Fatal(err)
+	}
+
+	reg.Close()
+
+	r, err := NewResolver(Options{LayoutDir: layoutDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := r.Resolve(context.Background(), v1beta1.ModuleSource{
+		Type: v1beta1.ModuleTypeOCI,
+		OCI:  &v1beta1.OCISource{Ref: artRef},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Resolve(): %v", err)
+	}
+	got, err := resolved.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch(): %v", err)
+	}
+	if diff := cmp.Diff(module, got); diff != "" {
+		t.Errorf("Fetch(): -want, +got:\n%s", diff)
+	}
+	raw, found, err := resolved.Manifest(context.Background())
+	if err != nil {
+		t.Fatalf("Manifest(): %v", err)
+	}
+	if !found || !bytes.Equal(raw, declared) {
+		t.Errorf("Manifest() = %q, %v; want %q, true", raw, found, declared)
+	}
+}
+
 // TestRefManifest pins how a module's manifest reaches the runtime: the
-// artifact's manifest layer, verified and bounded, or nothing at all — an
+// artifact's manifest layer, verified and bounded, or nothing at all - an
 // artifact without one, a path or http source.
 func TestRefManifest(t *testing.T) {
 	reg := httptest.NewServer(registry.New())

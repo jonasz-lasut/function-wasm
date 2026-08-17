@@ -37,32 +37,61 @@ var wasmLayerTypes = map[types.MediaType]bool{
 // module has to be, inside Fetch, and the layer is stored in the blob store
 // under its own digest, so a module whose compiled artifact is gone costs one
 // manifest read and no download.
-func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, auth authn.Authenticator) (*Ref, error) {
+func (r *Resolver) resolveOCI(_ context.Context, src v1beta1.ModuleSource, auth authn.Authenticator) (*Ref, error) {
 	ref, err := name.NewDigest(src.OCI.Ref)
 	if err != nil {
 		return nil, fmt.Errorf("module.oci.ref is not a valid digest reference: %w", err)
 	}
-	opts := []remote.Option{remote.WithContext(ctx)}
+
+	// The fetch ref and its auth: a mirror replaces where bytes come from
+	// and uses the runtime's own keychain - the mirror is the operator's,
+	// not the Composition author's, so the step credential is not sent to a
+	// host the author did not name. The stated ref is unchanged in the
+	// cache key, description, audit line and policy.
+	fetchRef := ref
+	opts := []remote.Option{}
 	if r.client.Transport != nil {
 		opts = append(opts, remote.WithTransport(r.client.Transport))
 	}
-	if auth != nil {
+	if mr, ok := r.mirrorOf(ref); ok {
+		fetchRef = mr
+		opts = append(opts, remote.WithAuthFromKeychain(r.opts.Keychain))
+	} else if auth != nil {
 		opts = append(opts, remote.WithAuth(auth))
 	} else {
 		opts = append(opts, remote.WithAuthFromKeychain(r.opts.Keychain))
 	}
 	opts = slices.Clip(opts)
+
 	out := &Ref{
 		Digest:      ref.DigestStr(),
 		Description: "oci " + src.OCI.Ref,
 		fetch: timed("oci", func(ctx context.Context) ([]byte, error) {
 			opts := append(opts, remote.WithContext(ctx))
-			layer, err := moduleLayer(ref, opts)
-			if err != nil {
-				return nil, err
+
+			// Pick the module layer: from the layout when it holds this
+			// manifest, from the registry otherwise.
+			var layer v1.Descriptor
+			if m, ok := r.layoutManifest(ref.DigestStr()); ok {
+				l, err := WasmLayer(m)
+				if err != nil {
+					return nil, fmt.Errorf("%s %w", fetchRef, err)
+				}
+				layer = l
+			} else {
+				l, err := moduleLayer(fetchRef, opts)
+				if err != nil {
+					return nil, err
+				}
+				layer = l
 			}
+
 			b, err := r.verified(ctx, "module layer", layer.Digest.String(), func(_ context.Context) ([]byte, error) {
-				l, err := remote.Layer(ref.Context().Digest(layer.Digest.String()), opts...)
+				// Layout first, then network.
+				if b, ok := r.layoutBlob(layer.Digest); ok {
+					return b, nil
+				}
+				l, err := remote.Layer(fetchRef.Context().Digest(layer.Digest.String()), opts...)
 				if err != nil {
 					return nil, fmt.Errorf("cannot fetch module layer: %w", err)
 				}
@@ -92,12 +121,29 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 	// this runs once per digest per volume.
 	out.manifest = func(ctx context.Context) ([]byte, bool, error) {
 		opts := append(opts, remote.WithContext(ctx))
-		layer, found, err := manifestLayer(ref, opts)
-		if err != nil || !found {
-			return nil, false, err
+
+		var (
+			layer v1.Descriptor
+			found bool
+		)
+		if m, ok := r.layoutManifest(ref.DigestStr()); ok {
+			layer, found = ManifestLayer(m)
+		} else {
+			var err error
+			layer, found, err = manifestLayer(fetchRef, opts)
+			if err != nil {
+				return nil, false, err
+			}
 		}
+		if !found {
+			return nil, false, nil
+		}
+
 		b, err := r.verified(ctx, "manifest layer", layer.Digest.String(), func(_ context.Context) ([]byte, error) {
-			l, err := remote.Layer(ref.Context().Digest(layer.Digest.String()), opts...)
+			if b, ok := r.layoutBlob(layer.Digest); ok {
+				return b, nil
+			}
+			l, err := remote.Layer(fetchRef.Context().Digest(layer.Digest.String()), opts...)
 			if err != nil {
 				return nil, fmt.Errorf("cannot fetch manifest layer: %w", err)
 			}
@@ -119,10 +165,31 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 	}
 	if r.opts.Verifier != nil {
 		out.verify = func(ctx context.Context) error {
-			return r.opts.Verifier.Verify(ctx, ref, append(opts, remote.WithContext(ctx)))
+			if err := r.opts.Verifier.VerifyFromLayout(ref, r.layout); err == nil {
+				return nil
+			}
+			return r.opts.Verifier.Verify(ctx, fetchRef, append(opts, remote.WithContext(ctx)))
 		}
 	}
 	return out, nil
+}
+
+// mirrorOf returns the mirror ref for ref when the resolver has a mirror
+// configured for ref's registry, or false otherwise.
+func (r *Resolver) mirrorOf(ref name.Digest) (name.Digest, bool) {
+	if len(r.mirrors) == 0 {
+		return name.Digest{}, false
+	}
+	mirror, ok := r.mirrors[ref.Context().RegistryStr()]
+	if !ok {
+		return name.Digest{}, false
+	}
+	repo := ref.Context().RepositoryStr()
+	d, err := name.NewDigest(mirror + "/" + repo + "@" + ref.DigestStr())
+	if err != nil {
+		return name.Digest{}, false
+	}
+	return d, true
 }
 
 // manifestLayer fetches an artifact's manifest and picks its module-manifest
