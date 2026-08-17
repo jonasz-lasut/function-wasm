@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"google.golang.org/protobuf/testing/protocmp"
@@ -218,14 +218,10 @@ func TestWarmModulesFlag(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("WARM_MODULES", tc.args.env)
 			cli := &CLI{}
-			parser, err := kong.New(cli)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := parser.Parse(tc.args.argv); err != nil {
+			if _, err := parser(cli, io.Discard).Parse(tc.args.argv); err != nil {
 				t.Fatalf("Parse(%v): %v", tc.args.argv, err)
 			}
-			if diff := cmp.Diff(tc.want, cli.WarmModules); diff != "" {
+			if diff := cmp.Diff(tc.want, cli.Serve.WarmModules); diff != "" {
 				t.Errorf("\n%s\n--warm-modules: -want, +got:\n%s", tc.reason, diff)
 			}
 		})
