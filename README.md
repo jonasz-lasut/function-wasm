@@ -481,6 +481,9 @@ in the order they decide:
    maxRequests: 16                       # per run
    maxResponseBytes: 4194304             # a longer body is an error, not a truncated body (headers are capped separately, at 64 KiB)
    maxRedirects: 5                       # each hop checked like the first request; hops count here, not against maxRequests
+   rateLimit:                             # process-wide token bucket per module digest; without it, no rate limit
+     requestsPerMinute: 60                # sustained rate
+     burst: 10                            # maximum tokens available at once (default: requestsPerMinute rounded down, at least 1)
    ```
 
    Without a file, any public host may be granted within the defaults shown.

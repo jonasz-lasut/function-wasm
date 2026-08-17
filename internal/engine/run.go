@@ -211,7 +211,7 @@ func guestError(what string, err error, budget time.Duration, instructionLimit i
 	var trap *wasmtime.Trap
 	if errors.As(err, &trap) {
 		if code := trap.Code(); code != nil {
-			switch *code {
+			switch *code { //nolint:exhaustive // Only Interrupt and OutOfFuel need special handling; every other code falls through to the generic trap text.
 			case wasmtime.Interrupt:
 				return fmt.Errorf("%s: %w (%s)", what, ErrTimeout, budget)
 			case wasmtime.OutOfFuel:

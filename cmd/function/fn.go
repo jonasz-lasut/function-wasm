@@ -160,7 +160,7 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	// The per-run client logs every request with the
 	// module's reference and digest.
 	if admitted.HTTP != nil {
-		limits.HTTP = admitted.HTTP.Client(log)
+		limits.HTTP = admitted.HTTP.Client(log, ref.Digest)
 	}
 	// A run slot, when --max-concurrent-runs bounds them, is waited for
 	// inside Run under the request context; a wait the deadline cuts short
