@@ -41,34 +41,12 @@ func Validate(s *v1beta1.Sandbox) error {
 		return nil
 	}
 	if s.Egress != nil {
-		for i, r := range s.Egress.HTTP {
-			if (r.Host == "") == (r.HostPattern == "") {
-				return fmt.Errorf("sandbox.egress.http[%d] must set exactly one of host and hostPattern", i)
-			}
-			if r.Host != "" && !egress.ValidHost(r.Host) {
-				return fmt.Errorf("sandbox.egress.http[%d].host %q must be a bare host name (no scheme, port, path or zone)", i, r.Host)
-			}
-			if r.HostPattern != "" && !egress.ValidHostPattern(r.HostPattern) {
-				return fmt.Errorf("sandbox.egress.http[%d].hostPattern %q must be a host name with one leading wildcard label, e.g. *.example.com", i, r.HostPattern)
-			}
-			if len(r.Methods) == 0 {
-				return fmt.Errorf("sandbox.egress.http[%d].methods must list at least one method", i)
-			}
-			for _, m := range r.Methods {
-				if !methods[m] {
-					return fmt.Errorf("sandbox.egress.http[%d].methods: %q is not one of GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS", i, m)
-				}
-			}
-			if r.PathPrefix != "" && r.PathPrefix[0] != '/' {
-				return fmt.Errorf("sandbox.egress.http[%d].pathPrefix %q must start with /", i, r.PathPrefix)
-			}
-			if !egress.NormalizedPath(r.PathPrefix) {
-				return fmt.Errorf("sandbox.egress.http[%d].pathPrefix %q must be normalized (no . or .. segments, no empty segments)", i, r.PathPrefix)
-			}
+		if err := ValidateRules("sandbox.egress.http", s.Egress.HTTP); err != nil {
+			return err
 		}
 	}
 	for k, v := range s.Env {
-		if !envKeyPattern.MatchString(k) {
+		if !ValidEnvKey(k) {
 			return fmt.Errorf("sandbox.env key %q is not an identifier ([A-Za-z_][A-Za-z0-9_]*)", k)
 		}
 		// WASI hands the environment over as NUL-terminated strings; a NUL
@@ -78,6 +56,45 @@ func Validate(s *v1beta1.Sandbox) error {
 		}
 	}
 	return nil
+}
+
+// ValidateRules checks the shape of HTTP egress rules - a Composition's
+// sandbox.egress.http, or a module manifest's requires.egress.http, which
+// share the type - naming a wrong rule as field[i]: exactly one of host and
+// hostPattern, at least one known method, an absolute normalized pathPrefix.
+func ValidateRules(field string, rules []v1beta1.SandboxHTTPRule) error {
+	for i, r := range rules {
+		if (r.Host == "") == (r.HostPattern == "") {
+			return fmt.Errorf("%s[%d] must set exactly one of host and hostPattern", field, i)
+		}
+		if r.Host != "" && !egress.ValidHost(r.Host) {
+			return fmt.Errorf("%s[%d].host %q must be a bare host name (no scheme, port, path or zone)", field, i, r.Host)
+		}
+		if r.HostPattern != "" && !egress.ValidHostPattern(r.HostPattern) {
+			return fmt.Errorf("%s[%d].hostPattern %q must be a host name with one leading wildcard label, e.g. *.example.com", field, i, r.HostPattern)
+		}
+		if len(r.Methods) == 0 {
+			return fmt.Errorf("%s[%d].methods must list at least one method", field, i)
+		}
+		for _, m := range r.Methods {
+			if !methods[m] {
+				return fmt.Errorf("%s[%d].methods: %q is not one of GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS", field, i, m)
+			}
+		}
+		if r.PathPrefix != "" && r.PathPrefix[0] != '/' {
+			return fmt.Errorf("%s[%d].pathPrefix %q must start with /", field, i, r.PathPrefix)
+		}
+		if !egress.NormalizedPath(r.PathPrefix) {
+			return fmt.Errorf("%s[%d].pathPrefix %q must be normalized (no . or .. segments, no empty segments)", field, i, r.PathPrefix)
+		}
+	}
+	return nil
+}
+
+// ValidEnvKey reports whether key is an environment variable name a guest
+// can be given: an identifier, [A-Za-z_][A-Za-z0-9_]*.
+func ValidEnvKey(key string) bool {
+	return envKeyPattern.MatchString(key)
 }
 
 // RequestsEgress reports whether s asks for any HTTP egress rule — the one
