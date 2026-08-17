@@ -519,6 +519,9 @@ func describeAdmitted(in *v1beta1.Input, a admission.Admitted) []string {
 		if in.Limits.Instructions != nil {
 			limits = append(limits, fmt.Sprintf("instructions %d", *in.Limits.Instructions))
 		}
+		if in.Limits.Concurrency != nil {
+			limits = append(limits, fmt.Sprintf("concurrency %d", a.Concurrency))
+		}
 		if len(limits) > 0 {
 			out = append(out, "limits "+strings.Join(limits, " "))
 		}

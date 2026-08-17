@@ -217,6 +217,17 @@ type Limits struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	Instructions *int64 `json:"instructions,omitempty"`
+
+	// Concurrency caps how many runs of this step execute at once, across
+	// all requests. A further request waits for a slot under its own
+	// context; when the deadline passes first, it is a fatal result that
+	// consumed nothing and is not counted as a run. Keyed by the module's
+	// content digest, so two Compositions using the same module share the
+	// limit. A value above --max-concurrent-runs is silently capped. No
+	// ceiling flag: this only narrows.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	Concurrency *int32 `json:"concurrency,omitempty"`
 }
 
 // Sandbox grants a module access beyond the default sandbox - nothing but

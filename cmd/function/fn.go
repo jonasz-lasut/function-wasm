@@ -53,6 +53,9 @@ type Function struct {
 	// parsed caches each digest's parsed manifest (nil for a module without
 	// one) so its schema is compiled once per process, like the module.
 	parsed sync.Map // digest → *manifest.Manifest
+	// stepSlots bounds per-step concurrency (limits.concurrency), keyed by
+	// the module's digest; nil when no request has ever used concurrency.
+	stepSlots *engine.StepSlots
 }
 
 // ceilings are what every request's Input is admitted against.
@@ -161,6 +164,16 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	// module's reference and digest.
 	if admitted.HTTP != nil {
 		limits.HTTP = admitted.HTTP.Client(log, ref.Digest)
+	}
+	// A per-step slot, when limits.concurrency is set, is taken before the
+	// engine's global slot: one step does not take every global slot from
+	// every other. The slot is released when the run ends.
+	if admitted.Concurrency > 0 {
+		release, err := f.stepSlots.Acquire(ctx, ref.Digest, admitted.Concurrency)
+		if err != nil {
+			return f.fatal(rsp, log, metrics.OutcomeError, errors.Wrapf(err, "module %s failed", ref.Description)), nil
+		}
+		defer release()
 	}
 	// A run slot, when --max-concurrent-runs bounds them, is waited for
 	// inside Run under the request context; a wait the deadline cuts short

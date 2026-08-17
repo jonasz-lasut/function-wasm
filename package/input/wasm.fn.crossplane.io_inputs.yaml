@@ -52,6 +52,18 @@ spec:
               ceilings (--module-timeout, --module-memory-limit). Asking for more
               than a ceiling is a fatal result naming both. Read from the Input only.
             properties:
+              concurrency:
+                description: |-
+                  Concurrency caps how many runs of this step execute at once, across
+                  all requests. A further request waits for a slot under its own
+                  context; when the deadline passes first, it is a fatal result that
+                  consumed nothing and is not counted as a run. Keyed by the module's
+                  content digest, so two Compositions using the same module share the
+                  limit. A value above --max-concurrent-runs is silently capped. No
+                  ceiling flag: this only narrows.
+                format: int32
+                minimum: 1
+                type: integer
               instructions:
                 description: |-
                   Instructions caps the number of wasm instructions one run may
