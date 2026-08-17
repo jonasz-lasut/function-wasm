@@ -38,6 +38,11 @@ const DefaultDir = "/tmp/function-wasm-cache"
 const (
 	ModulesDir  = "modules"
 	CompiledDir = "compiled"
+	// ManifestsDir holds one entry per module digest: the module's
+	// wasmfn.manifest custom section (empty when the module has none), kept
+	// beside the compiled artifacts because a wasmtime artifact drops custom
+	// sections and the artifact-hit path never re-reads the module bytes.
+	ManifestsDir = "manifests"
 )
 
 // Store is a content-addressed store of one kind of artifact.

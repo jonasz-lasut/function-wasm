@@ -29,6 +29,39 @@ func ValidatePolicy(p *v1beta1.Policy) error {
 	return nil
 }
 
+// ValidateFrom checks what can be known of a source without the composite
+// resource: its shape (Validate), the policy's shape (ValidatePolicy) and,
+// for a module.from source of type OCI or HTTP, that policy.repositoryAllowList
+// fences it — the rule FromComposite applies once the value is read, applied
+// here to the Input alone, so a Composition can be checked without an XR. A
+// source without From needs no more than its shape.
+func ValidateFrom(src v1beta1.ModuleSource, policy *v1beta1.Policy) error {
+	if err := Validate(src); err != nil {
+		return err
+	}
+	if err := ValidatePolicy(policy); err != nil {
+		return err
+	}
+	if src.From == "" {
+		return nil
+	}
+	return requireRepositoryAllowList(src.From, src.Type, policy)
+}
+
+// requireRepositoryAllowList is the rule that a source the composite resource
+// chooses must be fenced: without a repository allow list its author would
+// point the runtime at any host and read what its answer says. Path sources
+// have no host.
+func requireRepositoryAllowList(from string, t v1beta1.ModuleType, policy *v1beta1.Policy) error {
+	if t == v1beta1.ModuleTypePath {
+		return nil
+	}
+	if policy == nil || len(policy.RepositoryAllowList) == 0 {
+		return fmt.Errorf("module.from: %s of the composite resource names a %s source, but policy.repositoryAllowList is not set: a module the composite resource chooses must be fenced to repositories the Composition names, or its author could point the runtime at any host", from, t)
+	}
+	return nil
+}
+
 // admit applies policy to a concrete source the composite resource chose
 // through the Input field from: the ref (or url) must lie within the
 // repository allow list — which such a source requires: without one the
@@ -55,8 +88,8 @@ func admit(from string, src v1beta1.ModuleSource, policy *v1beta1.Policy) error 
 	if err != nil {
 		return fmt.Errorf("module.from: %s of the composite resource: %w", from, err)
 	}
-	if policy == nil || len(policy.RepositoryAllowList) == 0 {
-		return fmt.Errorf("module.from: %s of the composite resource names a %s source, but policy.repositoryAllowList is not set: a module the composite resource chooses must be fenced to repositories the Composition names, or its author could point the runtime at any host", from, src.Type)
+	if err := requireRepositoryAllowList(from, src.Type, policy); err != nil {
+		return err
 	}
 	if !hasAnyPrefix(location, policy.RepositoryAllowList) {
 		return fmt.Errorf("module.from: %s of the composite resource names %s %q, which policy.repositoryAllowList does not admit (allowed prefixes: %s)", from, field, location, strings.Join(policy.RepositoryAllowList, ", "))

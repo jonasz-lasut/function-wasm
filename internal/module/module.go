@@ -70,13 +70,26 @@ type Ref struct {
 	// Description names the source for logs and error messages.
 	Description string
 
-	fetch  func(ctx context.Context) ([]byte, error)
-	verify func(ctx context.Context) error
+	fetch    func(ctx context.Context) ([]byte, error)
+	verify   func(ctx context.Context) error
+	manifest func(ctx context.Context) ([]byte, bool, error)
 }
 
 // Fetch returns the module bytes, verified along the chain Digest pins.
 func (r *Ref) Fetch(ctx context.Context) ([]byte, error) {
 	return r.fetch(ctx)
+}
+
+// Manifest returns the module manifest an OCI artifact carries as its
+// manifest layer (internal/manifest.LayerMediaType), verified along the same
+// chain as the module, or found false: a source without one — every path and
+// http source, an artifact pushed without a manifest — has nothing to
+// declare and runs as it always did.
+func (r *Ref) Manifest(ctx context.Context) ([]byte, bool, error) {
+	if r.manifest == nil {
+		return nil, false, nil
+	}
+	return r.manifest(ctx)
 }
 
 // Verify checks the module's signature when the resolver has a Verifier

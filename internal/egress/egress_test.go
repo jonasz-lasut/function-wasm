@@ -274,3 +274,49 @@ func TestDialRefusesZonedAddresses(t *testing.T) {
 		}
 	}
 }
+
+// TestPatternCovers pins the exported pattern helpers a module manifest's
+// requirements are checked with: a pattern covers hosts under it, never the
+// apex; a pattern is under a pattern at or above it.
+func TestPatternCovers(t *testing.T) {
+	cases := map[string]struct {
+		pattern, host string
+		want          bool
+	}{
+		"Under":        {pattern: "*.example.com", host: "api.example.com", want: true},
+		"DeepUnder":    {pattern: "*.example.com", host: "a.b.example.com", want: true},
+		"Apex":         {pattern: "*.example.com", host: "example.com", want: false},
+		"Other":        {pattern: "*.example.com", host: "api.example.org", want: false},
+		"Case":         {pattern: "*.Example.com", host: "API.example.com.", want: true},
+		"InvalidPat":   {pattern: "example.com", host: "api.example.com", want: false},
+		"LookalikeEnd": {pattern: "*.example.com", host: "notexample.com", want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := PatternCovers(tc.pattern, tc.host); got != tc.want {
+				t.Errorf("PatternCovers(%q, %q) = %v, want %v", tc.pattern, tc.host, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPatternUnder(t *testing.T) {
+	cases := map[string]struct {
+		pattern, granted string
+		want             bool
+	}{
+		"Equal":      {pattern: "*.example.com", granted: "*.example.com", want: true},
+		"Under":      {pattern: "*.a.example.com", granted: "*.example.com", want: true},
+		"Above":      {pattern: "*.example.com", granted: "*.a.example.com", want: false},
+		"Other":      {pattern: "*.example.org", granted: "*.example.com", want: false},
+		"HostGrant":  {pattern: "*.example.com", granted: "example.com", want: false},
+		"InvalidPat": {pattern: "example.com", granted: "*.example.com", want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := PatternUnder(tc.pattern, tc.granted); got != tc.want {
+				t.Errorf("PatternUnder(%q, %q) = %v, want %v", tc.pattern, tc.granted, got, tc.want)
+			}
+		})
+	}
+}

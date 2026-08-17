@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/response"
 
+	"github.com/jonasz-lasut/function-wasm/internal/admission"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
@@ -32,31 +34,27 @@ import (
 // sweepInterval is how often the on-disk caches are measured and bounded.
 const sweepInterval = 10 * time.Minute
 
-// CLI of this Function.
+// CLI of this Function: serve (the default, so every existing invocation and
+// a DeploymentRuntimeConfig's args keep working with no subcommand) and
+// validate, which runs the runtime's own admission over Compositions offline
+// against the same ceiling flags.
 type CLI struct {
 	Debug bool `short:"d" help:"Emit debug logs in addition to info logs."`
 
-	Network            string         `help:"Network on which to listen for gRPC connections." default:"tcp"`
-	Address            string         `help:"Address at which to listen for gRPC connections." default:":9443"`
-	TLSCertsDir        string         `help:"Directory containing server certs (tls.key, tls.crt) and the CA used to verify client certificates (ca.crt)" env:"TLS_SERVER_CERTS_DIR"`
-	Insecure           bool           `help:"Run without mTLS credentials. If you supply this flag --tls-server-certs-dir will be ignored."`
-	MaxRecvMessageSize int            `help:"Maximum size of received messages in MB." default:"4"`
-	TTL                *time.Duration `help:"Time to live for function responses the runtime itself produces (fatal results); a module sets the TTL of its own responses."`
+	Serve    ServeCmd    `cmd:"" default:"withargs" help:"Serve the function over gRPC (the default)."`
+	Validate ValidateCmd `cmd:"" help:"Validate the function-wasm Inputs of Compositions against these flags, offline: the checks a request passes before its module is resolved, in the runtime's own words."`
+}
 
-	ModuleDir             string        `help:"Directory served for 'path' module sources; unset refuses them." env:"MODULE_DIR"`
-	MaxModuleSize         int           `help:"Maximum size of a module in MB." default:"128"`
-	ModuleTimeout         time.Duration `help:"Maximum wall-clock time one module run may take." default:"30s"`
-	EnableMemoryCache     bool          `help:"Keep compiled modules in memory between requests. Off (--enable-memory-cache=false), every request maps the module's compiled artifact from disk (milliseconds) and releases it afterwards." default:"true" negatable:"" env:"ENABLE_MEMORY_CACHE"`
-	MaxCachedModules      int           `help:"Most compiled modules kept in memory at once; the least recently used is dropped beyond it. 0 leaves it to the idle timeout." default:"0" env:"MAX_CACHED_MODULES"`
-	MaxConcurrentCompiles int           `help:"Most modules compiled at once. A compile already uses every core and about a gigabyte for a large Go module; further first requests wait their turn." default:"1" env:"MAX_CONCURRENT_COMPILES"`
-	MaxCacheSize          int           `help:"Bound in MB on the on-disk caches together (fetched modules and compiled artifacts); the least recently used entries are removed past it, at startup and every ten minutes. 0 leaves them unbounded." default:"0" env:"MAX_CACHE_SIZE"`
-	ModuleMemoryLimit     int           `help:"Maximum linear memory of a running module in MB." default:"512"`
-	CosignKey             string        `help:"PEM file with one or more cosign public keys. When set, only OCI modules carrying a cosign signature by one of the keys run; http and path sources are refused." env:"COSIGN_KEY" type:"existingfile"`
+// CeilingFlags are the operator's ceilings — what a Composition's Input is
+// admitted against — shared by serve and validate, so the flags an operator
+// passes to the runtime are the flags validate takes.
+type CeilingFlags struct {
+	ModuleDir         string        `help:"Directory served for 'path' module sources; unset refuses them." env:"MODULE_DIR"`
+	MaxModuleSize     int           `help:"Maximum size of a module in MB." default:"128"`
+	ModuleTimeout     time.Duration `help:"Maximum wall-clock time one module run may take." default:"30s"`
+	ModuleMemoryLimit int           `help:"Maximum linear memory of a running module in MB." default:"512"`
+	CosignKey         string        `help:"PEM file with one or more cosign public keys. When set, only OCI modules carrying a cosign signature by one of the keys run; http and path sources are refused." env:"COSIGN_KEY" type:"existingfile"`
 
-	// Readiness and the concurrent-runs bound.
-	MaxConcurrentRuns int      `help:"Most module runs executing at once; a further request waits for a slot until its deadline, then fails with a fatal result. 0 leaves concurrency to the caller." default:"0" env:"MAX_CONCURRENT_RUNS"`
-	HealthAddress     string   `help:"Address of the plain-HTTP health endpoints /livez and /readyz (ready once the caches are open and --warm-modules are loaded); empty disables them. The gRPC health service on the function port answers too, but speaks mTLS." default:":8081" env:"HEALTH_ADDRESS"`
-	WarmModules       []string `help:"Modules loaded — resolved, verified, compiled or mapped from the artifact cache — before the health service reports Serving: OCI references pinned to their manifest digest (repo[:tag]@sha256:...) and, with --module-dir, path:<file> entries. Repeatable or comma-separated. One that fails to load is logged and loaded on its first request instead." env:"WARM_MODULES" sep:"," placeholder:"REF"`
 	// Sandbox ceilings (docs/one-pager-sandbox.md): every capability is
 	// switched on with --enable-sandbox-<feature>; a Composition asks for
 	// less through the Input's sandbox, never more. Host directories are
@@ -67,57 +65,24 @@ type CLI struct {
 	SandboxEgressPolicy     string `help:"YAML or JSON file with the egress ceiling: hosts and hostPatterns a Composition may grant (any, when both are empty), blockedCIDRs and allowedCIDRs on top of the default block list (loopback, link-local, private, cluster and reserved ranges), and the per-run budgets timeout, maxRequests, maxResponseBytes, maxRedirects. Without it the defaults apply." env:"SANDBOX_EGRESS_POLICY" type:"existingfile"`
 }
 
-// Run this Function.
-func (c *CLI) Run() error {
-	log, err := function.NewLogger(c.Debug)
-	if err != nil {
-		return err
-	}
-	ttl := response.DefaultTTL
-	if c.TTL != nil {
-		ttl = *c.TTL
-	}
+// engineConfig is the run budget the flags name; MaxConcurrentRuns is
+// serve's alone.
+func (c *CeilingFlags) engineConfig() engine.Config {
+	return engine.Config{Timeout: c.ModuleTimeout, MemoryLimit: int64(c.ModuleMemoryLimit) << 20}
+}
 
-	eng, err := engine.New(engine.Config{
-		Timeout:           c.ModuleTimeout,
-		MemoryLimit:       int64(c.ModuleMemoryLimit) << 20,
-		MaxConcurrentRuns: c.MaxConcurrentRuns,
-	})
-	if err != nil {
-		return err
-	}
-	defer eng.Close()
-
-	blobs, compiled, err := openCaches()
-	if err != nil {
-		return err
-	}
-	go sweepCaches(log, []*cache.Store{blobs, compiled}, int64(c.MaxCacheSize)<<20)
-
-	var verifier *module.Verifier
-	if c.CosignKey != "" {
-		verifier, err = module.LoadVerifier(c.CosignKey)
-		if err != nil {
-			return err
-		}
-	}
-	resolver, err := module.NewResolver(module.Options{
-		Dir:      c.ModuleDir,
-		MaxSize:  int64(c.MaxModuleSize) << 20,
-		Blobs:    blobs,
-		Verifier: verifier,
-	})
-	if err != nil {
-		return err
-	}
+// ceilings builds the admission ceilings from the flags, checking them once:
+// an unwritable $TMPDIR or an unreadable policy file stops the command
+// instead of failing every request (or every step).
+func (c *CeilingFlags) ceilings(log logging.Logger) (admission.Ceilings, error) {
 	// The sandbox ceiling is checked once here — an unwritable $TMPDIR stops
 	// the runtime instead of failing every request that asks for a /tmp.
-	ceiling, err := sandbox.NewCeiling(sandbox.Options{
+	sandboxCeiling, err := sandbox.NewCeiling(sandbox.Options{
 		EnablePrivateTmp: c.EnableSandboxPrivateTmp,
 		EnableEnv:        c.EnableSandboxEnv,
 	})
 	if err != nil {
-		return err
+		return admission.Ceilings{}, err
 	}
 	// The egress ceiling: only with the flag, so a runtime that never opted
 	// in has no code path that dials out for a module.
@@ -126,14 +91,14 @@ func (c *CLI) Run() error {
 		policy := egress.Policy{}
 		if c.SandboxEgressPolicy != "" {
 			if policy, err = egress.LoadPolicy(c.SandboxEgressPolicy); err != nil {
-				return err
+				return admission.Ceilings{}, err
 			}
 		}
 		if egressCeiling, err = egress.New(policy); err != nil {
-			return err
+			return admission.Ceilings{}, err
 		}
 	} else if c.SandboxEgressPolicy != "" {
-		return errors.New("--sandbox-egress-policy needs --enable-sandbox-egress")
+		return admission.Ceilings{}, errors.New("--sandbox-egress-policy needs --enable-sandbox-egress")
 	}
 	if c.EnableSandboxPrivateTmp || c.EnableSandboxEnv || c.EnableSandboxEgress {
 		egressCeilingText := "disabled"
@@ -142,20 +107,99 @@ func (c *CLI) Run() error {
 		}
 		log.Info("Sandbox grants enabled", "private-tmp", c.EnableSandboxPrivateTmp, "env", c.EnableSandboxEnv, "egress", c.EnableSandboxEgress, "egress-policy", c.SandboxEgressPolicy, "egress-ceiling", egressCeilingText)
 	}
+	return admission.Ceilings{Engine: c.engineConfig().WithDefaults(), Sandbox: sandboxCeiling, Egress: egressCeiling}, nil
+}
+
+// resolver builds the module resolver the flags describe: --module-dir,
+// --max-module-size and --cosign-key, over the blob store (nil for a
+// one-off validate).
+func (c *CeilingFlags) resolver(blobs *cache.Store) (*module.Resolver, error) {
+	var verifier *module.Verifier
+	if c.CosignKey != "" {
+		v, err := module.LoadVerifier(c.CosignKey)
+		if err != nil {
+			return nil, err
+		}
+		verifier = v
+	}
+	return module.NewResolver(module.Options{
+		Dir:      c.ModuleDir,
+		MaxSize:  int64(c.MaxModuleSize) << 20,
+		Blobs:    blobs,
+		Verifier: verifier,
+	})
+}
+
+// ServeCmd runs the function.
+type ServeCmd struct {
+	CeilingFlags `embed:""`
+
+	Network            string         `help:"Network on which to listen for gRPC connections." default:"tcp"`
+	Address            string         `help:"Address at which to listen for gRPC connections." default:":9443"`
+	TLSCertsDir        string         `help:"Directory containing server certs (tls.key, tls.crt) and the CA used to verify client certificates (ca.crt)" env:"TLS_SERVER_CERTS_DIR"`
+	Insecure           bool           `help:"Run without mTLS credentials. If you supply this flag --tls-server-certs-dir will be ignored."`
+	MaxRecvMessageSize int            `help:"Maximum size of received messages in MB." default:"4"`
+	TTL                *time.Duration `help:"Time to live for function responses the runtime itself produces (fatal results); a module sets the TTL of its own responses."`
+
+	EnableMemoryCache     bool `help:"Keep compiled modules in memory between requests. Off (--enable-memory-cache=false), every request maps the module's compiled artifact from disk (milliseconds) and releases it afterwards." default:"true" negatable:"" env:"ENABLE_MEMORY_CACHE"`
+	MaxCachedModules      int  `help:"Most compiled modules kept in memory at once; the least recently used is dropped beyond it. 0 leaves it to the idle timeout." default:"0" env:"MAX_CACHED_MODULES"`
+	MaxConcurrentCompiles int  `help:"Most modules compiled at once. A compile already uses every core and about a gigabyte for a large Go module; further first requests wait their turn." default:"1" env:"MAX_CONCURRENT_COMPILES"`
+	MaxCacheSize          int  `help:"Bound in MB on the on-disk caches together (fetched modules and compiled artifacts); the least recently used entries are removed past it, at startup and every ten minutes. 0 leaves them unbounded." default:"0" env:"MAX_CACHE_SIZE"`
+
+	// Readiness and the concurrent-runs bound.
+	MaxConcurrentRuns int      `help:"Most module runs executing at once; a further request waits for a slot until its deadline, then fails with a fatal result. 0 leaves concurrency to the caller." default:"0" env:"MAX_CONCURRENT_RUNS"`
+	HealthAddress     string   `help:"Address of the plain-HTTP health endpoints /livez and /readyz (ready once the caches are open and --warm-modules are loaded); empty disables them. The gRPC health service on the function port answers too, but speaks mTLS." default:":8081" env:"HEALTH_ADDRESS"`
+	WarmModules       []string `help:"Modules loaded — resolved, verified, compiled or mapped from the artifact cache — before the health service reports Serving: OCI references pinned to their manifest digest (repo[:tag]@sha256:...) and, with --module-dir, path:<file> entries. Repeatable or comma-separated. One that fails to load is logged and loaded on its first request instead." env:"WARM_MODULES" sep:"," placeholder:"REF"`
+}
+
+// Run serves the function.
+func (c *ServeCmd) Run(cli *CLI) error {
+	log, err := function.NewLogger(cli.Debug)
+	if err != nil {
+		return err
+	}
+	ttl := response.DefaultTTL
+	if c.TTL != nil {
+		ttl = *c.TTL
+	}
+
+	cfg := c.engineConfig()
+	cfg.MaxConcurrentRuns = c.MaxConcurrentRuns
+	eng, err := engine.New(cfg)
+	if err != nil {
+		return err
+	}
+	defer eng.Close()
+
+	blobs, compiled, manifests, err := openCaches()
+	if err != nil {
+		return err
+	}
+	go sweepCaches(log, []*cache.Store{blobs, compiled, manifests}, int64(c.MaxCacheSize)<<20)
+
+	resolver, err := c.resolver(blobs)
+	if err != nil {
+		return err
+	}
+	ceilings, err := c.ceilings(log)
+	if err != nil {
+		return err
+	}
 
 	fn := &Function{
 		log:    log,
 		ttl:    ttl,
 		engine: eng,
-		egress: egressCeiling,
+		egress: ceilings.Egress,
 		modules: engine.NewCache(eng, engine.CacheOptions{
 			Disk:                  compiled,
 			NoMemory:              !c.EnableMemoryCache,
 			MaxEntries:            c.MaxCachedModules,
 			MaxConcurrentCompiles: c.MaxConcurrentCompiles,
 		}),
-		resolver: resolver,
-		sandbox:  ceiling,
+		resolver:  resolver,
+		sandbox:   ceilings.Sandbox,
+		manifests: manifests,
 	}
 	// Readiness: the caches are open, the engine is up and the modules named
 	// by --warm-modules are loaded. It is answered twice — by the gRPC health
@@ -232,48 +276,76 @@ func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64) {
 	}
 }
 
-// openCaches prepares the two on-disk caches under cache.DefaultDir before
-// the function serves: fetched modules by digest, and wasmtime artifacts
-// under a directory named after the wasmtime version and host so an upgrade
-// never loads foreign code; artifacts of other versions are removed once
-// nothing has written them for a day (a rolling upgrade shares the volume
-// between versions). Both directories are created if missing — the function
-// never runs without them.
-func openCaches() (blobs, compiled *cache.Store, err error) {
+// openCaches prepares the three on-disk caches under cache.DefaultDir before
+// the function serves: fetched modules by digest; wasmtime artifacts under a
+// directory named after the wasmtime version and host so an upgrade never
+// loads foreign code — artifacts of other versions are removed once nothing
+// has written them for a day (a rolling upgrade shares the volume between
+// versions); and the module manifests, kilobytes per digest, kept beside the
+// artifacts so a warm volume needs no registry read to learn what a module
+// requires. The directories are created if missing — the function never
+// runs without them.
+func openCaches() (blobs, compiled, manifests *cache.Store, err error) {
 	engineVersion := engine.Version()
 
 	modulesDir := filepath.Join(cache.DefaultDir, cache.ModulesDir)
 	compiledDir := filepath.Join(cache.DefaultDir, cache.CompiledDir)
 	versionDir := filepath.Join(compiledDir, engineVersion)
+	manifestsDir := filepath.Join(cache.DefaultDir, cache.ManifestsDir)
 	for _, d := range []struct{ path, what string }{
 		{cache.DefaultDir, "cache"},
 		{modulesDir, "modules cache"},
 		{compiledDir, "compiled cache"},
 		{versionDir, "compiled cache"},
+		{manifestsDir, "manifests cache"},
 	} {
 		if _, err := os.Stat(d.path); os.IsNotExist(err) {
 			err = os.Mkdir(d.path, 0750)
 			if err != nil {
-				return nil, nil, errors.Wrapf(err, "failed to create %s dir", d.what)
+				return nil, nil, nil, errors.Wrapf(err, "failed to create %s dir", d.what)
 			}
 		}
 	}
 	base := afero.NewBasePathFs(afero.NewOsFs(), cache.DefaultDir)
 	if err := cache.RemoveOthers(base, cache.CompiledDir, engineVersion, time.Now()); err != nil {
-		return nil, nil, errors.Wrapf(err, "cannot clean %s", compiledDir)
+		return nil, nil, nil, errors.Wrapf(err, "cannot clean %s", compiledDir)
 	}
 	blobs, err = cache.OpenDir(modulesDir, true)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	compiled, err = cache.OpenDir(versionDir, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return blobs, compiled, nil
+	manifests, err = cache.OpenDir(manifestsDir, false)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return blobs, compiled, manifests, nil
+}
+
+// parser builds the kong parser main and the tests share.
+func parser(cli *CLI, stdout io.Writer) *kong.Kong {
+	return kong.Must(cli,
+		kong.Name("function"),
+		kong.Description("A Crossplane composition function that runs a WebAssembly module supplied through its input in a wasmtime sandbox."),
+		kong.BindTo(stdout, (*io.Writer)(nil)),
+	)
 }
 
 func main() {
-	ctx := kong.Parse(&CLI{}, kong.Description("A Crossplane composition function that runs a WebAssembly module supplied through its input in a wasmtime sandbox."))
-	ctx.FatalIfErrorf(ctx.Run())
+	cli := &CLI{}
+	p := parser(cli, os.Stdout)
+	ctx, err := p.Parse(os.Args[1:])
+	p.FatalIfErrorf(err)
+	err = ctx.Run(cli)
+	// validate reports its verdict through the exit code alone: 1 when a step
+	// is refused, 2 when the tool itself failed; kong's FatalIfErrorf would
+	// print the error and exit 1 for both.
+	var exit exitError
+	if errors.As(err, &exit) {
+		os.Exit(exit.code)
+	}
+	p.FatalIfErrorf(err)
 }

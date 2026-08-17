@@ -83,7 +83,7 @@ RunFunction
               ├─ modules/<blob digest> hit → bytes                   (blob hit)
               └─ miss → source (registry layer / HTTP GET / file)    (blob miss)
                         → verify sha256 → modules/<blob digest> ← write
-              oci tar layer: extract the .wasm
+              oci tar layer: extract /fn.wasm
             → wait for a compile slot (--max-concurrent-compiles, default 1)
             → Compile (~25 CPU-seconds, ~1 GB peak for a 75 MB Go guest)
             → Serialize → compiled/<ver>/<digest> ← write

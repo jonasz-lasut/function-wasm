@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 )
 
 // Media types recognised as a raw wasm module layer: the CNCF wasm OCI
@@ -78,11 +80,42 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 			if err != nil {
 				return nil, err
 			}
-			if isTarLayer(layer.MediaType) {
-				return extractWasm(b, r.opts.MaxSize)
+			if IsTarLayer(layer.MediaType) {
+				return ExtractWasm(b, r.opts.MaxSize)
 			}
 			return b, nil
 		}),
+	}
+	// The manifest layer, when the artifact has one: fetched through the
+	// same manifest, verified against its own digest, bounded to
+	// manifest.MaxSize; the caller stores it beside the compiled artifact so
+	// this runs once per digest per volume.
+	out.manifest = func(ctx context.Context) ([]byte, bool, error) {
+		opts := append(opts, remote.WithContext(ctx))
+		layer, found, err := manifestLayer(ref, opts)
+		if err != nil || !found {
+			return nil, false, err
+		}
+		b, err := r.verified(ctx, "manifest layer", layer.Digest.String(), func(_ context.Context) ([]byte, error) {
+			l, err := remote.Layer(ref.Context().Digest(layer.Digest.String()), opts...)
+			if err != nil {
+				return nil, fmt.Errorf("cannot fetch manifest layer: %w", err)
+			}
+			rc, err := l.Compressed()
+			if err != nil {
+				return nil, fmt.Errorf("cannot read manifest layer: %w", err)
+			}
+			defer func() { _ = rc.Close() }()
+			b, err := readCapped(rc, manifest.MaxSize)
+			if err != nil {
+				return nil, fmt.Errorf("cannot read manifest layer: %w", err)
+			}
+			return b, nil
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		return b, true, nil
 	}
 	if r.opts.Verifier != nil {
 		out.verify = func(ctx context.Context) error {
@@ -92,8 +125,37 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 	return out, nil
 }
 
-// moduleLayer fetches a manifest and picks the layer holding the module: a
-// wasm-typed layer if there is one, otherwise the only layer.
+// manifestLayer fetches an artifact's manifest and picks its module-manifest
+// layer, if it has one.
+func manifestLayer(ref name.Digest, opts []remote.Option) (v1.Descriptor, bool, error) {
+	desc, err := remote.Get(ref, opts...)
+	if err != nil {
+		return v1.Descriptor{}, false, fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
+	}
+	if desc.MediaType.IsIndex() {
+		return v1.Descriptor{}, false, fmt.Errorf("%s is an image index; reference the manifest holding the module", ref)
+	}
+	m, err := v1.ParseManifest(bytes.NewReader(desc.Manifest))
+	if err != nil {
+		return v1.Descriptor{}, false, fmt.Errorf("cannot parse manifest %s: %w", ref, err)
+	}
+	l, ok := ManifestLayer(m)
+	return l, ok, nil
+}
+
+// ManifestLayer picks the module-manifest layer of an artifact's manifest —
+// the layer of media type manifest.LayerMediaType — if there is one; the
+// rule guestfn inspect and the resolver share.
+func ManifestLayer(m *v1.Manifest) (v1.Descriptor, bool) {
+	for _, l := range m.Layers {
+		if string(l.MediaType) == manifest.LayerMediaType {
+			return l, true
+		}
+	}
+	return v1.Descriptor{}, false
+}
+
+// moduleLayer fetches a manifest and picks the layer holding the module.
 func moduleLayer(ref name.Digest, opts []remote.Option) (v1.Descriptor, error) {
 	desc, err := remote.Get(ref, opts...)
 	if err != nil {
@@ -106,26 +168,50 @@ func moduleLayer(ref name.Digest, opts []remote.Option) (v1.Descriptor, error) {
 	if err != nil {
 		return v1.Descriptor{}, fmt.Errorf("cannot parse manifest %s: %w", ref, err)
 	}
+	l, err := WasmLayer(m)
+	if err != nil {
+		return v1.Descriptor{}, fmt.Errorf("%s %w", ref, err)
+	}
+	return l, nil
+}
+
+// WasmLayer picks the layer of a manifest that holds the module: a
+// wasm-typed layer if there is one, otherwise the only layer that is not the
+// module-manifest layer — the rule the resolver applies to every OCI source,
+// shared with guestfn inspect.
+func WasmLayer(m *v1.Manifest) (v1.Descriptor, error) {
+	var candidates []v1.Descriptor
 	for _, l := range m.Layers {
 		if wasmLayerTypes[l.MediaType] {
 			return l, nil
 		}
+		if string(l.MediaType) != manifest.LayerMediaType {
+			candidates = append(candidates, l)
+		}
 	}
-	if len(m.Layers) == 1 {
-		return m.Layers[0], nil
+	if len(candidates) == 1 {
+		return candidates[0], nil
 	}
-	return v1.Descriptor{}, fmt.Errorf("%s has %d layers and none is a wasm layer", ref, len(m.Layers))
+	return v1.Descriptor{}, fmt.Errorf("has %d layers and none is a wasm layer", len(m.Layers))
 }
 
-func isTarLayer(mt types.MediaType) bool {
+// ScratchModulePath is where a FROM scratch image must hold the module:
+// `COPY fn.wasm /`. It is the one path looked for in a tar layer — nothing
+// is guessed from the archive's contents, and the name is not configurable.
+const ScratchModulePath = "/fn.wasm"
+
+// IsTarLayer reports whether a layer media type is a tar archive — a FROM
+// scratch image holding the module as a file — rather than a raw module.
+func IsTarLayer(mt types.MediaType) bool {
 	return strings.Contains(string(mt), "tar")
 }
 
-// extractWasm returns the first .wasm file of a (possibly gzipped) tar layer,
-// which is how a `FROM scratch; COPY fn.wasm /` image stores a module. The
-// archive may expand to at most eight times the module size limit before the
-// .wasm entry is found: a gzip bomb costs bounded work, not the process.
-func extractWasm(b []byte, limit int64) ([]byte, error) {
+// ExtractWasm returns ScratchModulePath from a (possibly gzipped) tar layer,
+// which is how a `FROM scratch; COPY fn.wasm /` image stores a module; an
+// archive without that exact entry is refused, whatever else it holds. The
+// archive may expand to at most eight times limit before the entry is found:
+// a gzip bomb costs bounded work, not the process.
+func ExtractWasm(b []byte, limit int64) ([]byte, error) {
 	var rd io.Reader = bytes.NewReader(b)
 	if bytes.HasPrefix(b, []byte{0x1f, 0x8b}) {
 		zr, err := gzip.NewReader(rd)
@@ -140,12 +226,14 @@ func extractWasm(b []byte, limit int64) ([]byte, error) {
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return nil, errors.New("module layer is a tar archive without a .wasm file")
+			return nil, fmt.Errorf("module layer is a tar archive without %s: a FROM scratch image must COPY the module to %s", ScratchModulePath, ScratchModulePath)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("cannot read module layer archive: %w", err)
 		}
-		if h.Typeflag == tar.TypeReg && strings.HasSuffix(h.Name, ".wasm") {
+		// Archives name the entry as fn.wasm, ./fn.wasm or /fn.wasm depending
+		// on the builder; all are the root's fn.wasm, and nothing else is.
+		if h.Typeflag == tar.TypeReg && path.Clean("/"+h.Name) == ScratchModulePath {
 			return readCapped(tr, limit)
 		}
 	}
@@ -159,7 +247,7 @@ type cappedReader struct {
 
 func (c *cappedReader) Read(p []byte) (int, error) {
 	if c.left <= 0 {
-		return 0, errors.New("module layer archive exceeds the size limit before any .wasm file")
+		return 0, fmt.Errorf("module layer archive exceeds the size limit before %s", ScratchModulePath)
 	}
 	if int64(len(p)) > c.left {
 		p = p[:c.left]

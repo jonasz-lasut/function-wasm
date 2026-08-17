@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.2
+* Status: Implemented, revision 1.3
 
 How the sandbox grants a module *some* filesystem, network or environment
 access without giving up what makes it safe to run other people's modules.
@@ -62,6 +62,11 @@ file a sidecar wrote — which is what the grants below are for.
 5. **The ABI stays language-agnostic.** New capabilities are either WASI
    itself or a host import with a documented byte-level contract, so Rust
    and TinyGo guests are not second-class.
+6. **A module may declare a grant as required, never take it.** The module
+   manifest (`docs/one-pager-module-manifest.md`) lists the egress rules
+   and the private `/tmp` a module cannot run without; the runtime
+   refuses a Composition that grants less, before the run — the manifest
+   narrows, the Composition still asks and the operator still caps.
 
 ## Shape
 
