@@ -151,14 +151,14 @@ func (c *Client) do(ctx context.Context, req *Request) (rsp *Response, outcome s
 
 	hrsp, err := c.http.Do(hreq)
 	if err != nil {
-		rsp, detail := failed(err, limit)
-		return rsp, outcomeOf(err), u, detail
+		rsp, outcome, detail := classify(err, limit)
+		return rsp, outcome, u, detail
 	}
 	defer hrsp.Body.Close() //nolint:errcheck // Nothing to do about a close error on a fully read body.
 	body, err := io.ReadAll(io.LimitReader(hrsp.Body, budget.maxResponseBytes+1))
 	if err != nil {
-		rsp, detail := failed(err, limit)
-		return rsp, outcomeOf(err), u, detail
+		rsp, outcome, detail := classify(err, limit)
+		return rsp, outcome, u, detail
 	}
 	if int64(len(body)) > budget.maxResponseBytes {
 		return &Response{Error: fmt.Sprintf("sandbox.egress: the response body exceeds %d bytes (maxResponseBytes)", budget.maxResponseBytes)}, metrics.OutcomeBudget, u, ""
@@ -166,39 +166,31 @@ func (c *Client) do(ctx context.Context, req *Request) (rsp *Response, outcome s
 	return &Response{Status: hrsp.StatusCode, Headers: hrsp.Header, Body: body}, metrics.OutcomeOK, u, ""
 }
 
-// failed renders a transport error for the guest: the classified reasons
-// (refused, budget) keep their message — and a refusal's detail stays with
-// the operator, returned separately for the audit line — a deadline names
-// the limit that applied, and anything else is prefixed so a guest can tell
-// the host's refusal from its own bug.
-func failed(err error, limit string) (*Response, string) {
+// classify renders a transport error for the guest and picks its metrics
+// outcome in one pass over the error taxonomy, so a failed request is
+// classified once: a refusal keeps its message — and its detail stays with
+// the operator, returned separately for the audit line — a budget error
+// keeps its message, a deadline names the limit that applied, and anything
+// else is prefixed so a guest can tell the host's refusal from its own bug.
+// A budget error and a deadline share the same OutcomeBudget label.
+func classify(err error, limit string) (rsp *Response, outcome, detail string) {
 	var refused refusedError
 	var over budgetError
 	switch {
 	case errors.As(err, &refused):
-		return &Response{Error: refused.msg}, refused.detail
+		return &Response{Error: refused.msg}, metrics.OutcomeRefused, refused.detail
 	case errors.As(err, &over):
-		return &Response{Error: over.msg}, ""
+		return &Response{Error: over.msg}, metrics.OutcomeBudget, ""
 	case errors.Is(err, context.DeadlineExceeded):
-		return &Response{Error: "sandbox.egress: the request exceeded " + limit}, ""
+		return &Response{Error: "sandbox.egress: the request exceeded " + limit}, metrics.OutcomeBudget, ""
 	}
+	// The url.Error wrapper only shapes the guest's message; the outcome is
+	// error either way.
 	var uerr *url.Error
 	if errors.As(err, &uerr) {
 		err = uerr.Err
 	}
-	return &Response{Error: "sandbox.egress: " + err.Error()}, ""
-}
-
-func outcomeOf(err error) string {
-	var refused refusedError
-	var over budgetError
-	switch {
-	case errors.As(err, &refused):
-		return metrics.OutcomeRefused
-	case errors.As(err, &over), errors.Is(err, context.DeadlineExceeded):
-		return metrics.OutcomeBudget
-	}
-	return metrics.OutcomeError
+	return &Response{Error: "sandbox.egress: " + err.Error()}, metrics.OutcomeError, ""
 }
 
 func methodOf(req *Request) string {

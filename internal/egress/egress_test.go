@@ -420,10 +420,10 @@ func TestNewRateLimit(t *testing.T) {
 	if e.rateLimits == nil {
 		t.Fatal("New(): rateLimits should be non-nil with a rateLimit policy")
 	}
-	if e.rateLimit.requestsPerMinute != 120 {
-		t.Errorf("requestsPerMinute = %f, want 120", e.rateLimit.requestsPerMinute)
+	if e.rateLimits.cfg.requestsPerMinute != 120 {
+		t.Errorf("requestsPerMinute = %f, want 120", e.rateLimits.cfg.requestsPerMinute)
 	}
-	if e.rateLimit.burst != 10 {
-		t.Errorf("burst = %d, want 10", e.rateLimit.burst)
+	if e.rateLimits.cfg.burst != 10 {
+		t.Errorf("burst = %d, want 10", e.rateLimits.cfg.burst)
 	}
 }
