@@ -9,8 +9,17 @@ import (
 
 // StepSlots bounds how many runs of a given key execute at once. The key
 // is the caller's: typically the module digest, so one module does not
-// take every global run slot from every other. Idle entries are swept by
-// SweepIdle.
+// take every global run slot from every other.
+//
+// The slot count is fixed at a key's first Acquire and governs that key
+// until its entry goes idle and SweepIdle removes it. Two Composition steps
+// that name the same module digest with different limits.concurrency
+// therefore share the first-seen bound: the channel is never replaced while
+// runs may hold it, so an in-flight holder is never orphaned onto an old
+// channel and the effective concurrency can never exceed the first value.
+// This keeps the digest-keyed semantics the request path documents; a
+// changed limit takes effect only after the entry is swept. Idle entries
+// are swept by SweepIdle.
 type StepSlots struct {
 	mu      sync.Mutex
 	entries map[string]*stepEntry
@@ -33,11 +42,17 @@ func NewStepSlots() *StepSlots {
 // Acquire waits for one of the key's n slots under ctx. The returned
 // function releases the slot; call it exactly once. An error means ctx
 // ended before a slot was free, and no slot is held.
+//
+// n sizes the channel only on a key's first Acquire. A later Acquire with a
+// different n reuses the existing channel rather than replacing it: swapping
+// it would leave in-flight holders draining the old channel while new callers
+// fill a fresh one, so both bounds would run at once and each would be
+// exceeded. First-seen-wins avoids that; the bound changes only once the
+// entry is swept.
 func (s *StepSlots) Acquire(ctx context.Context, key string, n int) (release func(), err error) {
 	s.mu.Lock()
 	e, ok := s.entries[key]
-	if !ok || cap(e.ch) != n {
-		// First use or concurrency changed: allocate a fresh channel.
+	if !ok {
 		e = &stepEntry{ch: make(chan struct{}, n)}
 		s.entries[key] = e
 	}

@@ -89,6 +89,46 @@ func TestStepSlotsContextCancelled(t *testing.T) {
 	release()
 }
 
+func TestStepSlotsCapacityPinnedPerKey(t *testing.T) {
+	// Two steps naming the same digest with different limits.concurrency must
+	// not add up: the first-seen count governs, so the extra slots the larger
+	// n asks for are never admitted while the first-seen slots are held.
+	s := NewStepSlots()
+	ctx := context.Background()
+
+	const firstSeen = 2
+	held := make([]func(), 0, firstSeen)
+	for range firstSeen {
+		release, err := s.Acquire(ctx, "sha256:test", firstSeen)
+		if err != nil {
+			t.Fatalf("Acquire(): %v", err)
+		}
+		held = append(held, release)
+	}
+
+	// A larger n on the same key must not open a fresh channel: with every
+	// first-seen slot held, this Acquire blocks until its deadline.
+	blocked, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := s.Acquire(blocked, "sha256:test", firstSeen+3); err == nil {
+		t.Fatal("Acquire() with a larger n admitted past the first-seen capacity")
+	}
+
+	// Releasing a first-seen slot lets exactly one more in, proving the
+	// larger n reused the existing channel rather than a new one.
+	held[0]()
+	admitted, cancelAdmit := context.WithTimeout(context.Background(), time.Second)
+	defer cancelAdmit()
+	release, err := s.Acquire(admitted, "sha256:test", firstSeen+3)
+	if err != nil {
+		t.Fatalf("Acquire() after a release should have been admitted: %v", err)
+	}
+	release()
+	for _, r := range held[1:] {
+		r()
+	}
+}
+
 func TestStepSlotsSweepIdle(t *testing.T) {
 	s := NewStepSlots()
 	ctx := context.Background()
