@@ -153,6 +153,47 @@ func TestStepSlotsSweepIdle(t *testing.T) {
 	}
 }
 
+func TestStepSlotsSweepIdleSkipsHeld(t *testing.T) {
+	// An entry whose slot is currently held must survive the sweep even with an
+	// old lastSeen: removing it would let the next Acquire build a fresh channel
+	// beside the one the live holder drains, re-opening the over-admission.
+	s := NewStepSlots()
+	ctx := context.Background()
+	release, err := s.Acquire(ctx, "sha256:held", 1)
+	if err != nil {
+		t.Fatalf("Acquire(): %v", err)
+	}
+
+	// Backdate the held entry so only the len(e.ch) guard keeps it.
+	s.mu.Lock()
+	s.entries["sha256:held"].lastSeen = time.Now().Add(-stepIdleExpiry - time.Second)
+	s.mu.Unlock()
+
+	s.SweepIdle()
+
+	s.mu.Lock()
+	_, exists := s.entries["sha256:held"]
+	s.mu.Unlock()
+	if !exists {
+		t.Error("SweepIdle removed an entry that still holds a slot")
+	}
+
+	// Once released and still stale, the same entry is idle and swept.
+	release()
+	s.mu.Lock()
+	s.entries["sha256:held"].lastSeen = time.Now().Add(-stepIdleExpiry - time.Second)
+	s.mu.Unlock()
+
+	s.SweepIdle()
+
+	s.mu.Lock()
+	_, exists = s.entries["sha256:held"]
+	s.mu.Unlock()
+	if exists {
+		t.Error("SweepIdle should have removed the released, stale entry")
+	}
+}
+
 func containsStr(s, sub string) bool {
 	return len(s) >= len(sub) && searchStr(s, sub)
 }
