@@ -48,16 +48,21 @@ func (l *logger) Debug(msg string, keysAndValues ...any) {
 }
 
 func (l *logger) WithValues(keysAndValues ...any) logging.Logger {
+	return &logger{kv: l.merge(keysAndValues)}
+}
+
+// merge returns this logger's keys and values followed by the call's. It always
+// allocates a fresh slice, never aliasing l.kv, so emit can rewrite its copy in
+// place without disturbing the shared parent slice.
+func (l *logger) merge(keysAndValues []any) []any {
 	kv := make([]any, 0, len(l.kv)+len(keysAndValues))
 	kv = append(kv, l.kv...)
 	kv = append(kv, keysAndValues...)
-	return &logger{kv: kv}
+	return kv
 }
 
 func (l *logger) emit(level int32, msg string, keysAndValues []any) {
-	kv := make([]any, 0, len(l.kv)+len(keysAndValues))
-	kv = append(kv, l.kv...)
-	kv = append(kv, keysAndValues...)
+	kv := l.merge(keysAndValues)
 	for i := range kv {
 		kv[i] = jsonable(kv[i])
 	}
