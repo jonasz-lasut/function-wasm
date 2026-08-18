@@ -109,8 +109,7 @@ type Egress struct {
 	explicit []netip.Prefix // the file's blockedCIDRs, which allowed never override
 	budget   budget
 
-	rateLimit  *rateLimitPolicy
-	rateLimits *rateLimiters // nil when rateLimit is nil
+	rateLimits *rateLimiters // nil when the policy sets no rate limit
 
 	transportOnce sync.Once
 	rt            *http.Transport
@@ -189,7 +188,6 @@ func New(p Policy) (*Egress, error) {
 		if rl.burst <= 0 {
 			rl.burst = max(1, int(rl.requestsPerMinute))
 		}
-		e.rateLimit = rl
 		e.rateLimits = newRateLimiters(*rl)
 	}
 	return e, nil
@@ -293,7 +291,8 @@ func (e *Egress) Describe() string {
 	}
 	b := e.budget
 	desc := fmt.Sprintf("%s; timeout %s, maxRequests %d, maxResponseBytes %d, maxRedirects %d", hosts, b.timeout, b.maxRequests, b.maxResponseBytes, b.maxRedirects)
-	if rl := e.rateLimit; rl != nil {
+	if e.rateLimits != nil {
+		rl := e.rateLimits.cfg
 		desc += fmt.Sprintf(", rateLimit %.0f req/min burst %d", rl.requestsPerMinute, rl.burst)
 	}
 	return desc
@@ -319,13 +318,6 @@ func ValidHost(h string) bool {
 func ValidHostPattern(p string) bool {
 	suffix, ok := patternSuffix(p)
 	return ok && ValidHost(suffix[1:])
-}
-
-// NormalizedPath reports whether p is what path.Clean would return (a
-// trailing slash aside), so a rule's pathPrefix cannot be escaped with dot
-// segments the server would collapse; the empty path is fine.
-func NormalizedPath(p string) bool {
-	return normalizedPath(p)
 }
 
 // PatternCovers reports whether host is under pattern the way a rule's

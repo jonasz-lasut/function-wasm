@@ -319,11 +319,8 @@ func openCaches() (blobs, compiled, manifests *cache.Store, err error) {
 		{versionDir, "compiled cache"},
 		{manifestsDir, "manifests cache"},
 	} {
-		if _, err := os.Stat(d.path); os.IsNotExist(err) {
-			err = os.Mkdir(d.path, 0750)
-			if err != nil {
-				return nil, nil, nil, errors.Wrapf(err, "failed to create %s dir", d.what)
-			}
+		if err := os.MkdirAll(d.path, 0750); err != nil {
+			return nil, nil, nil, errors.Wrapf(err, "failed to create %s dir", d.what)
 		}
 	}
 	base := afero.NewBasePathFs(afero.NewOsFs(), cache.DefaultDir)
