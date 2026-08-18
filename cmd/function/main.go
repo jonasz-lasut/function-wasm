@@ -122,11 +122,15 @@ func (c *CeilingFlags) ceilings(log logging.Logger) (admission.Ceilings, error) 
 		log.Info("Operator grant policy loaded", "policy-file", c.SandboxPolicyFile)
 		// With an operator policy the signature requirement is per-repository
 		// (requireSignature), not --cosign-key's all-or-nothing: a repository
-		// no rule names is not required to be signed. Say so plainly, so an
-		// operator who added a policy for other reasons is not surprised that
-		// only the repositories it names are enforced.
-		if c.CosignKey != "" {
+		// no rule names is not required to be signed. Say so plainly, and warn
+		// loudly in the dangerous case - a policy with no requireSignature rule
+		// leaves --cosign-key requiring nothing - so an operator who added a
+		// policy for other reasons does not silently lose signature enforcement.
+		switch {
+		case c.CosignKey != "" && operatorPolicy.HasSignatureRules():
 			log.Info("Signature requirement is governed per-repository by the operator policy (requireSignature); --cosign-key provides the keys but no longer requires every module", "policy-file", c.SandboxPolicyFile)
+		case c.CosignKey != "":
+			log.Info("WARNING: --cosign-key is set but the operator policy has no requireSignature rule, so no module is required to be signed; add a requireSignature permit, or remove --sandbox-policy-file to keep --cosign-key's all-or-nothing", "policy-file", c.SandboxPolicyFile)
 		}
 	}
 	return admission.Ceilings{Engine: c.engineConfig().WithDefaults(), Sandbox: sandboxCeiling, Egress: egressCeiling, Policy: operatorPolicy}, nil
