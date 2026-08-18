@@ -428,3 +428,85 @@ func TestNewRateLimit(t *testing.T) {
 		t.Errorf("burst = %d, want 10", e.rateLimits.cfg.burst)
 	}
 }
+
+func TestBlockedByWithCIDRRules(t *testing.T) {
+	// The operator's Cedar rules, compiled to prefixes by internal/authz; egress
+	// consumes only the prefixes, never cedar-go, so the dial path stays Go.
+	cases := map[string]struct {
+		reason string
+		policy Policy
+		block  []netip.Prefix
+		allow  []netip.Prefix
+		ip     string
+		want   string
+	}{
+		"CedarForbid": {
+			reason: "A Cedar forbid rule blocks like the file's blockedCIDRs.",
+			block:  []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}, ip: "203.0.113.7", want: "203.0.113.0/24",
+		},
+		"CedarPermit": {
+			reason: "A Cedar permit rule opens a hole in the defaults.",
+			allow:  []netip.Prefix{netip.MustParsePrefix("10.96.0.0/12")}, ip: "10.96.0.10",
+		},
+		"CedarPermitNarrow": {
+			reason: "The hole is only as wide as the permit lists.",
+			allow:  []netip.Prefix{netip.MustParsePrefix("10.96.0.0/12")}, ip: "10.1.2.3", want: "10.0.0.0/8",
+		},
+		"CedarForbidWins": {
+			reason: "A Cedar forbid wins over a Cedar permit of the same range (forbid-wins).",
+			block:  []netip.Prefix{netip.MustParsePrefix("10.96.0.0/24")},
+			allow:  []netip.Prefix{netip.MustParsePrefix("10.96.0.0/12")}, ip: "10.96.0.10", want: "10.96.0.0/24",
+		},
+		"CedarAndFileCombine": {
+			reason: "Cedar rules add to the file's rather than replace them: the file's blockedCIDRs still bite.",
+			policy: Policy{BlockedCIDRs: []string{"198.51.100.0/24"}},
+			allow:  []netip.Prefix{netip.MustParsePrefix("10.96.0.0/12")}, ip: "198.51.100.5", want: "198.51.100.0/24",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e, err := New(tc.policy, WithBlockedCIDRs(tc.block), WithAllowedCIDRs(tc.allow))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.want, e.blockedBy(netip.MustParseAddr(tc.ip))); diff != "" {
+				t.Errorf("\n%s\nblockedBy(%s): -want, +got:\n%s", tc.reason, tc.ip, diff)
+			}
+		})
+	}
+}
+
+// BenchmarkBlockedBy measures the dial hot-path evaluator, which runs per
+// resolved IP, per redirect hop, per reconcile. The design gates moving the
+// CIDR rules into Cedar on this staying a few Prefix.Contains with no Cedar and
+// no allocation added, so the two sub-benchmarks compare the default block list
+// alone with the same list plus operator Cedar CIDR rules compiled to prefixes.
+// Both dial a public address, the worst case that scans every list to the end
+// and returns "" without allocating, so the numbers isolate the scan the Cedar
+// rules lengthen from the string the match names.
+func BenchmarkBlockedBy(b *testing.B) {
+	public := netip.MustParseAddr("93.184.216.34")
+	cedarRules := []Option{
+		WithBlockedCIDRs([]netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}),
+		WithAllowedCIDRs([]netip.Prefix{netip.MustParsePrefix("10.96.0.0/12")}),
+	}
+	cases := map[string]struct {
+		policy Policy
+		opts   []Option
+	}{
+		"Defaults":      {policy: Policy{}},
+		"WithCedarCIDR": {policy: Policy{BlockedCIDRs: []string{"198.51.100.0/24"}}, opts: cedarRules},
+	}
+	for name, tc := range cases {
+		e, err := New(tc.policy, tc.opts...)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = e.blockedBy(public)
+			}
+		})
+	}
+}
