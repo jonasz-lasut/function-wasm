@@ -85,7 +85,7 @@ func TestParse(t *testing.T) {
 		"BadABI": {
 			reason: "Another ABI is refused.",
 			raw:    `{"abi":2}`,
-			err:    "invalid manifest: abi must be 1 (this runtime implements ABI v1), got 2",
+			err:    "abi must be 1 (this runtime implements ABI v1), got 2",
 		},
 		"MissingABI": {
 			reason: "abi is required.",
