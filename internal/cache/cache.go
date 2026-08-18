@@ -84,6 +84,16 @@ func (s *Store) touch(name string) {
 	_ = s.fs.Chtimes(name, now, now)
 }
 
+// tmpMarker is embedded in the name of a Put's temporary file so a partial
+// entry left by a crash is recognised and skipped when listing the store.
+const tmpMarker = ".put-"
+
+// isTemp reports whether name is a Put temporary file rather than a stored
+// blob. The marker can sit anywhere in the name, so it is matched by substring.
+func isTemp(name string) bool {
+	return strings.Contains(name, tmpMarker)
+}
+
 // Put stores b under digest, through a temporary file and a rename so a crash
 // never leaves a partial entry that a later Get would serve.
 func (s *Store) Put(digest string, b []byte) error {
@@ -97,7 +107,7 @@ func (s *Store) Put(digest string, b []byte) error {
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return fmt.Errorf("cannot name cache entry: %w", err)
 	}
-	tmp := fileName(digest) + ".put-" + hex.EncodeToString(nonce[:])
+	tmp := fileName(digest) + tmpMarker + hex.EncodeToString(nonce[:])
 	if err := afero.WriteFile(s.fs, tmp, b, 0o600); err != nil {
 		_ = s.fs.Remove(tmp)
 		return fmt.Errorf("cannot write cache entry: %w", err)
@@ -111,17 +121,8 @@ func (s *Store) Put(digest string, b []byte) error {
 
 // Len counts stored artifacts (for tests and diagnostics).
 func (s *Store) Len() int {
-	entries, err := afero.ReadDir(s.fs, ".")
-	if err != nil {
-		return 0
-	}
-	n := 0
-	for _, e := range entries {
-		if !e.IsDir() && !strings.Contains(e.Name(), ".put-") {
-			n++
-		}
-	}
-	return n
+	entries, _ := s.Entries()
+	return len(entries)
 }
 
 // Subdir returns a store rooted at dir under fs, creating it.
@@ -176,7 +177,7 @@ func (s *Store) Entries() ([]Entry, error) {
 	}
 	var out []Entry
 	for _, e := range infos {
-		if e.IsDir() || strings.Contains(e.Name(), ".put-") {
+		if e.IsDir() || isTemp(e.Name()) {
 			continue
 		}
 		out = append(out, Entry{Store: s, Name: e.Name(), Size: e.Size(), LastUsed: e.ModTime()})
