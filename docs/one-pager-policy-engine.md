@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft
+* Status: Draft; Phase 1 (repository fence) implemented, revision 0.1
 
 Whether to express function-wasm's sandbox admission decisions - egress rules,
 the repository and credential fences, the ceiling that narrows a Composition's
@@ -31,6 +31,8 @@ enforcement. Mechanism is not an authorization question and cannot become
 Cedar. The whole decision rests on how much of the surface is policy.
 
 ## Layer map
+
+![Which sandbox admission layers are handled by Cedar, Cedar + Go, or Go only](policy-engine-architecture.svg)
 
 | Decision surface | Today | Cedar-expressible | Notes |
 |---|---|---|---|
@@ -101,10 +103,10 @@ manifest?" question:
 
 ## Costs and risks
 
-- **A new dependency.** `cedar-go` is pure Go (no CGo - fits the repo), but
-  younger than the Rust reference engine and pre-1.0 at time of writing; its
-  semantics parity and release cadence must be checked before betting on it, and
-  it joins the weekly Grype/supply-chain surface.
+- **A new dependency.** `cedar-go` is pure Go (no CGo - fits the repo) and, as
+  of this revision, is `v1.8.0` - past the pre-1.0 concern this doc first raised.
+  Its footprint is lean: the only transitive dependency it adds is
+  `golang.org/x/exp`. It joins the weekly Grype/supply-chain surface.
 - **Hot-path evaluation.** A composition function runs per reconcile. Two costs
   need measuring, not assuming: per-request egress admit, and *per-resolved-IP*
   block-list evaluation on every dial. The current path is a few map lookups and
@@ -119,13 +121,16 @@ manifest?" question:
 De-risk the "is it worth it" question with the smallest slice that proves the
 operator-authored-policy ergonomics, before touching any hot path:
 
-1. **Spike the repository/credential fence** as a new `internal/authz` (Cedar)
-   package that `internal/admission` calls, with `internal/module` providing the
-   entity hierarchy and context. Smallest surface, the decision where Cedar is
+1. **The repository fence** in a new `internal/authz` (Cedar) package that
+   `internal/module` calls. Smallest surface, the decision where Cedar is
    strictly better, zero hot-path exposure (runs once per resolve, not per
-   request). Deliverable: the fence expressed in Cedar behind the existing
-   refusal strings, behind a build/config flag, compared head-to-head with the
-   Go path on LOC, readability and the bug class it prevents.
+   request). **Done** (`internal/authz`): the fence is a static Cedar policy
+   (`resource in context.allowedRepositories`) over a boundary-correct
+   repository entity hierarchy - a location's ancestors are its path-boundary
+   prefixes, both slash forms - behind the module package's existing refusal
+   strings. The allow list travels in the request context, never the policy
+   text, so a Composition-authored entry cannot inject policy. The credential
+   check stays exact set membership (no boundary subtlety Cedar would improve).
 2. **Measure and decide.** If the slice feels good, egress admit is the next
    candidate and there are real numbers; if not, one package was spent, not a
    rewrite.
@@ -164,8 +169,9 @@ operator-authored-policy ergonomics, before touching any hot path:
 - Is operator-authored, auditable policy a goal real users are asking for, or is
   the motivation internal tidiness? The answer decides whether to proceed past
   the spike.
-- `cedar-go`'s 1.0 status and semantics parity with the Rust engine at decision
-  time.
+- ~~`cedar-go`'s 1.0 status~~ - resolved: `v1.8.0` is in use. Semantics parity
+  with the Rust engine for the features beyond the fence (the `ip` extension,
+  `.like`) still to confirm when egress admit is considered.
 - Measured per-request and per-dial evaluation cost against the current path.
 - Where the operator's Cedar document lives (flag-referenced file vs. ConfigMap)
   and how it reloads.

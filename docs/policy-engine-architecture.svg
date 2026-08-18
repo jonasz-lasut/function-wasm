@@ -1,0 +1,107 @@
+<svg viewBox="0 0 820 512" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <rect width="820" height="512" fill="#f8f7f4" rx="4"/>
+
+  <!-- Title -->
+  <text x="24" y="34" font-size="14" font-weight="700" fill="#2c2a25">Sandbox admission - what Cedar owns</text>
+  <text x="24" y="52" font-size="11" fill="#7a7668">Which layers are policy (Cedar), hybrid (Cedar + Go), or mechanism (Go only). See docs/one-pager-policy-engine.md.</text>
+
+  <!-- ============ COLUMN A: CEDAR ============ -->
+  <rect x="24" y="72" width="244" height="44" rx="5" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.3"/>
+  <text x="38" y="93" font-size="12.5" font-weight="700" fill="#3d6b5e" letter-spacing="0.04em">CEDAR</text>
+  <text x="38" y="108" font-size="9.5" fill="#6f6b5e">declarative admission &#183; operator-authored</text>
+
+  <!-- items -->
+  <rect x="24" y="128" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="38" y="141" font-size="11" font-weight="500" fill="#2c2a25">Capability enablement</text>
+  <text x="38" y="153" font-size="9" fill="#7a7668">--enable-sandbox-* &#8594; policy</text>
+
+  <rect x="24" y="166" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="38" y="179" font-size="11" font-weight="500" fill="#2c2a25">Ceiling &#8745; grant</text>
+  <text x="38" y="191" font-size="9" fill="#7a7668">narrow a Composition's grant</text>
+
+  <rect x="24" y="204" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="38" y="217" font-size="11" font-weight="500" fill="#2c2a25">Egress admit</text>
+  <text x="38" y="229" font-size="9" fill="#7a7668">host / method / path</text>
+
+  <!-- repository fence: implemented -->
+  <rect x="24" y="242" width="244" height="30" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.5"/>
+  <text x="38" y="255" font-size="11" font-weight="600" fill="#2c2a25">Repository fence</text>
+  <text x="38" y="267" font-size="9" fill="#7a7668">in-hierarchy, boundary-correct</text>
+  <rect x="216" y="248" width="44" height="16" rx="8" fill="#3d6b5e"/>
+  <text x="238" y="259" text-anchor="middle" font-size="8.5" font-weight="600" fill="#ffffff">&#10003; live</text>
+
+  <rect x="24" y="280" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="38" y="293" font-size="11" font-weight="500" fill="#2c2a25">Credential fence</text>
+  <text x="38" y="305" font-size="9" fill="#7a7668">allowed credential &#215; repository</text>
+
+  <rect x="24" y="318" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="38" y="331" font-size="11" font-weight="500" fill="#2c2a25">Signature requirement</text>
+  <text x="38" y="343" font-size="9" fill="#7a7668">per-repository, require-or-not</text>
+
+  <!-- ============ COLUMN B: CEDAR + GO ============ -->
+  <rect x="288" y="72" width="244" height="44" rx="5" fill="#fef6e8" stroke="#c4993a" stroke-width="1.3"/>
+  <text x="302" y="93" font-size="12.5" font-weight="700" fill="#b5872f" letter-spacing="0.04em">CEDAR + GO</text>
+  <text x="302" y="108" font-size="9.5" fill="#6f6b5e">rules in Cedar &#183; Go drives the hot path</text>
+
+  <rect x="288" y="128" width="244" height="44" rx="4" fill="#fef6e8" stroke="#c4993a" stroke-width="1"/>
+  <text x="302" y="146" font-size="11" font-weight="600" fill="#2c2a25">CIDR block list (SSRF)</text>
+  <text x="302" y="160" font-size="9" fill="#7a7668">Cedar ip rules + forbid-wins precedence</text>
+
+  <text x="302" y="192" font-size="10" font-weight="600" fill="#7a7668">Why hybrid</text>
+  <text x="302" y="208" font-size="9.5" fill="#7a7668">Cedar can express the CIDR rules,</text>
+  <text x="302" y="221" font-size="9.5" fill="#7a7668">but Go resolves DNS and judges</text>
+  <text x="302" y="234" font-size="9.5" fill="#7a7668">every resolved address on the dial</text>
+  <text x="302" y="247" font-size="9.5" fill="#7a7668">hot path - per IP, per redirect hop.</text>
+  <text x="302" y="266" font-size="9.5" fill="#7a7668">Cost measured before adopting</text>
+  <text x="302" y="279" font-size="9.5" fill="#7a7668">(Phase 3, conditional).</text>
+
+  <!-- ============ COLUMN C: GO ONLY ============ -->
+  <rect x="552" y="72" width="244" height="44" rx="5" fill="#ecebe4" stroke="#9a917d" stroke-width="1.3"/>
+  <text x="566" y="93" font-size="12.5" font-weight="700" fill="#6f6656" letter-spacing="0.04em">GO ONLY</text>
+  <text x="566" y="108" font-size="9.5" fill="#6f6b5e">mechanism &#183; never moves to Cedar</text>
+
+  <rect x="552" y="128" width="244" height="30" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="566" y="141" font-size="11" font-weight="500" fill="#2c2a25">SSRF dialer</text>
+  <text x="566" y="153" font-size="9" fill="#7a7668">resolve + TOCTOU-safe dial</text>
+
+  <rect x="552" y="166" width="244" height="30" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="566" y="179" font-size="11" font-weight="500" fill="#2c2a25">Normalization</text>
+  <text x="566" y="191" font-size="9" fill="#7a7668">URL / path / host (runs before Cedar)</text>
+
+  <rect x="552" y="204" width="244" height="30" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="566" y="217" font-size="11" font-weight="500" fill="#2c2a25">Rate limits &amp; budgets</text>
+  <text x="566" y="229" font-size="9" fill="#7a7668">stateful counting - not authorization</text>
+
+  <rect x="552" y="242" width="244" height="30" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="566" y="255" font-size="11" font-weight="500" fill="#2c2a25">Signature verification</text>
+  <text x="566" y="267" font-size="9" fill="#7a7668">cosign / crypto</text>
+
+  <rect x="552" y="280" width="244" height="30" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="566" y="293" font-size="11" font-weight="500" fill="#2c2a25">Fetch &#183; digest &#183; tar extract</text>
+  <text x="566" y="305" font-size="9" fill="#7a7668">verify-on-read, /fn.wasm</text>
+
+  <rect x="552" y="318" width="244" height="30" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="566" y="331" font-size="11" font-weight="500" fill="#2c2a25">Private /tmp &#183; WASI &#183; mem &#183; epoch</text>
+  <text x="566" y="343" font-size="9" fill="#7a7668">the run's enforcement</text>
+
+  <rect x="552" y="356" width="244" height="30" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="566" y="369" font-size="11" font-weight="500" fill="#2c2a25">Input shape validation</text>
+  <text x="566" y="381" font-size="9" fill="#7a7668">KRM / CEL, not authorization</text>
+
+  <!-- ============ TRUST BOUNDARY ============ -->
+  <text x="24" y="412" font-size="11" font-weight="600" fill="#a09b8e" letter-spacing="0.06em">TRUST BOUNDARY</text>
+  <rect x="24" y="422" width="772" height="46" rx="6" fill="#ffffff" stroke="#3d6b5e" stroke-width="1.2"/>
+  <text x="40" y="443" font-size="10.5" fill="#2c2a25">Cedar policy is <tspan font-weight="600" fill="#3d6b5e">operator-authored</tspan>, on the operator boundary only (a flag / ConfigMap beside the runtime).</text>
+  <text x="40" y="459" font-size="10.5" fill="#7a7668">Never in the module manifest (a requirement, not a grant, the module author controls) or the Composition Input - either would let a module self-authorize.</text>
+
+  <!-- ============ LEGEND ============ -->
+  <rect x="24" y="484" width="14" height="10" rx="2" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="0.9"/>
+  <text x="44" y="493" font-size="10" fill="#a09b8e">Cedar (policy)</text>
+  <rect x="150" y="484" width="14" height="10" rx="2" fill="#fef6e8" stroke="#c4993a" stroke-width="0.9"/>
+  <text x="170" y="493" font-size="10" fill="#a09b8e">Cedar + Go (hybrid)</text>
+  <rect x="312" y="484" width="14" height="10" rx="2" fill="#ffffff" stroke="#c5c1b7" stroke-width="0.9"/>
+  <text x="332" y="493" font-size="10" fill="#a09b8e">Go only (mechanism)</text>
+  <rect x="486" y="483" width="30" height="12" rx="6" fill="#3d6b5e"/>
+  <text x="501" y="492" text-anchor="middle" font-size="8" font-weight="600" fill="#ffffff">&#10003;</text>
+  <text x="524" y="493" font-size="10" fill="#a09b8e">implemented (Phase 1)</text>
+</svg>
