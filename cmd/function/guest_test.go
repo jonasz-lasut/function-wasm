@@ -122,7 +122,7 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 		_, _ = w.Write([]byte("howdy\n"))
 	}))
 	defer greetings.Close()
-	ceiling, err := egress.New(egress.Policy{AllowedCIDRs: []string{"127.0.0.0/8", "::1/128"}})
+	ceiling, err := egress.New(egress.WithAllowedCIDRs(loopbackCIDRs()))
 	if err != nil {
 		t.Fatal(err)
 	}
