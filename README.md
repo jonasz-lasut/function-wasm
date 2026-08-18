@@ -489,8 +489,8 @@ in the order they decide:
    Without a file, any public host may be granted within the defaults shown.
    The default block list — loopback, link-local (the cloud metadata
    endpoint), RFC 1918, carrier-grade NAT (`100.64.0.0/10`, a common pod
-   range), IPv6 unique-local, the NAT64 prefix, and the unspecified,
-   multicast and reserved ranges — applies to **every address a name
+   range), IPv6 unique-local, the NAT64 and IPv4-compatible prefixes, and the
+   unspecified, multicast and reserved ranges — applies to **every address a name
    resolves to** (a zoned IPv6 literal such as `[::1%25lo]` is never
    dialled), and the host dials the address it checked, so a name cannot
    rebind between the check and the connection. `blockedCIDRs` add to it,

@@ -32,13 +32,16 @@ const (
 // DefaultBlockedCIDRs are refused whatever the grant unless the Policy's
 // AllowedCIDRs make an exception: loopback, link-local (the cloud metadata
 // endpoint lives there), RFC 1918, carrier-grade NAT (a common pod range),
-// IPv6 unique-local, the NAT64 well-known prefix (an IPv4 address written as
-// IPv6), and the unspecified, multicast and reserved ranges. A module reaches
-// the operator's cluster only where the operator says so.
+// IPv6 unique-local, the NAT64 and IPv4-compatible well-known prefixes (an
+// IPv4 address written as IPv6), and the unspecified, IPv6-loopback,
+// multicast and reserved ranges. ::/96 covers the deprecated IPv4-compatible
+// range (::7f00:1 for 127.0.0.1) and subsumes ::/128 (unspecified) and ::1
+// (loopback). A module reaches the operator's cluster only where the operator
+// says so.
 var DefaultBlockedCIDRs = []string{
 	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
 	"172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
-	"::/128", "::1/128", "64:ff9b::/96", "fc00::/7", "fe80::/10", "ff00::/8",
+	"::/96", "64:ff9b::/96", "fc00::/7", "fe80::/10", "ff00::/8",
 }
 
 // Policy is the operator's egress ceiling — the --sandbox-egress-policy file
