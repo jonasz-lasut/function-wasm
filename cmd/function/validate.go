@@ -125,7 +125,7 @@ func (c *ValidateCmd) Run(cli *CLI, stdout io.Writer) error {
 	var resolver *module.Resolver
 	var eng *engine.Engine
 	if c.Resolve {
-		if resolver, err = c.resolver(nil); err != nil {
+		if resolver, err = c.resolver(nil, ceilings.Policy); err != nil {
 			return c.fail(err)
 		}
 		// wasmtime reads a module only by compiling it: --resolve pays the
