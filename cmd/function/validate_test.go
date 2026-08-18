@@ -91,6 +91,15 @@ func TestValidate(t *testing.T) {
 					fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[1] tmp-denied: OK (oci ghcr.io/example/greeter@" + testDigest + ", private /tmp)\n",
 			},
 		},
+		"OperatorPolicyEnvEgressDenied": {
+			reason: "The operator grant policy refuses the environment and egress it does not permit (default-deny), the same refusals the request path emits, so both surface in validate.",
+			args:   []string{fixture("operator-policy-denied.yaml"), "--enable-sandbox-env", "--enable-sandbox-egress", "--sandbox-egress-policy", fixture("egress-policy.yaml"), "--sandbox-policy-file", fixture("policy-strict.cedar")},
+			want: want{
+				stdout: fixture("operator-policy-denied.yaml") + ": Composition/operator-policy-denied pipeline[0] env-denied: refused: sandbox.env is refused: the operator policy (--sandbox-policy-file) does not permit it for this request\n" +
+					fixture("operator-policy-denied.yaml") + `: Composition/operator-policy-denied pipeline[1] egress-denied: refused: sandbox.egress.http[0] GET to host "api.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it` + "\n",
+				exit: 1,
+			},
+		},
 		"EgressWithoutFlags": {
 			reason: "The same Composition against a runtime with nothing enabled is refused at the first grant.",
 			args:   []string{fixture("egress.yaml")},
