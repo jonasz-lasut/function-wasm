@@ -5,6 +5,7 @@ go 1.26.6
 require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/bytecodealliance/wasmtime-go/v47 v47.0.0
+	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/crossplane/crossplane-runtime/v2 v2.3.3
 	github.com/crossplane/function-sdk-go v0.7.1
 	github.com/google/go-cmp v0.7.0

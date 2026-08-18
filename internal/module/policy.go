@@ -7,7 +7,20 @@ import (
 	"strings"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 )
+
+// repositoryFence decides whether an XR-chosen location lies within a
+// Composition's repositoryAllowList, using Cedar over a boundary-correct
+// repository hierarchy (internal/authz). The policy is static and embedded, so
+// a compile failure is a programming error: fail at init like a bad regexp.
+var repositoryFence = func() *authz.RepositoryFence {
+	f, err := authz.NewRepositoryFence()
+	if err != nil {
+		panic(fmt.Sprintf("compiling the repository fence policy: %v", err))
+	}
+	return f
+}()
 
 // ValidatePolicy checks the shape of an Input's policy: entries are non-empty
 // prefixes and names, and a credentials allow list comes with a repository
@@ -69,9 +82,11 @@ func requireRepositoryAllowList(from string, t v1beta1.ModuleType, policy *v1bet
 // what its answer says — and credentials may be named only when the
 // credentials allow list has them; the repository check has passed by then,
 // so the credential only ever reaches a host the Composition admitted. Path
-// sources have neither a repository nor credentials. Prefixes are matched
-// against the normalized location (registry/repository for OCI,
-// scheme://host/path for HTTP), never the raw string.
+// sources have neither a repository nor credentials. The repository check is a
+// Cedar authorization over a boundary-correct repository hierarchy
+// (internal/authz) against the normalized location (registry/repository for
+// OCI, scheme://host/path for HTTP), so a prefix never admits a sibling
+// namespace or an adjacent host; the credential check is exact set membership.
 func admit(from string, src v1beta1.ModuleSource, policy *v1beta1.Policy) error {
 	var field, location string
 	var err error
@@ -91,7 +106,7 @@ func admit(from string, src v1beta1.ModuleSource, policy *v1beta1.Policy) error 
 	if err := requireRepositoryAllowList(from, src.Type, policy); err != nil {
 		return err
 	}
-	if !hasAnyPrefix(location, policy.RepositoryAllowList) {
+	if !repositoryFence.Permits(location, policy.RepositoryAllowList) {
 		return fmt.Errorf("module.from: %s of the composite resource names %s %q, which policy.repositoryAllowList does not admit (allowed prefixes: %s)", from, field, location, strings.Join(policy.RepositoryAllowList, ", "))
 	}
 	if src.Type != v1beta1.ModuleTypeOCI || src.OCI.Credentials == "" {
@@ -104,22 +119,4 @@ func admit(from string, src v1beta1.ModuleSource, policy *v1beta1.Policy) error 
 		return fmt.Errorf("module.from: %s of the composite resource names credentials %q, which policy.credentialsAllowList does not allow (allowed: %s)", from, src.OCI.Credentials, strings.Join(policy.CredentialsAllowList, ", "))
 	}
 	return nil
-}
-
-// hasAnyPrefix reports whether s lies within one of the prefixes at a path or
-// host boundary: a prefix admits the location equal to it, or one it fences
-// with a following "/". A raw substring prefix would let "ghcr.io/team" admit
-// the sibling namespace "ghcr.io/team-evil" - and, worse, "https://cdn.example.com"
-// admit the adjacent host "https://cdn.example.com.attacker.net" - so the fence
-// is enforced at the boundary whether or not the prefix carries a trailing slash.
-func hasAnyPrefix(s string, prefixes []string) bool {
-	return slices.ContainsFunc(prefixes, func(p string) bool {
-		if s == p {
-			return true
-		}
-		if !strings.HasSuffix(p, "/") {
-			p += "/"
-		}
-		return strings.HasPrefix(s, p)
-	})
 }
