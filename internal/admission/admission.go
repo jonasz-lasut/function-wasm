@@ -18,6 +18,7 @@ import (
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
 	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
 )
@@ -52,6 +53,21 @@ type Admitted struct {
 	// zero when unset. Keyed by the module's digest, taken before the
 	// global run slot.
 	Concurrency int
+}
+
+// ManifestGrants is what a module's manifest is held against between load and
+// run: the sandbox grants admitted for the step, in the shape the manifest
+// check reads. The HTTP rules are the Composition's own (an egress grant is
+// their intersection with the ceiling, so the rules never widen the check),
+// carried only when the step was admitted egress. Both RunFunction and
+// function validate build it from the same admission result so the manifest
+// check reads the same on either path.
+func (a Admitted) ManifestGrants(in *v1beta1.Input) manifest.Grants {
+	grants := manifest.Grants{PrivateTmp: a.Grant.PrivateTmp}
+	if a.HTTP != nil && in.Sandbox != nil && in.Sandbox.Egress != nil {
+		grants.HTTP = in.Sandbox.Egress.HTTP
+	}
+	return grants
 }
 
 // Admit judges in against c in the order RunFunction does — sandbox shape,
