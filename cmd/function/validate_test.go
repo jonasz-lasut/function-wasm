@@ -122,6 +122,11 @@ func TestValidate(t *testing.T) {
 			args:   []string{fixture("egress.yaml"), "--sandbox-egress-policy", fixture("egress-policy.yaml")},
 			want:   want{stderr: "function validate: --sandbox-egress-policy needs --enable-sandbox-egress\n", exit: 2},
 		},
+		"BadIPRule": {
+			reason: "A malformed SSRF CIDR rule in --sandbox-policy-file stops the tool at load, exit 2, as it stops the runtime at startup.",
+			args:   []string{fixture("ok.yaml"), "--sandbox-policy-file", fixture("bad-iprule.cedar")},
+			want:   want{stderr: `function validate: operator policy: dialAddress rule "policy0": unsupported operation "isMulticast" (an ip test uses isInRange, isLoopback or ||)` + "\n", exit: 2},
+		},
 		"FromWithoutXR": {
 			reason: "Without --xr a from source is checked for its policy fence and reported as the composite resource's choice.",
 			args:   []string{fixture("from.yaml")},
