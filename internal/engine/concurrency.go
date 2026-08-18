@@ -67,13 +67,18 @@ func (s *StepSlots) Acquire(ctx context.Context, key string, n int) (release fun
 	}
 }
 
-// SweepIdle removes entries not seen for stepIdleExpiry.
+// SweepIdle removes entries not seen for stepIdleExpiry. An entry that still
+// holds a slot (len(e.ch) > 0) is kept even when its lastSeen is old:
+// dropping it would let the next Acquire build a fresh channel while the
+// current holder still drains the old one, re-introducing the over-admission
+// that pinning the capacity per key prevents. A held entry is by definition
+// in use, so it is never truly idle.
 func (s *StepSlots) SweepIdle() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cutoff := time.Now().Add(-stepIdleExpiry)
 	for k, e := range s.entries {
-		if e.lastSeen.Before(cutoff) {
+		if e.lastSeen.Before(cutoff) && len(e.ch) == 0 {
 			delete(s.entries, k)
 		}
 	}

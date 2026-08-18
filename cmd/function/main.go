@@ -183,7 +183,6 @@ func (c *ServeCmd) Run(cli *CLI) error {
 	if err != nil {
 		return err
 	}
-	go sweepCaches(log, []*cache.Store{blobs, compiled, manifests}, int64(c.MaxCacheSize)<<20)
 
 	resolver, err := c.resolver(blobs)
 	if err != nil {
@@ -193,6 +192,13 @@ func (c *ServeCmd) Run(cli *CLI) error {
 	if err != nil {
 		return err
 	}
+
+	// The periodic sweep bounds the on-disk caches and, unconditionally on the
+	// same interval, trims the in-memory per-digest maps (step slots, egress
+	// rate limiters) so they do not grow one entry per module for the pod's
+	// life. Built before the goroutine starts so it can pass them in.
+	stepSlots := engine.NewStepSlots()
+	go sweepCaches(log, []*cache.Store{blobs, compiled, manifests}, int64(c.MaxCacheSize)<<20, stepSlots, ceilings.Egress)
 
 	fn := &Function{
 		log:    log,
@@ -208,7 +214,7 @@ func (c *ServeCmd) Run(cli *CLI) error {
 		resolver:  resolver,
 		sandbox:   ceilings.Sandbox,
 		manifests: manifests,
-		stepSlots: engine.NewStepSlots(),
+		stepSlots: stepSlots,
 	}
 	// Readiness: the caches are open, the engine is up and the modules named
 	// by --warm-modules are loaded. It is answered twice — by the gRPC health
@@ -269,9 +275,13 @@ func serveHealth(log logging.Logger, address string, ready *atomic.Bool) {
 
 // sweepCaches bounds the on-disk caches to maxBytes, now and every ten
 // minutes, and publishes their sizes. Entries are immutable and reproducible,
-// so removing the least recently used ones is always safe. It runs for the
-// life of the process.
-func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64) {
+// so removing the least recently used ones is always safe. On the same tick
+// it trims the in-memory per-digest maps: the step-slot entries and, when
+// egress is enabled (eg non-nil), the egress rate limiters. Those run
+// unconditionally, independent of maxBytes, so both maps stay bounded even
+// with the on-disk cap off (--max-cache-size 0). It runs for the life of the
+// process.
+func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64, stepSlots *engine.StepSlots, eg *egress.Egress) {
 	for {
 		freed, err := cache.Sweep(stores, maxBytes)
 		if err != nil {
@@ -281,6 +291,10 @@ func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64) {
 		}
 		metrics.CacheBytes.WithLabelValues(metrics.CacheBlob).Set(float64(stores[0].Bytes()))
 		metrics.CacheBytes.WithLabelValues(metrics.CacheCompiledDisk).Set(float64(stores[1].Bytes()))
+		stepSlots.SweepIdle()
+		if eg != nil {
+			eg.SweepRateLimiters()
+		}
 		time.Sleep(sweepInterval)
 	}
 }
