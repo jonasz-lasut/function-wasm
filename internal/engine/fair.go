@@ -21,7 +21,7 @@ type fairScheduler struct {
 
 // waiter is one blocked acquire.
 type waiter struct {
-	ch  chan struct{} // closed when the waiter is admitted
+	ch  chan struct{} // buffered cap 1: receives one value when admitted
 	key string
 }
 
@@ -62,9 +62,22 @@ func (s *fairScheduler) acquire(ctx context.Context, key string) (release func()
 	case <-w.ch:
 		return s.releaseFunc(), nil
 	case <-ctx.Done():
-		// Remove self from the queue.
+		// wakeNext may have admitted this waiter in the same instant its
+		// context fired: it already did s.active++ and sent on w.ch, and
+		// Go's select chose ctx.Done here at random. Reconcile under mu so
+		// the grant is never dropped: a leaked s.active would climb until
+		// active == total and the scheduler deadlocked for good.
 		s.mu.Lock()
-		s.removeWaiter(key, w)
+		select {
+		case <-w.ch:
+			// Admitted: a real slot was granted to this waiter. Hand it
+			// on to the next waiter in rotation rather than abandoning it.
+			s.active--
+			s.wakeNext()
+		default:
+			// Not admitted: just drop the waiter from its queue.
+			s.removeWaiter(key, w)
+		}
 		s.mu.Unlock()
 		return nil, fmt.Errorf("waiting for a run slot: %w", ctx.Err())
 	}
@@ -98,11 +111,15 @@ func (s *fairScheduler) wakeNext() {
 			delete(s.queues, key)
 			continue
 		}
-		// Pop the oldest waiter from this key's FIFO.
+		// Pop the oldest waiter from this key's FIFO and grant it the slot.
+		// The grant is a send (not a close) into the cap-1 channel: it always
+		// succeeds once, and a waiter whose context fires in the same instant
+		// can take the value back to hand the slot on. See acquire's ctx.Done
+		// branch - this keeps every s.active++ balanced under mu.
 		elem := q.Front()
 		w := q.Remove(elem).(*waiter) //nolint:errcheck // waiter is always *waiter.
 		s.active++
-		close(w.ch)
+		w.ch <- struct{}{}
 		// Rotate: move this key to the back so the next slot goes to
 		// a different key.
 		s.order.MoveToBack(front)
