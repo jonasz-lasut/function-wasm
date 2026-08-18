@@ -117,6 +117,11 @@ func TestValidate(t *testing.T) {
 				exit: 1,
 			},
 		},
+		"EgressRateLimitNegative": {
+			reason: "A negative --egress-rate-limit flag is the tool's own error, exit 2, as it is the runtime's at startup.",
+			args:   []string{fixture("ok.yaml"), "--egress-rate-limit-per-minute=-1"},
+			want:   want{stderr: "function validate: --egress-rate-limit-per-minute and --egress-rate-limit-burst must not be negative\n", exit: 2},
+		},
 		"BadIPRule": {
 			reason: "A malformed SSRF CIDR rule in --sandbox-policy-file stops the tool at load, exit 2, as it stops the runtime at startup.",
 			args:   []string{fixture("ok.yaml"), "--sandbox-policy-file", fixture("bad-iprule.cedar")},
