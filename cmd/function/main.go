@@ -55,7 +55,7 @@ type CeilingFlags struct {
 	ModuleTimeout     time.Duration `help:"Maximum wall-clock time one module run may take." default:"30s"`
 	ModuleMemoryLimit int           `help:"Maximum linear memory of a running module in MB." default:"512"`
 	CosignKey         string        `help:"PEM file with one or more cosign public keys. When set, only OCI modules carrying a cosign signature by one of the keys run; http and path sources are refused." env:"COSIGN_KEY" type:"existingfile"`
-	SandboxPolicyFile string        `help:"Cedar document with the operator's grant policy: which callers (by namespace, xrKind) a Composition may be granted a private /tmp, environment or egress for. Evaluated default-deny after the --enable-sandbox-* floor, so it only tightens - a mounted ConfigMap satisfies it, and it is immutable for the process (restart to reload). Unset, no operator constraint applies." env:"SANDBOX_POLICY_FILE" type:"existingfile"`
+	SandboxPolicyFile string        `help:"Cedar document with the operator's grant policy: which callers (by namespace, xrKind) a Composition may be granted a private /tmp, environment or egress for, and the SSRF CIDR block/allow rules (forbid/permit on Action::\"dialAddress\" with context.ip.isInRange(ip(...))/isLoopback()), which compile at load into the egress block list - no Cedar runs on the dial path. Evaluated default-deny after the --enable-sandbox-* floor, so it only tightens - a mounted ConfigMap satisfies it, and it is immutable for the process (restart to reload). Unset, no operator constraint applies." env:"SANDBOX_POLICY_FILE" type:"existingfile"`
 
 	// Sandbox ceilings (docs/one-pager-sandbox.md): every capability is
 	// switched on with --enable-sandbox-<feature>; a Composition asks for
@@ -89,31 +89,12 @@ func (c *CeilingFlags) ceilings(log logging.Logger) (admission.Ceilings, error) 
 	if err != nil {
 		return admission.Ceilings{}, err
 	}
-	// The egress ceiling: only with the flag, so a runtime that never opted
-	// in has no code path that dials out for a module.
-	var egressCeiling *egress.Egress
-	if c.EnableSandboxEgress {
-		policy := egress.Policy{}
-		if c.SandboxEgressPolicy != "" {
-			if policy, err = egress.LoadPolicy(c.SandboxEgressPolicy); err != nil {
-				return admission.Ceilings{}, err
-			}
-		}
-		if egressCeiling, err = egress.New(policy); err != nil {
-			return admission.Ceilings{}, err
-		}
-	} else if c.SandboxEgressPolicy != "" {
-		return admission.Ceilings{}, errors.New("--sandbox-egress-policy needs --enable-sandbox-egress")
-	}
-	if c.EnableSandboxPrivateTmp || c.EnableSandboxEnv || c.EnableSandboxEgress {
-		egressCeilingText := "disabled"
-		if egressCeiling != nil {
-			egressCeilingText = egressCeiling.Describe()
-		}
-		log.Info("Sandbox grants enabled", "private-tmp", c.EnableSandboxPrivateTmp, "env", c.EnableSandboxEnv, "egress", c.EnableSandboxEgress, "egress-policy", c.SandboxEgressPolicy, "egress-ceiling", egressCeilingText)
-	}
-	// The operator's grant policy, compiled once. It narrows within the floor
-	// above; absent, it adds no constraint.
+	// The operator's grant policy, compiled once. It narrows the grant floor;
+	// absent, it adds no constraint. Its Action::"dialAddress" rules are the
+	// SSRF CIDR block/allow list, compiled to prefixes here so a malformed rule
+	// stops the command at startup (and function validate) rather than a dial,
+	// and injected into the egress ceiling below - Cedar never runs on the dial
+	// path.
 	var operatorPolicy *authz.OperatorPolicy
 	if c.SandboxPolicyFile != "" {
 		if operatorPolicy, err = authz.LoadOperatorPolicy(c.SandboxPolicyFile); err != nil {
@@ -132,6 +113,34 @@ func (c *CeilingFlags) ceilings(log logging.Logger) (admission.Ceilings, error) 
 		case c.CosignKey != "":
 			log.Info("WARNING: --cosign-key is set but the operator policy has no requireSignature rule, so no module is required to be signed; add a requireSignature permit, or remove --sandbox-policy-file to keep --cosign-key's all-or-nothing", "policy-file", c.SandboxPolicyFile)
 		}
+	}
+	ipRules, err := operatorPolicy.CompileIPRules()
+	if err != nil {
+		return admission.Ceilings{}, err
+	}
+	// The egress ceiling: only with the flag, so a runtime that never opted
+	// in has no code path that dials out for a module. The operator's Cedar
+	// CIDR rules extend its block and allow lists alongside DefaultBlockedCIDRs.
+	var egressCeiling *egress.Egress
+	if c.EnableSandboxEgress {
+		policy := egress.Policy{}
+		if c.SandboxEgressPolicy != "" {
+			if policy, err = egress.LoadPolicy(c.SandboxEgressPolicy); err != nil {
+				return admission.Ceilings{}, err
+			}
+		}
+		if egressCeiling, err = egress.New(policy, egress.WithBlockedCIDRs(ipRules.Blocked), egress.WithAllowedCIDRs(ipRules.Allowed)); err != nil {
+			return admission.Ceilings{}, err
+		}
+	} else if c.SandboxEgressPolicy != "" {
+		return admission.Ceilings{}, errors.New("--sandbox-egress-policy needs --enable-sandbox-egress")
+	}
+	if c.EnableSandboxPrivateTmp || c.EnableSandboxEnv || c.EnableSandboxEgress {
+		egressCeilingText := "disabled"
+		if egressCeiling != nil {
+			egressCeilingText = egressCeiling.Describe()
+		}
+		log.Info("Sandbox grants enabled", "private-tmp", c.EnableSandboxPrivateTmp, "env", c.EnableSandboxEnv, "egress", c.EnableSandboxEgress, "egress-policy", c.SandboxEgressPolicy, "egress-ceiling", egressCeilingText)
 	}
 	return admission.Ceilings{Engine: c.engineConfig().WithDefaults(), Sandbox: sandboxCeiling, Egress: egressCeiling, Policy: operatorPolicy}, nil
 }
