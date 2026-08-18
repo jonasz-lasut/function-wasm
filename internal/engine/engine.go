@@ -151,6 +151,15 @@ func (c Config) WithDefaults() Config {
 func New(cfg Config) (*Engine, error) {
 	cfg = cfg.WithDefaults()
 
+	// A run reserves up to the per-run memory ceiling from the pool. A pool
+	// smaller than that ceiling can never admit a full-limit run, so every
+	// such run would wait until its deadline for memory it can never get -
+	// caught here at startup rather than as a fleet of timing-out requests.
+	if cfg.MaxTotalRunMemory > 0 && cfg.MaxTotalRunMemory < cfg.MemoryLimit {
+		return nil, fmt.Errorf("--max-total-run-memory %s is smaller than the per-run ceiling %s (--module-memory-limit): no full-limit run could ever reserve its memory",
+			formatBytes(cfg.MaxTotalRunMemory), formatBytes(cfg.MemoryLimit))
+	}
+
 	wc := wasmtime.NewConfig()
 	wc.SetEpochInterruption(true)
 	// Native unwind info (.eh_frame) only serves host-side profilers such as
