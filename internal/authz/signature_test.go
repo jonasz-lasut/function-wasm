@@ -74,3 +74,34 @@ func TestOperatorPolicyRequiresSignature(t *testing.T) {
 		})
 	}
 }
+
+func TestOperatorPolicyHasSignatureRules(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		policy *OperatorPolicy
+		want   bool
+	}{
+		"Nil": {
+			reason: "A nil policy has no requireSignature rule.",
+			policy: nil,
+			want:   false,
+		},
+		"HasRequireSignature": {
+			reason: "A policy that requires a signature is detected, so --cosign-key is not warned as toothless.",
+			policy: mustOperatorPolicy(t, signatureDoc),
+			want:   true,
+		},
+		"OnlyGrantRules": {
+			reason: "A policy with only grant rules requires no signature, so --cosign-key would require nothing and the operator must be warned.",
+			policy: mustOperatorPolicy(t, `permit (principal, action == Action::"grantEgress", resource);`),
+			want:   false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := tc.policy.HasSignatureRules(); got != tc.want {
+				t.Fatalf("\n%s\nHasSignatureRules() = %v, want %v", tc.reason, got, tc.want)
+			}
+		})
+	}
+}
