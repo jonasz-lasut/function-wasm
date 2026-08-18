@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 
@@ -127,16 +127,18 @@ func TestRunHTTP(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "http://") // 127.0.0.1:port
 	port := host[strings.LastIndex(host, ":")+1:]
 
-	// Loopback is on the default block list; the tests' ceiling admits it.
-	loopback := egress.Policy{AllowedCIDRs: []string{"127.0.0.0/8", "::1/128"}}
+	// Loopback is on the default block list; the tests' ceiling admits it via an
+	// operator allow rule (WithAllowedCIDRs), as a Cedar dialAddress permit does.
+	loopback := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+	allowLoopback := []egress.Option{egress.WithAllowedCIDRs(loopback)}
 	get := []string{"GET"}
 
 	type args struct {
-		cfg    Config
-		policy *egress.Policy // nil: no egress at all (RunOptions.HTTP nil)
-		rules  []v1beta1.SandboxHTTPRule
-		req    egress.Request
-		calls  int
+		cfg   Config
+		opts  []egress.Option // nil: no egress at all (RunOptions.HTTP nil)
+		rules []v1beta1.SandboxHTTPRule
+		req   egress.Request
+		calls int
 	}
 	type want struct {
 		rsp egress.Response
@@ -155,9 +157,9 @@ func TestRunHTTP(t *testing.T) {
 		"Allowed": {
 			reason: "A request within the grant is performed; status, headers and body come back, the server saw method, path, query and headers.",
 			args: args{
-				policy: &loopback,
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: []string{"POST"}, PathPrefix: "/echo"}},
-				req:    egress.Request{Method: "POST", URL: srv.URL + "/echo?token=s3cret-query", Headers: map[string][]string{"X-Test": {"s3cret-header"}, "Host": {"evil"}}, Body: []byte("s3cret-body")},
+				opts:  allowLoopback,
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: []string{"POST"}, PathPrefix: "/echo"}},
+				req:   egress.Request{Method: "POST", URL: srv.URL + "/echo?token=s3cret-query", Headers: map[string][]string{"X-Test": {"s3cret-header"}, "Host": {"evil"}}, Body: []byte("s3cret-body")},
 			},
 			want: want{
 				rsp:     egress.Response{Status: 200, Body: []byte("POST s3cret-body")},
@@ -175,9 +177,9 @@ func TestRunHTTP(t *testing.T) {
 				return ""
 			},
 			args: args{
-				policy: &loopback,
-				rules:  []v1beta1.SandboxHTTPRule{{HostPattern: "*.localhost", Methods: get}},
-				req:    egress.Request{URL: "http://api.localhost:" + port + "/echo"},
+				opts:  allowLoopback,
+				rules: []v1beta1.SandboxHTTPRule{{HostPattern: "*.localhost", Methods: get}},
+				req:   egress.Request{URL: "http://api.localhost:" + port + "/echo"},
 			},
 			want: want{
 				rsp:     egress.Response{Status: 200, Body: []byte("GET ")},
@@ -188,9 +190,9 @@ func TestRunHTTP(t *testing.T) {
 		"BlockedAddress": {
 			reason: "A host that resolves to a blocked address is refused by the dialer, whatever the grant says.",
 			args: args{
-				policy: &egress.Policy{},
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{URL: srv.URL + "/echo"},
+				opts:  []egress.Option{},
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{URL: srv.URL + "/echo"},
 			},
 			want: want{
 				rsp:     egress.Response{Error: "sandbox.egress: 127.0.0.1 resolves to an address the egress policy blocks"},
@@ -200,9 +202,9 @@ func TestRunHTTP(t *testing.T) {
 		"HostOutsideGrant": {
 			reason: "A host no rule names is refused before any I/O.",
 			args: args{
-				policy: &loopback,
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: get}},
-				req:    egress.Request{URL: srv.URL + "/echo"},
+				opts:  allowLoopback,
+				rules: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: get}},
+				req:   egress.Request{URL: srv.URL + "/echo"},
 			},
 			want: want{
 				rsp:     egress.Response{Error: `sandbox.egress: no rule admits host "127.0.0.1"`},
@@ -212,9 +214,9 @@ func TestRunHTTP(t *testing.T) {
 		"MethodNotAllowed": {
 			reason: "A method the host's rules do not list is refused.",
 			args: args{
-				policy: &loopback,
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{Method: "DELETE", URL: srv.URL + "/echo"},
+				opts:  allowLoopback,
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{Method: "DELETE", URL: srv.URL + "/echo"},
 			},
 			want: want{
 				rsp:     egress.Response{Error: `sandbox.egress: no rule for host "127.0.0.1" admits DELETE /echo`},
@@ -224,9 +226,9 @@ func TestRunHTTP(t *testing.T) {
 		"PathOutsidePrefix": {
 			reason: "A path outside the rule's prefix is refused, and dot segments cannot sneak under it.",
 			args: args{
-				policy: &loopback,
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get, PathPrefix: "/echo"}},
-				req:    egress.Request{URL: srv.URL + "/echo/../big"},
+				opts:  allowLoopback,
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get, PathPrefix: "/echo"}},
+				req:   egress.Request{URL: srv.URL + "/echo/../big"},
 			},
 			want: want{
 				rsp:     egress.Response{Error: `sandbox.egress: the URL path "/echo/../big" must be normalized (no . or .. segments, no empty segments)`},
@@ -236,9 +238,9 @@ func TestRunHTTP(t *testing.T) {
 		"SchemeRefused": {
 			reason: "Only http and https are performed.",
 			args: args{
-				policy: &loopback,
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{URL: "ftp://127.0.0.1/x"},
+				opts:  allowLoopback,
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{URL: "ftp://127.0.0.1/x"},
 			},
 			want: want{
 				rsp:     egress.Response{Error: `sandbox.egress: only http and https URLs are allowed, not "ftp"`},
@@ -248,10 +250,10 @@ func TestRunHTTP(t *testing.T) {
 		"MaxRequests": {
 			reason: "The second request of a run whose budget is one is refused.",
 			args: args{
-				policy: &egress.Policy{AllowedCIDRs: loopback.AllowedCIDRs, MaxRequests: 1},
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{URL: srv.URL + "/echo"},
-				calls:  2,
+				opts:  []egress.Option{egress.WithAllowedCIDRs(loopback), egress.WithBudgets(0, 1, 0, 0)},
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{URL: srv.URL + "/echo"},
+				calls: 2,
 			},
 			want: want{
 				rsp:     egress.Response{Error: "sandbox.egress: this run already made 1 requests (maxRequests)"},
@@ -262,9 +264,9 @@ func TestRunHTTP(t *testing.T) {
 		"MaxResponseBytes": {
 			reason: "A body over the budget is an error, not a truncated body.",
 			args: args{
-				policy: &egress.Policy{AllowedCIDRs: loopback.AllowedCIDRs, MaxResponseBytes: 64},
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{URL: srv.URL + "/big"},
+				opts:  []egress.Option{egress.WithAllowedCIDRs(loopback), egress.WithBudgets(0, 0, 64, 0)},
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{URL: srv.URL + "/big"},
 			},
 			want: want{
 				rsp:     egress.Response{Error: "sandbox.egress: the response body exceeds 64 bytes (maxResponseBytes)"},
@@ -275,9 +277,9 @@ func TestRunHTTP(t *testing.T) {
 		"Timeout": {
 			reason: "A request slower than the policy's timeout is an error naming it.",
 			args: args{
-				policy: &egress.Policy{AllowedCIDRs: loopback.AllowedCIDRs, Timeout: metav1.Duration{Duration: 50 * time.Millisecond}},
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{URL: srv.URL + "/slow"},
+				opts:  []egress.Option{egress.WithAllowedCIDRs(loopback), egress.WithBudgets(50*time.Millisecond, 0, 0, 0)},
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{URL: srv.URL + "/slow"},
 			},
 			want: want{
 				rsp:     egress.Response{Error: "sandbox.egress: the request exceeded its 50ms timeout"},
@@ -288,10 +290,10 @@ func TestRunHTTP(t *testing.T) {
 		"RunDeadline": {
 			reason: "A request never outlives its run: the run's deadline cuts it short and the run is then interrupted as usual.",
 			args: args{
-				cfg:    Config{Timeout: 100 * time.Millisecond},
-				policy: &loopback,
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{URL: srv.URL + "/slow"},
+				cfg:   Config{Timeout: 100 * time.Millisecond},
+				opts:  allowLoopback,
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{URL: srv.URL + "/slow"},
 			},
 			want: want{
 				errIs:   ErrTimeout,
@@ -303,9 +305,9 @@ func TestRunHTTP(t *testing.T) {
 		"RedirectFollowed": {
 			reason: "A redirect within the grant is followed and the final response returned.",
 			args: args{
-				policy: &loopback,
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{URL: srv.URL + "/redirect"},
+				opts:  allowLoopback,
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{URL: srv.URL + "/redirect"},
 			},
 			want: want{
 				rsp:     egress.Response{Status: 200, Body: []byte("GET ")},
@@ -316,9 +318,9 @@ func TestRunHTTP(t *testing.T) {
 		"RedirectOutsideGrant": {
 			reason: "A redirect to a host outside the grant is refused at the hop.",
 			args: args{
-				policy: &loopback,
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{URL: srv.URL + "/redirect-out"},
+				opts:  allowLoopback,
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{URL: srv.URL + "/redirect-out"},
 			},
 			want: want{
 				rsp:     egress.Response{Error: `redirect to http://127.0.0.2:1/ refused: sandbox.egress: no rule admits host "127.0.0.2"`},
@@ -329,9 +331,9 @@ func TestRunHTTP(t *testing.T) {
 		"TooManyRedirects": {
 			reason: "Redirects stop at the budget.",
 			args: args{
-				policy: &egress.Policy{AllowedCIDRs: loopback.AllowedCIDRs, MaxRedirects: 2},
-				rules:  []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
-				req:    egress.Request{URL: srv.URL + "/redirect-loop"},
+				opts:  []egress.Option{egress.WithAllowedCIDRs(loopback), egress.WithBudgets(0, 0, 0, 2)},
+				rules: []v1beta1.SandboxHTTPRule{{Host: "127.0.0.1", Methods: get}},
+				req:   egress.Request{URL: srv.URL + "/redirect-loop"},
 			},
 			want: want{
 				rsp:     egress.Response{Error: "stopped after 2 redirects (maxRedirects)"},
@@ -374,8 +376,8 @@ func TestRunHTTP(t *testing.T) {
 			}
 			log := &recorder{}
 			var opts RunOptions
-			if tc.args.policy != nil {
-				ceiling, err := egress.New(*tc.args.policy)
+			if tc.args.opts != nil {
+				ceiling, err := egress.New(tc.args.opts...)
 				if err != nil {
 					t.Fatalf("egress.New(): %v", err)
 				}

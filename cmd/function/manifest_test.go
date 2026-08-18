@@ -58,7 +58,7 @@ func TestRunFunctionManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fenced, err := egress.New(egress.Policy{Hosts: []string{"api.example.com"}})
+	enabledEgress, err := egress.New()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestRunFunctionManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := cache.New(afero.NewMemMapFs(), false)
-	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: fenced, sandbox: ceiling, manifests: store}
+	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: enabledEgress, sandbox: ceiling, manifests: store}
 	closed := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver}
 
 	egressGrant := map[string]any{"egress": map[string]any{"http": []any{map[string]any{"host": "api.example.com", "methods": []any{"GET"}, "pathPrefix": "/v1/"}}}}
@@ -194,7 +194,7 @@ func TestRunFunctionManifest(t *testing.T) {
 	// A new process on the same volume — the compiled modules and the store
 	// at hand, the registry gone — reads the manifest from the store.
 	srv.Close()
-	warm := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: f.modules, resolver: resolver, egress: fenced, sandbox: ceiling, manifests: store}
+	warm := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: f.modules, resolver: resolver, egress: enabledEgress, sandbox: ceiling, manifests: store}
 	rsp, err := warm.RunFunction(context.Background(), &fnv1.RunFunctionRequest{Meta: &fnv1.RequestMeta{Tag: "hello"}, Input: inputWith(t, map[string]any{"module": oci("egress")})})
 	if err != nil {
 		t.Fatal(err)
