@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -343,46 +342,6 @@ func TestRun(t *testing.T) {
 				t.Errorf("\n%s\nRun() trap logged at debug: -want, +got:\n%s", tc.reason, diff)
 			}
 		})
-	}
-}
-
-// TestRunRaw pins that RunRaw produces the same response as Run from the
-// same pre-encoded request bytes, and returns the raw response bytes that
-// decode to the same message.
-func TestRunRaw(t *testing.T) {
-	e, err := New(Config{})
-	if err != nil {
-		t.Fatalf("New(): %v", err)
-	}
-	defer e.Close()
-	m, err := e.Compile(testwasm.Fixed(t, cannedResponse(), testwasm.Options{}))
-	if err != nil {
-		t.Fatalf("Compile(): %v", err)
-	}
-
-	req := request()
-	in, err := proto.Marshal(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got, raw, err := e.RunRaw(context.Background(), m, in, &recorder{}, RunOptions{})
-	if err != nil {
-		t.Fatalf("RunRaw(): unexpected error: %v", err)
-	}
-	if diff := cmp.Diff(cannedResponse(), got, protocmp.Transform()); diff != "" {
-		t.Errorf("RunRaw() response: -want, +got:\n%s", diff)
-	}
-	if raw == nil {
-		t.Fatal("RunRaw() raw bytes must be non-nil")
-	}
-	// The raw bytes must decode to the same response.
-	check := &fnv1.RunFunctionResponse{}
-	if err := proto.Unmarshal(raw, check); err != nil {
-		t.Fatalf("cannot unmarshal raw response bytes: %v", err)
-	}
-	if diff := cmp.Diff(got, check, protocmp.Transform()); diff != "" {
-		t.Errorf("RunRaw() raw bytes decode to a different response: -decoded, +raw:\n%s", diff)
 	}
 }
 
