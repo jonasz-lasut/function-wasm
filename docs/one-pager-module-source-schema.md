@@ -95,8 +95,9 @@ by the generated CRD under `package/input/`.
   grant and the flag; `egress` is checked against the operator's egress
   ceiling the same way (`internal/egress`). The private `/tmp`
   (`--enable-sandbox-private-tmp`), `env` (`--enable-sandbox-env`) and
-  `egress` (`--enable-sandbox-egress` + `--sandbox-egress-policy`) are all
-  implemented; host directories are deliberately not mountable. The
+  `egress` (`--enable-sandbox-egress`, with the host and CIDR rules in the
+  operator's `--sandbox-policy-file`) are all implemented; host directories
+  are deliberately not mountable. The
   behaviour is the sandbox one-pager's.
 - `guestfn push` prints the module block in this shape (`type: OCI` +
   `oci.ref`); the scaffold templates and examples use `type: Path` for local

@@ -52,9 +52,9 @@ Cedar. The whole decision rests on how much of the surface is policy.
 | Input *shape* validation (host XOR hostPattern, enums) | `sandbox.Validate` + CRD/CEL | No (awkward) | KRM field-shape; stays in Go/CEL |
 
 **Policy plane (top seven rows): a candidate for Cedar.** This is the surface an
-operator would want to author, and it is scattered today across
-`--enable-sandbox-*` flags, the `--sandbox-egress-policy` YAML and hand-coded
-intersection logic. **Mechanism plane (the rest, roughly 60% of the surface):
+operator would want to author, and it was scattered across
+`--enable-sandbox-*` flags, the (now-removed) `--sandbox-egress-policy` YAML and
+hand-coded intersection logic. **Mechanism plane (the rest, roughly 60% of the surface):
 imperative Go forever**, including the SSRF dialer, all stateful budgets, and
 all crypto.
 
