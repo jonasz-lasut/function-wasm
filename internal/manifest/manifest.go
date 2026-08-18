@@ -180,13 +180,28 @@ func (m *Manifest) Validate() error {
 	if m.MinRuntime != "" && !semver.IsValid(canonical(m.MinRuntime)) {
 		return fmt.Errorf("minRuntime %q is not a semantic version (e.g. v0.2.0)", m.MinRuntime)
 	}
-	if m.Config != nil && len(m.Config.Schema) > 0 && string(m.Config.Schema) != "null" {
-		schema, err := compile(m.Config.Schema)
-		if err != nil {
+	if m.hasConfigSchema() {
+		if err := m.ensureSchema(); err != nil {
 			return err
 		}
-		m.schema = schema
 	}
+	return nil
+}
+
+// hasConfigSchema reports whether the manifest carries an inline config
+// schema: a Config block whose Schema is non-empty and not the JSON null.
+func (m *Manifest) hasConfigSchema() bool {
+	return m.Config != nil && len(m.Config.Schema) > 0 && string(m.Config.Schema) != "null"
+}
+
+// ensureSchema compiles the inline config schema into m.schema. Callers gate
+// it on hasConfigSchema, so m.Config.Schema is present here.
+func (m *Manifest) ensureSchema() error {
+	schema, err := compile(m.Config.Schema)
+	if err != nil {
+		return err
+	}
+	m.schema = schema
 	return nil
 }
 
@@ -230,7 +245,7 @@ func (m *Manifest) Summary() string {
 		}
 	}
 	out := strings.Join(parts, ", ")
-	if m.Config != nil && len(m.Config.Schema) > 0 && string(m.Config.Schema) != "null" {
+	if m.hasConfigSchema() {
 		if out != "" {
 			out += "; "
 		}
@@ -299,15 +314,13 @@ func (m *Manifest) Check(g Grants, config *runtime.RawExtension, runtimeVersion 
 // schema, and an absent config validates as an empty object.
 func (m *Manifest) ValidateConfig(config *runtime.RawExtension) error {
 	if m.schema == nil {
-		if m.Config == nil || len(m.Config.Schema) == 0 || string(m.Config.Schema) == "null" {
+		if !m.hasConfigSchema() {
 			return nil
 		}
 		// Validate was not run: compile now, once.
-		schema, err := compile(m.Config.Schema)
-		if err != nil {
+		if err := m.ensureSchema(); err != nil {
 			return err
 		}
-		m.schema = schema
 	}
 	raw := []byte("{}")
 	if config != nil && len(config.Raw) > 0 {

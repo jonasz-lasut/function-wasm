@@ -37,7 +37,7 @@ func (e *Egress) Grant(rules []v1beta1.SandboxHTTPRule) (*Grant, error) {
 		for _, m := range r.Methods {
 			compiled.methods[strings.ToUpper(m)] = true
 		}
-		if compiled.pathPrefix != "" && !normalizedPath(compiled.pathPrefix) {
+		if compiled.pathPrefix != "" && !NormalizedPath(compiled.pathPrefix) {
 			return nil, fmt.Errorf("sandbox.egress.http[%d].pathPrefix %q must be normalized (no . or .. segments, no empty segments)", i, r.PathPrefix)
 		}
 		switch {
@@ -78,7 +78,7 @@ func (g *Grant) admit(method string, u *url.URL) error {
 	if host == "" {
 		return fmt.Errorf("sandbox.egress: the URL has no host")
 	}
-	if !normalizedPath(u.Path) {
+	if !NormalizedPath(u.Path) {
 		return fmt.Errorf("sandbox.egress: the URL path %q must be normalized (no . or .. segments, no empty segments)", u.Path)
 	}
 	method = strings.ToUpper(method)
@@ -106,10 +106,10 @@ func (g *Grant) admit(method string, u *url.URL) error {
 	return fmt.Errorf("sandbox.egress: no rule for host %q admits %s %s", host, method, pathOrRoot(u.Path))
 }
 
-// normalizedPath reports whether p is what path.Clean would return (a
+// NormalizedPath reports whether p is what path.Clean would return (a
 // trailing slash aside), so a rule's pathPrefix cannot be escaped with dot
-// segments the server would collapse.
-func normalizedPath(p string) bool {
+// segments the server would collapse; the empty path is fine.
+func NormalizedPath(p string) bool {
 	if p == "" {
 		return true
 	}

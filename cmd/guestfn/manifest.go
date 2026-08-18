@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -56,12 +54,12 @@ func (c *ManifestShowCmd) Run(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("cannot parse reference: %w", err)
 	}
-	opts := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx)}
-	om, err := fetchOCIManifest(ref, opts)
+	opts := remoteOpts(ctx)
+	_, om, err := module.ParseRemoteManifest(ref, "name", opts...)
 	if err != nil {
 		return err
 	}
-	ml, ok := manifestLayer(om)
+	ml, ok := module.ManifestLayer(om)
 	if !ok {
 		return fmt.Errorf("%s carries no %s layer: it was pushed without a %s (guestfn push publishes the manifest beside the module)", ref, manifest.LayerMediaType, manifest.FileName)
 	}
@@ -83,33 +81,6 @@ func (c *ManifestShowCmd) Run(ctx context.Context, stdout io.Writer) error {
 	}
 	_, _ = stdout.Write(out)
 	return nil
-}
-
-// fetchOCIManifest fetches and parses the OCI manifest of a reference — the
-// image manifest, never an index.
-func fetchOCIManifest(ref name.Reference, opts []remote.Option) (*v1.Manifest, error) {
-	desc, err := remote.Get(ref, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
-	}
-	if desc.MediaType.IsIndex() {
-		return nil, fmt.Errorf("%s is an image index; name the manifest holding the module", ref)
-	}
-	om, err := v1.ParseManifest(bytes.NewReader(desc.Manifest))
-	if err != nil {
-		return nil, fmt.Errorf("cannot parse manifest %s: %w", ref, err)
-	}
-	return om, nil
-}
-
-// manifestLayer finds the artifact's manifest layer, if it has one.
-func manifestLayer(om *v1.Manifest) (v1.Descriptor, bool) {
-	for _, l := range om.Layers {
-		if string(l.MediaType) == manifest.LayerMediaType {
-			return l, true
-		}
-	}
-	return v1.Descriptor{}, false
 }
 
 // fetchManifest pulls the manifest layer — kilobytes — and parses it as the

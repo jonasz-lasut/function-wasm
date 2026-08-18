@@ -143,9 +143,6 @@ func RequestsEnv(s *v1beta1.Sandbox) bool {
 	return s != nil && (len(s.Env) > 0 || len(s.EnvFrom) > 0)
 }
 
-// PrivateTmpPath is where a guest sees its private /tmp.
-const PrivateTmpPath = engine.PrivateTmpGuestPath
-
 // Options are the operator's sandbox flags - the ceiling.
 type Options struct {
 	// EnablePrivateTmp lets Compositions ask for a private /tmp

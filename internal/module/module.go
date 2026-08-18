@@ -148,7 +148,9 @@ func Validate(src v1beta1.ModuleSource) error {
 			return fmt.Errorf("module.%s is set but module.type is %s", fieldOf(t), src.Type)
 		}
 	}
-	if objects[src.Type] == (src.From != "") {
+	hasObject := objects[src.Type]
+	hasFrom := src.From != ""
+	if hasObject == hasFrom {
 		return fmt.Errorf("module.type %s needs exactly one of module.%s and module.from", src.Type, fieldOf(src.Type))
 	}
 	if src.From != "" && !fromPattern.MatchString(src.From) {
@@ -268,7 +270,7 @@ func (r *Resolver) Resolve(ctx context.Context, src v1beta1.ModuleSource, auth a
 	case v1beta1.ModuleTypeOCI:
 		return r.resolveOCI(ctx, src, auth)
 	}
-	return nil, fmt.Errorf("module.type %q must be OCI, HTTP or Path", src.Type)
+	panic("unreachable: Validate rejects other types")
 }
 
 // readCapped reads at most limit bytes and reports when the source held more.

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,10 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
@@ -110,17 +107,10 @@ func (c *InspectCmd) Run(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("%s is neither a file nor an OCI reference: %w", c.Target, err)
 	}
-	opts := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx)}
-	desc, err := remote.Get(ref, opts...)
+	opts := remoteOpts(ctx)
+	desc, m, err := module.ParseRemoteManifest(ref, "inspect", opts...)
 	if err != nil {
-		return fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
-	}
-	if desc.MediaType.IsIndex() {
-		return fmt.Errorf("%s is an image index; inspect the manifest holding the module", ref)
-	}
-	m, err := v1.ParseManifest(bytes.NewReader(desc.Manifest))
-	if err != nil {
-		return fmt.Errorf("cannot parse manifest %s: %w", ref, err)
+		return err
 	}
 	info := &referenceInfo{
 		Digest:      desc.Digest.String(),
@@ -139,7 +129,7 @@ func (c *InspectCmd) Run(ctx context.Context, stdout io.Writer) error {
 		d := descriptor(layer)
 		info.ModuleLayer = &d
 	}
-	if ml, ok := manifestLayer(m); ok {
+	if ml, ok := module.ManifestLayer(m); ok {
 		if parsed, err := fetchManifest(ref, ml, opts); err != nil {
 			info.ManifestError = err.Error()
 		} else {

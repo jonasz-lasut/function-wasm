@@ -62,7 +62,7 @@ type MemoryLimits struct {
 func (s *Shape) HostImports() []string {
 	var out []string
 	for _, im := range s.Imports {
-		if im.Module != wasiModule {
+		if im.Module != WASIModule {
 			out = append(out, im.Module+"."+im.Name)
 		}
 	}
