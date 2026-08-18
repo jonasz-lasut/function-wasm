@@ -383,7 +383,7 @@ func TestRunHTTP(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Grant(): %v", err)
 				}
-				opts.HTTP = grant.Client(log, "sha256:test", "")
+				opts.HTTP = grant.Client(log, "sha256:test")
 			}
 
 			rsp, err := e.Run(context.Background(), m, request(), log, opts)
