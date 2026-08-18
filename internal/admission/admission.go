@@ -143,18 +143,5 @@ func runOptions(l *v1beta1.Limits, ceiling engine.Config) (engine.RunOptions, er
 		}
 		opts.MemoryLimit = memory
 	}
-	if l.Instructions != nil {
-		instructions := *l.Instructions
-		if !ceiling.Fuel {
-			return opts, fmt.Errorf("limits.instructions is refused: the runtime was started without --enable-fuel")
-		}
-		if instructions <= 0 {
-			return opts, fmt.Errorf("limits.instructions %d must be positive", instructions)
-		}
-		if ceiling.InstructionLimit > 0 && instructions > ceiling.InstructionLimit {
-			return opts, fmt.Errorf("limits.instructions %d exceeds the runtime's --module-instruction-limit of %d", instructions, ceiling.InstructionLimit)
-		}
-		opts.Instructions = instructions
-	}
 	return opts, nil
 }

@@ -6,10 +6,10 @@
 // unbounded set of modules and digests, and per-module series would grow
 // without bound. Logs carry the digest.
 //
-// Four metrics (RunDuration, HTTPRequests, Requests, RunInstructions) gain an
-// opt-in "input" label (the Input's metadata.name) when Init(true) is called;
-// use the ObserveRun / IncHTTPRequests / IncRequests / ObserveInstructions
-// helpers rather than the vars directly, so the label count is handled.
+// Three metrics (RunDuration, HTTPRequests, Requests) gain an opt-in "input"
+// label (the Input's metadata.name) when Init(true) is called; use the
+// ObserveRun / IncHTTPRequests / IncRequests helpers rather than the vars
+// directly, so the label count is handled.
 package metrics
 
 import (
@@ -44,10 +44,6 @@ const (
 	// (requests, response bytes, redirects, the request timeout).
 	OutcomeRefused = "refused"
 	OutcomeBudget  = "budget"
-	// OutcomeFuel is a run that exhausted its instruction budget (wasmtime
-	// fuel); distinct from timeout so an operator can tell compute-bound
-	// from wall-clock-bound runs apart.
-	OutcomeFuel = "fuel"
 )
 
 // Shared opts for metrics that Init may re-register with an extra label.
@@ -70,13 +66,6 @@ var (
 		Subsystem: subsystem,
 		Name:      "requests_total",
 		Help:      "Requests by outcome: ok, refused (declined before the module ran), error (load or run failed).",
-	}
-	runInstructionsOpts = prometheus.HistogramOpts{
-		Namespace: namespace,
-		Subsystem: subsystem,
-		Name:      "run_instructions",
-		Help:      "Wasm instructions executed in one module run (wasmtime fuel consumed, observed only when --enable-fuel is on).",
-		Buckets:   []float64{1e5, 3e5, 1e6, 3e6, 1e7, 3e7, 1e8, 3e8, 1e9, 3e9, 1e10},
 	}
 )
 
@@ -131,14 +120,6 @@ var (
 	// .WithLabelValues directly.
 	Requests = prometheus.NewCounterVec(requestsOpts, []string{"outcome"})
 
-	// RunInstructions is the number of wasm instructions one guest run
-	// executed; observed only when --enable-fuel is on. Use
-	// ObserveInstructions instead of .Observe directly.
-	RunInstructions prometheus.Histogram = prometheus.NewHistogram(runInstructionsOpts)
-
-	// runInstructionsVec replaces RunInstructions when the input label is on.
-	runInstructionsVec *prometheus.HistogramVec
-
 	// CacheBytes is the size of each on-disk store, as of the last sweep.
 	CacheBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,
@@ -149,14 +130,14 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(RunDuration, HTTPRequests, Requests, RunInstructions)
+	prometheus.MustRegister(RunDuration, HTTPRequests, Requests)
 }
 
 // Init optionally adds an "input" label (the Input's metadata.name) to the
-// four request-path metrics: run_duration_seconds, http_requests_total,
-// requests_total and run_instructions. Call it once at startup before serving;
-// callers must use the observation helpers (ObserveRun, IncHTTPRequests,
-// IncRequests, ObserveInstructions) so the label count matches.
+// three request-path metrics: run_duration_seconds, http_requests_total and
+// requests_total. Call it once at startup before serving; callers must use the
+// observation helpers (ObserveRun, IncHTTPRequests, IncRequests) so the label
+// count matches.
 func Init(inputLabel bool) {
 	if !inputLabel {
 		return
@@ -174,10 +155,6 @@ func Init(inputLabel bool) {
 	prometheus.DefaultRegisterer.Unregister(Requests)
 	Requests = prometheus.NewCounterVec(requestsOpts, []string{"outcome", "input"})
 	prometheus.MustRegister(Requests)
-
-	prometheus.DefaultRegisterer.Unregister(RunInstructions)
-	runInstructionsVec = prometheus.NewHistogramVec(runInstructionsOpts, []string{"input"})
-	prometheus.MustRegister(runInstructionsVec)
 }
 
 // ObserveRun records a run's duration and outcome. When the input label is on,
@@ -205,14 +182,5 @@ func IncRequests(outcome, input string) {
 		Requests.WithLabelValues(outcome, input).Inc()
 	} else {
 		Requests.WithLabelValues(outcome).Inc()
-	}
-}
-
-// ObserveInstructions records how many wasm instructions a run consumed.
-func ObserveInstructions(count float64, input string) {
-	if withInput {
-		runInstructionsVec.WithLabelValues(input).Observe(count)
-	} else {
-		RunInstructions.Observe(count)
 	}
 }

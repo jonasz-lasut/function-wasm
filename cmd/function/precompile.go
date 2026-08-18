@@ -40,7 +40,7 @@ func (c *PrecompileCmd) Run(cli *CLI) error {
 	}
 	defer eng.Close()
 
-	blobs, compiled, manifests, err := openCaches(c.EnableFuel)
+	blobs, compiled, manifests, err := openCaches()
 	if err != nil {
 		return err
 	}
