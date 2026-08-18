@@ -389,11 +389,7 @@ func (v *validator) validate(ctx context.Context, s step) stepResult {
 			return refuse(errors.Wrapf(err, "module %s has an invalid manifest", ref.Description))
 		}
 		r.Resolved.Manifest = m
-		grants := manifest.Grants{PrivateTmp: admitted.Grant.PrivateTmp}
-		if admitted.HTTP != nil && in.Sandbox != nil && in.Sandbox.Egress != nil {
-			grants.HTTP = in.Sandbox.Egress.HTTP
-		}
-		if err := m.Check(grants, in.Config, manifest.RuntimeVersion()); err != nil {
+		if err := m.Check(admitted.ManifestGrants(in), in.Config, manifest.RuntimeVersion()); err != nil {
 			return refuse(errors.Errorf("module %s %v", ref.Description, err))
 		}
 	}

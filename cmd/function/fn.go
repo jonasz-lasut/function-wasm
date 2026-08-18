@@ -131,8 +131,8 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	// The credential that pulls the module is the host's business: the guest
 	// sees every other step credential, as a native function would, but not
 	// the one that fetched it.
-	if src.OCI != nil && src.OCI.Credentials != "" {
-		req.Credentials = withoutCredential(req.GetCredentials(), src.OCI.Credentials)
+	if pullCred != "" {
+		req.Credentials = withoutCredential(req.GetCredentials(), pullCred)
 	}
 	ref, err := f.resolver.Resolve(ctx, src, auth)
 	if err != nil {
@@ -217,11 +217,7 @@ func (f *Function) checkManifest(ctx context.Context, ref *module.Ref, in *v1bet
 	if m == nil {
 		return nil
 	}
-	grants := manifest.Grants{PrivateTmp: admitted.Grant.PrivateTmp}
-	if admitted.HTTP != nil && in.Sandbox != nil && in.Sandbox.Egress != nil {
-		grants.HTTP = in.Sandbox.Egress.HTTP
-	}
-	if err := m.Check(grants, in.Config, manifest.RuntimeVersion()); err != nil {
+	if err := m.Check(admitted.ManifestGrants(in), in.Config, manifest.RuntimeVersion()); err != nil {
 		return errors.Errorf("module %s %v", ref.Description, err)
 	}
 	return nil
