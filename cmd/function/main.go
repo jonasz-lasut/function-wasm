@@ -41,9 +41,8 @@ const sweepInterval = 10 * time.Minute
 type CLI struct {
 	Debug bool `short:"d" help:"Emit debug logs in addition to info logs."`
 
-	Serve      ServeCmd      `cmd:"" default:"withargs" help:"Serve the function over gRPC (the default)."`
-	Validate   ValidateCmd   `cmd:"" help:"Validate the function-wasm Inputs of Compositions against these flags, offline: the checks a request passes before its module is resolved, in the runtime's own words."`
-	Precompile PrecompileCmd `cmd:"" help:"Compile modules ahead of time into the cache volume so the serving pods map the artifacts on startup. Exits non-zero when any entry fails."`
+	Serve    ServeCmd    `cmd:"" default:"withargs" help:"Serve the function over gRPC (the default)."`
+	Validate ValidateCmd `cmd:"" help:"Validate the function-wasm Inputs of Compositions against these flags, offline: the checks a request passes before its module is resolved, in the runtime's own words."`
 }
 
 // CeilingFlags are the operator's ceilings — what a Composition's Input is
@@ -64,9 +63,6 @@ type CeilingFlags struct {
 	EnableSandboxEnv        bool   `help:"Let Compositions set the environment variables their modules see (sandbox.env); non-secret values only." env:"ENABLE_SANDBOX_ENV"`
 	EnableSandboxEgress     bool   `help:"Let Compositions grant their modules HTTP(S) requests through the host (sandbox.egress.http): the host performs wasmfn.http requests within each Composition's grant and the egress policy. Off, any sandbox.egress grant is a fatal result." env:"ENABLE_SANDBOX_EGRESS"`
 	SandboxEgressPolicy     string `help:"YAML or JSON file with the egress ceiling: hosts and hostPatterns a Composition may grant (any, when both are empty), blockedCIDRs and allowedCIDRs on top of the default block list (loopback, link-local, private, cluster and reserved ranges), and the per-run budgets timeout, maxRequests, maxResponseBytes, maxRedirects. Without it the defaults apply." env:"SANDBOX_EGRESS_POLICY" type:"existingfile"`
-
-	RegistryMirror map[string]string `help:"Rewrite the fetch location of OCI sources: --registry-mirror ghcr.io=registry.internal/ghcr fetches ghcr.io/repo@sha256:... from registry.internal/ghcr/repo@sha256:... instead. Policy, cache keys, audit and description see the stated ref. Auth for the mirror uses the runtime's Docker config, not a step credential. The cosign .sig lookup goes to the mirror too. Repeatable." env:"REGISTRY_MIRROR" mapsep:","`
-	OCILayoutDir   string            `help:"OCI image-layout directory (index.json, blobs/sha256/...) consulted before the network for OCI sources. The stated manifest digest names a blob regardless of any repository name; the manifest names its layer. With --cosign-key the .sig manifest is looked up in the layout's index by its ref-name annotation, so verification works offline." env:"OCI_LAYOUT_DIR" type:"existingdir"`
 }
 
 // engineConfig is the run budget the flags name; MaxConcurrentRuns is
@@ -130,12 +126,10 @@ func (c *CeilingFlags) resolver(blobs *cache.Store) (*module.Resolver, error) {
 		verifier = v
 	}
 	return module.NewResolver(module.Options{
-		Dir:       c.ModuleDir,
-		MaxSize:   int64(c.MaxModuleSize) << 20,
-		Blobs:     blobs,
-		Verifier:  verifier,
-		Mirrors:   c.RegistryMirror,
-		LayoutDir: c.OCILayoutDir,
+		Dir:      c.ModuleDir,
+		MaxSize:  int64(c.MaxModuleSize) << 20,
+		Blobs:    blobs,
+		Verifier: verifier,
 	})
 }
 

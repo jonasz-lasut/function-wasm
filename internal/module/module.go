@@ -23,7 +23,6 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/layout"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
@@ -46,7 +45,7 @@ type Options struct {
 	Dir string
 	// MaxSize caps the size of a module in bytes. Zero means DefaultMaxSize.
 	MaxSize int64
-	// Blobs stores fetched blobs - OCI layers as delivered, HTTP modules -
+	// Blobs stores fetched blobs — OCI layers as delivered, HTTP modules —
 	// on disk by content digest, so each is downloaded once per digest and a
 	// restart needs no download. Nil disables the store (tests).
 	Blobs *cache.Store
@@ -60,18 +59,6 @@ type Options struct {
 	// carrying a cosign signature it accepts; http and path sources are
 	// refused, having no signature to check.
 	Verifier *Verifier
-	// Mirrors maps a registry name to a mirror prefix: a fetch for
-	// registry/repo@sha256:... goes to mirror/repo@sha256:... instead. The
-	// stated ref is unchanged in the cache key, description, audit line and
-	// policy; auth for the mirror uses the runtime's Keychain, not step
-	// credentials. The cosign .sig lookup goes to the mirror too.
-	Mirrors map[string]string
-	// LayoutDir, when set, is an OCI image-layout directory (index.json,
-	// blobs/sha256/...) consulted before the network for OCI fetches: the
-	// stated manifest digest names a blob regardless of any repository name,
-	// and the manifest names its layer. With --cosign-key the .sig manifest
-	// is looked up in the layout's index by its ref-name annotation.
-	LayoutDir string
 }
 
 // A Ref is a resolved module: the digest that pins it and how to fetch it.
@@ -121,12 +108,7 @@ func (r *Ref) Verify(ctx context.Context) error {
 type Resolver struct {
 	opts   Options
 	client *http.Client
-	files  sync.Map // path -> fileStamp
-	// mirrors are the opts.Mirrors keys normalized to what
-	// go-containerregistry returns (e.g. docker.io -> index.docker.io).
-	mirrors map[string]string
-	// layout is the OCI image-layout directory, empty when not configured.
-	layout layout.Path
+	files  sync.Map // path → fileStamp
 }
 
 // NewResolver returns a Resolver.
@@ -141,21 +123,7 @@ func NewResolver(o Options) (*Resolver, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
-	// Normalize mirror keys to what go-containerregistry returns for
-	// ref.Context().RegistryStr() (e.g. docker.io -> index.docker.io).
-	mirrors := make(map[string]string, len(o.Mirrors))
-	for k, v := range o.Mirrors {
-		reg, err := name.NewRegistry(k)
-		if err != nil {
-			return nil, fmt.Errorf("invalid registry in --registry-mirror %s=%s: %w", k, v, err)
-		}
-		mirrors[reg.RegistryStr()] = v
-	}
-	lp, err := openLayout(o.LayoutDir)
-	if err != nil {
-		return nil, err
-	}
-	return &Resolver{opts: o, client: client, mirrors: mirrors, layout: lp}, nil
+	return &Resolver{opts: o, client: client}, nil
 }
 
 // Validate reports whether src names exactly one usable source: Type is set
