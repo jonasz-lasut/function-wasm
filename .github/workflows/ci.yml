@@ -37,7 +37,7 @@ jobs:
         uses: fkirc/skip-duplicate-actions@b974a9395958c231af965b70070979a577efa578 # v5.3.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          paths_ignore: '["**.md", "**.json"]'
+          paths_ignore: '["**.md", "**.json", "**.svg"]'
           do_not_skip: '["workflow_dispatch", "schedule", "push"]'
 
   check-diff:
