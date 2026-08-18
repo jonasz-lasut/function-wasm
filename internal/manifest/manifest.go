@@ -157,7 +157,9 @@ func Parse(raw []byte) (*Manifest, error) {
 		}
 	}
 	if err := m.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid manifest: %w", err)
+		// The caller supplies the "invalid manifest" framing (naming the module
+		// or the layer); return the bare cause so it is not stated twice.
+		return nil, err
 	}
 	return m, nil
 }
