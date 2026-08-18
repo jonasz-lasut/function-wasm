@@ -7,6 +7,43 @@ import (
 	"time"
 )
 
+func TestNewRejectsUndersizedMemPool(t *testing.T) {
+	cases := map[string]struct {
+		reason  string
+		cfg     Config
+		wantErr bool
+	}{
+		"PoolSmallerThanCeiling": {
+			reason:  "A pool below the per-run ceiling could never admit a full-limit run, so New refuses it at startup.",
+			cfg:     Config{MemoryLimit: 512 << 20, MaxTotalRunMemory: 256 << 20},
+			wantErr: true,
+		},
+		"PoolEqualsCeiling": {
+			reason: "A pool equal to the ceiling admits one full-limit run at a time.",
+			cfg:    Config{MemoryLimit: 512 << 20, MaxTotalRunMemory: 512 << 20},
+		},
+		"PoolAboveDefaultCeiling": {
+			reason: "With no explicit ceiling the default applies; a pool above it is fine.",
+			cfg:    Config{MaxTotalRunMemory: 2 << 30},
+		},
+		"NoPool": {
+			reason: "An unset pool imposes no aggregate bound.",
+			cfg:    Config{MemoryLimit: 512 << 20},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e, err := New(tc.cfg)
+			if e != nil {
+				defer e.Close()
+			}
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("\n%s\nNew(): wantErr %v, got %v", tc.reason, tc.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestMemPool(t *testing.T) {
 	cases := map[string]struct {
 		reason string

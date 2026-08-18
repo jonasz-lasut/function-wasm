@@ -165,11 +165,14 @@ type HTTPSource struct {
 // ignored for it. Never read from the composite resource.
 // +kubebuilder:validation:XValidation:rule="!has(self.credentialsAllowList) || size(self.credentialsAllowList) == 0 || (has(self.repositoryAllowList) && size(self.repositoryAllowList) > 0)",message="policy.credentialsAllowList requires policy.repositoryAllowList"
 type Policy struct {
-	// RepositoryAllowList are string prefixes an XR-chosen oci.ref (or
-	// http.url) must start with, e.g. "ghcr.io/example-org/" — the trailing
-	// slash matters: "ghcr.io/example-org" also admits
-	// "ghcr.io/example-organisation/...". Prefixes are matched against the
-	// normalized location — registry/repository for OCI (no tag or digest),
+	// RepositoryAllowList are path prefixes an XR-chosen oci.ref (or
+	// http.url) must lie within, e.g. "ghcr.io/example-org". Each prefix is
+	// matched at a path or host boundary: it admits the location equal to it
+	// or one it fences with a following "/", so "ghcr.io/example-org" admits
+	// "ghcr.io/example-org/mod" but never the sibling namespace
+	// "ghcr.io/example-org-other/..." (a trailing slash is optional and does
+	// not change the boundary). Prefixes are matched against the normalized
+	// location — registry/repository for OCI (no tag or digest),
 	// scheme://host/path for HTTP (host lowercased, no query) — and a ref or
 	// URL whose path is not already normalized (dot segments, empty
 	// segments) is refused outright. A ref outside every prefix is a fatal

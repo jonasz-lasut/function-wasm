@@ -79,9 +79,10 @@ policy:
 ```
 
 - `policy.repositoryAllowList`: an XR-chosen `ref` (or `url` for `HTTP`)
-  must start with one of the entries — plain string prefixes over the
-  normalized location (`registry/repository`, `scheme://host/path`), so the
-  trailing slash matters, and a ref or URL with dot segments is refused
+  must lie within one of the entries — prefixes over the normalized location
+  (`registry/repository`, `scheme://host/path`) matched at a path or host
+  boundary, so a prefix never admits a sibling namespace or adjacent host (a
+  trailing slash is optional), and a ref or URL with dot segments is refused
   before matching; anything else is a fatal result naming the policy and the
   ref. Required whenever `module.from` names an OCI or HTTP source: an
   unfenced XR author could point the runtime at any host and read what its

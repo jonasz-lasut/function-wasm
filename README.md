@@ -311,7 +311,7 @@ limits:                        # optional; each at most the runtime's ceiling
 sandbox:                       # optional; grants within the runtime's --enable-sandbox-* flags
   filesystem:
     privateTmp: true                                # an empty, writable /tmp per request; nothing else is mountable
-  env: {LOG_LEVEL: debug}                           # non-secret configuration
+  env: [{name: LOG_LEVEL, value: debug}]            # non-secret configuration
   egress:
     http: [{host: api.example.com, methods: [GET]}] # HTTP through the host, within --sandbox-egress-policy
 config: {...}                  # optional; opaque, forwarded to the module
@@ -331,7 +331,7 @@ Everything but the source is read from the Input: `policy`, `limits` and
 | `module.path` | string | a file relative to the runtime's `--module-dir`; refused unless that flag is set — local rendering and volume-mounted modules; carries no digest |
 | `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names — an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` — e.g. `status.module`; read on every request and decoded strictly (a typo or a wrong shape is a fatal result naming the field), so each XR can choose its module. What it may choose is fenced by `policy` |
 | `policy` | object | fences a module chosen through `module.from`; ignored for a source the Composition names statically (that source is trusted as the Composition is) |
-| `policy.repositoryAllowList` | []string | string prefixes an XR-chosen `oci.ref` (or `http.url`) must start with, e.g. `ghcr.io/example-org/` — the trailing slash matters. Matched against the normalized location (`registry/repository` for OCI, `scheme://host/path` for HTTP; a ref or URL with dot segments is refused). A ref outside every prefix is a fatal result naming the policy and the ref. **Required whenever `module.from` names an `OCI` or `HTTP` source** — an unfenced XR author could point the runtime at any host and read what its answer says |
+| `policy.repositoryAllowList` | []string | path prefixes an XR-chosen `oci.ref` (or `http.url`) must lie within, e.g. `ghcr.io/example-org`. Matched at a path or host boundary: a prefix admits the location equal to it or one it fences with a following `/`, so `ghcr.io/example-org` admits `ghcr.io/example-org/mod` but never the sibling namespace `ghcr.io/example-org-other/...` (a trailing slash is optional). Matched against the normalized location (`registry/repository` for OCI, `scheme://host/path` for HTTP; a ref or URL with dot segments is refused). A ref outside every prefix is a fatal result naming the policy and the ref. **Required whenever `module.from` names an `OCI` or `HTTP` source** — an unfenced XR author could point the runtime at any host and read what its answer says |
 | `policy.credentialsAllowList` | []string | step credentials an XR-chosen `oci` object may name, spent only on a ref `repositoryAllowList` admits — so it requires `repositoryAllowList` (`policy.credentialsAllowList requires policy.repositoryAllowList` otherwise). Absent or empty, an XR object naming credentials is refused: the XR author would otherwise choose the registry host the secret is sent to |
 | `limits.timeout` | duration | wall-clock budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). The request deadline still applies if shorter |
 | `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`; at most `--module-memory-limit`, else a fatal result naming both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
@@ -489,8 +489,8 @@ in the order they decide:
    Without a file, any public host may be granted within the defaults shown.
    The default block list — loopback, link-local (the cloud metadata
    endpoint), RFC 1918, carrier-grade NAT (`100.64.0.0/10`, a common pod
-   range), IPv6 unique-local, the NAT64 prefix, and the unspecified,
-   multicast and reserved ranges — applies to **every address a name
+   range), IPv6 unique-local, the NAT64 and IPv4-compatible prefixes, and the
+   unspecified, multicast and reserved ranges — applies to **every address a name
    resolves to** (a zoned IPv6 literal such as `[::1%25lo]` is never
    dialled), and the host dials the address it checked, so a name cannot
    rebind between the check and the connection. `blockedCIDRs` add to it,
@@ -842,8 +842,8 @@ host; `go test -short` skips that. See [AGENTS.md](AGENTS.md) for the layout
 and conventions.
 
 Design documents live under `docs/` as one-pagers: the implemented ones
-(cache, module source schema, trust model, resource governance, sandbox)
-and the drafts of what comes next — admission and inspection tooling, the
-module manifest, the local loop, request-sourced secrets, governance and
-performance phases, guest language support, a Nix development environment.
+(cache, module source schema, trust model, resource governance, sandbox,
+admission and inspection tooling, the module manifest, request-sourced
+secrets, governance and performance phases) and the drafts of what comes next
+(guest language support, a Nix development environment).
 [AGENTS.md](AGENTS.md#key-reference-documents) lists them.

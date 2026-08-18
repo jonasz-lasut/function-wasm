@@ -147,7 +147,7 @@ func TestRunFunctionManifest(t *testing.T) {
 			reason: "A manifest for another ABI is an invalid manifest.",
 			fn:     f,
 			fields: map[string]any{"module": oci("badabi")},
-			want:   fatal("module oci " + refs["badabi"] + " has an invalid manifest: invalid manifest: abi must be 1 (this runtime implements ABI v1), got 2"),
+			want:   fatal("module oci " + refs["badabi"] + " has an invalid manifest: abi must be 1 (this runtime implements ABI v1), got 2"),
 		},
 		"Garbage": {
 			reason: "A layer that is not a manifest is refused, not ignored.",

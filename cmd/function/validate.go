@@ -379,19 +379,17 @@ func (v *validator) validate(ctx context.Context, s step) stepResult {
 	r.Resolved = &resolvedModule{Digest: ref.Digest, Size: len(wasm), ABI: "v1", Imports: shape.HostImports()}
 	// The module's manifest, held against the grants the step was admitted
 	// with — the check the runtime makes between load and run.
-	raw, found, err := ref.Manifest(ctx)
+	raw, _, err := ref.Manifest(ctx)
 	if err != nil {
-		return refuse(errors.Wrapf(err, "cannot read the manifest of module %s", ref.Description))
+		return refuse(manifestReadError(err, ref.Description))
 	}
-	if found {
-		m, err := manifest.Parse(raw)
-		if err != nil {
-			return refuse(errors.Wrapf(err, "module %s has an invalid manifest", ref.Description))
-		}
-		r.Resolved.Manifest = m
-		if err := m.Check(admitted.ManifestGrants(in), in.Config, manifest.RuntimeVersion()); err != nil {
-			return refuse(errors.Errorf("module %s %v", ref.Description, err))
-		}
+	m, err := parseModuleManifest(raw, ref.Description)
+	if err != nil {
+		return refuse(err)
+	}
+	r.Resolved.Manifest = m
+	if err := checkManifestGrants(m, ref.Description, in, admitted); err != nil {
+		return refuse(err)
 	}
 	return r
 }

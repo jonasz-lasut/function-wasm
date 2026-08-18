@@ -54,7 +54,8 @@ type Function struct {
 	// one) so its schema is compiled once per process, like the module.
 	parsed sync.Map // digest → *manifest.Manifest
 	// stepSlots bounds per-step concurrency (limits.concurrency), keyed by
-	// the module's digest; nil when no request has ever used concurrency.
+	// the module's digest. main always sets it; nil (tests) disables the
+	// per-step bound rather than panicking.
 	stepSlots *engine.StepSlots
 }
 
@@ -168,7 +169,7 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	// A per-step slot, when limits.concurrency is set, is taken before the
 	// engine's global slot: one step does not take every global slot from
 	// every other. The slot is released when the run ends.
-	if admitted.Concurrency > 0 {
+	if admitted.Concurrency > 0 && f.stepSlots != nil {
 		release, err := f.stepSlots.Acquire(ctx, ref.Digest, admitted.Concurrency)
 		if err != nil {
 			return f.fatal(rsp, log, metrics.OutcomeError, errors.Wrapf(err, "module %s failed", ref.Description)), nil
@@ -214,13 +215,7 @@ func (f *Function) checkManifest(ctx context.Context, ref *module.Ref, in *v1bet
 	if err != nil {
 		return err
 	}
-	if m == nil {
-		return nil
-	}
-	if err := m.Check(admitted.ManifestGrants(in), in.Config, manifest.RuntimeVersion()); err != nil {
-		return errors.Errorf("module %s %v", ref.Description, err)
-	}
-	return nil
+	return checkManifestGrants(m, ref.Description, in, admitted)
 }
 
 // manifestFor returns a module's parsed manifest, nil when it carries none:
@@ -239,7 +234,7 @@ func (f *Function) manifestFor(ctx context.Context, ref *module.Ref) (*manifest.
 	if !ok {
 		var err error
 		if raw, _, err = ref.Manifest(ctx); err != nil {
-			return nil, errors.Wrapf(err, "cannot read the manifest of module %s", ref.Description)
+			return nil, manifestReadError(err, ref.Description)
 		}
 		if f.manifests != nil {
 			// An empty entry records "no manifest": the next process asks
@@ -248,13 +243,9 @@ func (f *Function) manifestFor(ctx context.Context, ref *module.Ref) (*manifest.
 			_ = f.manifests.Put(ref.Digest, raw)
 		}
 	}
-	var m *manifest.Manifest
-	if len(raw) > 0 {
-		parsed, err := manifest.Parse(raw)
-		if err != nil {
-			return nil, errors.Wrapf(err, "module %s has an invalid manifest", ref.Description)
-		}
-		m = parsed
+	m, err := parseModuleManifest(raw, ref.Description)
+	if err != nil {
+		return nil, err
 	}
 	f.parsed.Store(ref.Digest, m)
 	return m, nil

@@ -126,6 +126,9 @@ func TestFromComposite(t *testing.T) {
 			"dotted":    map[string]any{"ref": "example.com/repo/../evil@" + otherDigest},
 			"dottedurl": map[string]any{"url": "https://example.com/pub/../secret.wasm", "digest": moduleDigest},
 			"upperurl":  map[string]any{"url": "https://EXAMPLE.com/fn.wasm?x=1", "digest": moduleDigest},
+			"sibling":   map[string]any{"ref": "example.com/repo-evil@" + otherDigest},
+			"subrepo":   map[string]any{"ref": "example.com/repo/sub@" + otherDigest},
+			"sibhost":   map[string]any{"url": "https://example.com.attacker.net/fn.wasm", "digest": moduleDigest},
 			"path":      "fn.wasm",
 			"typo":      map[string]any{"reference": manifestRef},
 			"number":    7,
@@ -225,6 +228,26 @@ func TestFromComposite(t *testing.T) {
 			reason: "A ref outside every prefix is refused naming the policy and the ref.",
 			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"ghcr.io/example-org/", "registry.example.com/"}}, composite: composite},
 			want:   want{err: `module.from: spec.module of the composite resource names ref "example.com/repo", which policy.repositoryAllowList does not admit (allowed prefixes: ghcr.io/example-org/, registry.example.com/)`},
+		},
+		"OCIFromSiblingNamespace": {
+			reason: "A prefix without a trailing slash still fences at the path boundary: example.com/repo must not admit the sibling namespace example.com/repo-evil.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.sibling"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"example.com/repo"}}, composite: composite},
+			want:   want{err: `names ref "example.com/repo-evil", which policy.repositoryAllowList does not admit (allowed prefixes: example.com/repo)`},
+		},
+		"OCIFromExactRepo": {
+			reason: "A prefix without a trailing slash admits the repository equal to it.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"example.com/repo"}}, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
+		},
+		"OCIFromChildRepo": {
+			reason: "A prefix without a trailing slash admits a repository it fences with a following slash.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.subrepo"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"example.com/repo"}}, composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: "example.com/repo/sub@" + otherDigest}}},
+		},
+		"HTTPFromAdjacentHost": {
+			reason: "The boundary fence protects the host too: https://example.com must not admit the adjacent host https://example.com.attacker.net.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.sibhost"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com"}}, composite: composite},
+			want:   want{err: `names url "https://example.com.attacker.net/fn.wasm", which policy.repositoryAllowList does not admit`},
 		},
 		"OCIFromStatus": {
 			reason: "status works the same way.",
