@@ -1,0 +1,94 @@
+<svg viewBox="0 0 860 468" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <rect width="860" height="468" fill="#f8f7f4" rx="4"/>
+
+  <text x="24" y="34" font-size="14" font-weight="700" fill="#2c2a25">Foundation - the policy decision point (PDP)</text>
+  <text x="24" y="52" font-size="11" fill="#7a7668">One operator-authored Cedar document, many request types. The spine every feature below shares. PROPOSED.</text>
+
+  <!-- 1 Operator document -->
+  <rect x="24" y="72" width="250" height="44" rx="5" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.3"/>
+  <text x="38" y="92" font-size="12" font-weight="700" fill="#3d6b5e">1 &#183; Operator document</text>
+  <text x="38" y="107" font-size="9.5" fill="#6f6b5e">authored + audited by the operator</text>
+
+  <rect x="24" y="124" width="250" height="98" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="38" y="142" font-size="10" fill="#2c2a25">--policy-file &#8594; .cedar document(s)</text>
+  <text x="38" y="159" font-size="9.5" fill="#7a7668">compiled once at startup &#8594; PolicySet</text>
+  <text x="38" y="176" font-size="9.5" fill="#7a7668">immutable for the process life</text>
+  <text x="38" y="190" font-size="9" fill="#a09b8e">(parity with --sandbox-egress-policy,</text>
+  <text x="38" y="202" font-size="9" fill="#a09b8e">--cosign-key; restart to reload)</text>
+  <text x="38" y="216" font-size="9" fill="#a09b8e">absent = no operator constraint</text>
+
+  <!-- 2 Shared schema -->
+  <rect x="290" y="72" width="286" height="44" rx="5" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.3"/>
+  <text x="304" y="92" font-size="12" font-weight="700" fill="#3d6b5e">2 &#183; Shared schema</text>
+  <text x="304" y="107" font-size="9.5" fill="#6f6b5e">entities, actions, principal attributes</text>
+
+  <rect x="290" y="124" width="286" height="98" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="304" y="141" font-size="9.5" fill="#2c2a25"><tspan font-weight="600">entities</tspan>  Repository&#9656; HostPattern&#9656; Capability Credential</text>
+  <text x="304" y="157" font-size="9" fill="#a09b8e">&#9656; = boundary-correct hierarchy (in respects it)</text>
+  <text x="304" y="174" font-size="9.5" fill="#2c2a25"><tspan font-weight="600">principal</tspan>  Request { namespace, xrKind, composition }</text>
+  <text x="304" y="191" font-size="9.5" fill="#2c2a25"><tspan font-weight="600">actions</tspan>  pullModule <tspan fill="#3d6b5e" font-weight="600">&#10003;</tspan> grantEgress usePrivateTmp</text>
+  <text x="304" y="205" font-size="9.5" fill="#2c2a25">          setEnv spendCredential requireSignature</text>
+  <text x="304" y="218" font-size="9" fill="#a09b8e">context carries the request specifics (grant, path, ...)</text>
+
+  <!-- 3 Evaluation -->
+  <rect x="592" y="72" width="244" height="44" rx="5" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.3"/>
+  <text x="606" y="92" font-size="12" font-weight="700" fill="#3d6b5e">3 &#183; Evaluation</text>
+  <text x="606" y="107" font-size="9.5" fill="#6f6b5e">default deny &#183; forbid wins</text>
+
+  <rect x="592" y="124" width="244" height="98" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="606" y="142" font-size="9.5" fill="#2c2a25">cedar.Authorize(PolicySet, entities, req)</text>
+  <text x="606" y="162" font-size="9.5" fill="#2c2a25"><tspan font-weight="600" fill="#3d6b5e">AND</tspan> the always-on built-in fence</text>
+  <text x="606" y="176" font-size="9" fill="#7a7668">(repo fence; allow-list in context,</text>
+  <text x="606" y="188" font-size="9" fill="#7a7668">never in policy text - injection-safe)</text>
+  <text x="606" y="207" font-size="9" fill="#a09b8e">separate PolicySets, AND-combined, so</text>
+  <text x="606" y="219" font-size="9" fill="#a09b8e">an operator can only tighten, never widen</text>
+
+  <!-- request flow pipeline -->
+  <text x="24" y="258" font-size="11" font-weight="600" fill="#a09b8e" letter-spacing="0.05em">PER-REQUEST FLOW</text>
+
+  <rect x="24" y="270" width="150" height="46" rx="4" fill="#ecebe4" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="99" y="290" text-anchor="middle" font-size="10" font-weight="500" fill="#2c2a25">RunFunctionRequest</text>
+  <text x="99" y="304" text-anchor="middle" font-size="9" fill="#7a7668">Input + observed XR</text>
+
+  <rect x="192" y="270" width="150" height="46" rx="4" fill="#ecebe4" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="267" y="290" text-anchor="middle" font-size="10" font-weight="500" fill="#2c2a25">Go: normalize</text>
+  <text x="267" y="304" text-anchor="middle" font-size="9" fill="#7a7668">URL/path/host, resolve</text>
+
+  <rect x="360" y="270" width="150" height="46" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.1"/>
+  <text x="435" y="290" text-anchor="middle" font-size="10" font-weight="500" fill="#2c2a25">build Cedar request</text>
+  <text x="435" y="304" text-anchor="middle" font-size="9" fill="#6f6b5e">P / A / R / context</text>
+
+  <rect x="528" y="270" width="150" height="46" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.1"/>
+  <text x="603" y="290" text-anchor="middle" font-size="10" font-weight="500" fill="#2c2a25">Authorize</text>
+  <text x="603" y="304" text-anchor="middle" font-size="9" fill="#6f6b5e">permit / forbid</text>
+
+  <rect x="696" y="270" width="140" height="46" rx="4" fill="#ecebe4" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="766" y="290" text-anchor="middle" font-size="10" font-weight="500" fill="#2c2a25">Go: enforce</text>
+  <text x="766" y="304" text-anchor="middle" font-size="9" fill="#7a7668">grant or refuse</text>
+
+  <g stroke="#9a917d" stroke-width="1.4" fill="none">
+    <path d="M176 293 l14 0" marker-end="url(#ah)"/>
+    <path d="M344 293 l14 0" marker-end="url(#ah)"/>
+    <path d="M512 293 l14 0" marker-end="url(#ah)"/>
+    <path d="M680 293 l14 0" marker-end="url(#ah)"/>
+  </g>
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0 1 L6 4 L0 7 z" fill="#9a917d"/>
+    </marker>
+  </defs>
+
+  <text x="24" y="344" font-size="9" fill="#a09b8e">Cedar answers only the declarative "permit or forbid?"; the imperative steps on either side (normalize, resolve, enforce) stay Go.</text>
+
+  <!-- trust boundary -->
+  <rect x="24" y="362" width="812" height="46" rx="6" fill="#ffffff" stroke="#3d6b5e" stroke-width="1.2"/>
+  <text x="40" y="383" font-size="10.5" fill="#2c2a25">The document sits on the <tspan font-weight="600" fill="#3d6b5e">operator boundary only</tspan> - the same party that sets --enable-sandbox-* and the egress policy today.</text>
+  <text x="40" y="399" font-size="10.5" fill="#7a7668">Never in the module manifest (a requirement, not a grant) or the Composition Input - either would let a module self-authorize.</text>
+
+  <!-- legend -->
+  <rect x="24" y="424" width="14" height="10" rx="2" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="0.9"/>
+  <text x="44" y="433" font-size="10" fill="#a09b8e">Cedar (policy)</text>
+  <rect x="150" y="424" width="14" height="10" rx="2" fill="#ecebe4" stroke="#c5c1b7" stroke-width="0.9"/>
+  <text x="170" y="433" font-size="10" fill="#a09b8e">Go (mechanism)</text>
+  <text x="300" y="433" font-size="10" fill="#a09b8e"><tspan fill="#3d6b5e" font-weight="700">&#10003;</tspan> = live today (Phase 1 repository fence)</text>
+</svg>
