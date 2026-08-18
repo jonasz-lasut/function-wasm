@@ -158,11 +158,6 @@ func (in *Limits) DeepCopyInto(out *Limits) {
 		x := (*in).DeepCopy()
 		*out = &x
 	}
-	if in.Instructions != nil {
-		in, out := &in.Instructions, &out.Instructions
-		*out = new(int64)
-		**out = **in
-	}
 	if in.Concurrency != nil {
 		in, out := &in.Concurrency, &out.Concurrency
 		*out = new(int32)

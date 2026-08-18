@@ -210,14 +210,6 @@ type Limits struct {
 	// +optional
 	Memory *resource.Quantity `json:"memory,omitempty"`
 
-	// Instructions caps the number of wasm instructions one run may
-	// execute (wasmtime fuel); at most --module-instruction-limit. The
-	// count is deterministic across nodes and runs. Requires the runtime
-	// to be started with --enable-fuel; without it the field is refused.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	Instructions *int64 `json:"instructions,omitempty"`
-
 	// Concurrency caps how many runs of this step execute at once, across
 	// all requests. A further request waits for a slot under its own
 	// context; when the deadline passes first, it is a fatal result that

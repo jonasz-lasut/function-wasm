@@ -8,16 +8,20 @@ The resource-governance one-pager bounds a run by wall clock and linear
 memory, the runtime by compiles, resident modules, disk and (optionally)
 concurrent runs; the sandbox one-pager bounds egress per run. This
 document adds what the 2026-08-16 capabilities research ranked as cheap and
-worth having, as one coherent extension of that model in five independent
-phases: a deterministic instruction budget (fuel), an egress economy (a
-host-side response cache and per-module rate limits), fairness inside one
+worth having, as one coherent extension of that model in four independent
+phases: an egress economy (per-module rate limits), fairness inside one
 runtime (per-Input concurrency, fair queueing, a global run-memory budget,
 an opt-in per-Input metric label), distribution for restricted networks (a
 registry mirror, an OCI layout on disk, `function precompile`), and a
-raw-bytes gRPC codec that skips three of the four protobuf passes. Each
+raw-bytes gRPC codec that skips two of the four protobuf passes. Each
 phase is a new optional Input field or a new flag; none changes an existing
 one, and every ceiling keeps the rule that the operator sets it and a
 Composition may only ask for less. Nothing here gates `v0.1.0`.
+
+Fuel-based instruction counting (wasmtime's `SetConsumeFuel`/`SetFuel`)
+was drafted as Phase 1 and dropped: it is not portable to wazero, the
+stated fallback engine, and the project cannot build features tied to one
+wasm engine.
 
 ## Invariants across all phases
 
@@ -38,54 +42,13 @@ Composition may only ask for less. Nothing here gates `v0.1.0`.
   rate limit or a slot wait is an error the guest reads or a fatal result
   the runtime issues — never a trap inside the module.
 
-## Phase 1 — Fuel: `limits.instructions` and an instructions histogram
+## ~~Phase 1 — Fuel~~ (dropped)
 
-The epoch deadline measures wall clock, so a budget depends on node speed
-and neighbours; a module that is slow because the node is busy is cut like
-one that loops. wasmtime's fuel counts instructions executed: about one
-unit per wasm instruction, deterministic across nodes and runs — what
-Shopify Functions bound (11 million instructions) instead of time.
-
-Mechanics (`internal/engine`, wasmtime-go v47): `Config.SetConsumeFuel(true)`
-on the engine's `wasmtime.Config` when `engine.Config.Fuel` is set (the
-`--enable-fuel` flag, `ENABLE_FUEL`, default off); per run,
-`store.SetFuel(budget)` before the instance is created — a fuel-consuming
-store starts empty, so `math.MaxUint64` is "unbounded" — and
-`store.GetFuel()` after the run: `budget − remaining` is the observation.
-The trap is already named: `trapText` prints `trap: out of fuel` for
-`wasmtime.OutOfFuel`; it becomes `ErrOutOfFuel`, reported like `ErrTimeout`
-(`module … failed: wasmfn_run failed: module exceeded its instruction
-budget (10000000 instructions)`) with `run_duration_seconds{outcome=fuel}`
-(an enumeration, bounded). Fuel instruments generated code (a decrement and
-check on every block), so it changes codegen: artifacts compiled with fuel
-are incompatible with those compiled without, and `engine.Version()` gains
-a `-fuel` suffix — the compiled store namespaces itself
-(`compiled/v47.0.0-linux-arm64-fuel/`) and `RemoveOthers` reaps the other
-set a day after the flag flips; internal, and fine. The overhead is
-unmeasured here — wasmtime documents "some"; single-digit to low
-double-digit percent is the expectation for a Go guest whose cost is
-`_initialize` — and must be measured with the existing perf harness before
-the flag is documented; it is the reason fuel is opt-in.
-
-Shape: `--enable-fuel` plus `--module-instruction-limit` (the ceiling; 0 =
-metered but unbounded, so a runtime can observe before it bounds), and
-`limits.instructions` (int64, `+kubebuilder:validation:Minimum=1`) in
-`input/v1beta1.Limits`, checked in `runOptions` (`limits.instructions
-20000000 exceeds the runtime's --module-instruction-limit of 10000000`;
-`limits.instructions is refused: the runtime was started without
---enable-fuel`), carried in `engine.RunOptions.Instructions`, capped by
-`effective`. Metric: `function_wasm_module_run_instructions` histogram
-(buckets from 10⁵ to 10¹⁰, log-spaced), observed on every run when fuel is
-on — capacity planning without a profiler; a `function run` harness (the
-research's local loop) prints the same number.
-
-Interactions: the epoch deadline stays as the wall-clock backstop and the
-two bound different things — fuel is the guest's own compute, the deadline
-is real time including host imports (`wasmfn.http` waiting on a server
-burns no fuel) — so both apply and the first one hit ends the run. Warm-up
-and the caches are unaffected beyond the version namespace. Effort S.
-Deferred: charging fuel for host calls (a way to price egress), per-Input
-fuel accounting over time, `fuel_async_yield` (not in the Go binding).
+Wasmtime's fuel-based instruction counting (`SetConsumeFuel`, `SetFuel`,
+`GetFuel`, `OutOfFuel` trap, codegen change requiring a separate compiled
+cache namespace) is not portable to wazero, the stated fallback engine.
+The project cannot build features tied to one wasm engine. The epoch
+deadline (wall clock) remains the run bound.
 
 ## Phase 2 — Egress economy: per-module rate limits
 
@@ -244,10 +207,10 @@ a run holding a slot while it waits for memory (fixed order, bounded by
 
 | phase | what | effort | lands |
 |---|---|---|---|
-| 1 | `--enable-fuel`, `--module-instruction-limit`, `limits.instructions`, `run_instructions`, `outcome=fuel`, `-fuel` version suffix | S + a measurement | any release after `v0.1.0`; off by default |
-| 2 | `sandbox.egress.http[].cache`, policy `cache{maxTTL,maxBytes,maxEntryBytes}`, `outcome=cached`; policy `rateLimit` | S–M, S | independent |
-| 3 | `limits.concurrency`, fair queueing, `--max-total-run-memory`, `--metrics-label-input-name`, `run_queue_wait_seconds` | S, M, S, S | independent; fair queueing last |
-| 4 | `--registry-mirror`, `--oci-layout-dir`, `function precompile` (+ `serve` default subcommand) | S, M, S | independent |
+| ~~1~~ | ~~fuel~~ | - | **Dropped** (not portable to wazero) |
+| 2 | policy `rateLimit` | S | **Implemented.** |
+| 3 | `limits.concurrency`, fair queueing, `--max-total-run-memory`, `--metrics-label-input-name` | S, M, S, S | **Implemented.** |
+| 4 | `--registry-mirror`, `--oci-layout-dir`, `function precompile` (+ `serve` default subcommand) | S, M, S | **Implemented.** |
 | 5 | raw-bytes codec, `engine.RunRaw`, credential-stripping fallback to normal path, response stash when meta is present | M | **Implemented.** |
 
 Every phase is additive — new optional `limits`/`sandbox` fields, new
@@ -257,12 +220,8 @@ enumeration values on existing metric labels. Nothing here gates `v0.1.0`.
 
 ## Open questions
 
-- **Fuel as an engine-wide opt-in flag (recompiles once, some slowdown) or
-  a diagnostic only?** Recommendation: the flag, off by default; the
-  histogram exists only when it is on; the epoch stays the default
-  deadline. A deterministic budget is worth its cost exactly to the shared
-  runtimes that want budgets independent of node speed, and nobody else
-  pays.
+- ~~**Fuel as an engine-wide opt-in flag?**~~ Dropped: not portable to
+  wazero.
 - **Cache key: include the module digest?** Recommendation: yes — a hit rate
   across different modules against the same endpoint is not worth the
   sentence "modules never share responses" being conditional.

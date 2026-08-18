@@ -65,9 +65,6 @@ type CeilingFlags struct {
 	EnableSandboxEgress     bool   `help:"Let Compositions grant their modules HTTP(S) requests through the host (sandbox.egress.http): the host performs wasmfn.http requests within each Composition's grant and the egress policy. Off, any sandbox.egress grant is a fatal result." env:"ENABLE_SANDBOX_EGRESS"`
 	SandboxEgressPolicy     string `help:"YAML or JSON file with the egress ceiling: hosts and hostPatterns a Composition may grant (any, when both are empty), blockedCIDRs and allowedCIDRs on top of the default block list (loopback, link-local, private, cluster and reserved ranges), and the per-run budgets timeout, maxRequests, maxResponseBytes, maxRedirects. Without it the defaults apply." env:"SANDBOX_EGRESS_POLICY" type:"existingfile"`
 
-	EnableFuel             bool  `help:"Count wasm instructions executed per run (wasmtime fuel). When on, the run_instructions histogram is populated and limits.instructions is admitted. The codegen changes: compiled artifacts are not interchangeable with those without fuel, so the compiled cache gains a separate namespace." env:"ENABLE_FUEL"`
-	ModuleInstructionLimit int64 `help:"Maximum wasm instructions one module run may execute (wasmtime fuel). Zero means metered but unbounded - the histogram observes, nothing is capped. Only meaningful with --enable-fuel." env:"MODULE_INSTRUCTION_LIMIT"`
-
 	RegistryMirror map[string]string `help:"Rewrite the fetch location of OCI sources: --registry-mirror ghcr.io=registry.internal/ghcr fetches ghcr.io/repo@sha256:... from registry.internal/ghcr/repo@sha256:... instead. Policy, cache keys, audit and description see the stated ref. Auth for the mirror uses the runtime's Docker config, not a step credential. The cosign .sig lookup goes to the mirror too. Repeatable." env:"REGISTRY_MIRROR" mapsep:","`
 	OCILayoutDir   string            `help:"OCI image-layout directory (index.json, blobs/sha256/...) consulted before the network for OCI sources. The stated manifest digest names a blob regardless of any repository name; the manifest names its layer. With --cosign-key the .sig manifest is looked up in the layout's index by its ref-name annotation, so verification works offline." env:"OCI_LAYOUT_DIR" type:"existingdir"`
 }
@@ -76,10 +73,8 @@ type CeilingFlags struct {
 // serve's alone.
 func (c *CeilingFlags) engineConfig() engine.Config {
 	return engine.Config{
-		Timeout:          c.ModuleTimeout,
-		MemoryLimit:      int64(c.ModuleMemoryLimit) << 20,
-		Fuel:             c.EnableFuel,
-		InstructionLimit: c.ModuleInstructionLimit,
+		Timeout:     c.ModuleTimeout,
+		MemoryLimit: int64(c.ModuleMemoryLimit) << 20,
 	}
 }
 
@@ -165,7 +160,7 @@ type ServeCmd struct {
 	MaxTotalRunMemory     int      `help:"Total linear-memory budget in MB across all running modules; a run reserves its effective limit (limits.memory or --module-memory-limit) before it starts and waits under its deadline when the pool is full. 0 means no bound." default:"0" env:"MAX_TOTAL_RUN_MEMORY"`
 	HealthAddress         string   `help:"Address of the plain-HTTP health endpoints /livez and /readyz (ready once the caches are open and --warm-modules are loaded); empty disables them. The gRPC health service on the function port answers too, but speaks mTLS." default:":8081" env:"HEALTH_ADDRESS"`
 	WarmModules           []string `help:"Modules loaded — resolved, verified, compiled or mapped from the artifact cache — before the health service reports Serving: OCI references pinned to their manifest digest (repo[:tag]@sha256:...) and, with --module-dir, path:<file> entries. Repeatable or comma-separated. One that fails to load is logged and loaded on its first request instead." env:"WARM_MODULES" sep:"," placeholder:"REF"`
-	MetricsLabelInputName bool     `help:"Add an 'input' label (the Input's metadata.name, empty when unset) to run_duration_seconds, http_requests_total, requests_total and run_instructions. The cardinality is bounded by the set of Compositions the operator's own cluster uses; the risk (hundreds of Inputs) is the operator's to decide." env:"METRICS_LABEL_INPUT_NAME"`
+	MetricsLabelInputName bool     `help:"Add an 'input' label (the Input's metadata.name, empty when unset) to run_duration_seconds, http_requests_total and requests_total. The cardinality is bounded by the set of Compositions the operator's own cluster uses; the risk (hundreds of Inputs) is the operator's to decide." env:"METRICS_LABEL_INPUT_NAME"`
 }
 
 // Run serves the function.
@@ -190,7 +185,7 @@ func (c *ServeCmd) Run(cli *CLI) error {
 	}
 	defer eng.Close()
 
-	blobs, compiled, manifests, err := openCaches(c.EnableFuel)
+	blobs, compiled, manifests, err := openCaches()
 	if err != nil {
 		return err
 	}
@@ -305,8 +300,8 @@ func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64) {
 // artifacts so a warm volume needs no registry read to learn what a module
 // requires. The directories are created if missing — the function never
 // runs without them.
-func openCaches(fuel bool) (blobs, compiled, manifests *cache.Store, err error) {
-	engineVersion := engine.Version(fuel)
+func openCaches() (blobs, compiled, manifests *cache.Store, err error) {
+	engineVersion := engine.Version()
 
 	modulesDir := filepath.Join(cache.DefaultDir, cache.ModulesDir)
 	compiledDir := filepath.Join(cache.DefaultDir, cache.CompiledDir)

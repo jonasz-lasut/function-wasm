@@ -406,12 +406,8 @@ func TestCacheMapsArtifactsFromDisk(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	v := Version(false)
+	v := Version()
 	if !strings.HasPrefix(v, "v") || !strings.HasSuffix(v, "-"+runtime.GOOS+"-"+runtime.GOARCH) {
-		t.Errorf("Version(false) = %q, want <wasmtime-go major>-<GOOS>-<GOARCH>", v)
-	}
-	vf := Version(true)
-	if !strings.HasSuffix(vf, "-"+runtime.GOOS+"-"+runtime.GOARCH+"-fuel") {
-		t.Errorf("Version(true) = %q, want suffix -%s-%s-fuel", vf, runtime.GOOS, runtime.GOARCH)
+		t.Errorf("Version() = %q, want <wasmtime-go major>-<GOOS>-<GOARCH>", v)
 	}
 }
