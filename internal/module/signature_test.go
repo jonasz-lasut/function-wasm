@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -81,6 +82,35 @@ func pushSignature(t *testing.T, ref name.Digest, key crypto.Signer, claims stri
 	}
 }
 
+// simplePayload is a cosign simple-signing payload naming digest, with the
+// given critical.type (cosignPayloadType for a well-formed one).
+func simplePayload(digest, typ string) []byte {
+	return []byte(`{"critical":{"identity":{"docker-reference":"x"},"image":{"docker-manifest-digest":"` + digest + `"},"type":"` + typ + `"},"optional":null}`)
+}
+
+// pushRawSignature publishes a signature artifact for ref with one layer
+// carrying payload verbatim. ann is the raw signature annotation value (not
+// re-encoded, so a caller can push invalid base64); withAnn omits the
+// annotation entirely to model a layer that is not a signature.
+func pushRawSignature(t *testing.T, ref name.Digest, payload []byte, ann string, withAnn bool) {
+	t.Helper()
+	repo, manifestDigest := ref.Context(), ref.DigestStr()
+	annotations := map[string]string{}
+	if withAnn {
+		annotations[cosignSignatureAnnotation] = ann
+	}
+	img, err := mutate.Append(empty.Image, mutate.Addendum{
+		Layer:       static.NewLayer(payload, "application/vnd.dev.cosign.simplesigning.v1+json"),
+		Annotations: annotations,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(repo.Tag(SignatureTag(manifestDigest)), img); err != nil {
+		t.Fatalf("cannot push signature: %v", err)
+	}
+}
+
 func digestRef(t *testing.T, ref string) name.Digest {
 	t.Helper()
 	d, err := name.NewDigest(ref)
@@ -128,6 +158,16 @@ func TestVerifier(t *testing.T) {
 	wrongPayloadRef := artifact(t, host, "wrongpayload", layer)
 	pushSignature(t, digestRef(t, wrongPayloadRef), ecKey, otherDigest)
 
+	validB64 := base64.StdEncoding.EncodeToString([]byte("x"))
+	notB64Ref := artifact(t, host, "notb64", layer)
+	pushRawSignature(t, digestRef(t, notB64Ref), simplePayload(digestRef(t, notB64Ref).DigestStr(), cosignPayloadType), "not base64!!", true)
+	notJSONRef := artifact(t, host, "notjson", layer)
+	pushRawSignature(t, digestRef(t, notJSONRef), []byte("not json at all"), validB64, true)
+	wrongTypeRef := artifact(t, host, "wrongtype", layer)
+	pushRawSignature(t, digestRef(t, wrongTypeRef), simplePayload(digestRef(t, wrongTypeRef).DigestStr(), "not a cosign signature"), validB64, true)
+	noLayerRef := artifact(t, host, "nolayer", layer)
+	pushRawSignature(t, digestRef(t, noLayerRef), simplePayload(digestRef(t, noLayerRef).DigestStr(), cosignPayloadType), "", false)
+
 	cases := map[string]struct {
 		reason string
 		keys   [][]byte
@@ -171,6 +211,30 @@ func TestVerifier(t *testing.T) {
 			keys:   [][]byte{pemPublic(t, &ecKey.PublicKey)},
 			src:    oci(wrongPayloadRef),
 			want:   "payload signs " + otherDigest,
+		},
+		"SignatureNotBase64": {
+			reason: "A signature annotation that is not base64 is refused.",
+			keys:   [][]byte{pemPublic(t, &ecKey.PublicKey)},
+			src:    oci(notB64Ref),
+			want:   "signature is not base64",
+		},
+		"PayloadNotJSON": {
+			reason: "A payload that is not simple-signing JSON is refused.",
+			keys:   [][]byte{pemPublic(t, &ecKey.PublicKey)},
+			src:    oci(notJSONRef),
+			want:   "payload is not simple-signing JSON",
+		},
+		"PayloadWrongType": {
+			reason: "A payload whose critical.type is not a cosign signature is refused.",
+			keys:   [][]byte{pemPublic(t, &ecKey.PublicKey)},
+			src:    oci(wrongTypeRef),
+			want:   `payload type is "not a cosign signature"`,
+		},
+		"NoSignatureLayer": {
+			reason: "A signature artifact with no signature-annotated layer is refused.",
+			keys:   [][]byte{pemPublic(t, &ecKey.PublicKey)},
+			src:    oci(noLayerRef),
+			want:   "has no cosign signature layers",
 		},
 		"PathRefused": {
 			reason: "With a verifier configured only OCI sources are accepted.",
@@ -239,6 +303,18 @@ func TestNewVerifierErrors(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("UnsupportedKeyType", func(t *testing.T) {
+		// An X25519 key parses as a valid PKIX public key but is not one cosign
+		// signs with, so it is refused rather than silently ignored.
+		k, err := ecdh.X25519().GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewVerifier(pemPublic(t, k.Public())); err == nil || !strings.Contains(err.Error(), "unsupported cosign public key type") {
+			t.Fatalf("NewVerifier() of an X25519 key: want unsupported-type error, got %v", err)
+		}
+	})
 }
 
 func TestLoadVerifier(t *testing.T) {
