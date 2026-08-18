@@ -99,7 +99,7 @@ small additions, all in `internal/engine` and `cmd/function`, all optional:
   slot, memory — so no cycle exists. S. **Implemented.**
 - **`--metrics-label-input-name`** (bool, off): adds an `input` label - the
   Input's `metadata.name`, empty when unset - to `requests_total`,
-  `run_duration_seconds`, `http_requests_total` and `run_instructions`. It
+  `run_duration_seconds` and `http_requests_total`. It
   is Composition-authored and bounded by the operator's own Compositions,
   never a digest, ref or host; the risk (hundreds of Inputs) is documented
   next to the flag. `internal/metrics` builds its vectors at startup with
