@@ -22,6 +22,19 @@ var repositoryFence = func() *authz.RepositoryFence {
 	return f
 }()
 
+// credentialFence decides whether an XR-chosen module may spend a step
+// credential: the credential must be in credentialsAllowList and its repository
+// within repositoryAllowList (co-located), using Cedar over the same
+// boundary-correct repository hierarchy (internal/authz). Static and embedded,
+// so a compile failure fails at init.
+var credentialFence = func() *authz.CredentialFence {
+	f, err := authz.NewCredentialFence()
+	if err != nil {
+		panic(fmt.Sprintf("compiling the credential fence policy: %v", err))
+	}
+	return f
+}()
+
 // ValidatePolicy checks the shape of an Input's policy: entries are non-empty
 // prefixes and names, and a credentials allow list comes with a repository
 // allow list — a credential must never be spendable on an arbitrary host. A
@@ -115,7 +128,11 @@ func admit(from string, src v1beta1.ModuleSource, policy *v1beta1.Policy) error 
 	if policy == nil || len(policy.CredentialsAllowList) == 0 {
 		return fmt.Errorf("module.from: %s of the composite resource names credentials %q, but a module chosen by the composite resource cannot use the step's credentials (the registry host would be its author's) unless policy.credentialsAllowList allows them for a repository in policy.repositoryAllowList; otherwise pull it with the runtime's Docker config or anonymously", from, src.OCI.Credentials)
 	}
-	if !slices.Contains(policy.CredentialsAllowList, src.OCI.Credentials) {
+	// The credential fence is a Cedar authorization co-locating both halves:
+	// the credential must be in credentialsAllowList and its repository within
+	// repositoryAllowList. The repository check has passed already, so this
+	// reduces to exact credential membership, in the repository's context.
+	if !credentialFence.Permits(src.OCI.Credentials, location, policy.CredentialsAllowList, policy.RepositoryAllowList) {
 		return fmt.Errorf("module.from: %s of the composite resource names credentials %q, which policy.credentialsAllowList does not allow (allowed: %s)", from, src.OCI.Credentials, strings.Join(policy.CredentialsAllowList, ", "))
 	}
 	return nil
