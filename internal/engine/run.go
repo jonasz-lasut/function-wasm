@@ -38,41 +38,7 @@ type call struct {
 // response. When the Engine bounds concurrent runs, Run first waits for a
 // slot under ctx; a wait cut short by ctx is an error too, and such a Run
 // is neither timed nor counted - it never ran.
-func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionRequest, log logging.Logger, opts RunOptions) (*fnv1.RunFunctionResponse, error) {
-	in, err := proto.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("cannot encode request: %w", err)
-	}
-	out, err := e.runWith(ctx, m, in, log, opts)
-	if err != nil {
-		return nil, err
-	}
-	rsp := &fnv1.RunFunctionResponse{}
-	if err := proto.Unmarshal(out, rsp); err != nil {
-		return nil, fmt.Errorf("cannot decode response: %w", err)
-	}
-	return rsp, nil
-}
-
-// RunRaw is like Run but takes the pre-encoded request bytes, skipping the
-// proto.Marshal pass. It returns both the decoded response and its raw bytes
-// so the caller can stash them for the gRPC codec.
-func (e *Engine) RunRaw(ctx context.Context, m *Module, in []byte, log logging.Logger, opts RunOptions) (*fnv1.RunFunctionResponse, []byte, error) {
-	out, err := e.runWith(ctx, m, in, log, opts)
-	if err != nil {
-		return nil, nil, err
-	}
-	rsp := &fnv1.RunFunctionResponse{}
-	if err := proto.Unmarshal(out, rsp); err != nil {
-		return nil, nil, fmt.Errorf("cannot decode response: %w", err)
-	}
-	return rsp, out, nil
-}
-
-// runWith is the core of Run and RunRaw: it takes the pre-encoded request
-// bytes, runs the module and returns the raw response bytes. Slot
-// acquisition, memory reservation and timing are all inside.
-func (e *Engine) runWith(ctx context.Context, m *Module, in []byte, log logging.Logger, opts RunOptions) (out []byte, err error) {
+func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionRequest, log logging.Logger, opts RunOptions) (rsp *fnv1.RunFunctionResponse, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -95,6 +61,10 @@ func (e *Engine) runWith(ctx context.Context, m *Module, in []byte, log logging.
 	defer func() {
 		metrics.ObserveRun(outcome(err), opts.InputName, time.Since(start).Seconds())
 	}()
+	in, err := proto.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot encode request: %w", err)
+	}
 	if len(in) > math.MaxInt32 {
 		return nil, fmt.Errorf("request of %d bytes exceeds what a 32-bit guest can address", len(in))
 	}
@@ -173,7 +143,13 @@ func (e *Engine) runWith(ctx context.Context, m *Module, in []byte, log logging.
 	}
 	// The store dies with this call, so the response is copied out; two
 	// slicing steps keep the arithmetic in 64 bits.
-	return bytes.Clone(memory.UnsafeData(store)[outPtr:][:outLen]), nil
+	out := bytes.Clone(memory.UnsafeData(store)[outPtr:][:outLen])
+
+	rsp = &fnv1.RunFunctionResponse{}
+	if err := proto.Unmarshal(out, rsp); err != nil {
+		return nil, fmt.Errorf("cannot decode response: %w", err)
+	}
+	return rsp, nil
 }
 
 func outcome(err error) string {
