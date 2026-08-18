@@ -6,11 +6,9 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v47"
 )
 
-// Log levels of the wasmfn.log import.
-const (
-	levelInfo  int32 = 0
-	levelDebug int32 = 1
-)
+// levelDebug is the wasmfn.log level a guest sends for a debug record; any
+// other level (0, info) logs at info.
+const levelDebug int32 = 1
 
 // logRecord is the JSON payload of one wasmfn.log call.
 type logRecord struct {
