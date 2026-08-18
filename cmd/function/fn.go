@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/crossplane/function-sdk-go/errors"
 	"github.com/crossplane/function-sdk-go/logging"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/admission"
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
@@ -43,6 +45,9 @@ type Function struct {
 	// egress is the operator's HTTP egress ceiling (--enable-sandbox-egress,
 	// --sandbox-egress-policy); nil refuses every sandbox.egress grant.
 	egress *egress.Egress
+	// policy is the operator's grant policy (--policy-file); nil adds no
+	// constraint, so admission is identical to a runtime without one.
+	policy *authz.OperatorPolicy
 
 	// manifests is the on-disk store of module manifests by digest, kept
 	// beside the compiled artifacts so an artifact hit — a warm volume, a
@@ -61,7 +66,7 @@ type Function struct {
 
 // ceilings are what every request's Input is admitted against.
 func (f *Function) ceilings() admission.Ceilings {
-	return admission.Ceilings{Engine: f.engine.Config(), Sandbox: f.sandbox, Egress: f.egress}
+	return admission.Ceilings{Engine: f.engine.Config(), Sandbox: f.sandbox, Egress: f.egress, Policy: f.policy}
 }
 
 // RunFunction resolves, loads and runs the module and returns its response
@@ -83,11 +88,17 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		return f.fatal(rsp, log, metrics.OutcomeRefused, errors.Wrapf(err, "cannot get function input from %T", req)), nil
 	}
 
+	// The observed composite resource identifies the caller for the operator's
+	// grant policy: its kind and namespace, read cheaply before admission. It
+	// is also the source of a module.from value, read as a map further down.
+	xr := req.GetObserved().GetComposite().GetResource()
+	principal := principalFrom(xr)
+
 	// What the Composition asks of the runtime — sandbox grants, egress and
 	// limits — is settled before any module is resolved, fetched or compiled:
 	// nothing will run if it is refused. The same admission runs offline as
 	// function validate.
-	admitted, err := admission.Admit(in, f.ceilings())
+	admitted, err := admission.Admit(in, f.ceilings(), principal)
 	if err != nil {
 		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
 	}
@@ -98,10 +109,8 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	// free, so only then). The policy is the Input's: nothing but the source
 	// is read from the XR.
 	var composite map[string]any
-	if in.Module.From != "" {
-		if xr := req.GetObserved().GetComposite().GetResource(); xr != nil {
-			composite = xr.AsMap()
-		}
+	if in.Module.From != "" && xr != nil {
+		composite = xr.AsMap()
 	}
 	src, err := module.FromComposite(in.Module, in.Policy, composite)
 	if err != nil {
@@ -270,6 +279,25 @@ func (f *Function) load(ctx context.Context, ref *module.Ref, log logging.Logger
 		return nil, errors.Wrapf(err, "cannot load module %s", ref.Description)
 	}
 	return mod, nil
+}
+
+// principalFrom builds the operator-policy principal from the observed
+// composite resource: its kind and namespace, read cheaply without converting
+// the whole object. A RunFunctionRequest does not carry the Composition's name,
+// so principal.composition stays empty; an operator policy that keys on it
+// simply never matches. A nil XR (a request with no observed composite) yields
+// the zero principal, which matches no principal condition - safe, since the
+// operator policy only narrows.
+func principalFrom(xr *structpb.Struct) authz.Principal {
+	if xr == nil {
+		return authz.Principal{}
+	}
+	fields := xr.GetFields()
+	p := authz.Principal{XRKind: fields["kind"].GetStringValue()}
+	if md := fields["metadata"].GetStructValue(); md != nil {
+		p.Namespace = md.GetFields()["namespace"].GetStringValue()
+	}
+	return p
 }
 
 // registryAuth returns the authenticator for an OCI source that names a

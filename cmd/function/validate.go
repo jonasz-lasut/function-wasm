@@ -18,6 +18,7 @@ import (
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/admission"
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
@@ -321,8 +322,11 @@ func (v *validator) validate(ctx context.Context, s step) stepResult {
 	}
 	r.Warnings = warnings
 
-	// The runtime's admission, verbatim.
-	admitted, err := admission.Admit(in, v.ceilings)
+	// The runtime's admission, verbatim. The principal comes from --xr when
+	// given, else it is the zero principal - an operator grant policy that
+	// keys on the caller then matches nothing, which is safe because it only
+	// narrows.
+	admitted, err := admission.Admit(in, v.ceilings, principalFromMap(v.xr))
 	if err != nil {
 		return refuse(err)
 	}
@@ -482,6 +486,20 @@ func removeField(obj map[string]any, field string) bool {
 		}
 	}
 	return false
+}
+
+// principalFromMap builds the operator-policy principal from a --xr document:
+// its kind and namespace. A nil map (no --xr) yields the zero principal.
+func principalFromMap(xr map[string]any) authz.Principal {
+	if xr == nil {
+		return authz.Principal{}
+	}
+	p := authz.Principal{}
+	p.XRKind, _ = xr["kind"].(string)
+	if md, ok := xr["metadata"].(map[string]any); ok {
+		p.Namespace, _ = md["namespace"].(string)
+	}
+	return p
 }
 
 // describeSource names a source the way the runtime's messages do.
