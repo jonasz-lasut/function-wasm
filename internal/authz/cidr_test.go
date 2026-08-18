@@ -97,6 +97,11 @@ permit (principal, action == Action::"dialAddress", resource) when { context.ip.
 			doc:    `forbid (principal, action == Action::"dialAddress", resource) when { context.ip.isInRange(ip("10.0.0.0/8")) && context.ip.isInRange(ip("10.1.0.0/16")) };`,
 			want:   want{err: `unsupported operation "&&"`},
 		},
+		"ActionInSet": {
+			reason: "A dialAddress rule scoped with `action in [...]` is refused, not silently skipped: it would compile a forbid meant as a block to nothing (fail-open).",
+			doc:    `forbid (principal, action in [Action::"dialAddress"], resource) when { context.ip.isInRange(ip("10.0.0.0/8")) };`,
+			want:   want{err: `must scope the action as == Action::"dialAddress"`},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
