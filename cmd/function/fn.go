@@ -54,7 +54,8 @@ type Function struct {
 	// one) so its schema is compiled once per process, like the module.
 	parsed sync.Map // digest → *manifest.Manifest
 	// stepSlots bounds per-step concurrency (limits.concurrency), keyed by
-	// the module's digest; nil when no request has ever used concurrency.
+	// the module's digest. main always sets it; nil (tests) disables the
+	// per-step bound rather than panicking.
 	stepSlots *engine.StepSlots
 }
 
@@ -168,7 +169,7 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	// A per-step slot, when limits.concurrency is set, is taken before the
 	// engine's global slot: one step does not take every global slot from
 	// every other. The slot is released when the run ends.
-	if admitted.Concurrency > 0 {
+	if admitted.Concurrency > 0 && f.stepSlots != nil {
 		release, err := f.stepSlots.Acquire(ctx, ref.Digest, admitted.Concurrency)
 		if err != nil {
 			return f.fatal(rsp, log, metrics.OutcomeError, errors.Wrapf(err, "module %s failed", ref.Description)), nil
