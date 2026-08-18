@@ -19,6 +19,7 @@ import (
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/admission"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
+	"github.com/jonasz-lasut/function-wasm/internal/codec"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
@@ -91,6 +92,12 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		return f.fatal(rsp, log, metrics.OutcomeRefused, in.Name, err), nil
 	}
 	limits := admitted.Options
+
+	// Consume any raw bytes the codec stashed before the decoded request
+	// may be modified: credential stripping below makes the wire bytes
+	// stale, and ConsumeRequest removes them from the side table so
+	// early returns or panics leave nothing behind.
+	rawReq := codec.ConsumeRequest(req)
 
 	// A module.from source names a field of the composite resource; it is
 	// read from the observed XR on every request (converting the XR is not
@@ -176,18 +183,23 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		}
 		defer release()
 	}
-	// A run slot, when --max-concurrent-runs bounds them, is waited for
-	// inside Run under the request context; a wait the deadline cuts short
-	// is reported like any other reason the module did not run.
-	got, err := f.engine.Run(ctx, mod, req, log, limits)
-	if err != nil {
-		return f.fatal(rsp, log, metrics.OutcomeError, in.Name, errors.Wrapf(err, "module %s failed", ref.Description)), nil
+	// Run the module. The raw path forwards the codec's wire bytes to the
+	// guest without re-marshaling; it is taken when no pull credential
+	// needs stripping from the decoded request (which would make the
+	// stashed bytes stale).
+	got, rspRaw, runErr := f.runModule(ctx, mod, req, rawReq, pullCred == "", log, limits)
+	if runErr != nil {
+		return f.fatal(rsp, log, metrics.OutcomeError, in.Name, errors.Wrapf(runErr, "module %s failed", ref.Description)), nil
 	}
 	metrics.IncRequests(metrics.OutcomeOK, in.Name)
 	// A guest that skipped the response meta (a non-Go guest, typically)
 	// still gets a well-formed reply.
 	if got.GetMeta() == nil {
 		got.Meta = &fnv1.ResponseMeta{Tag: req.GetMeta().GetTag(), Ttl: durationpb.New(f.ttl)}
+	} else if rspRaw != nil {
+		// The guest set meta: stash the raw response bytes so the
+		// codec's Marshal returns them without re-encoding.
+		codec.StashResponse(got, rspRaw)
 	}
 	return got, nil
 }
@@ -302,6 +314,18 @@ func registryAuth(req *fnv1.RunFunctionRequest, src v1beta1.ModuleSource) (authn
 		return nil, errors.Wrapf(err, "cannot use credentials %q for module.oci", src.OCI.Credentials)
 	}
 	return auth, nil
+}
+
+// runModule runs the module either on the raw path (forwarding the codec's
+// wire bytes without re-marshaling) or the normal path (marshaling the
+// decoded request). The raw path is used when rawReq is non-nil and useRaw
+// is true; the normal path is the fallback.
+func (f *Function) runModule(ctx context.Context, mod *engine.Module, req *fnv1.RunFunctionRequest, rawReq []byte, useRaw bool, log logging.Logger, opts engine.RunOptions) (*fnv1.RunFunctionResponse, []byte, error) {
+	if rawReq != nil && useRaw {
+		return f.engine.RunRaw(ctx, mod, rawReq, log, opts)
+	}
+	rsp, err := f.engine.Run(ctx, mod, req, log, opts)
+	return rsp, nil, err
 }
 
 // withoutCredential returns creds minus name.

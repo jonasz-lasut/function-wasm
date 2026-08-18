@@ -29,6 +29,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/spf13/afero"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -39,6 +40,7 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
+	"github.com/jonasz-lasut/function-wasm/internal/codec"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
@@ -841,4 +843,95 @@ func TestRunFunctionRecoversPanics(t *testing.T) {
 	if len(rsp.GetResults()) != 1 || rsp.GetResults()[0].GetSeverity() != fnv1.Severity_SEVERITY_FATAL || !strings.HasPrefix(rsp.GetResults()[0].GetMessage(), "internal error while running the module: ") {
 		t.Errorf("want one fatal result naming an internal error, got %v", rsp.GetResults())
 	}
+}
+
+// TestRunFunctionRawPath pins the raw-bytes codec path: when the codec
+// stashes the request's wire bytes and no pull credential needs stripping,
+// the host forwards them to the guest without re-marshaling. When a
+// credential does need stripping, the normal path runs instead and the
+// guest never sees the pull credential.
+func TestRunFunctionRawPath(t *testing.T) {
+	okModule := testwasm.Fixed(t, guestResponse(), testwasm.Options{})
+	moduleDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(moduleDir, "fn.wasm"), okModule, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	registryHost := privateRegistry(t)
+	ociRef := push(t, registryHost+"/fn:v1", okModule)
+	credentials := map[string]*fnv1.Credentials{
+		"registry": {Source: &fnv1.Credentials_CredentialData{CredentialData: &fnv1.CredentialData{
+			Data: map[string][]byte{"username": []byte("robot"), "password": []byte("s3cret")},
+		}}},
+	}
+
+	eng, err := engine.New(engine.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	resolver, err := module.NewResolver(module.Options{Dir: moduleDir, Keychain: authn.NewMultiKeychain()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver}
+
+	t.Run("RawPathNoCredential", func(t *testing.T) {
+		req := &fnv1.RunFunctionRequest{
+			Meta:  &fnv1.RequestMeta{Tag: "hello"},
+			Input: input(t, pathModule("fn.wasm")),
+		}
+		// Simulate what the gRPC codec does: stash the raw wire bytes.
+		raw, err := proto.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		codec.StashRequest(req, raw)
+
+		rsp, err := f.RunFunction(context.Background(), req)
+		if err != nil {
+			t.Fatalf("RunFunction(): unexpected error: %v", err)
+		}
+		if diff := cmp.Diff(guestResponse(), rsp, protocmp.Transform()); diff != "" {
+			t.Errorf("raw path response: -want, +got:\n%s", diff)
+		}
+	})
+
+	t.Run("NormalPathWithCredential", func(t *testing.T) {
+		req := &fnv1.RunFunctionRequest{
+			Meta:        &fnv1.RequestMeta{Tag: "hello"},
+			Input:       input(t, map[string]any{"type": "OCI", "oci": map[string]any{"ref": ociRef, "credentials": "registry"}}),
+			Credentials: credentials,
+		}
+		// Stash raw bytes - they include the credential. The raw path
+		// must not be taken because the credential needs stripping.
+		raw, err := proto.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		codec.StashRequest(req, raw)
+
+		rsp, err := f.RunFunction(context.Background(), req)
+		if err != nil {
+			t.Fatalf("RunFunction(): unexpected error: %v", err)
+		}
+		if diff := cmp.Diff(guestResponse(), rsp, protocmp.Transform()); diff != "" {
+			t.Errorf("normal path response: -want, +got:\n%s", diff)
+		}
+	})
+
+	t.Run("FallbackWithoutStash", func(t *testing.T) {
+		req := &fnv1.RunFunctionRequest{
+			Meta:  &fnv1.RequestMeta{Tag: "hello"},
+			Input: input(t, pathModule("fn.wasm")),
+		}
+		// No stash - the normal path must work as before.
+		rsp, err := f.RunFunction(context.Background(), req)
+		if err != nil {
+			t.Fatalf("RunFunction(): unexpected error: %v", err)
+		}
+		if diff := cmp.Diff(guestResponse(), rsp, protocmp.Transform()); diff != "" {
+			t.Errorf("fallback response: -want, +got:\n%s", diff)
+		}
+	})
 }
