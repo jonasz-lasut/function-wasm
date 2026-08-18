@@ -1,0 +1,111 @@
+<svg viewBox="0 0 800 420" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#8a8578" stroke-width="1.2"/>
+    </marker>
+  </defs>
+
+  <rect width="800" height="420" fill="#f8f7f4" rx="4"/>
+
+  <!-- Incoming requests -->
+  <text x="20" y="32" font-size="11" font-weight="600" fill="#a09b8e" letter-spacing="0.06em">INCOMING REQUESTS</text>
+  <rect x="20" y="46" width="120" height="34" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.2"/>
+  <text x="80" y="67" text-anchor="middle" font-size="12" fill="#2c2a25">Module A  x5</text>
+  <rect x="20" y="88" width="120" height="34" rx="4" fill="#fef6e8" stroke="#c4993a" stroke-width="1.2"/>
+  <text x="80" y="109" text-anchor="middle" font-size="12" fill="#2c2a25">Module B  x3</text>
+  <rect x="20" y="130" width="120" height="34" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1.2"/>
+  <text x="80" y="151" text-anchor="middle" font-size="12" fill="#2c2a25">Module C  x1</text>
+
+  <line x1="140" y1="100" x2="188" y2="100" stroke="#8a8578" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- Step slots -->
+  <rect x="190" y="40" width="140" height="132" rx="6" fill="#ffffff" stroke="#d8d5cd" stroke-width="1.2"/>
+  <text x="260" y="30" text-anchor="middle" font-size="11" font-weight="600" fill="#a09b8e" letter-spacing="0.06em">STEP SLOTS</text>
+  <text x="260" y="34" text-anchor="middle" font-size="10" fill="#a09b8e">limits.concurrency</text>
+  <rect x="200" y="52" width="120" height="24" rx="3" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="260" y="68" text-anchor="middle" font-size="11" fill="#2c2a25">A: 2 of 2 held</text>
+  <rect x="200" y="82" width="120" height="24" rx="3" fill="#fef6e8" stroke="#c4993a" stroke-width="1"/>
+  <text x="260" y="98" text-anchor="middle" font-size="11" fill="#2c2a25">B: 1 of 3 held</text>
+  <rect x="200" y="112" width="120" height="24" rx="3" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="260" y="128" text-anchor="middle" font-size="11" fill="#2c2a25">C: 0 of 1 held</text>
+  <text x="260" y="158" text-anchor="middle" font-size="10" fill="#a09b8e">keyed by digest, idle-swept 10m</text>
+
+  <line x1="330" y1="100" x2="378" y2="100" stroke="#8a8578" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- Fair scheduler -->
+  <rect x="380" y="22" width="200" height="180" rx="6" fill="#ffffff" stroke="#3d6b5e" stroke-width="1.5"/>
+  <text x="480" y="16" text-anchor="middle" font-size="11" font-weight="600" fill="#3d6b5e" letter-spacing="0.06em">FAIR SCHEDULER</text>
+  <text x="400" y="46" font-size="10" font-weight="600" fill="#7a7668">Round-robin order:</text>
+  <rect x="400" y="56" width="160" height="22" rx="3" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="408" y="71" font-size="10" fill="#2c2a25" font-weight="500">A</text>
+  <rect x="430" y="58" width="14" height="18" rx="2" fill="#3d6b5e" opacity="0.3"/>
+  <rect x="448" y="58" width="14" height="18" rx="2" fill="#3d6b5e" opacity="0.3"/>
+  <rect x="466" y="58" width="14" height="18" rx="2" fill="#3d6b5e" opacity="0.2"/>
+  <text x="500" y="71" font-size="10" fill="#a09b8e">3 waiting</text>
+  <rect x="400" y="84" width="160" height="22" rx="3" fill="#fef6e8" stroke="#c4993a" stroke-width="1"/>
+  <text x="408" y="99" font-size="10" fill="#2c2a25" font-weight="500">B</text>
+  <rect x="430" y="86" width="14" height="18" rx="2" fill="#c4993a" opacity="0.3"/>
+  <rect x="448" y="86" width="14" height="18" rx="2" fill="#c4993a" opacity="0.3"/>
+  <text x="500" y="99" font-size="10" fill="#a09b8e">2 waiting</text>
+  <rect x="400" y="112" width="160" height="22" rx="3" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="408" y="127" font-size="10" fill="#2c2a25" font-weight="500">C</text>
+  <rect x="430" y="114" width="14" height="18" rx="2" fill="#c5c1b7" opacity="0.3"/>
+  <text x="500" y="127" font-size="10" fill="#a09b8e">1 waiting</text>
+  <text x="400" y="152" font-size="10" fill="#7a7668">Freed slot goes to the next key</text>
+  <text x="400" y="164" font-size="10" fill="#7a7668">in rotation (FIFO within a key).</text>
+  <text x="480" y="190" text-anchor="middle" font-size="10" fill="#a09b8e">--max-concurrent-runs N total slots</text>
+
+  <line x1="580" y1="100" x2="618" y2="100" stroke="#8a8578" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- Memory pool -->
+  <rect x="620" y="36" width="160" height="130" rx="6" fill="#ffffff" stroke="#d8d5cd" stroke-width="1.2"/>
+  <text x="700" y="28" text-anchor="middle" font-size="11" font-weight="600" fill="#a09b8e" letter-spacing="0.06em">MEMORY POOL</text>
+  <rect x="636" y="52" width="128" height="20" rx="3" fill="#f3f2ee" stroke="#d8d5cd" stroke-width="1"/>
+  <rect x="637" y="53" width="80" height="18" rx="2" fill="#e8f0ec"/>
+  <text x="700" y="66" text-anchor="middle" font-size="10" fill="#2c2a25">1.5Gi / 2Gi used</text>
+  <text x="636" y="92" font-size="10" fill="#7a7668">Each run reserves its</text>
+  <text x="636" y="104" font-size="10" fill="#7a7668">effective memory limit</text>
+  <text x="636" y="116" font-size="10" fill="#7a7668">before starting. A small</text>
+  <text x="636" y="128" font-size="10" fill="#7a7668">limits.memory gets more</text>
+  <text x="636" y="140" font-size="10" fill="#7a7668">parallelism.</text>
+  <text x="700" y="160" text-anchor="middle" font-size="10" fill="#a09b8e">--max-total-run-memory</text>
+
+  <!-- Acquisition order -->
+  <text x="20" y="220" font-size="11" font-weight="600" fill="#a09b8e" letter-spacing="0.06em">ACQUISITION ORDER (FIXED, NO DEADLOCK)</text>
+  <rect x="20" y="236" width="760" height="50" rx="6" fill="#ffffff" stroke="#d8d5cd" stroke-width="1.2"/>
+  <rect x="40" y="246" width="150" height="30" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="115" y="266" text-anchor="middle" font-size="11" font-weight="500" fill="#2c2a25">1. Per-step slot</text>
+  <line x1="190" y1="261" x2="228" y2="261" stroke="#8a8578" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="230" y="246" width="150" height="30" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="305" y="266" text-anchor="middle" font-size="11" font-weight="500" fill="#2c2a25">2. Global run slot</text>
+  <line x1="380" y1="261" x2="418" y2="261" stroke="#8a8578" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="420" y="246" width="170" height="30" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="505" y="266" text-anchor="middle" font-size="11" font-weight="500" fill="#2c2a25">3. Memory reservation</text>
+  <line x1="590" y1="261" x2="618" y2="261" stroke="#8a8578" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="620" y="246" width="140" height="30" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="690" y="266" text-anchor="middle" font-size="11" font-weight="500" fill="#2c2a25">Run</text>
+
+  <!-- Observability -->
+  <text x="20" y="316" font-size="11" font-weight="600" fill="#a09b8e" letter-spacing="0.06em">OBSERVABILITY</text>
+  <rect x="20" y="330" width="760" height="76" rx="6" fill="#ffffff" stroke="#d8d5cd" stroke-width="1.2"/>
+  <text x="40" y="354" font-size="12" fill="#2c2a25">
+    <tspan font-weight="500" fill="#3d6b5e">run_duration_seconds{input}</tspan>
+    <tspan fill="#7a7668"> - per-run time (waits outside)</tspan>
+  </text>
+  <text x="40" y="374" font-size="12" fill="#2c2a25">
+    <tspan font-weight="500" fill="#3d6b5e">runs_in_flight</tspan>
+    <tspan fill="#7a7668"> - current slots held (unchanged gauge)</tspan>
+  </text>
+  <text x="40" y="394" font-size="12" fill="#2c2a25">
+    <tspan font-weight="500" fill="#3d6b5e">--metrics-label-input-name</tspan>
+    <tspan fill="#7a7668"> - adds {input} to requests_total, http_requests_total</tspan>
+  </text>
+
+  <!-- Legend -->
+  <rect x="20" y="412" width="14" height="4" rx="2" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="0.8"/>
+  <text x="40" y="416" font-size="10" fill="#a09b8e">Active / granted</text>
+  <rect x="150" y="412" width="14" height="4" rx="2" fill="#fef6e8" stroke="#c4993a" stroke-width="0.8"/>
+  <text x="170" y="416" font-size="10" fill="#a09b8e">Waiting</text>
+  <rect x="240" y="412" width="14" height="4" rx="2" fill="#ffffff" stroke="#c5c1b7" stroke-width="0.8"/>
+  <text x="260" y="416" font-size="10" fill="#a09b8e">Idle / available</text>
+</svg>

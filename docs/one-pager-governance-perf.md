@@ -64,12 +64,14 @@ Response caching was considered and dropped: the invalidation semantics
 (TTL, Cache-Control, key correctness across headers) add complexity out of
 proportion to the benefit when modules already run in milliseconds.
 
-## Phase 3 — Fairness inside one runtime
+## Phase 3 - Fairness inside one runtime
 
 `--max-concurrent-runs` is one FIFO: with it set, a slow module's requests
 queue everyone's behind them (the resource-governance one-pager says so),
 and without it `runs × --module-memory-limit` is the caller's number. Four
 small additions, all in `internal/engine` and `cmd/function`, all optional:
+
+![Fairness architecture](fairness-architecture.svg)
 
 - **`limits.concurrency`** (int32, ≥ 1): at most N runs of *this step* at
   once - a semaphore keyed by the module's content digest
