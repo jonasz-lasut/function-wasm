@@ -632,7 +632,7 @@ flags would admit.
 | `--max-cached-modules` | `MAX_CACHED_MODULES` | `0` (unbounded) | most compiled modules resident at once; the least recently used is dropped beyond it (freed once its last run ends). Artifacts are mapped from disk, so a resident Go module costs ~90 MB of file-backed memory |
 | `--max-concurrent-compiles` | `MAX_CONCURRENT_COMPILES` | `1` | modules compiled at once. One compile already uses every core (~25 CPU-seconds and ~1 GB for a large Go module); further first requests wait their turn instead of multiplying that |
 | `--max-cache-size` | `MAX_CACHE_SIZE` | `0` (unbounded) | MB the two on-disk caches may hold together; past it the least recently used entries (fetched modules and artifacts alike, ~230 MB per Go module version) are removed, at startup and every ten minutes. Size the volume, or set this below its size |
-| `--cosign-key` | `COSIGN_KEY` | unset | PEM file of cosign public key(s); when set only OCI modules with a matching `cosign sign --key` signature run, and `http`/`path` sources are refused |
+| `--cosign-key` | `COSIGN_KEY` | unset | PEM file of cosign public key(s); on its own, all-or-nothing — only OCI modules with a matching `cosign sign --key` signature run and `http`/`path` sources are refused. With a `--policy-file`, it supplies the keys while the policy's `requireSignature` rules decide which repositories must be signed (a repository no rule names runs unsigned) |
 | `--max-concurrent-runs` | `MAX_CONCURRENT_RUNS` | `0` (unbounded) | module runs executing at once; a further request waits for a slot under its own deadline and, if that passes first, is a fatal result (`waiting for a run slot: context deadline exceeded`) without having run. Unbounded, concurrency is the caller's — Crossplane's reconcile workers |
 | `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | total linear-memory budget in MB across all running modules; a run reserves its effective limit (`limits.memory` or `--module-memory-limit`) from the pool before it starts and waits under its deadline when the pool is full. A step that states a small `limits.memory` gets more parallelism |
 | `--warm-modules` | `WARM_MODULES` | unset | modules loaded before the health service reports Serving — resolved, verified (`--cosign-key` applies), then compiled or mapped through the same caches a request uses: OCI references pinned to their manifest digest (`repo[:tag]@sha256:…`, pulled with the runtime's Docker config) and, with `--module-dir`, `path:<file>` entries. Repeatable or comma-separated. An entry that fails to load is logged with the reason and does not stop the pod from serving; that module is loaded on its first request as usual |
@@ -640,7 +640,7 @@ flags would admit.
 | `--enable-sandbox-env` | `ENABLE_SANDBOX_ENV` | `false` | let Compositions set the environment variables a module sees (`sandbox.env`, `sandbox.envFrom`); the runtime's own environment is never passed on |
 | `--enable-sandbox-egress` | `ENABLE_SANDBOX_EGRESS` | `false` | let Compositions grant modules HTTP(S) egress through the host (`sandbox.egress`); off, any such grant is a fatal result naming the flag. See [HTTP egress](#http-egress) |
 | `--sandbox-egress-policy` | `SANDBOX_EGRESS_POLICY` | unset | YAML/JSON file with the egress ceiling: `hosts`, `hostPatterns` (any host when both are empty), `blockedCIDRs`/`allowedCIDRs` on top of the default block list, and the per-run budgets `timeout` (10s), `maxRequests` (16), `maxResponseBytes` (4 MiB), `maxRedirects` (5) |
-| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`). Evaluated **default-deny** (a `forbid` wins) **after** the `--enable-sandbox-*` floor, so it only tightens: a capability a flag disabled is never grantable whatever the policy says, and a capability the policy does not permit is refused. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). Unset, no operator constraint applies and admission is identical to today. See [operator grant policy](#operator-grant-policy) |
+| `--policy-file` | `POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`), and — caller-independent, over the `Repository` hierarchy — which repositories must carry a cosign signature (`requireSignature`, verified with `--cosign-key`). Evaluated **default-deny** (a `forbid` wins) **after** the `--enable-sandbox-*` floor, so it only tightens: a capability a flag disabled is never grantable whatever the policy says, and a capability the policy does not permit is refused. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). Unset, no operator constraint applies and admission is identical to today. See [operator grant policy](#operator-grant-policy) |
 | `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
@@ -695,8 +695,10 @@ The principal every rule sees is the caller: `principal.namespace` and
 is presently always empty). The actions are `usePrivateTmp`, `setEnv` and
 `grantEgress`; for egress the resource is the host or pattern within a
 boundary-correct `HostPattern` hierarchy, and the context carries the method
-and path. A policy that lets only `team-a` use a private `/tmp` and lets any
-namespace reach `*.example.com`:
+and path. A separate, caller-independent action `requireSignature` (over the
+`Repository` hierarchy) decides which repositories must carry a cosign signature
+- see [signing](#trust-model) below. A policy that lets only `team-a` use a
+private `/tmp` and lets any namespace reach `*.example.com`:
 
 ```cedar
 permit (principal, action == Action::"usePrivateTmp", resource)
@@ -883,6 +885,28 @@ manifest digest per process before it is run — before any cache is
 consulted, so an artifact left on a persisted volume by a runtime without
 the key is not served by one with it — and unsigned sources are refused.
 Keyless (Fulcio/Rekor) signatures are not verified.
+
+`--cosign-key` on its own is all-or-nothing: with it, every module must be
+signed. An operator grant policy (`--policy-file`) can instead require a
+signature **per repository** through a `requireSignature` rule over the same
+boundary-correct `Repository` hierarchy the module fence uses, so only the
+repositories you name must be signed while others run unsigned:
+
+```cedar
+permit (principal, action == Action::"requireSignature", resource)
+when { resource in Repository::"ghcr.io/acme/prod" };
+```
+
+The crypto is unchanged: `--cosign-key` still provides the keys and performs
+the check; Cedar only decides *whether* a given repository must be signed, and
+the refusal (a required module that is unsigned, or that the runtime has no
+`--cosign-key` to verify) happens before any cache, exactly as the
+all-or-nothing check does. Precedence: **without** `--policy-file`, `--cosign-key`
+keeps its all-or-nothing meaning unchanged; **with** a `--policy-file`, the
+per-repository `requireSignature` decision governs which modules must be signed
+(a repository no rule names is not required), and `--cosign-key` supplies the
+keys. A signature no key can check is refused, so the requirement is
+fail-closed.
 
 ## Development
 
