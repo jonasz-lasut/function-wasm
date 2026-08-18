@@ -2,7 +2,7 @@ package engine
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -196,7 +196,7 @@ func (c *Cache) load(ctx context.Context, digest string, fetch func(ctx context.
 	case c.compiles <- struct{}{}:
 		defer func() { <-c.compiles }()
 	case <-ctx.Done():
-		return nil, errors.New("timed out waiting for a compile slot")
+		return nil, fmt.Errorf("timed out waiting for a compile slot: %w", ctx.Err())
 	}
 	m, err := c.engine.Compile(wasm)
 	if err != nil {

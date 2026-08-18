@@ -141,7 +141,8 @@ func TestBlockedBy(t *testing.T) {
 		"ExplicitBlock":   {reason: "The file's blockedCIDRs add to the defaults.", policy: Policy{BlockedCIDRs: []string{"203.0.113.0/24"}}, ip: "203.0.113.7", want: "203.0.113.0/24"},
 		"ExplicitWins":    {reason: "A CIDR the file blocks stays blocked whatever allowedCIDRs says.", policy: Policy{BlockedCIDRs: []string{"10.96.0.0/24"}, AllowedCIDRs: []string{"10.96.0.0/12"}}, ip: "10.96.0.10", want: "10.96.0.0/24"},
 		"AllowEverything": {reason: "An operator can lift the whole default list.", policy: Policy{AllowedCIDRs: []string{"0.0.0.0/0", "::/0"}}, ip: "127.0.0.1"},
-		"ZonedLoopback":   {reason: "A zone must not blind the block list: netip's Contains is false for zoned addresses, so the zone is stripped before judging.", ip: "::1%lo0", want: "::1/128"},
+		"ZonedLoopback":   {reason: "A zone must not blind the block list: netip's Contains is false for zoned addresses, so the zone is stripped before judging.", ip: "::1%lo0", want: "::/96"},
+		"IPv4Compatible":  {reason: "The deprecated IPv4-compatible range (::7f00:1 for 127.0.0.1) is blocked so it cannot smuggle a private address past the block list.", ip: "::7f00:1", want: "::/96"},
 		"ZonedLinkLocal":  {reason: "Link-local addresses usually carry a zone; they stay blocked.", ip: "fe80::1%eth0", want: "fe80::/10"},
 		"ZonedULA":        {reason: "A zoned unique-local address stays blocked.", ip: "fd00::1%eth0", want: "fc00::/7"},
 	}

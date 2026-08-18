@@ -150,7 +150,7 @@ the grant decides per request. The host (`internal/egress`) applies the
 grant (host or pattern, method, normalized path prefix — dot segments are
 refused), resolves DNS itself and judges **every** address a name resolves
 to against the block list — loopback, link-local, RFC 1918, CGNAT, ULA,
-NAT64, unspecified, multicast, reserved by default; `allowedCIDRs` punch
+NAT64, IPv4-compatible, unspecified, multicast, reserved by default; `allowedCIDRs` punch
 holes, `blockedCIDRs` add — then dials the address it checked (no
 re-resolution, no proxy), terminates TLS with its own roots, follows
 redirects re-checking each hop, enforces the budgets (`timeout` 10 s,
