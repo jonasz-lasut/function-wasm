@@ -150,9 +150,10 @@ policy:
 
 The XR keeps choosing the artifact; the Composition keeps choosing where
 from and with what. The same field serves signature-free deployments that
-still want to fence tenants to a registry. Prefixes are plain string
-prefixes: `ghcr.io/example-org/` with the trailing slash, or
-`ghcr.io/example-organisation/…` is admitted too.
+still want to fence tenants to a registry. Prefixes match at a path or host
+boundary: `ghcr.io/example-org` admits `ghcr.io/example-org/mod` but never the
+sibling namespace `ghcr.io/example-org-other/…` (a trailing slash is optional
+and does not change the boundary).
 
 ## `limits`: per-Composition budgets
 

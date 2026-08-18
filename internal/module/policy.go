@@ -106,6 +106,20 @@ func admit(from string, src v1beta1.ModuleSource, policy *v1beta1.Policy) error 
 	return nil
 }
 
+// hasAnyPrefix reports whether s lies within one of the prefixes at a path or
+// host boundary: a prefix admits the location equal to it, or one it fences
+// with a following "/". A raw substring prefix would let "ghcr.io/team" admit
+// the sibling namespace "ghcr.io/team-evil" - and, worse, "https://cdn.example.com"
+// admit the adjacent host "https://cdn.example.com.attacker.net" - so the fence
+// is enforced at the boundary whether or not the prefix carries a trailing slash.
 func hasAnyPrefix(s string, prefixes []string) bool {
-	return slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(s, p) })
+	return slices.ContainsFunc(prefixes, func(p string) bool {
+		if s == p {
+			return true
+		}
+		if !strings.HasSuffix(p, "/") {
+			p += "/"
+		}
+		return strings.HasPrefix(s, p)
+	})
 }
