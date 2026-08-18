@@ -119,14 +119,14 @@ func (c *CeilingFlags) ceilings(log logging.Logger) (admission.Ceilings, error) 
 		if operatorPolicy, err = authz.LoadOperatorPolicy(c.SandboxPolicyFile); err != nil {
 			return admission.Ceilings{}, err
 		}
-		log.Info("Operator grant policy loaded", "policy-file", c.PolicyFile)
+		log.Info("Operator grant policy loaded", "policy-file", c.SandboxPolicyFile)
 		// With an operator policy the signature requirement is per-repository
 		// (requireSignature), not --cosign-key's all-or-nothing: a repository
 		// no rule names is not required to be signed. Say so plainly, so an
 		// operator who added a policy for other reasons is not surprised that
 		// only the repositories it names are enforced.
 		if c.CosignKey != "" {
-			log.Info("Signature requirement is governed per-repository by the operator policy (requireSignature); --cosign-key provides the keys but no longer requires every module", "policy-file", c.PolicyFile)
+			log.Info("Signature requirement is governed per-repository by the operator policy (requireSignature); --cosign-key provides the keys but no longer requires every module", "policy-file", c.SandboxPolicyFile)
 		}
 	}
 	return admission.Ceilings{Engine: c.engineConfig().WithDefaults(), Sandbox: sandboxCeiling, Egress: egressCeiling, Policy: operatorPolicy}, nil
@@ -135,7 +135,7 @@ func (c *CeilingFlags) ceilings(log logging.Logger) (admission.Ceilings, error) 
 // resolver builds the module resolver the flags describe: --module-dir,
 // --max-module-size and --cosign-key, over the blob store (nil for a one-off
 // validate). When an operator policy is present it also carries its
-// per-repository signature requirement (--policy-file's requireSignature),
+// per-repository signature requirement (--sandbox-policy-file's requireSignature),
 // which replaces --cosign-key's all-or-nothing: the key still verifies, the
 // policy decides which repositories must be signed.
 func (c *CeilingFlags) resolver(blobs *cache.Store, policy *authz.OperatorPolicy) (*module.Resolver, error) {

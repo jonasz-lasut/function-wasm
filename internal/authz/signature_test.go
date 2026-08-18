@@ -24,7 +24,7 @@ func TestOperatorPolicyRequiresSignature(t *testing.T) {
 		want     bool
 	}{
 		"NilPolicyRequiresNothing": {
-			reason:   "No --policy-file adds no requirement, so today's --cosign-key behaviour stands: a nil policy requires nothing.",
+			reason:   "No --sandbox-policy-file adds no requirement, so today's --cosign-key behaviour stands: a nil policy requires nothing.",
 			policy:   nil,
 			location: "ghcr.io/secure/greeter",
 			want:     false,

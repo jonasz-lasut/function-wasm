@@ -59,7 +59,7 @@ type Options struct {
 	// against. When RequireSignature is nil it is also the requirement: set,
 	// every module must be an OCI artifact carrying a signature it accepts and
 	// http and path sources are refused (the all-or-nothing --cosign-key a
-	// runtime without --policy-file has); unset, nothing is verified.
+	// runtime without --sandbox-policy-file has); unset, nothing is verified.
 	Verifier *Verifier
 	// RequireSignature, when set, decides per normalized module location
 	// whether a cosign signature is required, replacing Verifier's

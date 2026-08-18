@@ -22,7 +22,7 @@ var requireSignatureAction = types.NewEntityUID("Action", "requireSignature")
 // "ghcr.io/team-evil") or an adjacent host.
 //
 // Unlike the sandbox-capability decisions, a nil policy returns false: absent a
-// --policy-file the per-repository requirement adds nothing, so the caller keeps
+// --sandbox-policy-file the per-repository requirement adds nothing, so the caller keeps
 // today's all-or-nothing --cosign-key behaviour unchanged. The requirement is
 // caller-independent - a signed module is trusted whoever pulls it - so the
 // request principal is a placeholder, as the built-in fences leave it.
