@@ -1,0 +1,202 @@
+# function-wasm: DeploymentRuntimeConfig mounting a Cedar operator policy,
+# exercising every operator-authorable option. Apply into crossplane-system.
+#
+# Trust model: this Cedar document is OPERATOR-authored and lives only here,
+# beside the runtime. It never comes from a module manifest or a Composition
+# Input (either would let a module self-authorize). It can only TIGHTEN: it is
+# AND-combined with the --enable-sandbox-* floor and evaluated default-deny.
+---
+# ── Cedar operator grant policy (--sandbox-policy-file) ───────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: function-wasm-policy
+  namespace: crossplane-system
+data:
+  policy.cedar: |
+    // Default-deny: with a policy file present, a sandbox capability is granted
+    // ONLY where a permit below matches - and only if its --enable-sandbox-*
+    // flag is on (the flag is the hard floor; this policy narrows within it).
+    // `forbid` always wins. Omitting a capability's permit means it is refused,
+    // even though the flag enables it - so permit every capability you intend
+    // to allow.
+
+    // Private /tmp (Action::"usePrivateTmp"): allowed for every caller.
+    permit (principal, action == Action::"usePrivateTmp", resource);
+
+    // Environment variables (Action::"setEnv"; context.keys holds the explicit
+    // sandbox.env names). Only namespace "team-a" may set env vars...
+    permit (principal, action == Action::"setEnv", resource)
+    when { principal.namespace == "team-a" };
+    // ...and never a variable named like a cloud secret (forbid wins).
+    forbid (principal, action == Action::"setEnv", resource)
+    when { context.keys.contains("AWS_SECRET_ACCESS_KEY") };
+
+    // HTTP egress (Action::"grantEgress"). This is now the HOST ALLOWLIST: with
+    // the egress file carrying no hosts (below), the ceiling is open and this
+    // default-deny policy is the sole authority over which hosts are grantable.
+    // The resource is the host or pattern in the HostPattern hierarchy (so
+    // `resource in HostPattern::"example.com"` matches an exact host under
+    // example.com and the pattern "*.example.com"); resource.host is available
+    // for `like`; context.method and context.path carry the rest. Judged once
+    // per (rule, method).
+    // GET/HEAD under /v1/ to any host in example.com, for any caller...
+    permit (principal, action == Action::"grantEgress", resource)
+    when {
+      resource in HostPattern::"example.com" &&
+      ["GET", "HEAD"].contains(context.method) &&
+      context.path like "/v1/*"
+    };
+    // ...but never for namespace "untrusted" (forbid wins).
+    forbid (principal, action == Action::"grantEgress", resource)
+    when { principal.namespace == "untrusted" };
+
+    // Per-repository signature requirement (Action::"requireSignature"). Cedar
+    // chooses WHICH repositories must be signed; --cosign-key supplies the keys
+    // and the cosign crypto performs the check. A repository no rule names runs
+    // unsigned (this replaces --cosign-key's all-or-nothing).
+    permit (principal, action == Action::"requireSignature", resource)
+    when { resource in Repository::"ghcr.io/acme/prod" };
+
+    // SSRF CIDR rules (Action::"dialAddress"). Compiled to a Go table at load -
+    // no Cedar runs on the dial path. These ADD to the built-in block list
+    // (loopback, link-local, RFC1918, cluster and reserved ranges); forbid wins
+    // over permit and over the defaults. The condition must be a single ip test:
+    // context.ip.isInRange(ip("CIDR")), context.ip.isLoopback(), or a || of them.
+    //
+    // Allow one in-cluster service (a hole in the default 10.0.0.0/8 block):
+    permit (principal, action == Action::"dialAddress", resource)
+    when { context.ip.isInRange(ip("10.96.10.5/32")) };
+    // Additionally block a public range the defaults do not cover:
+    forbid (principal, action == Action::"dialAddress", resource)
+    when { context.ip.isInRange(ip("203.0.113.0/24")) };
+---
+# ── Egress budgets (--sandbox-egress-policy): budgets-only now. The declarative
+#    halves moved to the Cedar policy above - the host allowlist is `grantEgress`,
+#    the CIDR block/allow list is `dialAddress`. Only the STATEFUL budgets and
+#    rate limit remain here, because Cedar cannot count over time. (hosts/
+#    hostPatterns/blockedCIDRs/allowedCIDRs are still accepted for back-compat,
+#    but the Cedar policy is the forward path.) Leaving hosts unset makes the
+#    ceiling open, so grantEgress alone gates hosts. Drop this file entirely if
+#    the default budgets and no rate limit suit you - the egress ceiling is then
+#    wholly Cedar.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: function-wasm-egress
+  namespace: crossplane-system
+data:
+  egress.yaml: |
+    # Stateful budgets only; hosts and CIDR rules live in the Cedar policy.
+    timeout: 10s
+    maxRequests: 16
+    maxResponseBytes: 4194304   # 4 MiB
+    maxRedirects: 5
+    rateLimit:
+      requestsPerMinute: 60
+      burst: 10
+---
+# ── cosign public key (--cosign-key): the keys the policy's requireSignature
+#    rules verify against. Replace with your real cosign.pub.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: function-wasm-cosign
+  namespace: crossplane-system
+type: Opaque
+stringData:
+  cosign.pub: |
+    -----BEGIN PUBLIC KEY-----
+    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...replace-with-your-cosign-public-key...
+    -----END PUBLIC KEY-----
+---
+# ── DeploymentRuntimeConfig: flags, mounts, and a writable /tmp ───────────────
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: function-wasm-runtime
+spec:
+  deploymentTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            # Must be "package-runtime": the container Crossplane runs the
+            # function in. Args and mounts are overlaid onto it.
+            - name: package-runtime
+              args:
+                # serve is the default command - no subcommand needed.
+                - --debug
+                # Run budgets (upper bounds; a Composition's limits ask for less).
+                - --module-timeout=30s
+                - --module-memory-limit=512      # MB
+                - --max-module-size=128          # MB
+                - --max-concurrent-runs=8
+                # Signatures: keys here, per-repository requirement in the policy.
+                - --cosign-key=/etc/function-wasm/cosign/cosign.pub
+                # Operator grant policy (Cedar): capabilities, per-tenant rules,
+                # requireSignature, and the SSRF CIDR rules.
+                - --sandbox-policy-file=/etc/function-wasm/policy/policy.cedar
+                # Sandbox capability floor (hard on/off; Cedar narrows within it).
+                - --enable-sandbox-private-tmp
+                - --enable-sandbox-env
+                - --enable-sandbox-egress
+                - --sandbox-egress-policy=/etc/function-wasm/egress/egress.yaml
+                # Other governance flags exist too: --module-dir,
+                # --max-concurrent-compiles, --max-cached-modules,
+                # --max-cache-size, --max-total-run-memory, --warm-modules,
+                # --health-address.
+              volumeMounts:
+                - name: policy
+                  mountPath: /etc/function-wasm/policy
+                  readOnly: true
+                - name: egress
+                  mountPath: /etc/function-wasm/egress
+                  readOnly: true
+                - name: cosign
+                  mountPath: /etc/function-wasm/cosign
+                  readOnly: true
+                - name: tmp
+                  # The private /tmp and the module cache (/tmp/function-wasm-cache)
+                  # both live here; the root filesystem is read-only.
+                  mountPath: /tmp
+              securityContext:
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+          volumes:
+            - name: policy
+              configMap:
+                name: function-wasm-policy
+            - name: egress
+              configMap:
+                name: function-wasm-egress
+            - name: cosign
+              secret:
+                secretName: function-wasm-cosign
+            - name: tmp
+              # emptyDir bounds what a module may write to /tmp (sizeLimit) and
+              # gives the read-only-root pod a writable scratch + cache. Swap for
+              # a PVC to persist the compiled-artifact cache across restarts.
+              emptyDir:
+                sizeLimit: 2Gi
+---
+# ── The Function, using the runtime config above ──────────────────────────────
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-wasm
+spec:
+  # Use a build that carries --sandbox-policy-file (the Cedar features).
+  package: xpkg.upbound.io/jonasz-lasut/function-wasm:v0.3.0
+  runtimeConfigRef:
+    name: function-wasm-runtime
