@@ -53,6 +53,9 @@ type Function struct {
 	// parsed caches each digest's parsed manifest (nil for a module without
 	// one) so its schema is compiled once per process, like the module.
 	parsed sync.Map // digest → *manifest.Manifest
+	// stepSlots bounds per-step concurrency (limits.concurrency), keyed by
+	// the module's digest; nil when no request has ever used concurrency.
+	stepSlots *engine.StepSlots
 }
 
 // ceilings are what every request's Input is admitted against.
@@ -68,14 +71,13 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	log := f.log.WithValues("tag", req.GetMeta().GetTag())
 	log.Info("Running function")
 	rsp := response.To(req, f.ttl)
+	in := &v1beta1.Input{}
 	defer func() {
 		if r := recover(); r != nil {
 			log.Info("Panic while running the function", "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
 			out, err = f.fatal(rsp, log, metrics.OutcomeError, errors.Errorf("internal error while running the module: %v", r)), nil
 		}
 	}()
-
-	in := &v1beta1.Input{}
 	if err := request.GetInput(req, in); err != nil {
 		return f.fatal(rsp, log, metrics.OutcomeRefused, errors.Wrapf(err, "cannot get function input from %T", req)), nil
 	}
@@ -108,6 +110,24 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	if err != nil {
 		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
 	}
+
+	// Resolve env[] and envFrom[] against the request's credentials, after
+	// registryAuth: the pull credential is known and withheld as a source.
+	var pullCred string
+	if src.OCI != nil && src.OCI.Credentials != "" {
+		pullCred = src.OCI.Credentials
+	}
+	if sandbox.RequestsEnv(in.Sandbox) {
+		env, err := sandbox.Materialize(in.Sandbox, sandbox.Sources{
+			Credentials: req.GetCredentials(),
+			Withheld:    pullCred,
+		})
+		if err != nil {
+			return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
+		}
+		limits.Env = env
+	}
+
 	// The credential that pulls the module is the host's business: the guest
 	// sees every other step credential, as a native function would, but not
 	// the one that fetched it.
@@ -142,7 +162,18 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	// The per-run client logs every request with the
 	// module's reference and digest.
 	if admitted.HTTP != nil {
-		limits.HTTP = admitted.HTTP.Client(log)
+		limits.HTTP = admitted.HTTP.Client(log, ref.Digest)
+	}
+	limits.Key = ref.Digest
+	// A per-step slot, when limits.concurrency is set, is taken before the
+	// engine's global slot: one step does not take every global slot from
+	// every other. The slot is released when the run ends.
+	if admitted.Concurrency > 0 {
+		release, err := f.stepSlots.Acquire(ctx, ref.Digest, admitted.Concurrency)
+		if err != nil {
+			return f.fatal(rsp, log, metrics.OutcomeError, errors.Wrapf(err, "module %s failed", ref.Description)), nil
+		}
+		defer release()
 	}
 	// A run slot, when --max-concurrent-runs bounds them, is waited for
 	// inside Run under the request context; a wait the deadline cuts short
@@ -161,8 +192,8 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 }
 
 // fatal turns err into the request's fatal result and makes the refusal
-// visible on the runtime side too — one log line with the reason and a
-// count by outcome — so an operator of a shared runtime can see what is
+// visible on the runtime side too - one log line with the reason and a
+// count by outcome - so an operator of a shared runtime can see what is
 // being refused (or failing) without reading every XR's conditions.
 // outcome is refused (the runtime declined before running the module:
 // input, policy, grants, limits, resolution, verification) or error (the

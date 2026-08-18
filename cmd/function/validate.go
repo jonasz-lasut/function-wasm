@@ -516,6 +516,9 @@ func describeAdmitted(in *v1beta1.Input, a admission.Admitted) []string {
 		if in.Limits.Memory != nil {
 			limits = append(limits, "memory "+in.Limits.Memory.String())
 		}
+		if in.Limits.Concurrency != nil {
+			limits = append(limits, fmt.Sprintf("concurrency %d", a.Concurrency))
+		}
 		if len(limits) > 0 {
 			out = append(out, "limits "+strings.Join(limits, " "))
 		}
@@ -534,13 +537,26 @@ func describeAdmitted(in *v1beta1.Input, a admission.Admitted) []string {
 	if a.Grant.PrivateTmp {
 		out = append(out, "private /tmp")
 	}
-	if len(a.Grant.Env) > 0 {
-		keys := make([]string, 0, len(a.Grant.Env))
-		for k := range a.Grant.Env {
-			keys = append(keys, k)
+	if in.Sandbox != nil && len(in.Sandbox.Env) > 0 {
+		keys := make([]string, 0, len(in.Sandbox.Env))
+		for _, e := range in.Sandbox.Env {
+			keys = append(keys, e.Name)
 		}
 		sort.Strings(keys)
 		out = append(out, "env "+strings.Join(keys, " "))
+	}
+	if in.Sandbox != nil && len(in.Sandbox.EnvFrom) > 0 {
+		var sources []string
+		for _, ef := range in.Sandbox.EnvFrom {
+			if ef.Credential != nil {
+				s := ef.Credential.Name
+				if ef.Prefix != "" {
+					s += " (prefix " + ef.Prefix + ")"
+				}
+				sources = append(sources, s)
+			}
+		}
+		out = append(out, "envFrom "+strings.Join(sources, " "))
 	}
 	return out
 }

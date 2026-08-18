@@ -48,6 +48,10 @@ type Admitted struct {
 	// HTTP is the egress grant — the Composition's rules within the ceiling —
 	// or nil when the Input asks for none.
 	HTTP *egress.Grant
+	// Concurrency is the per-step concurrency limit (limits.concurrency),
+	// zero when unset. Keyed by the module's digest, taken before the
+	// global run slot.
+	Concurrency int
 }
 
 // Admit judges in against c in the order RunFunction does — sandbox shape,
@@ -84,8 +88,23 @@ func Admit(in *v1beta1.Input, c Ceilings) (Admitted, error) {
 		return out, err
 	}
 	opts.PrivateTmp = grant.PrivateTmp
-	opts.Env = grant.Env
+	// Env is populated by sandbox.Materialize after the pull credential is
+	// known, not here: valueFrom references need the request's credentials
+	// and the withheld pull credential name, neither of which Admit has.
 	out.Options, out.Grant = opts, grant
+	if in.Limits != nil && in.Limits.Concurrency != nil {
+		n := int(*in.Limits.Concurrency)
+		if n <= 0 {
+			return out, fmt.Errorf("limits.concurrency %d must be positive", n)
+		}
+		// Silently cap to the global bound when set: a per-step limit
+		// above the global one would never help, but refusing it would
+		// force every Composition to know the operator's flag.
+		if c.Engine.MaxConcurrentRuns > 0 && n > c.Engine.MaxConcurrentRuns {
+			n = c.Engine.MaxConcurrentRuns
+		}
+		out.Concurrency = n
+	}
 	if err := module.Validate(in.Module); err != nil {
 		return out, fmt.Errorf("cannot resolve module: %w", err)
 	}

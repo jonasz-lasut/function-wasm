@@ -37,10 +37,11 @@ func TestAdmit(t *testing.T) {
 		c  Ceilings
 	}
 	type want struct {
-		options engine.RunOptions
-		grant   sandbox.Grant
-		http    bool
-		err     string
+		options     engine.RunOptions
+		grant       sandbox.Grant
+		http        bool
+		concurrency int
+		err         string
 	}
 	cases := map[string]struct {
 		reason string
@@ -58,20 +59,20 @@ func TestAdmit(t *testing.T) {
 				Limits: &v1beta1.Limits{Timeout: &metav1.Duration{Duration: 5 * time.Second}, Memory: resource.NewQuantity(64<<20, resource.BinarySI)},
 				Sandbox: &v1beta1.Sandbox{
 					Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true},
-					Env:        map[string]string{"GREETING": "hi"},
+					Env:        []v1beta1.EnvVar{{Name: "GREETING", Value: new("hi")}},
 					Egress:     &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}},
 				},
 			}, c: all},
 			want: want{
-				options: engine.RunOptions{Timeout: 5 * time.Second, MemoryLimit: 64 << 20, PrivateTmp: true, Env: map[string]string{"GREETING": "hi"}},
-				grant:   sandbox.Grant{PrivateTmp: true, Env: map[string]string{"GREETING": "hi"}},
+				options: engine.RunOptions{Timeout: 5 * time.Second, MemoryLimit: 64 << 20, PrivateTmp: true},
+				grant:   sandbox.Grant{PrivateTmp: true},
 				http:    true,
 			},
 		},
 		"BadSandboxShape": {
 			reason: "The sandbox's shape is judged first, before any ceiling.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: map[string]string{"1x": "y"}}}, c: all},
-			want:   want{err: `sandbox.env key "1x" is not an identifier`},
+			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "1x", Value: new("y")}}}}, c: all},
+			want:   want{err: `sandbox.env[0].name "1x" is not an identifier`},
 		},
 		"PrivateTmpRefused": {
 			reason: "A grant outside the ceiling names the grant and the flag.",
@@ -80,7 +81,7 @@ func TestAdmit(t *testing.T) {
 		},
 		"EnvRefused": {
 			reason: "The same for the environment.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: map[string]string{"A": "b"}}}, c: closed},
+			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "A", Value: new("b")}}}}, c: closed},
 			want:   want{err: "sandbox.env is refused: the runtime was started without --enable-sandbox-env"},
 		},
 		"EgressDisabled": {
@@ -122,6 +123,30 @@ func TestAdmit(t *testing.T) {
 			reason: "A module.from source passes shape checks here; the composite resource is FromComposite's business.",
 			args:   args{in: &v1beta1.Input{Module: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}}, c: all},
 		},
+		"ConcurrencySet": {
+			reason: "A concurrency limit is passed through.",
+			args: args{
+				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(4))}},
+				c:  all,
+			},
+			want: want{concurrency: 4},
+		},
+		"ConcurrencyCapped": {
+			reason: "Concurrency above --max-concurrent-runs is silently capped.",
+			args: args{
+				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(10))}},
+				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, MaxConcurrentRuns: 5}, Sandbox: open, Egress: fenced},
+			},
+			want: want{concurrency: 5},
+		},
+		"ConcurrencyNoBound": {
+			reason: "Concurrency without --max-concurrent-runs is uncapped.",
+			args: args{
+				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(100))}},
+				c:  all,
+			},
+			want: want{concurrency: 100},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -143,6 +168,9 @@ func TestAdmit(t *testing.T) {
 			}
 			if (got.HTTP != nil) != tc.want.http {
 				t.Errorf("\n%s\nAdmit() HTTP grant present: %v, want %v", tc.reason, got.HTTP != nil, tc.want.http)
+			}
+			if got.Concurrency != tc.want.concurrency {
+				t.Errorf("\n%s\nAdmit() concurrency: got %d, want %d", tc.reason, got.Concurrency, tc.want.concurrency)
 			}
 		})
 	}

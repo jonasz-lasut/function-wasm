@@ -408,6 +408,6 @@ func TestCacheMapsArtifactsFromDisk(t *testing.T) {
 func TestVersion(t *testing.T) {
 	v := Version()
 	if !strings.HasPrefix(v, "v") || !strings.HasSuffix(v, "-"+runtime.GOOS+"-"+runtime.GOARCH) {
-		t.Errorf("Version() = %q, want <wasmtime-go major from the import path>-<GOOS>-<GOARCH>", v)
+		t.Errorf("Version() = %q, want <wasmtime-go major>-<GOOS>-<GOARCH>", v)
 	}
 }
