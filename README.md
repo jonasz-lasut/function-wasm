@@ -502,6 +502,29 @@ in the order they decide:
    is only that the policy refused; the resolved address and the block-list
    entry stay in the runtime's audit line.
 
+   The `blockedCIDRs`/`allowedCIDRs` fields can instead be authored as
+   [Cedar](https://www.cedarpolicy.com) rules in `--sandbox-policy-file`, over the
+   `Action::"dialAddress"` action and the `context.ip` extension: a `forbid`
+   is a block (like `blockedCIDRs`), a `permit` is a hole (like
+   `allowedCIDRs`), and `forbid` wins.
+
+   ```cedar
+   // Block an internal range, then open one service inside it.
+   forbid (principal, action == Action::"dialAddress", resource)
+   when { context.ip.isInRange(ip("10.0.0.0/8")) };
+   permit (principal, action == Action::"dialAddress", resource)
+   when { context.ip.isInRange(ip("10.96.0.0/12")) };
+   ```
+
+   Each rule's condition is one ip test — `context.ip.isInRange(ip("CIDR"))`,
+   `context.ip.isLoopback()`, or a `||` of those — and it compiles **at load**
+   into the same ordered prefix lists the YAML fields fill, so the dial path
+   stays a few `Prefix.Contains` and **Cedar never runs per resolved IP**. The
+   two sources combine additively (a Cedar `forbid` joins `blockedCIDRs`, a
+   Cedar `permit` joins `allowedCIDRs`); the YAML fields still work unchanged.
+   A malformed rule is refused at startup, so `function validate` reports it
+   too.
+
 2. **The Composition** grants what its module needs, within the ceiling:
 
    ```yaml
@@ -640,7 +663,7 @@ flags would admit.
 | `--enable-sandbox-env` | `ENABLE_SANDBOX_ENV` | `false` | let Compositions set the environment variables a module sees (`sandbox.env`, `sandbox.envFrom`); the runtime's own environment is never passed on |
 | `--enable-sandbox-egress` | `ENABLE_SANDBOX_EGRESS` | `false` | let Compositions grant modules HTTP(S) egress through the host (`sandbox.egress`); off, any such grant is a fatal result naming the flag. See [HTTP egress](#http-egress) |
 | `--sandbox-egress-policy` | `SANDBOX_EGRESS_POLICY` | unset | YAML/JSON file with the egress ceiling: `hosts`, `hostPatterns` (any host when both are empty), `blockedCIDRs`/`allowedCIDRs` on top of the default block list, and the per-run budgets `timeout` (10s), `maxRequests` (16), `maxResponseBytes` (4 MiB), `maxRedirects` (5) |
-| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`), and — caller-independent, over the `Repository` hierarchy — which repositories must carry a cosign signature (`requireSignature`, verified with `--cosign-key`). Evaluated **default-deny** (a `forbid` wins) **after** the `--enable-sandbox-*` floor, so it only tightens: a capability a flag disabled is never grantable whatever the policy says, and a capability the policy does not permit is refused. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). Unset, no operator constraint applies and admission is identical to today. See [operator grant policy](#operator-grant-policy) |
+| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`). It may also carry the SSRF CIDR block/allow rules (`forbid`/`permit` on `Action::"dialAddress"` with `context.ip.isInRange(ip(…))`/`isLoopback()`), which compile at load into the egress block list alongside `--sandbox-egress-policy`'s `blockedCIDRs`/`allowedCIDRs` — Cedar never runs on the dial path. Evaluated **default-deny** (a `forbid` wins) **after** the `--enable-sandbox-*` floor, so it only tightens: a capability a flag disabled is never grantable whatever the policy says, and a capability the policy does not permit is refused. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). Unset, no operator constraint applies and admission is identical to today. See [operator grant policy](#operator-grant-policy) |
 | `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 

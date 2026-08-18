@@ -130,8 +130,11 @@ type budget struct {
 	maxRedirects     int
 }
 
-// New compiles a Policy, applying the defaults for its zero fields.
-func New(p Policy) (*Egress, error) {
+// New compiles a Policy, applying the defaults for its zero fields. Options add
+// the operator's Cedar-authored CIDR rules (internal/authz) to the compiled
+// block and allow lists, so blockedBy incorporates them with no Cedar on the
+// dial path.
+func New(p Policy, opts ...Option) (*Egress, error) {
 	e := &Egress{
 		hosts: map[string]bool{},
 		budget: budget{
@@ -192,6 +195,13 @@ func New(p Policy) (*Egress, error) {
 			rl.burst = max(1, int(rl.requestsPerMinute))
 		}
 		e.rateLimits = newRateLimiters(*rl)
+	}
+	// The operator's Cedar-authored CIDR rules extend the same lists the policy
+	// file's fields fill, applied last so a forbid joins explicit (which wins)
+	// and a permit joins allowed (a hole over the defaults); blockedBy's
+	// precedence is unchanged.
+	for _, opt := range opts {
+		opt(e)
 	}
 	return e, nil
 }
