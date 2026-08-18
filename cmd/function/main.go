@@ -23,6 +23,7 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 
 	"github.com/jonasz-lasut/function-wasm/internal/admission"
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
@@ -54,6 +55,7 @@ type CeilingFlags struct {
 	ModuleTimeout     time.Duration `help:"Maximum wall-clock time one module run may take." default:"30s"`
 	ModuleMemoryLimit int           `help:"Maximum linear memory of a running module in MB." default:"512"`
 	CosignKey         string        `help:"PEM file with one or more cosign public keys. When set, only OCI modules carrying a cosign signature by one of the keys run; http and path sources are refused." env:"COSIGN_KEY" type:"existingfile"`
+	SandboxPolicyFile string        `help:"Cedar document with the operator's grant policy: which callers (by namespace, xrKind) a Composition may be granted a private /tmp, environment or egress for. Evaluated default-deny after the --enable-sandbox-* floor, so it only tightens - a mounted ConfigMap satisfies it, and it is immutable for the process (restart to reload). Unset, no operator constraint applies." env:"SANDBOX_POLICY_FILE" type:"existingfile"`
 
 	// Sandbox ceilings (docs/one-pager-sandbox.md): every capability is
 	// switched on with --enable-sandbox-<feature>; a Composition asks for
@@ -110,7 +112,16 @@ func (c *CeilingFlags) ceilings(log logging.Logger) (admission.Ceilings, error) 
 		}
 		log.Info("Sandbox grants enabled", "private-tmp", c.EnableSandboxPrivateTmp, "env", c.EnableSandboxEnv, "egress", c.EnableSandboxEgress, "egress-policy", c.SandboxEgressPolicy, "egress-ceiling", egressCeilingText)
 	}
-	return admission.Ceilings{Engine: c.engineConfig().WithDefaults(), Sandbox: sandboxCeiling, Egress: egressCeiling}, nil
+	// The operator's grant policy, compiled once. It narrows within the floor
+	// above; absent, it adds no constraint.
+	var operatorPolicy *authz.OperatorPolicy
+	if c.SandboxPolicyFile != "" {
+		if operatorPolicy, err = authz.LoadOperatorPolicy(c.SandboxPolicyFile); err != nil {
+			return admission.Ceilings{}, err
+		}
+		log.Info("Operator grant policy loaded", "policy-file", c.SandboxPolicyFile)
+	}
+	return admission.Ceilings{Engine: c.engineConfig().WithDefaults(), Sandbox: sandboxCeiling, Egress: egressCeiling, Policy: operatorPolicy}, nil
 }
 
 // resolver builds the module resolver the flags describe: --module-dir,
@@ -210,6 +221,7 @@ func (c *ServeCmd) Run(cli *CLI) error {
 		}),
 		resolver:  resolver,
 		sandbox:   ceilings.Sandbox,
+		policy:    ceilings.Policy,
 		manifests: manifests,
 		stepSlots: stepSlots,
 	}

@@ -10,7 +10,7 @@
   <text x="38" y="107" font-size="9.5" fill="#6f6b5e">authored + audited by the operator</text>
 
   <rect x="24" y="124" width="250" height="98" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
-  <text x="38" y="142" font-size="10" fill="#2c2a25">--policy-file &#8594; .cedar document(s)</text>
+  <text x="38" y="142" font-size="10" fill="#2c2a25">--sandbox-policy-file &#8594; .cedar document(s)</text>
   <text x="38" y="159" font-size="9.5" fill="#7a7668">compiled once at startup &#8594; PolicySet</text>
   <text x="38" y="176" font-size="9.5" fill="#7a7668">immutable for the process life</text>
   <text x="38" y="190" font-size="9" fill="#a09b8e">(parity with --sandbox-egress-policy,</text>

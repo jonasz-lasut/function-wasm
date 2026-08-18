@@ -640,6 +640,7 @@ flags would admit.
 | `--enable-sandbox-env` | `ENABLE_SANDBOX_ENV` | `false` | let Compositions set the environment variables a module sees (`sandbox.env`, `sandbox.envFrom`); the runtime's own environment is never passed on |
 | `--enable-sandbox-egress` | `ENABLE_SANDBOX_EGRESS` | `false` | let Compositions grant modules HTTP(S) egress through the host (`sandbox.egress`); off, any such grant is a fatal result naming the flag. See [HTTP egress](#http-egress) |
 | `--sandbox-egress-policy` | `SANDBOX_EGRESS_POLICY` | unset | YAML/JSON file with the egress ceiling: `hosts`, `hostPatterns` (any host when both are empty), `blockedCIDRs`/`allowedCIDRs` on top of the default block list, and the per-run budgets `timeout` (10s), `maxRequests` (16), `maxResponseBytes` (4 MiB), `maxRedirects` (5) |
+| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`). Evaluated **default-deny** (a `forbid` wins) **after** the `--enable-sandbox-*` floor, so it only tightens: a capability a flag disabled is never grantable whatever the policy says, and a capability the policy does not permit is refused. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). Unset, no operator constraint applies and admission is identical to today. See [operator grant policy](#operator-grant-policy) |
 | `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
@@ -675,6 +676,63 @@ spec:
           - name: scratch
             emptyDir: {medium: Memory, sizeLimit: 64Mi}
 ```
+
+### Operator grant policy
+
+The `--enable-sandbox-*` flags are the hard floor: a capability a flag
+disables is never grantable. `--sandbox-policy-file` adds an optional
+[Cedar](https://www.cedarpolicy.com) document on top of that floor - the
+operator's grant policy - that decides *which callers* may be granted a
+capability the floor already allows. It is evaluated **default-deny** (a
+`forbid` overrides a `permit`), **AND-combined** with the floor, so it can
+only tighten. Without it, admission is identical to a runtime that never had
+it; the document lives on the operator boundary alone (never the module
+manifest or the Composition, which would let a module self-authorize).
+
+The principal every rule sees is the caller: `principal.namespace` and
+`principal.xrKind` come from the observed composite resource (a
+`RunFunctionRequest` carries no Composition name, so `principal.composition`
+is presently always empty). The actions are `usePrivateTmp`, `setEnv` and
+`grantEgress`; for egress the resource is the host or pattern within a
+boundary-correct `HostPattern` hierarchy, and the context carries the method
+and path. A policy that lets only `team-a` use a private `/tmp` and lets any
+namespace reach `*.example.com`:
+
+```cedar
+permit (principal, action == Action::"usePrivateTmp", resource)
+when { principal.namespace == "team-a" };
+
+permit (principal, action == Action::"grantEgress", resource)
+when { resource in HostPattern::"example.com" && context.method == "GET" };
+```
+
+Mount it and point the flag at it:
+
+```yaml
+spec:
+  deploymentTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            args:
+            - --enable-sandbox-private-tmp
+            - --enable-sandbox-egress
+            - --sandbox-policy-file=/etc/function-wasm/policy.cedar
+            volumeMounts:
+            - {name: policy, mountPath: /etc/function-wasm, readOnly: true}
+          volumes:
+          - name: policy
+            configMap: {name: function-wasm-policy}
+```
+
+Because the policy is default-deny, a document that governs one capability
+refuses every *other* capability a Composition asks for unless it also
+permits it: with a `--sandbox-policy-file` set, permit every capability you mean to
+allow. `function validate --sandbox-policy-file …` reports the same verdicts offline
+(the principal comes from `--xr`, else a zero principal that matches no
+per-tenant condition).
 
 The runtime reports readiness — caches open, engine up, the modules named
 by `--warm-modules` (none by default) loaded — in two places: the gRPC

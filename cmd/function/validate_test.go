@@ -72,6 +72,34 @@ func TestValidate(t *testing.T) {
 				exit: 1,
 			},
 		},
+		"OperatorPolicy": {
+			reason: "With --sandbox-policy-file the operator grant policy narrows within the floor: it permits the egress it grants but, default-deny, refuses the private /tmp the flag enabled.",
+			args:   []string{fixture("operator-policy.yaml"), "--enable-sandbox-egress", "--sandbox-egress-policy", fixture("egress-policy.yaml"), "--enable-sandbox-private-tmp", "--sandbox-policy-file", fixture("policy.cedar")},
+			want: want{
+				stdout: fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[0] egress-ok: OK (oci ghcr.io/example/greeter@" + testDigest + ", egress api.example.com)\n" +
+					"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n" +
+					fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[1] tmp-denied: refused: sandbox.filesystem.privateTmp is refused: the operator policy (--sandbox-policy-file) does not permit it for this request\n",
+				exit: 1,
+			},
+		},
+		"OperatorPolicyAbsent": {
+			reason: "Without --sandbox-policy-file the same Composition against the same flags is admitted throughout: the policy is purely additive.",
+			args:   []string{fixture("operator-policy.yaml"), "--enable-sandbox-egress", "--sandbox-egress-policy", fixture("egress-policy.yaml"), "--enable-sandbox-private-tmp"},
+			want: want{
+				stdout: fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[0] egress-ok: OK (oci ghcr.io/example/greeter@" + testDigest + ", egress api.example.com)\n" +
+					"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n" +
+					fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[1] tmp-denied: OK (oci ghcr.io/example/greeter@" + testDigest + ", private /tmp)\n",
+			},
+		},
+		"OperatorPolicyEnvEgressDenied": {
+			reason: "The operator grant policy refuses the environment and egress it does not permit (default-deny), the same refusals the request path emits, so both surface in validate.",
+			args:   []string{fixture("operator-policy-denied.yaml"), "--enable-sandbox-env", "--enable-sandbox-egress", "--sandbox-egress-policy", fixture("egress-policy.yaml"), "--sandbox-policy-file", fixture("policy-strict.cedar")},
+			want: want{
+				stdout: fixture("operator-policy-denied.yaml") + ": Composition/operator-policy-denied pipeline[0] env-denied: refused: sandbox.env is refused: the operator policy (--sandbox-policy-file) does not permit it for this request\n" +
+					fixture("operator-policy-denied.yaml") + `: Composition/operator-policy-denied pipeline[1] egress-denied: refused: sandbox.egress.http[0] GET to host "api.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it` + "\n",
+				exit: 1,
+			},
+		},
 		"EgressWithoutFlags": {
 			reason: "The same Composition against a runtime with nothing enabled is refused at the first grant.",
 			args:   []string{fixture("egress.yaml")},
