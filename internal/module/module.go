@@ -55,10 +55,21 @@ type Options struct {
 	// Keychain resolves registry credentials when the Input names none. Nil
 	// means authn.DefaultKeychain (Docker config from DOCKER_CONFIG).
 	Keychain authn.Keychain
-	// Verifier, when set, requires every module to be an OCI artifact
-	// carrying a cosign signature it accepts; http and path sources are
-	// refused, having no signature to check.
+	// Verifier holds the cosign public keys a required module is checked
+	// against. When RequireSignature is nil it is also the requirement: set,
+	// every module must be an OCI artifact carrying a signature it accepts and
+	// http and path sources are refused (the all-or-nothing --cosign-key a
+	// runtime without --policy-file has); unset, nothing is verified.
 	Verifier *Verifier
+	// RequireSignature, when set, decides per normalized module location
+	// whether a cosign signature is required, replacing Verifier's
+	// all-or-nothing with the operator policy's per-repository decision
+	// (internal/authz). A required OCI module is verified with Verifier's keys,
+	// or refused when no key is configured; a required http source is refused
+	// (it cannot carry a cosign signature); a path source is never required,
+	// being operator-controlled. Nil keeps the all-or-nothing behaviour above,
+	// so a runtime without an operator policy behaves exactly as before.
+	RequireSignature func(location string) bool
 }
 
 // A Ref is a resolved module: the digest that pins it and how to fetch it.
@@ -92,11 +103,14 @@ func (r *Ref) Manifest(ctx context.Context) ([]byte, bool, error) {
 	return r.manifest(ctx)
 }
 
-// Verify checks the module's signature when the resolver has a Verifier
-// and is a no-op otherwise. It is a precondition of running the module —
-// not of fetching it — so it must be called before any cache is consulted:
-// a compiled artifact on disk may predate the key, and a signature is only
-// known to be good for the lifetime of the process that checked it.
+// Verify checks the module's signature when one is required — the resolver's
+// all-or-nothing --cosign-key, or an operator policy's per-repository
+// requirement (Options.RequireSignature) — and is a no-op otherwise. A
+// required module with no key configured to verify it is refused here too. It
+// is a precondition of running the module — not of fetching it — so it must be
+// called before any cache is consulted: a compiled artifact on disk may
+// predate the key, and a signature is only known to be good for the lifetime
+// of the process that checked it.
 func (r *Ref) Verify(ctx context.Context) error {
 	if r.verify == nil {
 		return nil
@@ -259,8 +273,19 @@ func (r *Resolver) Resolve(ctx context.Context, src v1beta1.ModuleSource, auth a
 	if src.From != "" {
 		return nil, errors.New("a module.from source must be materialised with FromComposite before it is resolved")
 	}
-	if r.opts.Verifier != nil && src.Type != v1beta1.ModuleTypeOCI {
-		return nil, errors.New("only cosign-signed oci modules are accepted (--cosign-key is set); http and path sources are refused")
+	// Whether this module must carry a cosign signature is settled before it is
+	// resolved: the legacy all-or-nothing --cosign-key requires every module
+	// (and refuses non-OCI), while an operator policy requires it per
+	// repository. A required http source is refused here (it cannot carry a
+	// cosign signature); the OCI path wires Verify to the crypto or, when a
+	// policy requires a signature but no key is configured, to a refusal.
+	location, err := locationOf(src)
+	if err != nil {
+		return nil, err
+	}
+	required := r.signatureRequired(src.Type, location)
+	if required && src.Type != v1beta1.ModuleTypeOCI {
+		return nil, r.nonOCISignatureRefusal(src.Type, location)
 	}
 	switch src.Type {
 	case v1beta1.ModuleTypePath:
@@ -268,9 +293,50 @@ func (r *Resolver) Resolve(ctx context.Context, src v1beta1.ModuleSource, auth a
 	case v1beta1.ModuleTypeHTTP:
 		return r.resolveHTTP(src)
 	case v1beta1.ModuleTypeOCI:
-		return r.resolveOCI(ctx, src, auth)
+		return r.resolveOCI(ctx, src, auth, required)
 	}
 	panic("unreachable: Validate rejects other types")
+}
+
+// locationOf returns the normalized location of a concrete source - what a
+// repository policy matches against - or empty for a path source, which has
+// none. Validate has already passed, so ociLocation/httpLocation succeed.
+func locationOf(src v1beta1.ModuleSource) (string, error) {
+	switch src.Type {
+	case v1beta1.ModuleTypeOCI:
+		return ociLocation(src.OCI.Ref)
+	case v1beta1.ModuleTypeHTTP:
+		return httpLocation(src.HTTP.URL)
+	case v1beta1.ModuleTypePath:
+		return "", nil
+	}
+	return "", nil
+}
+
+// signatureRequired reports whether a module at location must carry a cosign
+// signature. With an operator policy (RequireSignature set) the requirement is
+// per repository: a path source, being operator-controlled and locationless,
+// is never required. Without one it is the legacy all-or-nothing --cosign-key:
+// a configured Verifier requires every module, no key requires none.
+func (r *Resolver) signatureRequired(t v1beta1.ModuleType, location string) bool {
+	if r.opts.RequireSignature != nil {
+		if t == v1beta1.ModuleTypePath {
+			return false
+		}
+		return r.opts.RequireSignature(location)
+	}
+	return r.opts.Verifier != nil
+}
+
+// nonOCISignatureRefusal explains why a required non-OCI source cannot run:
+// only OCI artifacts carry a cosign signature. The legacy all-or-nothing keeps
+// its exact wording; a policy names the location it refused (only an http
+// source can reach here, a path source is never required under a policy).
+func (r *Resolver) nonOCISignatureRefusal(t v1beta1.ModuleType, location string) error {
+	if r.opts.RequireSignature == nil {
+		return errors.New("only cosign-signed oci modules are accepted (--cosign-key is set); http and path sources are refused")
+	}
+	return fmt.Errorf("module.%s %q requires a cosign signature (operator policy), but only OCI modules can be signature-verified", fieldOf(t), location)
 }
 
 // readCapped reads at most limit bytes and reports when the source held more.

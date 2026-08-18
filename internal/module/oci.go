@@ -37,7 +37,7 @@ var wasmLayerTypes = map[types.MediaType]bool{
 // module has to be, inside Fetch, and the layer is stored in the blob store
 // under its own digest, so a module whose compiled artifact is gone costs one
 // manifest read and no download.
-func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, auth authn.Authenticator) (*Ref, error) {
+func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, auth authn.Authenticator, required bool) (*Ref, error) {
 	ref, err := name.NewDigest(src.OCI.Ref)
 	if err != nil {
 		return nil, fmt.Errorf("module.oci.ref is not a valid digest reference: %w", err)
@@ -91,9 +91,19 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 		}
 		return b, true, nil
 	}
-	if r.opts.Verifier != nil {
-		out.verify = func(ctx context.Context) error {
-			return r.opts.Verifier.Verify(ctx, ref, append(opts, remote.WithContext(ctx)))
+	// Verify gates serving only when a signature is required (Resolve decided).
+	// With keys it is the cosign check; a policy that requires a signature the
+	// runtime has no --cosign-key to check refuses here rather than serving
+	// unverified code. The crypto in Verifier is untouched either way.
+	if required {
+		if r.opts.Verifier == nil {
+			out.verify = func(context.Context) error {
+				return errors.New("the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it")
+			}
+		} else {
+			out.verify = func(ctx context.Context) error {
+				return r.opts.Verifier.Verify(ctx, ref, append(opts, remote.WithContext(ctx)))
+			}
 		}
 	}
 	return out, nil
