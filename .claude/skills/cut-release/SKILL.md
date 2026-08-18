@@ -68,6 +68,17 @@ CI on `main` already covers lint, build, tests and `check-diff` (`go mod tidy`
 plus `go generate ./...` must leave the tree unchanged), so a green run is a
 legitimate signal.
 
+**Bump the runtime-version references in docs to `$NEW_VERSION` before cutting**
+(there is no automated step for this): the `function-wasm` package tags in
+`README.md` (the Install snippet) and `examples/deployment-runtime-config-cedar.yaml`,
+and any example whose Composition installs the function, should name the version
+being released, not the previous one - a copy-pasted install of a tag that does
+not exist yet fails. Find them with `git grep -n 'function-wasm:v[0-9]'` and
+commit the bump to `main` before step 3, so CI stays green and the new branch
+carries it. Not this: illustrative `ghcr.io/example/...` module tags (arbitrary)
+and the scaffold's pinned `wasmfn` version, which the `Tag` workflow tags in
+lockstep.
+
 ### 3. Cut the new release branch from `main` HEAD
 
 ```bash

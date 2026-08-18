@@ -197,6 +197,6 @@ metadata:
   name: function-wasm
 spec:
   # Use a build that carries --sandbox-policy-file (the Cedar features).
-  package: xpkg.upbound.io/jonasz-lasut/function-wasm:v0.3.0
+  package: xpkg.upbound.io/jonasz-lasut/function-wasm:v0.2.0
   runtimeConfigRef:
     name: function-wasm-runtime

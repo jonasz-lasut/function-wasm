@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.4
+* Status: Implemented, revision 1.5
 
 How the sandbox grants a module *some* filesystem, network or environment
 access without giving up what makes it safe to run other people's modules.
@@ -18,7 +18,11 @@ component-model one implemented. Revision 1.1 removes host mounts (Jonasz,
 directory into a module — the request is a module's only view of the world
 beyond what it writes into its private `/tmp` — so the filesystem grant is
 `privateTmp` alone, and `--enable-sandbox-mounts`/`--sandbox-mount` are
-gone. Status by phase:
+gone. Revision 1.5 adds the optional operator Cedar grant policy
+(`--sandbox-policy-file`): when set it narrows every sandbox capability grant -
+the private `/tmp`, environment and egress - per caller and per condition on top
+of the flags, evaluated default-deny so it only ever tightens, never widens
+(policy-engine one-pager). Status by phase:
 
 | phase | grant | status |
 |---|---|---|
