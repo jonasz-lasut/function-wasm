@@ -61,10 +61,15 @@ type CeilingFlags struct {
 	// switched on with --enable-sandbox-<feature>; a Composition asks for
 	// less through the Input's sandbox, never more. Host directories are
 	// deliberately not mountable into modules — no flag offers it.
-	EnableSandboxPrivateTmp bool   `help:"Let Compositions give their modules a private, empty, writable /tmp for the duration of a request (sandbox.filesystem.privateTmp), created under $TMPDIR and removed afterwards." env:"ENABLE_SANDBOX_PRIVATE_TMP"`
-	EnableSandboxEnv        bool   `help:"Let Compositions set the environment variables their modules see (sandbox.env); non-secret values only." env:"ENABLE_SANDBOX_ENV"`
-	EnableSandboxEgress     bool   `help:"Let Compositions grant their modules HTTP(S) requests through the host (sandbox.egress.http): the host performs wasmfn.http requests within each Composition's grant and the egress policy. Off, any sandbox.egress grant is a fatal result." env:"ENABLE_SANDBOX_EGRESS"`
-	SandboxEgressPolicy     string `help:"YAML or JSON file with the egress ceiling: hosts and hostPatterns a Composition may grant (any, when both are empty), blockedCIDRs and allowedCIDRs on top of the default block list (loopback, link-local, private, cluster and reserved ranges), and the per-run budgets timeout, maxRequests, maxResponseBytes, maxRedirects. Without it the defaults apply." env:"SANDBOX_EGRESS_POLICY" type:"existingfile"`
+	EnableSandboxPrivateTmp bool `help:"Let Compositions give their modules a private, empty, writable /tmp for the duration of a request (sandbox.filesystem.privateTmp), created under $TMPDIR and removed afterwards." env:"ENABLE_SANDBOX_PRIVATE_TMP"`
+	EnableSandboxEnv        bool `help:"Let Compositions set the environment variables their modules see (sandbox.env); non-secret values only." env:"ENABLE_SANDBOX_ENV"`
+	EnableSandboxEgress     bool `help:"Let Compositions grant their modules HTTP(S) requests through the host (sandbox.egress.http): the host performs wasmfn.http requests within each Composition's grant. The operator's host allowlist and CIDR block/allow rules are authored in the Cedar --sandbox-policy-file (grantEgress, dialAddress); the per-run budgets are fixed (timeout 10s, maxRequests 16, maxResponseBytes 4Mi, maxRedirects 5). Off, any sandbox.egress grant is a fatal result." env:"ENABLE_SANDBOX_EGRESS"`
+
+	// Egress rate limit: a process-wide token bucket per module digest, the one
+	// egress budget an operator can tune (the rest are fixed). Only meaningful
+	// with --enable-sandbox-egress.
+	EgressRateLimitPerMinute float64 `help:"Sustained egress requests per minute per module digest. 0 (the default) leaves egress unrated." env:"EGRESS_RATE_LIMIT_PER_MINUTE"`
+	EgressRateLimitBurst     int     `help:"Burst tokens for --egress-rate-limit-per-minute; 0 (the default) derives max(1, requestsPerMinute)." env:"EGRESS_RATE_LIMIT_BURST"`
 }
 
 // engineConfig is the run budget the flags name; MaxConcurrentRuns is
@@ -118,29 +123,30 @@ func (c *CeilingFlags) ceilings(log logging.Logger) (admission.Ceilings, error) 
 	if err != nil {
 		return admission.Ceilings{}, err
 	}
-	// The egress ceiling: only with the flag, so a runtime that never opted
-	// in has no code path that dials out for a module. The operator's Cedar
-	// CIDR rules extend its block and allow lists alongside DefaultBlockedCIDRs.
+	// The egress ceiling: only with the flag, so a runtime that never opted in
+	// has no code path that dials out for a module. The operator's Cedar CIDR
+	// rules (dialAddress) extend the block and allow lists alongside
+	// DefaultBlockedCIDRs; the per-run budgets are fixed and the rate limit is a
+	// flag. The host allowlist is Cedar's grantEgress, applied at admission.
+	if c.EgressRateLimitPerMinute < 0 || c.EgressRateLimitBurst < 0 {
+		return admission.Ceilings{}, errors.New("--egress-rate-limit-per-minute and --egress-rate-limit-burst must not be negative")
+	}
 	var egressCeiling *egress.Egress
 	if c.EnableSandboxEgress {
-		policy := egress.Policy{}
-		if c.SandboxEgressPolicy != "" {
-			if policy, err = egress.LoadPolicy(c.SandboxEgressPolicy); err != nil {
-				return admission.Ceilings{}, err
-			}
-		}
-		if egressCeiling, err = egress.New(policy, egress.WithBlockedCIDRs(ipRules.Blocked), egress.WithAllowedCIDRs(ipRules.Allowed)); err != nil {
+		if egressCeiling, err = egress.New(
+			egress.WithBlockedCIDRs(ipRules.Blocked),
+			egress.WithAllowedCIDRs(ipRules.Allowed),
+			egress.WithRateLimit(c.EgressRateLimitPerMinute, c.EgressRateLimitBurst),
+		); err != nil {
 			return admission.Ceilings{}, err
 		}
-	} else if c.SandboxEgressPolicy != "" {
-		return admission.Ceilings{}, errors.New("--sandbox-egress-policy needs --enable-sandbox-egress")
 	}
 	if c.EnableSandboxPrivateTmp || c.EnableSandboxEnv || c.EnableSandboxEgress {
 		egressCeilingText := "disabled"
 		if egressCeiling != nil {
 			egressCeilingText = egressCeiling.Describe()
 		}
-		log.Info("Sandbox grants enabled", "private-tmp", c.EnableSandboxPrivateTmp, "env", c.EnableSandboxEnv, "egress", c.EnableSandboxEgress, "egress-policy", c.SandboxEgressPolicy, "egress-ceiling", egressCeilingText)
+		log.Info("Sandbox grants enabled", "private-tmp", c.EnableSandboxPrivateTmp, "env", c.EnableSandboxEnv, "egress", c.EnableSandboxEgress, "egress-ceiling", egressCeilingText)
 	}
 	return admission.Ceilings{Engine: c.engineConfig().WithDefaults(), Sandbox: sandboxCeiling, Egress: egressCeiling, Policy: operatorPolicy}, nil
 }
