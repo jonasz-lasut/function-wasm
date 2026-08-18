@@ -62,20 +62,7 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 				return nil, err
 			}
 			b, err := r.verified(ctx, "module layer", layer.Digest.String(), func(_ context.Context) ([]byte, error) {
-				l, err := remote.Layer(ref.Context().Digest(layer.Digest.String()), opts...)
-				if err != nil {
-					return nil, fmt.Errorf("cannot fetch module layer: %w", err)
-				}
-				rc, err := l.Compressed()
-				if err != nil {
-					return nil, fmt.Errorf("cannot read module layer: %w", err)
-				}
-				defer func() { _ = rc.Close() }()
-				b, err := readCapped(rc, r.opts.MaxSize)
-				if err != nil {
-					return nil, fmt.Errorf("cannot read module layer: %w", err)
-				}
-				return b, nil
+				return pullLayer(ref, layer.Digest.String(), opts, r.opts.MaxSize, "module layer")
 			})
 			if err != nil {
 				return nil, err
@@ -97,20 +84,7 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 			return nil, false, err
 		}
 		b, err := r.verified(ctx, "manifest layer", layer.Digest.String(), func(_ context.Context) ([]byte, error) {
-			l, err := remote.Layer(ref.Context().Digest(layer.Digest.String()), opts...)
-			if err != nil {
-				return nil, fmt.Errorf("cannot fetch manifest layer: %w", err)
-			}
-			rc, err := l.Compressed()
-			if err != nil {
-				return nil, fmt.Errorf("cannot read manifest layer: %w", err)
-			}
-			defer func() { _ = rc.Close() }()
-			b, err := readCapped(rc, manifest.MaxSize)
-			if err != nil {
-				return nil, fmt.Errorf("cannot read manifest layer: %w", err)
-			}
-			return b, nil
+			return pullLayer(ref, layer.Digest.String(), opts, manifest.MaxSize, "manifest layer")
 		})
 		if err != nil {
 			return nil, false, err
@@ -125,19 +99,52 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 	return out, nil
 }
 
-// manifestLayer fetches an artifact's manifest and picks its module-manifest
-// layer, if it has one.
-func manifestLayer(ref name.Digest, opts []remote.Option) (v1.Descriptor, bool, error) {
+// ParseRemoteManifest fetches an artifact's OCI manifest and parses it: an
+// image manifest, never an index. verb names the manifest in the index
+// refusal ("reference"/"name"/"inspect" the manifest holding the module),
+// which the callers phrase differently. It returns the descriptor (callers
+// read its Digest, MediaType and Size) and the parsed manifest.
+func ParseRemoteManifest(ref name.Reference, verb string, opts ...remote.Option) (*remote.Descriptor, *v1.Manifest, error) {
 	desc, err := remote.Get(ref, opts...)
 	if err != nil {
-		return v1.Descriptor{}, false, fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
+		return nil, nil, fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
 	}
 	if desc.MediaType.IsIndex() {
-		return v1.Descriptor{}, false, fmt.Errorf("%s is an image index; reference the manifest holding the module", ref)
+		return nil, nil, fmt.Errorf("%s is an image index; %s the manifest holding the module", ref, verb)
 	}
 	m, err := v1.ParseManifest(bytes.NewReader(desc.Manifest))
 	if err != nil {
-		return v1.Descriptor{}, false, fmt.Errorf("cannot parse manifest %s: %w", ref, err)
+		return nil, nil, fmt.Errorf("cannot parse manifest %s: %w", ref, err)
+	}
+	return desc, m, nil
+}
+
+// pullLayer fetches one compressed layer of an artifact by its digest and
+// returns its bytes, bounded to limit; label names the layer in the fetch and
+// read errors.
+func pullLayer(ref name.Digest, digest string, opts []remote.Option, limit int64, label string) ([]byte, error) {
+	l, err := remote.Layer(ref.Context().Digest(digest), opts...)
+	if err != nil {
+		return nil, fmt.Errorf("cannot fetch %s: %w", label, err)
+	}
+	rc, err := l.Compressed()
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s: %w", label, err)
+	}
+	defer func() { _ = rc.Close() }()
+	b, err := readCapped(rc, limit)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s: %w", label, err)
+	}
+	return b, nil
+}
+
+// manifestLayer fetches an artifact's manifest and picks its module-manifest
+// layer, if it has one.
+func manifestLayer(ref name.Digest, opts []remote.Option) (v1.Descriptor, bool, error) {
+	_, m, err := ParseRemoteManifest(ref, "reference", opts...)
+	if err != nil {
+		return v1.Descriptor{}, false, err
 	}
 	l, ok := ManifestLayer(m)
 	return l, ok, nil
@@ -157,16 +164,9 @@ func ManifestLayer(m *v1.Manifest) (v1.Descriptor, bool) {
 
 // moduleLayer fetches a manifest and picks the layer holding the module.
 func moduleLayer(ref name.Digest, opts []remote.Option) (v1.Descriptor, error) {
-	desc, err := remote.Get(ref, opts...)
+	_, m, err := ParseRemoteManifest(ref, "reference", opts...)
 	if err != nil {
-		return v1.Descriptor{}, fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
-	}
-	if desc.MediaType.IsIndex() {
-		return v1.Descriptor{}, fmt.Errorf("%s is an image index; reference the manifest holding the module", ref)
-	}
-	m, err := v1.ParseManifest(bytes.NewReader(desc.Manifest))
-	if err != nil {
-		return v1.Descriptor{}, fmt.Errorf("cannot parse manifest %s: %w", ref, err)
+		return v1.Descriptor{}, err
 	}
 	l, err := WasmLayer(m)
 	if err != nil {
