@@ -286,6 +286,76 @@ func TestVerifier(t *testing.T) {
 	}
 }
 
+// TestResolveSignatureRequirement pins how Options.RequireSignature (an
+// operator policy) drives verification without touching the crypto: a required
+// OCI source with no key is refused at Verify, a required http source at
+// Resolve, an unrequired repository runs unsigned, and a path source is never
+// required. The predicate stands in for authz.OperatorPolicy.RequiresSignature,
+// whose boundary correctness is tested in internal/authz.
+func TestResolveSignatureRequirement(t *testing.T) {
+	full := "sha256:" + strings.Repeat("ab", 32) // 64 hex characters
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "fn.wasm"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	require := func(loc string) bool {
+		return loc == "ghcr.io/secure" || strings.HasPrefix(loc, "ghcr.io/secure/") || loc == "https://cdn.example.com/fn.wasm"
+	}
+	cases := map[string]struct {
+		reason     string
+		src        v1beta1.ModuleSource
+		resolveErr string
+		verifyErr  string
+	}{
+		"RequiredOCINoKey": {
+			reason:    "A required OCI repository with no --cosign-key is refused at Verify, before any cache, in the runtime's words.",
+			src:       oci("ghcr.io/secure/greeter@" + full),
+			verifyErr: "the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it",
+		},
+		"UnrequiredOCI": {
+			reason: "A repository the policy does not require runs unsigned: Verify is a no-op even without a key.",
+			src:    oci("ghcr.io/public/greeter@" + full),
+		},
+		"RequiredHTTP": {
+			reason:     "A required http source is refused at Resolve: it cannot carry a cosign signature.",
+			src:        v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://cdn.example.com/fn.wasm", Digest: full}},
+			resolveErr: `module.http "https://cdn.example.com/fn.wasm" requires a cosign signature (operator policy), but only OCI modules can be signature-verified`,
+		},
+		"PathNeverRequired": {
+			reason: "A path source is operator-controlled and locationless, so a policy never requires a signature of it.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r, err := NewResolver(Options{Dir: dir, RequireSignature: require})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref, err := r.Resolve(context.Background(), tc.src, nil)
+			if tc.resolveErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.resolveErr) {
+					t.Fatalf("\n%s\nResolve(): want error containing %q, got %v", tc.reason, tc.resolveErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("\n%s\nResolve(): %v", tc.reason, err)
+			}
+			err = ref.Verify(context.Background())
+			if tc.verifyErr == "" {
+				if err != nil {
+					t.Fatalf("\n%s\nVerify(): want no error, got %v", tc.reason, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.verifyErr) {
+				t.Fatalf("\n%s\nVerify(): want error containing %q, got %v", tc.reason, tc.verifyErr, err)
+			}
+		})
+	}
+}
+
 func TestNewVerifierErrors(t *testing.T) {
 	cases := map[string]struct {
 		reason string

@@ -120,14 +120,29 @@ func (c *CeilingFlags) ceilings(log logging.Logger) (admission.Ceilings, error) 
 			return admission.Ceilings{}, err
 		}
 		log.Info("Operator grant policy loaded", "policy-file", c.SandboxPolicyFile)
+		// With an operator policy the signature requirement is per-repository
+		// (requireSignature), not --cosign-key's all-or-nothing: a repository
+		// no rule names is not required to be signed. Say so plainly, and warn
+		// loudly in the dangerous case - a policy with no requireSignature rule
+		// leaves --cosign-key requiring nothing - so an operator who added a
+		// policy for other reasons does not silently lose signature enforcement.
+		switch {
+		case c.CosignKey != "" && operatorPolicy.HasSignatureRules():
+			log.Info("Signature requirement is governed per-repository by the operator policy (requireSignature); --cosign-key provides the keys but no longer requires every module", "policy-file", c.SandboxPolicyFile)
+		case c.CosignKey != "":
+			log.Info("WARNING: --cosign-key is set but the operator policy has no requireSignature rule, so no module is required to be signed; add a requireSignature permit, or remove --sandbox-policy-file to keep --cosign-key's all-or-nothing", "policy-file", c.SandboxPolicyFile)
+		}
 	}
 	return admission.Ceilings{Engine: c.engineConfig().WithDefaults(), Sandbox: sandboxCeiling, Egress: egressCeiling, Policy: operatorPolicy}, nil
 }
 
 // resolver builds the module resolver the flags describe: --module-dir,
-// --max-module-size and --cosign-key, over the blob store (nil for a
-// one-off validate).
-func (c *CeilingFlags) resolver(blobs *cache.Store) (*module.Resolver, error) {
+// --max-module-size and --cosign-key, over the blob store (nil for a one-off
+// validate). When an operator policy is present it also carries its
+// per-repository signature requirement (--sandbox-policy-file's requireSignature),
+// which replaces --cosign-key's all-or-nothing: the key still verifies, the
+// policy decides which repositories must be signed.
+func (c *CeilingFlags) resolver(blobs *cache.Store, policy *authz.OperatorPolicy) (*module.Resolver, error) {
 	var verifier *module.Verifier
 	if c.CosignKey != "" {
 		v, err := module.LoadVerifier(c.CosignKey)
@@ -136,12 +151,16 @@ func (c *CeilingFlags) resolver(blobs *cache.Store) (*module.Resolver, error) {
 		}
 		verifier = v
 	}
-	return module.NewResolver(module.Options{
+	opts := module.Options{
 		Dir:      c.ModuleDir,
 		MaxSize:  int64(c.MaxModuleSize) << 20,
 		Blobs:    blobs,
 		Verifier: verifier,
-	})
+	}
+	if policy != nil {
+		opts.RequireSignature = policy.RequiresSignature
+	}
+	return module.NewResolver(opts)
 }
 
 // ServeCmd runs the function.
@@ -192,11 +211,11 @@ func (c *ServeCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	resolver, err := c.resolver(blobs)
+	ceilings, err := c.ceilings(log)
 	if err != nil {
 		return err
 	}
-	ceilings, err := c.ceilings(log)
+	resolver, err := c.resolver(blobs, ceilings.Policy)
 	if err != nil {
 		return err
 	}

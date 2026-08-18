@@ -100,6 +100,14 @@ func TestValidate(t *testing.T) {
 				exit: 1,
 			},
 		},
+		"SignatureRequired": {
+			reason: "A --sandbox-policy-file that requires a signature for a repository refuses a module from it under --resolve when no --cosign-key can verify it - the runtime's own words, settled before any fetch. The requirement is per-repository, so this is caught with no registry reached.",
+			args:   []string{fixture("signature.yaml"), "--sandbox-policy-file", fixture("signature-policy.cedar"), "--resolve"},
+			want: want{
+				stdout: fixture("signature.yaml") + ": Composition/signature pipeline[0] secure: refused: cannot verify module oci ghcr.io/secure/greeter@" + testDigest + ": the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it\n",
+				exit:   1,
+			},
+		},
 		"EgressWithoutFlags": {
 			reason: "The same Composition against a runtime with nothing enabled is refused at the first grant.",
 			args:   []string{fixture("egress.yaml")},
