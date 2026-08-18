@@ -32,6 +32,8 @@ Cedar. The whole decision rests on how much of the surface is policy.
 
 ## Layer map
 
+![Which sandbox admission layers are handled by Cedar, Cedar + Go, or Go only](policy-engine-architecture.svg)
+
 | Decision surface | Today | Cedar-expressible | Notes |
 |---|---|---|---|
 | Which capabilities a Composition may grant (`--enable-sandbox-*`) | boolean flags | Yes | `permit(... action == Action::"grantEgress" ...)`; flags become policy |
