@@ -157,7 +157,7 @@ surface it replaced (`internal/admission`, `internal/egress`, `internal/sandbox`
 ![The policy decision point: one operator document, a shared schema, default-deny evaluation](policy-engine-pdp.svg)
 
 One operator-authored Cedar document (`--sandbox-policy-file`), compiled once at startup
-and immutable for the process, deliberate parity with `--sandbox-egress-policy`
+and immutable for the process, deliberate parity with `--cosign-key`
 and `--cosign-key` (restart to reload; hot-reload is a later option, not a
 launch requirement). Absent, the operator adds no constraint and every current
 behaviour is identical.
@@ -197,12 +197,12 @@ policy misconfiguration cannot widen a capability), auditability (a boolean in a
 `DeploymentRuntimeConfig` is legible at a glance), and additivity (no policy file
 means today's behaviour).
 
-**The `--sandbox-egress-policy` file, by contrast, is meant to end up as Cedar.**
+**The `--sandbox-egress-policy` file, by contrast, ended up as Cedar (v0.2.0).**
 Its declarative parts are exactly what Cedar expresses: the host/pattern ceiling
 (this feature, `grantEgress`) and the CIDR block/allow rules (the SSRF feature
-below) map directly onto the operator's document, so the standalone YAML
-dissolves once both land - one document, authored and analysable in one language,
-instead of a bespoke schema. Only its budgets and rate limit stay behind as
+below) map directly onto the operator's document, so the standalone YAML was
+removed - one document, authored and analysable in one language, instead of a
+bespoke schema. Only its budgets and rate limit stayed behind as
 numeric config: they are stateful counting over time, which Cedar cannot express
 (see the SSRF and non-goals sections). The migration is gated by the spike, but
 the destination is not in doubt - the egress policy file was always a
@@ -265,9 +265,10 @@ Sequencing keeps the plan's gate at every step:
    foundation.
 4. **SSRF CIDR** only behind a benchmark. Egress per-request admit never moves.
 
-Once the host/pattern ceiling (step 1) and the CIDR rules (step 4) are both in
-Cedar, the `--sandbox-egress-policy` YAML retires to a budgets-only config: the
-declarative half becomes policy, the stateful half stays numeric.
+With the host/pattern ceiling (step 1) and the CIDR rules (step 4) both in Cedar,
+the `--sandbox-egress-policy` YAML was removed in v0.2.0: its declarative half is
+policy, its budgets are fixed defaults, and its one stateful knob - the rate
+limit - is a flag (`--egress-rate-limit-per-minute` / `--egress-rate-limit-burst`).
 
 ## Non-goals
 
@@ -307,7 +308,7 @@ declarative half becomes policy, the stateful half stays numeric.
 - Measured per-request and per-dial evaluation cost against the current path.
 - ~~Where the operator's Cedar document lives and how it reloads~~ - designed
   (Phase 2+, foundation): a `--sandbox-policy-file` read at startup and immutable for the
-  process, parity with `--sandbox-egress-policy`; a mounted ConfigMap satisfies
+  process, parity with `--cosign-key`; a mounted ConfigMap satisfies
   the flag, and restart reloads. Hot-reload stays a later option.
 
 ## References

@@ -71,31 +71,6 @@ data:
     forbid (principal, action == Action::"dialAddress", resource)
     when { context.ip.isInRange(ip("203.0.113.0/24")) };
 ---
-# ── Egress budgets (--sandbox-egress-policy): budgets-only now. The declarative
-#    halves moved to the Cedar policy above - the host allowlist is `grantEgress`,
-#    the CIDR block/allow list is `dialAddress`. Only the STATEFUL budgets and
-#    rate limit remain here, because Cedar cannot count over time. (hosts/
-#    hostPatterns/blockedCIDRs/allowedCIDRs are still accepted for back-compat,
-#    but the Cedar policy is the forward path.) Leaving hosts unset makes the
-#    ceiling open, so grantEgress alone gates hosts. Drop this file entirely if
-#    the default budgets and no rate limit suit you - the egress ceiling is then
-#    wholly Cedar.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: function-wasm-egress
-  namespace: crossplane-system
-data:
-  egress.yaml: |
-    # Stateful budgets only; hosts and CIDR rules live in the Cedar policy.
-    timeout: 10s
-    maxRequests: 16
-    maxResponseBytes: 4194304   # 4 MiB
-    maxRedirects: 5
-    rateLimit:
-      requestsPerMinute: 60
-      burst: 10
----
 # ── cosign public key (--cosign-key): the keys the policy's requireSignature
 #    rules verify against. Replace with your real cosign.pub.
 apiVersion: v1
@@ -141,7 +116,11 @@ spec:
                 - --enable-sandbox-private-tmp
                 - --enable-sandbox-env
                 - --enable-sandbox-egress
-                - --sandbox-egress-policy=/etc/function-wasm/egress/egress.yaml
+                # Egress budgets are fixed defaults (timeout 10s, maxRequests 16,
+                # maxResponseBytes 4Mi, maxRedirects 5); only the rate limit is
+                # tunable. Optional - omit to leave egress unrated.
+                - --egress-rate-limit-per-minute=60
+                - --egress-rate-limit-burst=10
                 # Other governance flags exist too: --module-dir,
                 # --max-concurrent-compiles, --max-cached-modules,
                 # --max-cache-size, --max-total-run-memory, --warm-modules,
@@ -149,9 +128,6 @@ spec:
               volumeMounts:
                 - name: policy
                   mountPath: /etc/function-wasm/policy
-                  readOnly: true
-                - name: egress
-                  mountPath: /etc/function-wasm/egress
                   readOnly: true
                 - name: cosign
                   mountPath: /etc/function-wasm/cosign
@@ -177,9 +153,6 @@ spec:
             - name: policy
               configMap:
                 name: function-wasm-policy
-            - name: egress
-              configMap:
-                name: function-wasm-egress
             - name: cosign
               secret:
                 secretName: function-wasm-cosign

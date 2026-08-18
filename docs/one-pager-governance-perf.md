@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 0.1
+* Status: Implemented, revision 0.2
 
 The resource-governance one-pager bounds a run by wall clock and linear
 memory, the runtime by compiles, resident modules, disk and (optionally)
@@ -49,14 +49,13 @@ A module called once per XR against the same endpoint makes one request per
 reconcile per XR: a thousand XRs are a thousand identical GETs per sweep.
 One addition in `internal/egress`, behind the operator's policy file:
 
-**Per-module rate limits** (policy `rateLimit: {requestsPerMinute, burst}`).
+**Per-module rate limits** (`--egress-rate-limit-per-minute` / `--egress-rate-limit-burst`).
 A token bucket per module digest in `Egress` (a bounded, idle-expiring map:
 the set of digests in use is the memory tier's size, not a metric label),
 consulted in `Client.do` after the per-run `maxRequests` check; over the
 limit the guest reads `sandbox.egress: the module's request rate exceeds
 the egress policy's rateLimit` - `outcome=budget`, never a trap - and
-retries next reconcile. Policy file only, like the other budgets; a
-Composition cannot raise it. Idle entries are swept every ten minutes.
+retries next reconcile. Set by the operator flags, like the other budgets; a Composition cannot raise it. Idle entries are swept every ten minutes.
 Deferred: a per-host bucket (protects a third party across modules - needs
 a bounded key set first), a Composition-lowerable `sandbox.egress.rateLimit`.
 
@@ -114,7 +113,7 @@ acquisition order, bounded by `ctx`).
 | phase | what | effort | lands |
 |---|---|---|---|
 | ~~1~~ | ~~fuel~~ | - | **Dropped** (not portable to wazero) |
-| 2 | policy `rateLimit` | S | **Implemented.** |
+| 2 | egress `rateLimit` (--egress-rate-limit-* flags) | S | **Implemented.** |
 | 3 | `limits.concurrency`, fair queueing, `--max-total-run-memory` | S, M, S | **Implemented.** |
 | ~~4~~ | ~~registry mirror, OCI layout, precompile~~ | - | **Dropped** (path mode covers air-gapped) |
 | ~~5~~ | ~~raw-bytes codec~~ | - | **Dropped** (maintenance cost outweighs savings) |

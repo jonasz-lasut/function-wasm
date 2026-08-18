@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.5
+* Status: Implemented, revision 1.6
 
 How the sandbox grants a module *some* filesystem, network or environment
 access without giving up what makes it safe to run other people's modules.
@@ -28,7 +28,7 @@ of the flags, evaluated default-deny so it only ever tightens, never widens
 |---|---|---|
 | 0 | Input types, shape validation | implemented |
 | 1 | `sandbox.filesystem.privateTmp` (`--enable-sandbox-private-tmp`); host mounts deliberately not offered | implemented |
-| 2 | `sandbox.egress.http` (`--enable-sandbox-egress`, `--sandbox-egress-policy`) | implemented |
+| 2 | `sandbox.egress.http` (`--enable-sandbox-egress`; host allowlist and CIDR rules in `--sandbox-policy-file`) | implemented |
 | 3 | `sandbox.env`, `sandbox.envFrom` (`--enable-sandbox-env`) | implemented |
 | 4 | WASI HTTP through components | not started |
 
@@ -102,22 +102,23 @@ that always runs.
 Operator flags set the ceiling, one `--enable-sandbox-<feature>` switch per
 capability (off by default, `ENABLE_SANDBOX_<FEATURE>` in the environment)
 and `--sandbox-<feature>-…` for what it declares:
-`--enable-sandbox-private-tmp`, `--enable-sandbox-egress` with
-`--sandbox-egress-policy <file>` (allowed `hosts` and `hostPatterns`,
-`blockedCIDRs`/`allowedCIDRs` on top of a default block list, per-run
-budgets `timeout`, `maxRequests`, `maxResponseBytes`, `maxRedirects`),
-`--enable-sandbox-env`. There is no flag that maps a host directory into a
+`--enable-sandbox-private-tmp`, `--enable-sandbox-egress` (the host allowlist
+and CIDR block/allow rules are authored in the Cedar `--sandbox-policy-file`;
+the per-run budgets are fixed defaults and the rate limit is
+`--egress-rate-limit-per-minute`/`-burst`), `--enable-sandbox-env`. There is no flag that maps a host directory into a
 module: what a module can read is its request, what it can write is its
-private `/tmp`. `internal/sandbox.NewCeiling` and `internal/egress.New`
-check the flags once at startup — an unwritable `$TMPDIR` with the private
-`/tmp` enabled, an egress policy file without `--enable-sandbox-egress` or
-one that does not parse — and refuse to start rather than fail every
-request that would hit the mistake. At request time `Ceiling.Grant` and
-`Egress.Grant` turn the Input's `sandbox` into what the run gets, or a fatal
-result naming the grant and the flag (`sandbox.filesystem.privateTmp is
-refused: the runtime was started without --enable-sandbox-private-tmp`,
-`sandbox.egress.http[0].host "evil.example.com" is outside the runtime's
-egress policy (allowed: …)`), before the module is resolved.
+private `/tmp`. `internal/sandbox.NewCeiling`, `internal/egress.New` and the
+`--sandbox-policy-file` loader check the flags once at startup - an unwritable
+`$TMPDIR` with the private `/tmp` enabled, or a `--sandbox-policy-file` that
+does not parse (a malformed ip-rule included) - and refuse to start rather
+than fail every request that would hit the mistake. At request time
+`Ceiling.Grant` and `Egress.Grant` turn the Input's `sandbox` into what the
+run gets, or a fatal result naming the grant and the flag
+(`sandbox.filesystem.privateTmp is refused: the runtime was started without
+--enable-sandbox-private-tmp`); a host the operator's Cedar policy does not
+grant is `sandbox.egress.http[0] GET to host "evil.example.com" is refused:
+the operator policy (--sandbox-policy-file) does not permit it`, before the
+module is resolved.
 
 
 ## Mechanics
@@ -231,8 +232,8 @@ module.
    module's inputs come through the request, not through the pod's
    filesystem.
 2. **HTTP egress (implemented):** the `wasmfn.http` import,
-   `wasmfn.HTTPClient()`, `--enable-sandbox-egress` and the
-   `--sandbox-egress-policy` file, metrics and audit logging; the ABI
+   `wasmfn.HTTPClient()`, `--enable-sandbox-egress` with the host allowlist
+   and CIDR rules in the Cedar `--sandbox-policy-file`, metrics and audit logging; the ABI
    extension is in `docs/abi.md`, the WAT fixture in the engine tests and a
    Go guest fixture (`internal/testwasm/testdata/httpguest`) in the host
    tests. The TinyGo and Rust scaffolds carry a helper over the import

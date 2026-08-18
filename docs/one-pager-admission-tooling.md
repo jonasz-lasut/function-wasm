@@ -79,7 +79,7 @@ rule the runtime enforces (`module.from` with `OCI`/`HTTP` requires
 ```
 composition.yaml: Composition/hello pipeline[0] greeter: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, egress api.example.com)
   warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given
-composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0].host "evil.example.com" is outside the runtime's egress policy (allowed: api.example.com)
+composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0] GET to host "evil.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it
 ```
 
 `--resolve` goes one step further: `Resolve` + `Verify` (with `--cosign-key`)
