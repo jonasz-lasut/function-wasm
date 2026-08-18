@@ -44,7 +44,6 @@ const (
 	// WASIModule is the WASI preview 1 import module the host provides in
 	// full.
 	WASIModule = "wasi_snapshot_preview1"
-	wasiModule = WASIModule
 
 	// argv0 is what a guest sees as os.Args[0]. WASI guests written in Go
 	// (via klog's init) index os.Args[0], so an empty argv traps at
@@ -398,7 +397,7 @@ func checkABI(m *wasmtime.Module) error {
 			name = *im.Name()
 		}
 		switch {
-		case im.Module() == wasiModule:
+		case im.Module() == WASIModule:
 		case im.Module() == HostModule && name == HostLog:
 			if err := checkImport(im, HostLog, []wasmtime.ValKind{wasmtime.KindI32, wasmtime.KindI32, wasmtime.KindI32}, nil); err != nil {
 				return err
@@ -508,8 +507,5 @@ func deadlineTicks(ctx context.Context, timeout time.Duration) (uint64, time.Dur
 		return 1, budget
 	}
 	ticks := uint64((budget + epochTick - 1) / epochTick)
-	if ticks == 0 {
-		ticks = 1
-	}
 	return ticks, budget
 }
