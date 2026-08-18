@@ -105,7 +105,7 @@ comes in through the request (observed state, required resources), and the
 module returns desired state. The sandbox opens selectively, one capability
 per operator flag ([docs/one-pager-sandbox.md](docs/one-pager-sandbox.md)):
 a Composition may grant its module a private `/tmp` for the request and
-environment variables (`sandbox.filesystem`, `sandbox.env` — see the Input
+environment variables (`sandbox.filesystem`, `sandbox.env`, `sandbox.envFrom` - see the Input
 reference; host directories are deliberately not mountable), and **HTTP
 egress through the host** (`sandbox.egress`,
 `--enable-sandbox-egress`) to call the APIs its Composition lists, with the
@@ -335,10 +335,13 @@ Everything but the source is read from the Input: `policy`, `limits` and
 | `policy.credentialsAllowList` | []string | step credentials an XR-chosen `oci` object may name, spent only on a ref `repositoryAllowList` admits — so it requires `repositoryAllowList` (`policy.credentialsAllowList requires policy.repositoryAllowList` otherwise). Absent or empty, an XR object naming credentials is refused: the XR author would otherwise choose the registry host the secret is sent to |
 | `limits.timeout` | duration | wall-clock budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). The request deadline still applies if shorter |
 | `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`; at most `--module-memory-limit`, else a fatal result naming both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
+| `limits.concurrency` | int32 | at most N runs of this step at once, across all requests, keyed by the module's content digest. A further request waits under its own context; when the deadline passes first, it is a fatal result that consumed nothing and is not counted as a run. A value above `--max-concurrent-runs` is silently capped. No ceiling flag: this only narrows |
 | `sandbox` | object | grants beyond the default sandbox (nothing but the request), each within a ceiling the operator sets with an `--enable-sandbox-*` flag: a grant outside the ceiling is a fatal result naming the grant and the flag, before any module is resolved. Read from the Input only. Filesystem, environment and HTTP egress are implemented ([docs/one-pager-sandbox.md](docs/one-pager-sandbox.md)) |
 | `sandbox.filesystem.privateTmp` | bool | a private, empty, writable `/tmp` for the duration of the request — created under the runtime's `$TMPDIR` before the module runs and removed afterwards, whatever the outcome (`--enable-sandbox-private-tmp`) |
 | `sandbox.egress.http[]` | `{host \| hostPattern, methods, pathPrefix}` | HTTP(S) requests the host performs for the module (`wasmfn.HTTPClient()` in Go, the `wasmfn.http` import elsewhere): exactly one of `host` (exact name, port ignored) and `hostPattern` (`*.example.com`: every name under it, not the apex), at least one of `GET HEAD POST PUT PATCH DELETE OPTIONS`, and an optional `pathPrefix` the (normalized) path must start with. Rules for the same host add up. Needs `--enable-sandbox-egress`; each rule must fit `--sandbox-egress-policy`, else a fatal result names the rule and what the policy allows. See [HTTP egress](#http-egress) |
-| `sandbox.env` | map | environment variables the module sees, exactly these and nothing of the runtime's; keys are identifiers, values may not contain NUL. Non-secret configuration only — secrets keep coming through step credentials, so nothing the guest might log or write to its `/tmp` carries them (`--enable-sandbox-env`) |
+| `sandbox.env[]` | `{name, value \| valueFrom}` | environment variables the module sees, exactly these and nothing of the runtime's; names are identifiers, no duplicates. A literal `value` may not contain NUL. A `valueFrom.credential` reads a key of a step credential (`--enable-sandbox-env`) |
+| `sandbox.env[].valueFrom.credential` | `{name, key}` | reads the value from step credential `name`, key `key`; the pull credential (`module.oci.credentials`) is refused as a source |
+| `sandbox.envFrom[]` | `{credential, prefix}` | imports every key of a step credential as environment variables; `prefix` is prepended to each key. Keys that are not valid identifiers (after prefixing) refuse the run. A key colliding with an `env[]` name is refused. The pull credential is refused as a source (`--enable-sandbox-env`) |
 | `config` | object | opaque, passed to the module untouched inside the request input; a Go guest reads it with `wasmfn.GetConfig` |
 
 Letting each composite resource choose its module — the Composition names
@@ -402,7 +405,7 @@ Opening the sandbox: the operator enables each capability, the Composition
 asks for what its module needs, the module gets the intersection. With a
 runtime started with `--enable-sandbox-private-tmp --enable-sandbox-env`,
 this step's module scratches in an empty `/tmp` that is gone when the
-request ends and sees one environment variable — host directories are never
+request ends and sees environment variables - host directories are never
 mountable into a module, whatever the flags:
 
 ```yaml
@@ -410,11 +413,23 @@ mountable into a module, whatever the flags:
       filesystem:
         privateTmp: true
       env:
-        LOG_LEVEL: debug           # never a secret: those arrive as step credentials
+      - name: LOG_LEVEL
+        value: debug                           # literal: never a secret
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom:
+          credential:
+            name: aws                          # step credential "aws", key "access_key_id"
+            key: access_key_id
+      envFrom:
+      - credential:
+          name: vault                          # every key of step credential "vault"
+        prefix: VAULT_                         # becomes VAULT_TOKEN, VAULT_ADDR, ...
 ```
 
-A `privateTmp`/`env` grant without its `--enable-sandbox-*` flag is a fatal
-result naming the grant and the flag; the module never runs.
+A `privateTmp`/`env`/`envFrom` grant without its `--enable-sandbox-*` flag is a
+fatal result naming the grant and the flag; the module never runs. The pull
+credential (`module.oci.credentials`) is refused as a source for `env` and
+`envFrom`: the module must never see the secret that fetched it.
 
 ### Module manifests
 
@@ -466,6 +481,9 @@ in the order they decide:
    maxRequests: 16                       # per run
    maxResponseBytes: 4194304             # a longer body is an error, not a truncated body (headers are capped separately, at 64 KiB)
    maxRedirects: 5                       # each hop checked like the first request; hops count here, not against maxRequests
+   rateLimit:                             # process-wide token bucket per module digest; without it, no rate limit
+     requestsPerMinute: 60                # sustained rate
+     burst: 10                            # maximum tokens available at once (default: requestsPerMinute rounded down, at least 1)
    ```
 
    Without a file, any public host may be granted within the defaults shown.
@@ -597,14 +615,12 @@ The full host/guest contract is in [docs/abi.md](docs/abi.md).
 
 ## Runtime flags
 
-The binary has two subcommands: `serve` — the default, so `function
+The binary has two subcommands: `serve` - the default, so `function
 --insecure --module-dir=.` and a `DeploymentRuntimeConfig`'s `args` need no
-subcommand — and [`validate`](#validate-a-composition), which takes the
-ceiling flags below (`--module-dir`, `--max-module-size`,
-`--module-timeout`, `--module-memory-limit`, `--cosign-key`, the
-`--enable-sandbox-*` flags and `--sandbox-egress-policy`) with the same
-defaults and environment variables, so a Composition is validated against
-exactly what a runtime started with those flags would admit.
+subcommand - and [`validate`](#validate-a-composition), which takes the
+ceiling flags below with the same defaults and environment variables, so a
+Composition is validated against exactly what a runtime started with those
+flags would admit.
 
 | flag | env | default | purpose |
 |---|---|---|---|
@@ -618,12 +634,13 @@ exactly what a runtime started with those flags would admit.
 | `--max-cache-size` | `MAX_CACHE_SIZE` | `0` (unbounded) | MB the two on-disk caches may hold together; past it the least recently used entries (fetched modules and artifacts alike, ~230 MB per Go module version) are removed, at startup and every ten minutes. Size the volume, or set this below its size |
 | `--cosign-key` | `COSIGN_KEY` | unset | PEM file of cosign public key(s); when set only OCI modules with a matching `cosign sign --key` signature run, and `http`/`path` sources are refused |
 | `--max-concurrent-runs` | `MAX_CONCURRENT_RUNS` | `0` (unbounded) | module runs executing at once; a further request waits for a slot under its own deadline and, if that passes first, is a fatal result (`waiting for a run slot: context deadline exceeded`) without having run. Unbounded, concurrency is the caller's — Crossplane's reconcile workers |
+| `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | total linear-memory budget in MB across all running modules; a run reserves its effective limit (`limits.memory` or `--module-memory-limit`) from the pool before it starts and waits under its deadline when the pool is full. A step that states a small `limits.memory` gets more parallelism |
 | `--warm-modules` | `WARM_MODULES` | unset | modules loaded before the health service reports Serving — resolved, verified (`--cosign-key` applies), then compiled or mapped through the same caches a request uses: OCI references pinned to their manifest digest (`repo[:tag]@sha256:…`, pulled with the runtime's Docker config) and, with `--module-dir`, `path:<file>` entries. Repeatable or comma-separated. An entry that fails to load is logged with the reason and does not stop the pod from serving; that module is loaded on its first request as usual |
 | `--enable-sandbox-private-tmp` | `ENABLE_SANDBOX_PRIVATE_TMP` | `false` | let Compositions give a module a private, empty, writable `/tmp` per request (`sandbox.filesystem.privateTmp`), created under the runtime's `$TMPDIR` (probed at startup) and removed when the run ends. There is no byte quota: to bound what a module may write, point `TMPDIR` at a tmpfs `emptyDir` with a `sizeLimit` through a `DeploymentRuntimeConfig` |
-| `--enable-sandbox-env` | `ENABLE_SANDBOX_ENV` | `false` | let Compositions set the environment variables a module sees (`sandbox.env`); the runtime's own environment is never passed on |
+| `--enable-sandbox-env` | `ENABLE_SANDBOX_ENV` | `false` | let Compositions set the environment variables a module sees (`sandbox.env`, `sandbox.envFrom`); the runtime's own environment is never passed on |
 | `--enable-sandbox-egress` | `ENABLE_SANDBOX_EGRESS` | `false` | let Compositions grant modules HTTP(S) egress through the host (`sandbox.egress`); off, any such grant is a fatal result naming the flag. See [HTTP egress](#http-egress) |
 | `--sandbox-egress-policy` | `SANDBOX_EGRESS_POLICY` | unset | YAML/JSON file with the egress ceiling: `hosts`, `hostPatterns` (any host when both are empty), `blockedCIDRs`/`allowedCIDRs` on top of the default block list, and the per-run budgets `timeout` (10s), `maxRequests` (16), `maxResponseBytes` (4 MiB), `maxRedirects` (5) |
-| `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) — what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
+| `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
 The usual function-sdk-go flags (`--insecure`, `--debug`, `--tls-certs-dir`,

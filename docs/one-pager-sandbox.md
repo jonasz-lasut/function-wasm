@@ -2,12 +2,12 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.3
+* Status: Implemented, revision 1.4
 
 How the sandbox grants a module *some* filesystem, network or environment
 access without giving up what makes it safe to run other people's modules.
 The Input types (`input/v1beta1`: `sandbox.filesystem`, `sandbox.egress`,
-`sandbox.env`, validated for shape by `internal/sandbox`) shipped in
+`sandbox.env`, `sandbox.envFrom`, validated for shape by `internal/sandbox`) shipped in
 revision 0.3; revision 0.4 implemented the filesystem (phase 1) and
 environment (phase 3) grants with their operator flags, and phase 2 — HTTP
 egress through the host (`sandbox.egress`, `--enable-sandbox-egress`,
@@ -25,7 +25,7 @@ gone. Status by phase:
 | 0 | Input types, shape validation | implemented |
 | 1 | `sandbox.filesystem.privateTmp` (`--enable-sandbox-private-tmp`); host mounts deliberately not offered | implemented |
 | 2 | `sandbox.egress.http` (`--enable-sandbox-egress`, `--sandbox-egress-policy`) | implemented |
-| 3 | `sandbox.env` (`--enable-sandbox-env`) | implemented |
+| 3 | `sandbox.env`, `sandbox.envFrom` (`--enable-sandbox-env`) | implemented |
 | 4 | WASI HTTP through components | not started |
 
 
@@ -180,13 +180,18 @@ call — and the host function cannot be replaced without forking the SDK. It
 does not meet the requirements above; the decision to keep this import is
 recorded in AGENTS.md ("Not Extism").
 
-**Environment — `SetEnv` from the grant (implemented).** `sandbox.env`
-becomes `WasiConfig.SetEnv(keys, values)` on the run's store, sorted by key;
-the runtime's own environment is never inherited, and without a grant the
-guest's `environ` is empty. Non-secret values only: the request already
-carries the step credentials, the values sit in plain sight in the
-Composition, and keeping secrets out of the environment keeps them out of
-anything the guest might log or write to its private `/tmp`.
+**Environment — `SetEnv` from the grant (implemented).** `sandbox.env[]`
+(list of `{name, value | valueFrom}`) and `sandbox.envFrom[]` (list of
+`{credential, prefix}`) become `WasiConfig.SetEnv(keys, values)` on the
+run's store, sorted by key; the runtime's own environment is never
+inherited, and without a grant the guest's `environ` is empty. Literal
+values are set directly; `valueFrom.credential` reads a key of a step
+credential; `envFrom` imports every key of a credential (with an optional
+prefix). The pull credential (`module.oci.credentials`) is refused as a
+source for both - the module must never see the secret that fetched it.
+Resolution happens after `registryAuth` (`sandbox.Materialize` in `fn.go`),
+the first point where the pull credential's name is known; shape validation
+(`Validate`) and the ceiling check (`Grant`) run at admission.
 
 ## Threat model in one paragraph
 
@@ -213,7 +218,7 @@ module.
 ## Phasing
 
 0. **Input types (implemented):** `sandbox.filesystem.privateTmp`,
-   `sandbox.egress.http[]`, `sandbox.env` with shape validation — shipped
+   `sandbox.egress.http[]`, `sandbox.env[]`, `sandbox.envFrom[]` with shape validation - shipped
    first, with a "not implemented yet" refusal, so the schema was settled
    before any behaviour.
 1. **Filesystem (implemented):** the private `/tmp`

@@ -69,6 +69,12 @@ type Config struct {
 	// fails, having consumed nothing, when that ends first. Zero or less
 	// means no bound: concurrency is the caller's.
 	MaxConcurrentRuns int
+	// MaxTotalRunMemory bounds the aggregate linear-memory reservation
+	// of all running modules (bytes). A Run reserves its effective limit
+	// (limits.memory or the ceiling) from this pool before it starts and
+	// returns it after; a Run that cannot fit waits under its context.
+	// Zero means no bound.
+	MaxTotalRunMemory int64
 }
 
 // Defaults applied for zero Config fields.
@@ -106,6 +112,11 @@ type RunOptions struct {
 	// for this Run. Nil is no grant — every call gets a refusal, never a
 	// trap.
 	HTTP HTTPRequester
+
+	// Key identifies this Run for the fair scheduler: requests with
+	// different keys are served round-robin so one hot module cannot
+	// starve the others. Typically the module's content digest.
+	Key string
 }
 
 // ErrTimeout reports that a guest exceeded its Run deadline.
@@ -116,7 +127,8 @@ type Engine struct {
 	cfg       Config
 	engine    *wasmtime.Engine
 	linker    *wasmtime.Linker
-	runs      chan struct{}
+	scheduler *fairScheduler // fair round-robin slot scheduler, nil when unbounded
+	mem       *memPool
 	active    atomic.Int64
 	wake      chan struct{}
 	stop      chan struct{}
@@ -164,7 +176,10 @@ func New(cfg Config) (*Engine, error) {
 
 	e := &Engine{cfg: cfg, engine: engine, linker: linker, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	if cfg.MaxConcurrentRuns > 0 {
-		e.runs = make(chan struct{}, cfg.MaxConcurrentRuns)
+		e.scheduler = newFairScheduler(cfg.MaxConcurrentRuns)
+	}
+	if cfg.MaxTotalRunMemory > 0 {
+		e.mem = newMemPool(cfg.MaxTotalRunMemory)
 	}
 	go e.tick()
 	return e, nil
@@ -212,19 +227,19 @@ func (e *Engine) running() func() {
 }
 
 // slot waits for a run slot when the Engine bounds concurrent Runs and
-// returns the func that gives it back. The wait is bounded by ctx alone — a
+// returns the func that gives it back. The wait is bounded by ctx alone - a
 // request that cannot run before its deadline has nothing to gain from a
-// slot afterwards — and a Run that never got one has consumed nothing.
-func (e *Engine) slot(ctx context.Context) (release func(), err error) {
-	if e.runs == nil {
+// slot afterwards - and a Run that never got one has consumed nothing.
+//
+// When the engine has a fair scheduler, key identifies which queue the
+// waiter belongs to; requests from different keys are served round-robin
+// so one hot module cannot starve the others. When fair queueing is off
+// (no scheduler), the key is ignored.
+func (e *Engine) slot(ctx context.Context, key string) (release func(), err error) {
+	if e.scheduler == nil {
 		return func() {}, nil
 	}
-	select {
-	case e.runs <- struct{}{}:
-		return func() { <-e.runs }, nil
-	case <-ctx.Done():
-		return nil, fmt.Errorf("waiting for a run slot: %w", ctx.Err())
-	}
+	return e.scheduler.acquire(ctx, key)
 }
 
 // Config returns the engine's ceilings with defaults applied — what a Run
@@ -338,7 +353,7 @@ func (e *Engine) checked(m *wasmtime.Module) (*Module, error) {
 }
 
 // Version identifies the wasmtime-go release and the host that compiled
-// artifacts are only valid for, e.g. "v47.0.0-linux-arm64" — the compiled
+// artifacts are only valid for, e.g. "v47.0.0-linux-arm64" - the compiled
 // cache is namespaced by it. The version comes from the build's module
 // information (falling back to the major in the import path), so a bump
 // changes the namespace without anyone remembering to; wasmtime itself

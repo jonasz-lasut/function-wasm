@@ -86,8 +86,9 @@ by the generated CRD under `package/input/`.
   --module-memory-limit of 512Mi`), asking for less narrows that run's
   epoch deadline and store limiter (`engine.RunOptions`, capped by the
   engine's `Config` whatever the caller passes).
-- `sandbox` — `filesystem.privateTmp`, `egress.http[] {host | hostPattern,
-  methods, pathPrefix}`, `env`. The Go types, the CRD schema (with a CEL
+- `sandbox` - `filesystem.privateTmp`, `egress.http[] {host | hostPattern,
+  methods, pathPrefix}`, `env[] {name, value | valueFrom}`, `envFrom[]
+  {credential, prefix}`. The Go types, the CRD schema (with a CEL
   rule for host XOR hostPattern) and `internal/sandbox.Validate` check the
   shape; `internal/sandbox.Ceiling` checks each grant against the operator's
   `--enable-sandbox-*` flag and refuses it with a fatal result naming the

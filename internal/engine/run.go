@@ -37,16 +37,25 @@ type call struct {
 // trap, exit, deadline, memory limit or an ABI violation) and carries no
 // response. When the Engine bounds concurrent runs, Run first waits for a
 // slot under ctx; a wait cut short by ctx is an error too, and such a Run
-// is neither timed nor counted — it never ran.
+// is neither timed nor counted - it never ran.
 func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionRequest, log logging.Logger, opts RunOptions) (rsp *fnv1.RunFunctionResponse, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	release, err := e.slot(ctx)
+	release, err := e.slot(ctx, opts.Key)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+
+	if e.mem != nil {
+		mem := e.effective(opts).MemoryLimit
+		releaseMem, err := e.mem.reserve(ctx, mem)
+		if err != nil {
+			return nil, err
+		}
+		defer releaseMem()
+	}
 
 	start := time.Now()
 	defer func() {
@@ -164,13 +173,15 @@ func checkBounds(size uintptr, ptr, n uint32) error {
 // guestError turns wasmtime's failure into something an operator can act on
 // from an XR condition: a deadline interrupt becomes ErrTimeout, a WASI exit
 // reports its status and a trap is named by its code. wasmtime's full message
-// carries a wasm backtrace that is only useful next to the guest's own stderr,
-// so it goes to the debug log.
+// carries a wasm backtrace that is only useful next to the guest's own
+// stderr, so it goes to the debug log.
 func guestError(what string, err error, budget time.Duration, log logging.Logger) error {
 	var trap *wasmtime.Trap
 	if errors.As(err, &trap) {
-		if code := trap.Code(); code != nil && *code == wasmtime.Interrupt {
-			return fmt.Errorf("%s: %w (%s)", what, ErrTimeout, budget)
+		if code := trap.Code(); code != nil {
+			if *code == wasmtime.Interrupt {
+				return fmt.Errorf("%s: %w (%s)", what, ErrTimeout, budget)
+			}
 		}
 		if log != nil {
 			log.Debug("Guest trapped", "trap", trap.Message())

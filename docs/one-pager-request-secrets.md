@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft
+* Status: Implemented, revision 1.0 (env retyped and envFrom; files not implemented)
 
 A module that talks to a cloud API through `wasmfn.HTTPClient()` usually
 does so through an SDK, and SDKs find their credentials where they always

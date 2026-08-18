@@ -73,6 +73,17 @@ type Policy struct {
 	// MaxRedirects followed for one request, each hop checked like the
 	// first.
 	MaxRedirects int `json:"maxRedirects,omitempty"`
+	// RateLimit is a process-wide token bucket per module digest: a module
+	// that exceeds it reads a budget error, never a trap.
+	RateLimit *RateLimitPolicy `json:"rateLimit,omitempty"`
+}
+
+// RateLimitPolicy is a process-wide token bucket per module digest.
+type RateLimitPolicy struct {
+	// RequestsPerMinute is the sustained rate.
+	RequestsPerMinute float64 `json:"requestsPerMinute"`
+	// Burst is the maximum tokens available at once.
+	Burst int `json:"burst,omitempty"`
 }
 
 // LoadPolicy reads a Policy file (YAML or JSON).
@@ -98,8 +109,16 @@ type Egress struct {
 	explicit []netip.Prefix // the file's blockedCIDRs, which allowed never override
 	budget   budget
 
+	rateLimit  *rateLimitPolicy
+	rateLimits *rateLimiters // nil when rateLimit is nil
+
 	transportOnce sync.Once
 	rt            *http.Transport
+}
+
+type rateLimitPolicy struct {
+	requestsPerMinute float64
+	burst             int
 }
 
 type budget struct {
@@ -159,7 +178,29 @@ func New(p Policy) (*Egress, error) {
 	if p.MaxRedirects > 0 {
 		e.budget.maxRedirects = p.MaxRedirects
 	}
+	if p.RateLimit != nil {
+		if p.RateLimit.RequestsPerMinute <= 0 {
+			return nil, fmt.Errorf("egress policy: rateLimit.requestsPerMinute must be positive")
+		}
+		rl := &rateLimitPolicy{
+			requestsPerMinute: p.RateLimit.RequestsPerMinute,
+			burst:             p.RateLimit.Burst,
+		}
+		if rl.burst <= 0 {
+			rl.burst = max(1, int(rl.requestsPerMinute))
+		}
+		e.rateLimit = rl
+		e.rateLimits = newRateLimiters(*rl)
+	}
 	return e, nil
+}
+
+// SweepRateLimiters removes rate-limit entries for modules not seen
+// recently. Called by the same periodic sweep that trims the caches.
+func (e *Egress) SweepRateLimiters() {
+	if e.rateLimits != nil {
+		e.rateLimits.sweep()
+	}
 }
 
 func prefixes(cidrs []string) ([]netip.Prefix, error) {
@@ -251,7 +292,11 @@ func (e *Egress) Describe() string {
 		hosts = "any host"
 	}
 	b := e.budget
-	return fmt.Sprintf("%s; timeout %s, maxRequests %d, maxResponseBytes %d, maxRedirects %d", hosts, b.timeout, b.maxRequests, b.maxResponseBytes, b.maxRedirects)
+	desc := fmt.Sprintf("%s; timeout %s, maxRequests %d, maxResponseBytes %d, maxRedirects %d", hosts, b.timeout, b.maxRequests, b.maxResponseBytes, b.maxRedirects)
+	if rl := e.rateLimit; rl != nil {
+		desc += fmt.Sprintf(", rateLimit %.0f req/min burst %d", rl.requestsPerMinute, rl.burst)
+	}
+	return desc
 }
 
 // normalizeHost lowercases a host name and drops a trailing dot, so rules and

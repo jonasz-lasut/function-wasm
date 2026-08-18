@@ -68,7 +68,10 @@ type CeilingFlags struct {
 // engineConfig is the run budget the flags name; MaxConcurrentRuns is
 // serve's alone.
 func (c *CeilingFlags) engineConfig() engine.Config {
-	return engine.Config{Timeout: c.ModuleTimeout, MemoryLimit: int64(c.ModuleMemoryLimit) << 20}
+	return engine.Config{
+		Timeout:     c.ModuleTimeout,
+		MemoryLimit: int64(c.ModuleMemoryLimit) << 20,
+	}
 }
 
 // ceilings builds the admission ceilings from the flags, checking them once:
@@ -148,6 +151,7 @@ type ServeCmd struct {
 
 	// Readiness and the concurrent-runs bound.
 	MaxConcurrentRuns int      `help:"Most module runs executing at once; a further request waits for a slot until its deadline, then fails with a fatal result. 0 leaves concurrency to the caller." default:"0" env:"MAX_CONCURRENT_RUNS"`
+	MaxTotalRunMemory int      `help:"Total linear-memory budget in MB across all running modules; a run reserves its effective limit (limits.memory or --module-memory-limit) before it starts and waits under its deadline when the pool is full. 0 means no bound." default:"0" env:"MAX_TOTAL_RUN_MEMORY"`
 	HealthAddress     string   `help:"Address of the plain-HTTP health endpoints /livez and /readyz (ready once the caches are open and --warm-modules are loaded); empty disables them. The gRPC health service on the function port answers too, but speaks mTLS." default:":8081" env:"HEALTH_ADDRESS"`
 	WarmModules       []string `help:"Modules loaded — resolved, verified, compiled or mapped from the artifact cache — before the health service reports Serving: OCI references pinned to their manifest digest (repo[:tag]@sha256:...) and, with --module-dir, path:<file> entries. Repeatable or comma-separated. One that fails to load is logged and loaded on its first request instead." env:"WARM_MODULES" sep:"," placeholder:"REF"`
 }
@@ -165,6 +169,7 @@ func (c *ServeCmd) Run(cli *CLI) error {
 
 	cfg := c.engineConfig()
 	cfg.MaxConcurrentRuns = c.MaxConcurrentRuns
+	cfg.MaxTotalRunMemory = int64(c.MaxTotalRunMemory) << 20
 	eng, err := engine.New(cfg)
 	if err != nil {
 		return err
@@ -175,7 +180,6 @@ func (c *ServeCmd) Run(cli *CLI) error {
 	if err != nil {
 		return err
 	}
-	go sweepCaches(log, []*cache.Store{blobs, compiled, manifests}, int64(c.MaxCacheSize)<<20)
 
 	resolver, err := c.resolver(blobs)
 	if err != nil {
@@ -185,6 +189,13 @@ func (c *ServeCmd) Run(cli *CLI) error {
 	if err != nil {
 		return err
 	}
+
+	// The periodic sweep bounds the on-disk caches and, unconditionally on the
+	// same interval, trims the in-memory per-digest maps (step slots, egress
+	// rate limiters) so they do not grow one entry per module for the pod's
+	// life. Built before the goroutine starts so it can pass them in.
+	stepSlots := engine.NewStepSlots()
+	go sweepCaches(log, []*cache.Store{blobs, compiled, manifests}, int64(c.MaxCacheSize)<<20, stepSlots, ceilings.Egress)
 
 	fn := &Function{
 		log:    log,
@@ -200,6 +211,7 @@ func (c *ServeCmd) Run(cli *CLI) error {
 		resolver:  resolver,
 		sandbox:   ceilings.Sandbox,
 		manifests: manifests,
+		stepSlots: stepSlots,
 	}
 	// Readiness: the caches are open, the engine is up and the modules named
 	// by --warm-modules are loaded. It is answered twice — by the gRPC health
@@ -260,9 +272,13 @@ func serveHealth(log logging.Logger, address string, ready *atomic.Bool) {
 
 // sweepCaches bounds the on-disk caches to maxBytes, now and every ten
 // minutes, and publishes their sizes. Entries are immutable and reproducible,
-// so removing the least recently used ones is always safe. It runs for the
-// life of the process.
-func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64) {
+// so removing the least recently used ones is always safe. On the same tick
+// it trims the in-memory per-digest maps: the step-slot entries and, when
+// egress is enabled (eg non-nil), the egress rate limiters. Those run
+// unconditionally, independent of maxBytes, so both maps stay bounded even
+// with the on-disk cap off (--max-cache-size 0). It runs for the life of the
+// process.
+func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64, stepSlots *engine.StepSlots, eg *egress.Egress) {
 	for {
 		freed, err := cache.Sweep(stores, maxBytes)
 		if err != nil {
@@ -272,6 +288,10 @@ func sweepCaches(log logging.Logger, stores []*cache.Store, maxBytes int64) {
 		}
 		metrics.CacheBytes.WithLabelValues(metrics.CacheBlob).Set(float64(stores[0].Bytes()))
 		metrics.CacheBytes.WithLabelValues(metrics.CacheCompiledDisk).Set(float64(stores[1].Bytes()))
+		stepSlots.SweepIdle()
+		if eg != nil {
+			eg.SweepRateLimiters()
+		}
 		time.Sleep(sweepInterval)
 	}
 }

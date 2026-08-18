@@ -28,7 +28,7 @@ const (
 	EventHit  = "hit"
 	EventMiss = "miss"
 	// EventStale is a compiled-disk lookup that found an artifact wasmtime
-	// refused (another version, a corrupt file) — a miss that cost a read.
+	// refused (another version, a corrupt file) - a miss that cost a read.
 	EventStale = "stale"
 
 	OutcomeOK      = "ok"
@@ -69,7 +69,7 @@ var (
 		Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	}, []string{"outcome"})
 
-	// RunsInFlight is how many guest runs are executing right now — pinned
+	// RunsInFlight is how many guest runs are executing right now - pinned
 	// at --max-concurrent-runs, it says the bound is what requests wait on.
 	RunsInFlight = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: namespace,
@@ -86,9 +86,7 @@ var (
 		Help:      "Cache lookups by cache (compiled = in-memory modules, compiled-disk = wasmtime artifacts on disk, blob = fetched modules on disk) and event (hit, miss, stale).",
 	}, []string{"cache", "event"})
 
-	// HTTPRequests counts the HTTP requests modules made through the host
-	// (the wasmfn.http import), by outcome. No host label: the set of hosts a
-	// Function's modules reach is unbounded; the audit log line names it.
+	// HTTPRequests counts the HTTP requests modules made through the host.
 	HTTPRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: subsystem,
@@ -96,11 +94,7 @@ var (
 		Help:      "HTTP requests modules made through the host (wasmfn.http), by outcome (ok = the server answered, refused = outside the grant or the egress policy, budget = over a per-run budget or the request timeout, error = the request failed).",
 	}, []string{"outcome"})
 
-	// Requests counts requests by outcome: ok (the module ran and answered),
-	// refused (the runtime declined before running it — input, policy,
-	// grants, limits, resolution, verification), error (the load or the run
-	// failed). Together with the run histogram it tells a shared runtime's
-	// operator how many requests never reach a module and why.
+	// Requests counts requests by outcome.
 	Requests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: subsystem,
