@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, Phases 1-4 Implemented
+* Status: Implemented, revision 0.1
 
 The resource-governance one-pager bounds a run by wall clock and linear
 memory, the runtime by compiles, resident modules, disk and (optionally)
@@ -198,26 +198,32 @@ additions keep them portable:
 A request is decoded by gRPC into Go structs, re-encoded by the host for
 the guest, and the guest's response is decoded by the host and re-encoded
 by gRPC: four passes, measured at ~20 ms per MB of observed state,
-regardless of guest. Three of them are avoidable. A codec (registered as
-`proto`, either through `grpc.ForceServerCodec` — which needs a
-`function.WithGRPCServerOptions` in function-sdk-go, whose `Serve` exposes
-none today, a small upstream PR — or, until then, `encoding.RegisterCodec`
-globally, acceptable in a process with one gRPC server) decodes the request
-as before *and* stashes the wire bytes in a side table keyed by the message
-pointer (`weak.Pointer` + `runtime.AddCleanup`, taken by `RunFunction`);
-`Function.RunFunction` still reads the decoded Input, `module.from` field
-and credentials, then hands `engine.RunRaw` the stashed bytes verbatim —
-unless a pull credential must be withheld, in which case either the
-message is re-marshalled as today or the one map entry (field 7, one
-length-delimited record per key) is dropped with `protowire` without
-decoding the rest; the guest's response bytes travel back untouched after a
-`protowire` scan for field 1 (`meta`), appended when absent — protobuf
-concatenation merges. Savings: up to 3 of 4 passes for large XRs; measure
-before committing (the estimate is inferred). Risks: a global codec also
-serves the health service (tiny messages, plain path); the withheld
-credential must be proven absent on the raw path by a test that decodes
-the forwarded bytes. Effort M. Deferred: streaming, avoiding the copy into
-guest memory (impossible: the guest owns its memory).
+regardless of guest. Two of them are avoidable without field-level wire
+surgery. A codec (`internal/codec`, registered as `proto` via
+`encoding.RegisterCodec` globally - acceptable in a process with one gRPC
+server) decodes the request as before *and* stashes the wire bytes in a
+side table keyed by the message pointer (`weak.Pointer` +
+`runtime.AddCleanup`); `RunFunction` consumes the stashed bytes before the
+decoded request may be modified and hands `engine.RunRaw` the stashed bytes
+verbatim - unless a pull credential must be withheld, in which case the
+normal path re-marshals the modified request as before. The guest's
+response bytes travel back through the codec when the guest set `meta`
+(the common case for Go guests): `RunRaw` returns the raw bytes alongside
+the decoded response, and `RunFunction` stashes them on the response so
+the codec's `Marshal` returns them instead of re-encoding. When `meta` is
+absent (a non-Go guest, typically), the host sets it and the codec
+marshals normally. Savings: skip request Marshal (pass 2) when no
+credential stripping is needed, skip response Marshal (pass 4) when the
+guest sets meta - up to 2 of 4 passes for large XRs. The `protowire`
+approach (field-level credential strip and meta scan for up to 3 of 4
+passes) was considered and dropped as disproportionate complexity. Risks:
+the global codec also serves the health service (tiny messages, plain
+path - the codec falls through to standard proto for non-RunFunction
+messages); when credential stripping is needed the raw path is not taken,
+so the pull credential is absent by construction - tested. Effort M.
+**Implemented.** Deferred: streaming, avoiding the copy into guest memory
+(impossible: the guest owns its memory), `grpc.ForceServerCodec` via an
+upstream function-sdk-go PR.
 
 ## Trust and threats
 
@@ -242,7 +248,7 @@ a run holding a slot while it waits for memory (fixed order, bounded by
 | 2 | `sandbox.egress.http[].cache`, policy `cache{maxTTL,maxBytes,maxEntryBytes}`, `outcome=cached`; policy `rateLimit` | S–M, S | independent |
 | 3 | `limits.concurrency`, fair queueing, `--max-total-run-memory`, `--metrics-label-input-name`, `run_queue_wait_seconds` | S, M, S, S | independent; fair queueing last |
 | 4 | `--registry-mirror`, `--oci-layout-dir`, `function precompile` (+ `serve` default subcommand) | S, M, S | independent |
-| 5 | raw-bytes codec, `engine.RunRaw`, `protowire` credential strip and `meta` check | M | after a measurement |
+| 5 | raw-bytes codec, `engine.RunRaw`, credential-stripping fallback to normal path, response stash when meta is present | M | **Implemented.** |
 
 Every phase is additive — new optional `limits`/`sandbox` fields, new
 flags, new policy-file sections (a strict-parsed file with a new section
