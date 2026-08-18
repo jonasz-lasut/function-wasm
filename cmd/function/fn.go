@@ -45,7 +45,7 @@ type Function struct {
 	// egress is the operator's HTTP egress ceiling (--enable-sandbox-egress,
 	// --sandbox-egress-policy); nil refuses every sandbox.egress grant.
 	egress *egress.Egress
-	// policy is the operator's grant policy (--policy-file); nil adds no
+	// policy is the operator's grant policy (--sandbox-policy-file); nil adds no
 	// constraint, so admission is identical to a runtime without one.
 	policy *authz.OperatorPolicy
 

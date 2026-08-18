@@ -179,7 +179,7 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 				c:         allTeamA,
 				principal: authz.Principal{Namespace: "team-b"},
 			},
-			want: want{err: "sandbox.filesystem.privateTmp is refused: the operator policy (--policy-file) does not permit it for this request"},
+			want: want{err: "sandbox.filesystem.privateTmp is refused: the operator policy (--sandbox-policy-file) does not permit it for this request"},
 		},
 		"OperatorPolicyEnvDenied": {
 			reason: "The environment grant is gated too.",
@@ -188,7 +188,7 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 				c:         allTeamA,
 				principal: authz.Principal{Namespace: "team-b"},
 			},
-			want: want{err: "sandbox.env is refused: the operator policy (--policy-file) does not permit it for this request"},
+			want: want{err: "sandbox.env is refused: the operator policy (--sandbox-policy-file) does not permit it for this request"},
 		},
 		"OperatorPolicyEgressDenied": {
 			reason: "An egress rule the ceiling admitted is refused by the operator policy, naming the method and host.",
@@ -197,7 +197,7 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 				c:         allTeamA,
 				principal: authz.Principal{Namespace: "team-b"},
 			},
-			want: want{err: `sandbox.egress.http[0] GET to host "api.example.com" is refused: the operator policy (--policy-file) does not permit it`},
+			want: want{err: `sandbox.egress.http[0] GET to host "api.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it`},
 		},
 		"OperatorPolicyEgressAllowed": {
 			reason: "A matching principal keeps the egress grant.",

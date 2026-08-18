@@ -150,7 +150,7 @@ them becomes in-tree code. Every one is grounded in the surface it would replace
 
 ![The policy decision point: one operator document, a shared schema, default-deny evaluation](policy-engine-pdp.svg)
 
-One operator-authored Cedar document (`--policy-file`), compiled once at startup
+One operator-authored Cedar document (`--sandbox-policy-file`), compiled once at startup
 and immutable for the process, deliberate parity with `--sandbox-egress-policy`
 and `--cosign-key` (restart to reload; hot-reload is a later option, not a
 launch requirement). Absent, the operator adds no constraint and every current
@@ -297,7 +297,7 @@ declarative half becomes policy, the stateful half stays numeric.
   `.like`) still to confirm when egress admit is considered.
 - Measured per-request and per-dial evaluation cost against the current path.
 - ~~Where the operator's Cedar document lives and how it reloads~~ - designed
-  (Phase 2+, foundation): a `--policy-file` read at startup and immutable for the
+  (Phase 2+, foundation): a `--sandbox-policy-file` read at startup and immutable for the
   process, parity with `--sandbox-egress-policy`; a mounted ConfigMap satisfies
   the flag, and restart reloads. Hot-reload stays a later option.
 

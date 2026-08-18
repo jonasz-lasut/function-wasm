@@ -38,8 +38,8 @@ type Ceilings struct {
 	// Egress is the HTTP egress ceiling (--enable-sandbox-egress,
 	// --sandbox-egress-policy); nil refuses every sandbox.egress grant.
 	Egress *egress.Egress
-	// Policy is the operator's grant policy (--policy-file), compiled once at
-	// startup; nil when no --policy-file is set, in which case it adds no
+	// Policy is the operator's grant policy (--sandbox-policy-file), compiled once at
+	// startup; nil when no --sandbox-policy-file is set, in which case it adds no
 	// constraint and admission is identical to a runtime without one. It only
 	// tightens: it is AND-combined with the --enable-sandbox-* floor and runs
 	// after it, over the capabilities the floor already admitted.
@@ -89,7 +89,7 @@ func (a Admitted) ManifestGrants(in *v1beta1.Input) manifest.Grants {
 // and kind, the Composition's name) for the operator's grant policy (c.Policy).
 // The policy is an AND gate after the --enable-sandbox-* floor: a capability
 // the floor already admitted must additionally be permitted by the policy, so
-// the policy only ever tightens. Without a --policy-file c.Policy is nil and
+// the policy only ever tightens. Without a --sandbox-policy-file c.Policy is nil and
 // every gate permits, so admission is identical to today.
 func Admit(in *v1beta1.Input, c Ceilings, principal authz.Principal) (Admitted, error) {
 	var out Admitted
@@ -106,10 +106,10 @@ func Admit(in *v1beta1.Input, c Ceilings, principal authz.Principal) (Admitted, 
 	// The operator's grant policy narrows the floor's grant, never widens it:
 	// each capability the floor admitted must also be permitted by the policy.
 	if grant.PrivateTmp && !c.Policy.PermitsPrivateTmp(principal) {
-		return out, errors.New("sandbox.filesystem.privateTmp is refused: the operator policy (--policy-file) does not permit it for this request")
+		return out, errors.New("sandbox.filesystem.privateTmp is refused: the operator policy (--sandbox-policy-file) does not permit it for this request")
 	}
 	if sandbox.RequestsEnv(in.Sandbox) && !c.Policy.PermitsEnv(principal, envKeys(in.Sandbox)) {
-		return out, fmt.Errorf("%s is refused: the operator policy (--policy-file) does not permit it for this request", envField(in.Sandbox))
+		return out, fmt.Errorf("%s is refused: the operator policy (--sandbox-policy-file) does not permit it for this request", envField(in.Sandbox))
 	}
 	// The Composition's HTTP rules must fit the operator's ceiling; the
 	// intersection is this run's grant. Without the flag the capability does
@@ -194,7 +194,7 @@ func admitEgressPolicy(policy *authz.OperatorPolicy, principal authz.Principal, 
 		}
 		for _, m := range r.Methods {
 			if !policy.PermitsEgress(principal, authz.EgressGrant{Host: r.Host, HostPattern: r.HostPattern, Method: m, Path: r.PathPrefix}) {
-				return fmt.Errorf("sandbox.egress.http[%d] %s to host %q is refused: the operator policy (--policy-file) does not permit it", i, strings.ToUpper(m), host)
+				return fmt.Errorf("sandbox.egress.http[%d] %s to host %q is refused: the operator policy (--sandbox-policy-file) does not permit it", i, strings.ToUpper(m), host)
 			}
 		}
 	}
