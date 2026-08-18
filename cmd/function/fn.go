@@ -214,13 +214,7 @@ func (f *Function) checkManifest(ctx context.Context, ref *module.Ref, in *v1bet
 	if err != nil {
 		return err
 	}
-	if m == nil {
-		return nil
-	}
-	if err := m.Check(admitted.ManifestGrants(in), in.Config, manifest.RuntimeVersion()); err != nil {
-		return errors.Errorf("module %s %v", ref.Description, err)
-	}
-	return nil
+	return checkManifestGrants(m, ref.Description, in, admitted)
 }
 
 // manifestFor returns a module's parsed manifest, nil when it carries none:
@@ -239,7 +233,7 @@ func (f *Function) manifestFor(ctx context.Context, ref *module.Ref) (*manifest.
 	if !ok {
 		var err error
 		if raw, _, err = ref.Manifest(ctx); err != nil {
-			return nil, errors.Wrapf(err, "cannot read the manifest of module %s", ref.Description)
+			return nil, manifestReadError(err, ref.Description)
 		}
 		if f.manifests != nil {
 			// An empty entry records "no manifest": the next process asks
@@ -248,13 +242,9 @@ func (f *Function) manifestFor(ctx context.Context, ref *module.Ref) (*manifest.
 			_ = f.manifests.Put(ref.Digest, raw)
 		}
 	}
-	var m *manifest.Manifest
-	if len(raw) > 0 {
-		parsed, err := manifest.Parse(raw)
-		if err != nil {
-			return nil, errors.Wrapf(err, "module %s has an invalid manifest", ref.Description)
-		}
-		m = parsed
+	m, err := parseModuleManifest(raw, ref.Description)
+	if err != nil {
+		return nil, err
 	}
 	f.parsed.Store(ref.Digest, m)
 	return m, nil
