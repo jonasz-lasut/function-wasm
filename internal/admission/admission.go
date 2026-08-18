@@ -12,10 +12,12 @@ package admission
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
@@ -36,6 +38,12 @@ type Ceilings struct {
 	// Egress is the HTTP egress ceiling (--enable-sandbox-egress,
 	// --sandbox-egress-policy); nil refuses every sandbox.egress grant.
 	Egress *egress.Egress
+	// Policy is the operator's grant policy (--sandbox-policy-file), compiled once at
+	// startup; nil when no --sandbox-policy-file is set, in which case it adds no
+	// constraint and admission is identical to a runtime without one. It only
+	// tightens: it is AND-combined with the --enable-sandbox-* floor and runs
+	// after it, over the capabilities the floor already admitted.
+	Policy *authz.OperatorPolicy
 }
 
 // Admitted is what one run gets when its Input is admitted.
@@ -76,7 +84,14 @@ func (a Admitted) ManifestGrants(in *v1beta1.Input) manifest.Grants {
 // fatal result as is. The module source is only checked for shape here; a
 // module.from source is materialised against the composite resource by
 // module.FromComposite afterwards.
-func Admit(in *v1beta1.Input, c Ceilings) (Admitted, error) {
+//
+// principal describes the caller (the observed composite resource's namespace
+// and kind, the Composition's name) for the operator's grant policy (c.Policy).
+// The policy is an AND gate after the --enable-sandbox-* floor: a capability
+// the floor already admitted must additionally be permitted by the policy, so
+// the policy only ever tightens. Without a --sandbox-policy-file c.Policy is nil and
+// every gate permits, so admission is identical to today.
+func Admit(in *v1beta1.Input, c Ceilings, principal authz.Principal) (Admitted, error) {
 	var out Admitted
 	if err := sandbox.Validate(in.Sandbox); err != nil {
 		return out, err
@@ -88,6 +103,14 @@ func Admit(in *v1beta1.Input, c Ceilings) (Admitted, error) {
 	if err != nil {
 		return out, err
 	}
+	// The operator's grant policy narrows the floor's grant, never widens it:
+	// each capability the floor admitted must also be permitted by the policy.
+	if grant.PrivateTmp && !c.Policy.PermitsPrivateTmp(principal) {
+		return out, errors.New("sandbox.filesystem.privateTmp is refused: the operator policy (--sandbox-policy-file) does not permit it for this request")
+	}
+	if sandbox.RequestsEnv(in.Sandbox) && !c.Policy.PermitsEnv(principal, envKeys(in.Sandbox)) {
+		return out, fmt.Errorf("%s is refused: the operator policy (--sandbox-policy-file) does not permit it for this request", envField(in.Sandbox))
+	}
 	// The Composition's HTTP rules must fit the operator's ceiling; the
 	// intersection is this run's grant. Without the flag the capability does
 	// not exist.
@@ -96,6 +119,12 @@ func Admit(in *v1beta1.Input, c Ceilings) (Admitted, error) {
 			return out, errors.New("sandbox.egress is refused: the runtime was started without --enable-sandbox-egress")
 		}
 		if out.HTTP, err = c.Egress.Grant(in.Sandbox.Egress.HTTP); err != nil {
+			return out, err
+		}
+		// After the egress ceiling, the operator policy judges every request
+		// the rules admit - once per (rule, method), so a policy can key on the
+		// method.
+		if err := admitEgressPolicy(c.Policy, principal, in.Sandbox.Egress.HTTP); err != nil {
 			return out, err
 		}
 	}
@@ -128,6 +157,48 @@ func Admit(in *v1beta1.Input, c Ceilings) (Admitted, error) {
 		return out, fmt.Errorf("cannot resolve module: %w", err)
 	}
 	return out, nil
+}
+
+// envKeys are the explicit sandbox.env variable names, offered to the operator
+// policy as context.keys. A bulk envFrom import contributes no keys (they are
+// not known until the run), so a key-level policy condition governs env only.
+func envKeys(s *v1beta1.Sandbox) []string {
+	keys := make([]string, 0, len(s.Env))
+	for _, e := range s.Env {
+		keys = append(keys, e.Name)
+	}
+	return keys
+}
+
+// envField names the environment grant for a refusal: sandbox.env when the
+// Composition sets any explicit variable, else sandbox.envFrom.
+func envField(s *v1beta1.Sandbox) string {
+	if len(s.Env) > 0 {
+		return "sandbox.env"
+	}
+	return "sandbox.envFrom"
+}
+
+// admitEgressPolicy runs the operator's grant policy over egress rules the
+// ceiling already admitted, once per rule and method. A nil policy permits
+// everything. The refusal names the rule, method and host so the Composition
+// author can act on it.
+func admitEgressPolicy(policy *authz.OperatorPolicy, principal authz.Principal, rules []v1beta1.SandboxHTTPRule) error {
+	if policy == nil {
+		return nil
+	}
+	for i, r := range rules {
+		host := r.Host
+		if host == "" {
+			host = r.HostPattern
+		}
+		for _, m := range r.Methods {
+			if !policy.PermitsEgress(principal, authz.EgressGrant{Host: r.Host, HostPattern: r.HostPattern, Method: m, Path: r.PathPrefix}) {
+				return fmt.Errorf("sandbox.egress.http[%d] %s to host %q is refused: the operator policy (--sandbox-policy-file) does not permit it", i, strings.ToUpper(m), host)
+			}
+		}
+	}
+	return nil
 }
 
 // runOptions turns the Input's limits into the run's budget, checked against
