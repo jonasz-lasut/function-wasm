@@ -10,7 +10,7 @@ concurrent runs; the sandbox one-pager bounds egress per run. This
 document adds what the 2026-08-16 capabilities research ranked as cheap and
 worth having, in two phases: per-module egress rate limits, and fairness
 inside one runtime (per-Input concurrency, fair queueing, a global
-run-memory budget, an opt-in per-Input metric label). Each phase is a new
+run-memory budget). Each phase is a new
 optional Input field or a new flag; none changes an existing one, and every
 ceiling keeps the rule that the operator sets it and a Composition may only
 ask for less. Nothing here gates `v0.1.0`.
@@ -97,13 +97,6 @@ small additions, all in `internal/engine` and `cmd/function`, all optional:
   states a small `limits.memory` gets more parallelism, an incentive to
   state it honestly. Acquisition order is fixed — per-Input slot, global
   slot, memory — so no cycle exists. S. **Implemented.**
-- **`--metrics-label-input-name`** (bool, off): adds an `input` label - the
-  Input's `metadata.name`, empty when unset - to `requests_total`,
-  `run_duration_seconds` and `http_requests_total`. It
-  is Composition-authored and bounded by the operator's own Compositions,
-  never a digest, ref or host; the risk (hundreds of Inputs) is documented
-  next to the flag. `internal/metrics` builds its vectors at startup with
-  or without the label (`metrics.Init`). S. **Implemented.**
 
 Interactions: the resource-governance table gains a row per addition;
 `run_duration_seconds` keeps measuring runs (every wait is outside it);
@@ -122,7 +115,7 @@ acquisition order, bounded by `ctx`).
 |---|---|---|---|
 | ~~1~~ | ~~fuel~~ | - | **Dropped** (not portable to wazero) |
 | 2 | policy `rateLimit` | S | **Implemented.** |
-| 3 | `limits.concurrency`, fair queueing, `--max-total-run-memory`, `--metrics-label-input-name` | S, M, S, S | **Implemented.** |
+| 3 | `limits.concurrency`, fair queueing, `--max-total-run-memory` | S, M, S | **Implemented.** |
 | ~~4~~ | ~~registry mirror, OCI layout, precompile~~ | - | **Dropped** (path mode covers air-gapped) |
 | ~~5~~ | ~~raw-bytes codec~~ | - | **Dropped** (maintenance cost outweighs savings) |
 
@@ -141,10 +134,11 @@ enumeration values on existing metric labels. Nothing here gates `v0.1.0`.
 - **Rate-limit unit: per module digest or per host?** Recommendation: per
   module first (the digest is already the audit's unit and the key set is
   the memory tier's); per host when a bounded key set is designed.
-- **Opt-in `input` metric label from `metadata.name`?** Recommendation:
-  yes, off by default, the only identity label ever, documented with its
-  cardinality risk; per-Input governance without per-Input observability is
-  half a feature.
+- ~~**Opt-in `input` metric label from `metadata.name`?**~~ Dropped: an
+  Input is a Composition-embedded fragment, so its `metadata.name` is unset
+  in practice (no example sets it) and, when set, is neither unique nor
+  meaningful across the many Compositions one server handles; the label
+  carried no reliable signal.
 - **Warm-up from a bounded "last served" file on the cache volume?**
   Recommendation: no — it makes the warm set a function of history that a
   fresh volume lacks and an operator cannot read from the deployment;

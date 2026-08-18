@@ -5,11 +5,6 @@
 // None of the metrics carries a module identity label: a Function serves an
 // unbounded set of modules and digests, and per-module series would grow
 // without bound. Logs carry the digest.
-//
-// Three metrics (RunDuration, HTTPRequests, Requests) gain an opt-in "input"
-// label (the Input's metadata.name) when Init(true) is called; use the
-// ObserveRun / IncHTTPRequests / IncRequests helpers rather than the vars
-// directly, so the label count is handled.
 package metrics
 
 import (
@@ -46,32 +41,6 @@ const (
 	OutcomeBudget  = "budget"
 )
 
-// Shared opts for metrics that Init may re-register with an extra label.
-var (
-	runDurationOpts = prometheus.HistogramOpts{
-		Namespace: namespace,
-		Subsystem: subsystem,
-		Name:      "run_duration_seconds",
-		Help:      "Time spent instantiating and running a module for one request, by outcome (ok, error, timeout).",
-		Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
-	}
-	httpRequestsOpts = prometheus.CounterOpts{
-		Namespace: namespace,
-		Subsystem: subsystem,
-		Name:      "http_requests_total",
-		Help:      "HTTP requests modules made through the host (wasmfn.http), by outcome (ok = the server answered, refused = outside the grant or the egress policy, budget = over a per-run budget or the request timeout, error = the request failed).",
-	}
-	requestsOpts = prometheus.CounterOpts{
-		Namespace: namespace,
-		Subsystem: subsystem,
-		Name:      "requests_total",
-		Help:      "Requests by outcome: ok, refused (declined before the module ran), error (load or run failed).",
-	}
-)
-
-// withInput is set by Init(true); the observation helpers check it.
-var withInput bool
-
 var (
 	// CompileDuration is how long compiling a module took, on cache misses.
 	CompileDuration = promauto.NewHistogram(prometheus.HistogramOpts{
@@ -91,9 +60,14 @@ var (
 		Buckets:   []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60},
 	}, []string{"source"})
 
-	// RunDuration is how long one guest run took, by outcome. Use
-	// ObserveRun instead of .WithLabelValues directly.
-	RunDuration = prometheus.NewHistogramVec(runDurationOpts, []string{"outcome"})
+	// RunDuration is how long one guest run took, by outcome.
+	RunDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Subsystem: subsystem,
+		Name:      "run_duration_seconds",
+		Help:      "Time spent instantiating and running a module for one request, by outcome (ok, error, timeout).",
+		Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	}, []string{"outcome"})
 
 	// RunsInFlight is how many guest runs are executing right now - pinned
 	// at --max-concurrent-runs, it says the bound is what requests wait on.
@@ -113,12 +87,20 @@ var (
 	}, []string{"cache", "event"})
 
 	// HTTPRequests counts the HTTP requests modules made through the host.
-	// Use IncHTTPRequests instead of .WithLabelValues directly.
-	HTTPRequests = prometheus.NewCounterVec(httpRequestsOpts, []string{"outcome"})
+	HTTPRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: subsystem,
+		Name:      "http_requests_total",
+		Help:      "HTTP requests modules made through the host (wasmfn.http), by outcome (ok = the server answered, refused = outside the grant or the egress policy, budget = over a per-run budget or the request timeout, error = the request failed).",
+	}, []string{"outcome"})
 
-	// Requests counts requests by outcome. Use IncRequests instead of
-	// .WithLabelValues directly.
-	Requests = prometheus.NewCounterVec(requestsOpts, []string{"outcome"})
+	// Requests counts requests by outcome.
+	Requests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: subsystem,
+		Name:      "requests_total",
+		Help:      "Requests by outcome: ok, refused (declined before the module ran), error (load or run failed).",
+	}, []string{"outcome"})
 
 	// CacheBytes is the size of each on-disk store, as of the last sweep.
 	CacheBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
@@ -128,59 +110,3 @@ var (
 		Help:      "Bytes held by each on-disk store (compiled-disk = wasmtime artifacts, blob = fetched modules), measured by the periodic sweep.",
 	}, []string{"cache"})
 )
-
-func init() {
-	prometheus.MustRegister(RunDuration, HTTPRequests, Requests)
-}
-
-// Init optionally adds an "input" label (the Input's metadata.name) to the
-// three request-path metrics: run_duration_seconds, http_requests_total and
-// requests_total. Call it once at startup before serving; callers must use the
-// observation helpers (ObserveRun, IncHTTPRequests, IncRequests) so the label
-// count matches.
-func Init(inputLabel bool) {
-	if !inputLabel {
-		return
-	}
-	withInput = true
-
-	prometheus.DefaultRegisterer.Unregister(RunDuration)
-	RunDuration = prometheus.NewHistogramVec(runDurationOpts, []string{"outcome", "input"})
-	prometheus.MustRegister(RunDuration)
-
-	prometheus.DefaultRegisterer.Unregister(HTTPRequests)
-	HTTPRequests = prometheus.NewCounterVec(httpRequestsOpts, []string{"outcome", "input"})
-	prometheus.MustRegister(HTTPRequests)
-
-	prometheus.DefaultRegisterer.Unregister(Requests)
-	Requests = prometheus.NewCounterVec(requestsOpts, []string{"outcome", "input"})
-	prometheus.MustRegister(Requests)
-}
-
-// ObserveRun records a run's duration and outcome. When the input label is on,
-// input is the Input's metadata.name; otherwise it is ignored.
-func ObserveRun(outcome, input string, seconds float64) {
-	if withInput {
-		RunDuration.WithLabelValues(outcome, input).Observe(seconds)
-	} else {
-		RunDuration.WithLabelValues(outcome).Observe(seconds)
-	}
-}
-
-// IncHTTPRequests counts one HTTP request by outcome.
-func IncHTTPRequests(outcome, input string) {
-	if withInput {
-		HTTPRequests.WithLabelValues(outcome, input).Inc()
-	} else {
-		HTTPRequests.WithLabelValues(outcome).Inc()
-	}
-}
-
-// IncRequests counts one function request by outcome.
-func IncRequests(outcome, input string) {
-	if withInput {
-		Requests.WithLabelValues(outcome, input).Inc()
-	} else {
-		Requests.WithLabelValues(outcome).Inc()
-	}
-}

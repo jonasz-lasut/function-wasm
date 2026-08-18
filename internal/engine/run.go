@@ -59,7 +59,7 @@ func (e *Engine) Run(ctx context.Context, m *Module, req *fnv1.RunFunctionReques
 
 	start := time.Now()
 	defer func() {
-		metrics.ObserveRun(outcome(err), opts.InputName, time.Since(start).Seconds())
+		metrics.RunDuration.WithLabelValues(outcome(err)).Observe(time.Since(start).Seconds())
 	}()
 	in, err := proto.Marshal(req)
 	if err != nil {

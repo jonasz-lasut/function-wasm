@@ -113,11 +113,6 @@ type RunOptions struct {
 	// trap.
 	HTTP HTTPRequester
 
-	// InputName is the Input's metadata.name, threaded here so the
-	// run-duration and run-instructions metrics carry it when the
-	// --metrics-label-input-name flag is on. Empty is fine.
-	InputName string
-
 	// Key identifies this Run for the fair scheduler: requests with
 	// different keys are served round-robin so one hot module cannot
 	// starve the others. Typically the module's content digest.
