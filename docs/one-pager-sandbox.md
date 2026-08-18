@@ -251,8 +251,8 @@ module.
   implemented: allowed, since the grant is the Composition's; a stricter mode
   could refuse the pairing.)
 - Per-request budgets in the egress policy file only, or lowerable per Input
-  the way `limits` narrows the run's timeout and memory? (Revision 0.4 ships
-  them in the policy file only; the run's `limits.timeout` still bounds every
+  the way `limits` narrows the run's timeout and memory? (v0.2.0 fixed them as defaults, not a file or per Input, with the rate
+  limit a flag; the run's `limits.timeout` still bounds every
   request.)
 - Should the audit log line be a structured `Result` on the response (visible
   in `crossplane render --include-function-results`) as well as a log?

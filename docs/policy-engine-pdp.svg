@@ -13,8 +13,8 @@
   <text x="38" y="142" font-size="10" fill="#2c2a25">--sandbox-policy-file &#8594; .cedar document(s)</text>
   <text x="38" y="159" font-size="9.5" fill="#7a7668">compiled once at startup &#8594; PolicySet</text>
   <text x="38" y="176" font-size="9.5" fill="#7a7668">immutable for the process life</text>
-  <text x="38" y="190" font-size="9" fill="#a09b8e">(parity with --sandbox-egress-policy,</text>
-  <text x="38" y="202" font-size="9" fill="#a09b8e">--cosign-key; restart to reload)</text>
+  <text x="38" y="190" font-size="9" fill="#a09b8e">(parity with --cosign-key;</text>
+  <text x="38" y="202" font-size="9" fill="#a09b8e">restart to reload)</text>
   <text x="38" y="216" font-size="9" fill="#a09b8e">absent = no operator constraint</text>
 
   <!-- 2 Shared schema -->
