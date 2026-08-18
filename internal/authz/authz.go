@@ -8,7 +8,7 @@
 //     step credential such a module may spend. Their allow lists travel in the
 //     request context, never in the policy text, so a Composition-authored
 //     entry cannot inject Cedar policy.
-//   - The operator's grant policy (OperatorPolicy), compiled from --policy-file
+//   - The operator's grant policy (OperatorPolicy), compiled from --sandbox-policy-file
 //     and immutable for the process. It decides whether a caller may be granted
 //     a sandbox capability (private /tmp, environment, egress). It is a separate
 //     PolicySet, AND-combined with the built-in fences and the --enable-sandbox-*

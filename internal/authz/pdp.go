@@ -68,10 +68,10 @@ type EgressGrant struct {
 	Path        string
 }
 
-// OperatorPolicy is the operator's grant policy, compiled from --policy-file
+// OperatorPolicy is the operator's grant policy, compiled from --sandbox-policy-file
 // and immutable for the process, so it is safe for concurrent use. A nil
 // *OperatorPolicy is the no-policy-file case: every Permits method returns true,
-// so admission is identical to a runtime started without --policy-file. The
+// so admission is identical to a runtime started without --sandbox-policy-file. The
 // policy can only tighten - it is AND-combined with the --enable-sandbox-*
 // floor and the built-in fences, and evaluates default-deny (forbid wins).
 type OperatorPolicy struct {

@@ -39,7 +39,7 @@ func TestOperatorPolicyPrivateTmp(t *testing.T) {
 		want      bool
 	}{
 		"NilPolicyPermits": {
-			reason:    "No --policy-file adds no constraint: a nil policy permits.",
+			reason:    "No --sandbox-policy-file adds no constraint: a nil policy permits.",
 			policy:    nil,
 			principal: Principal{Namespace: "team-b"},
 			want:      true,
