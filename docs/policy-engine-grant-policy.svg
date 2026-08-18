@@ -1,0 +1,36 @@
+<svg viewBox="0 0 470 344" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <rect width="470" height="344" fill="#f8f7f4" rx="4"/>
+
+  <text x="24" y="32" font-size="13.5" font-weight="700" fill="#2c2a25">Grant policy</text>
+  <text x="24" y="49" font-size="10" fill="#7a7668">capabilities + ceiling &#8745; grant + per-tenant conditions</text>
+  <rect x="352" y="20" width="94" height="18" rx="9" fill="#3d6b5e"/>
+  <text x="399" y="32.5" text-anchor="middle" font-size="9.5" font-weight="700" fill="#ffffff">BUILD &#183; flagship</text>
+
+  <!-- cedar request panel -->
+  <rect x="24" y="64" width="422" height="126" rx="5" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.2"/>
+  <text x="38" y="82" font-size="9.5" font-weight="700" fill="#3d6b5e" letter-spacing="0.06em">CEDAR REQUEST</text>
+
+  <text x="38" y="103" font-size="10" font-weight="600" fill="#6f6656">principal</text>
+  <text x="132" y="103" font-size="10" fill="#2c2a25">Request { namespace, xrKind, composition }</text>
+  <text x="38" y="122" font-size="10" font-weight="600" fill="#6f6656">action</text>
+  <text x="132" y="122" font-size="10" fill="#2c2a25">grantEgress &#183; usePrivateTmp &#183; setEnv</text>
+  <text x="38" y="141" font-size="10" font-weight="600" fill="#6f6656">resource</text>
+  <text x="132" y="141" font-size="10" fill="#2c2a25">Capability &#183; HostPattern&#9656;</text>
+  <text x="38" y="160" font-size="10" font-weight="600" fill="#6f6656">context</text>
+  <text x="132" y="160" font-size="10" fill="#2c2a25">{ host, method, path, envKeys, limits }</text>
+  <text x="38" y="180" font-size="9" fill="#a09b8e">permit when { principal.namespace == "team-a" &amp;&amp; resource.host like "*.svc" }</text>
+
+  <!-- floor + decision -->
+  <rect x="24" y="202" width="205" height="46" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
+  <text x="38" y="221" font-size="10" font-weight="600" fill="#2c2a25">--enable-sandbox-* = hard floor</text>
+  <text x="38" y="237" font-size="9" fill="#7a7668">a disabled capability is never grantable</text>
+
+  <rect x="241" y="202" width="205" height="46" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="255" y="221" font-size="10" font-weight="600" fill="#2c2a25">Cedar narrows within the floor</text>
+  <text x="255" y="237" font-size="9" fill="#7a7668">per-tenant / conditional deny</text>
+
+  <text x="24" y="277" font-size="10.5" font-weight="700" fill="#3d6b5e">Why</text>
+  <text x="24" y="294" font-size="9.5" fill="#7a7668">The one place Cedar is strictly better for operators: per-tenant and conditional</text>
+  <text x="24" y="307" font-size="9.5" fill="#7a7668">policy is impossible today (every Composition gets one flat ceiling). Additive under</text>
+  <text x="24" y="320" font-size="9.5" fill="#7a7668">the flags - narrowing only, so absent policy keeps every current behaviour identical.</text>
+</svg>

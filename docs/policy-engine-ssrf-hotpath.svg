@@ -1,0 +1,34 @@
+<svg viewBox="0 0 470 356" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <rect width="470" height="356" fill="#f8f7f4" rx="4"/>
+
+  <text x="24" y="32" font-size="13.5" font-weight="700" fill="#2c2a25">SSRF CIDR rules &amp; the dial hot path</text>
+  <text x="24" y="49" font-size="10" fill="#7a7668">Cedar authors the block/allow rules; Go evaluates them per resolved IP</text>
+  <rect x="366" y="20" width="80" height="18" rx="9" fill="#c4993a"/>
+  <text x="406" y="32.5" text-anchor="middle" font-size="9.5" font-weight="700" fill="#ffffff">HYBRID</text>
+
+  <!-- authoring (cedar) -->
+  <rect x="24" y="62" width="422" height="66" rx="5" fill="#fef6e8" stroke="#c4993a" stroke-width="1.2"/>
+  <text x="38" y="80" font-size="9.5" font-weight="700" fill="#b5872f" letter-spacing="0.05em">AUTHOR &#183; CEDAR (load time, once)</text>
+  <text x="38" y="99" font-size="10" fill="#2c2a25">ip extension: .isInRange, .isLoopback  &#183;  forbid-wins precedence</text>
+  <text x="38" y="117" font-size="9.5" fill="#7a7668">compiled at startup &#8594; a Go decision table (ordered netip.Prefix list, precedence kept)</text>
+
+  <!-- dashed transition -->
+  <line x1="235" y1="132" x2="235" y2="150" stroke="#c4993a" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <text x="243" y="146" font-size="8.5" fill="#a09b8e">compile down - Cedar never runs on the dial</text>
+
+  <!-- evaluation (go) -->
+  <rect x="24" y="154" width="422" height="66" rx="5" fill="#ecebe4" stroke="#9a917d" stroke-width="1.2"/>
+  <text x="38" y="172" font-size="9.5" font-weight="700" fill="#6f6656" letter-spacing="0.05em">EVALUATE &#183; GO (dial hot path, per resolved IP, per redirect)</text>
+  <text x="38" y="191" font-size="10" fill="#2c2a25">resolve name &#8594; judge every address &#8594; dial the checked one (TOCTOU-safe)</text>
+  <text x="38" y="209" font-size="9.5" fill="#7a7668">blockedBy(ip) - a few Prefix.Contains, no allocation, no Cedar per address</text>
+
+  <!-- sibling decision -->
+  <rect x="24" y="234" width="422" height="42" rx="4" fill="#ffffff" stroke="#9a917d" stroke-width="1"/>
+  <text x="38" y="252" font-size="10" font-weight="600" fill="#2c2a25">Sibling decision: egress per-request admit (host/method/path) STAYS GO</text>
+  <text x="38" y="267" font-size="9" fill="#7a7668">per redirect hop, already boundary-correct; Cedar would add cost with no correctness gain</text>
+
+  <text x="24" y="303" font-size="10.5" font-weight="700" fill="#b5872f">Why hybrid, not full Cedar</text>
+  <text x="24" y="320" font-size="9.5" fill="#7a7668">A composition function dials per reconcile, per resolved IP, per redirect - the block list is</text>
+  <text x="24" y="333" font-size="9.5" fill="#7a7668">the actual SSRF defense and must stay hot. Cedar is the authoring + analysis surface</text>
+  <text x="24" y="346" font-size="9.5" fill="#7a7668">(readable rules, "is A more permissive than B"); Go stays the evaluator. Measure before adopting.</text>
+</svg>
