@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/partial"
@@ -429,17 +428,14 @@ func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := remote.Write(ref, img, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx)); err != nil {
+	if err := remote.Write(ref, img, remoteOpts(ctx)...); err != nil {
 		return fmt.Errorf("cannot push %s: %w", ref, err)
 	}
 	digest, err := img.Digest()
 	if err != nil {
 		return err
 	}
-	pinned := ref.String()
-	if _, ok := ref.(name.Digest); !ok {
-		pinned += "@" + digest.String()
-	}
+	pinned := pinnedRef(ref, digest)
 	_, _ = fmt.Fprintf(stdout, "Pushed %s\n\nmodule:\n  type: OCI\n  oci:\n    ref: %s\n", pinned, pinned)
 	if m != nil {
 		block, err := sandboxBlock(m)

@@ -9,13 +9,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"sigs.k8s.io/yaml"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
+	"github.com/jonasz-lasut/function-wasm/internal/module"
 )
 
 // ScaffoldCmd prints Composition fragments for a module.
@@ -100,21 +99,14 @@ func (c *ScaffoldCompositionCmd) source(ctx context.Context) (v1beta1.ModuleSour
 	if err != nil {
 		return v1beta1.ModuleSource{}, nil, fmt.Errorf("%s is neither a file nor an OCI reference: %w", c.From, err)
 	}
-	opts := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx)}
-	desc, err := remote.Get(ref, opts...)
+	opts := remoteOpts(ctx)
+	desc, om, err := module.ParseRemoteManifest(ref, "name", opts...)
 	if err != nil {
-		return v1beta1.ModuleSource{}, nil, fmt.Errorf("cannot fetch manifest %s: %w", ref, err)
+		return v1beta1.ModuleSource{}, nil, err
 	}
-	pinned := ref.String()
-	if _, ok := ref.(name.Digest); !ok {
-		pinned += "@" + desc.Digest.String()
-	}
+	pinned := pinnedRef(ref, desc.Digest)
 	if m == nil {
-		om, err := fetchOCIManifest(ref, opts)
-		if err != nil {
-			return v1beta1.ModuleSource{}, nil, err
-		}
-		if ml, ok := manifestLayer(om); ok {
+		if ml, ok := module.ManifestLayer(om); ok {
 			if m, err = fetchManifest(ref, ml, opts); err != nil {
 				return v1beta1.ModuleSource{}, nil, fmt.Errorf("%s: %w", ref, err)
 			}
