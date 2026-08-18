@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.2
+* Status: Implemented, revision 1.3
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. Written after the 2026-08-16 review,
@@ -11,8 +11,11 @@ Revision 1.1 adds the Composition-owned `policy` that fences XR-chosen
 modules — the Input shape is the module-source-schema one-pager's; revision
 1.2 records the sandbox's grants — filesystem and environment, and what
 enforces the network boundary now that HTTP egress through the host is
-implemented (sandbox one-pager, revision 1.0). Everything below is
-implemented.
+implemented (sandbox one-pager, revision 1.0); revision 1.3 records the
+operator-authored Cedar grant policy (`--sandbox-policy-file`) that narrows the
+sandbox grants per caller and the per-repository signature requirement that makes
+`--cosign-key` per-repository, both on the operator boundary only (policy-engine
+one-pager). Everything below is implemented.
 
 
 ## Parties
@@ -52,6 +55,15 @@ consulted: an artifact a keyless runtime (or one with a since-rotated key)
 left on a shared or persisted volume is never served by a keyed one. Keyless
 (Fulcio/Rekor) signatures are out of scope — sigstore-go alone is hundreds
 of modules and needs network access to Rekor and TUF at run time.
+
+An operator `--sandbox-policy-file` makes the requirement per-repository: a
+`requireSignature` rule demands a signature for the repositories it names,
+`--cosign-key` supplies the keys, and a required module the runtime cannot
+verify is refused (fail-closed). This replaces the all-or-nothing default -
+a repository no rule names then runs unsigned, so the runtime warns loudly at
+startup when a key is set but the policy requires nothing (policy-engine
+one-pager). The choice of *which* repositories must be signed is operator
+policy; the crypto is unchanged.
 
 ## Credentials and `policy`
 
