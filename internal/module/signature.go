@@ -21,7 +21,6 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/layout"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
@@ -155,88 +154,6 @@ func (v *Verifier) Verify(ctx context.Context, ref name.Digest, opts []remote.Op
 		return fmt.Errorf("%s has no cosign signature layers", sigRef)
 	}
 	return fmt.Errorf("no valid cosign signature for %s: %s", ref, strings.Join(reasons, "; "))
-}
-
-// VerifyFromLayout checks the signature for ref's digest in an OCI layout.
-// The .sig manifest is found in the layout's index.json by its ref-name
-// annotation (as cosign save and crane copy write it). Returns a non-nil
-// error when the layout is empty, has no signature or the signature does
-// not verify: the caller falls through to network verification.
-func (v *Verifier) VerifyFromLayout(ref name.Digest, lp layout.Path) error {
-	if lp == "" {
-		return errors.New("no layout")
-	}
-	digest := ref.DigestStr()
-	v.mu.Lock()
-	_, done := v.verified[digest]
-	v.mu.Unlock()
-	if done {
-		return nil
-	}
-	idx, err := lp.ImageIndex()
-	if err != nil {
-		return fmt.Errorf("cannot read layout index: %w", err)
-	}
-	im, err := idx.IndexManifest()
-	if err != nil {
-		return fmt.Errorf("cannot read layout index manifest: %w", err)
-	}
-	sigTag := SignatureTag(digest)
-	const refNameAnnotation = "org.opencontainers.image.ref.name"
-	var sigDigest v1.Hash
-	found := false
-	for _, desc := range im.Manifests {
-		ann := desc.Annotations[refNameAnnotation]
-		// The annotation may be the full reference (registry/repo:tag) or
-		// just the tag, depending on the tool.
-		if ann == sigTag || strings.HasSuffix(ann, ":"+sigTag) {
-			sigDigest = desc.Digest
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("layout has no signature for %s (tag %s)", ref, sigTag)
-	}
-	raw, err := lp.Bytes(sigDigest)
-	if err != nil {
-		return fmt.Errorf("cannot read signature manifest from layout: %w", err)
-	}
-	m, err := v1.ParseManifest(bytes.NewReader(raw))
-	if err != nil {
-		return fmt.Errorf("cannot parse signature manifest from layout: %w", err)
-	}
-	var reasons []string
-	for _, layer := range m.Layers {
-		encoded, ok := layer.Annotations[cosignSignatureAnnotation]
-		if !ok {
-			continue
-		}
-		sig, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil {
-			reasons = append(reasons, "signature is not base64")
-			continue
-		}
-		payload, err := lp.Bytes(layer.Digest)
-		if err != nil {
-			return fmt.Errorf("cannot read cosign payload from layout: %w", err)
-		}
-		if err := checkPayload(payload, digest); err != nil {
-			reasons = append(reasons, err.Error())
-			continue
-		}
-		if v.verifies(payload, sig) {
-			v.mu.Lock()
-			v.verified[digest] = struct{}{}
-			v.mu.Unlock()
-			return nil
-		}
-		reasons = append(reasons, "signature does not verify with the configured keys")
-	}
-	if len(reasons) == 0 {
-		return fmt.Errorf("layout signature for %s has no cosign signature layers", ref)
-	}
-	return fmt.Errorf("no valid cosign signature for %s from layout: %s", ref, strings.Join(reasons, "; "))
 }
 
 // simpleSigning is the part of cosign's payload that binds a signature to a
