@@ -87,6 +87,91 @@ func TestFairSchedulerContextCancelled(t *testing.T) {
 	release()
 }
 
+func TestFairSchedulerNoLeakOnAdmitCancelRace(t *testing.T) {
+	// Regression: wakeNext admits a waiter (s.active++, signal on its channel)
+	// while, in the same instant, that waiter's context fires. If the grant is
+	// dropped on the cancel path, s.active climbs until it equals total with no
+	// real holder and the scheduler deadlocks for good. Storm the admit/cancel
+	// race, then prove the scheduler reconciled every grant and still works.
+	s := newFairScheduler(1)
+
+	// Run the storm in a goroutine so an unfixed scheduler that wedges fails
+	// the test by timeout instead of hanging the whole suite.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		// A driver churns the single slot: each release admits a victim
+		// waiter through wakeNext, which is where a simultaneously-cancelling
+		// waiter used to leak a slot.
+		driverCtx, stopDriver := context.WithCancel(context.Background())
+		var driverWG sync.WaitGroup
+		driverWG.Add(1)
+		go func() {
+			defer driverWG.Done()
+			for driverCtx.Err() == nil {
+				rel, err := s.acquire(driverCtx, "driver")
+				if err != nil {
+					return // driver context ended while waiting
+				}
+				rel()
+			}
+		}()
+
+		// Victims on a different key with very short, index-jittered deadlines,
+		// so a good number expire at almost the instant wakeNext admits them.
+		// A bounded worker pool keeps the queue small, so an admitted victim is
+		// always a freshly-enqueued one whose deadline is near its admission.
+		const iterations = 10000
+		inFlight := make(chan struct{}, 16)
+		var victimWG sync.WaitGroup
+		for i := range iterations {
+			inFlight <- struct{}{}
+			victimWG.Add(1)
+			go func() {
+				defer victimWG.Done()
+				defer func() { <-inFlight }()
+				d := time.Duration(30+(i%50)) * time.Microsecond
+				ctx, cancel := context.WithTimeout(context.Background(), d)
+				defer cancel()
+				if rel, err := s.acquire(ctx, "victim"); err == nil {
+					rel()
+				}
+			}()
+		}
+		victimWG.Wait()
+
+		stopDriver()
+		driverWG.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("scheduler storm did not finish in time: a leaked slot deadlocked acquire")
+	}
+
+	// Every admit/cancel race must have reconciled: no slot is held now.
+	s.mu.Lock()
+	active := s.active
+	s.mu.Unlock()
+	if active != 0 {
+		t.Fatalf("active = %d after quiesce, want 0 (a run slot leaked)", active)
+	}
+
+	// And a fresh acquire is granted promptly rather than blocking forever.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	rel, err := s.acquire(ctx, "after")
+	if err != nil {
+		t.Fatalf("acquire after quiesce: %v (the scheduler is wedged)", err)
+	}
+	if rel == nil {
+		t.Fatal("acquire after quiesce returned a nil release func")
+	}
+	rel()
+}
+
 func TestFairSchedulerRoundRobin(t *testing.T) {
 	// 1 slot, two keys each with 3 waiters. The scheduler should alternate
 	// between keys, not drain one before the other.
