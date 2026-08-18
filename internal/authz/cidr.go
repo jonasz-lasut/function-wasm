@@ -92,8 +92,9 @@ type cedarJSONPolicy struct {
 }
 
 type cedarJSONScope struct {
-	Op     string           `json:"op"`
-	Entity *cedarJSONEntity `json:"entity,omitempty"`
+	Op       string            `json:"op"`
+	Entity   *cedarJSONEntity  `json:"entity,omitempty"`
+	Entities []cedarJSONEntity `json:"entities,omitempty"`
 }
 
 type cedarJSONEntity struct {
@@ -120,6 +121,13 @@ func compileDialRule(pol *cedar.Policy) (prefixes []netip.Prefix, effect cedar.E
 		return nil, false, false, fmt.Errorf("cannot read policy: %w", err)
 	}
 	if !isDialActionScope(jp.Action) {
+		// A dialAddress rule written `action in [Action::"dialAddress"]` would
+		// otherwise be silently skipped and compile to nothing - a fail-open
+		// no-op for a forbid meant as a block. Refuse it so the operator uses
+		// the one form the compiler recognizes.
+		if dialActionInScope(jp.Action) {
+			return nil, false, false, fmt.Errorf(`must scope the action as == Action::"dialAddress", not an "in" set`)
+		}
 		return nil, false, false, nil
 	}
 	if jp.Principal.Op != "All" || jp.Resource.Op != "All" {
@@ -135,6 +143,18 @@ func compileDialRule(pol *cedar.Policy) (prefixes []netip.Prefix, effect cedar.E
 // isDialActionScope reports whether an action scope is exactly `== Action::
 // "dialAddress"`. An `in` set is not matched: an ip rule states one action so
 // its shape is unambiguous.
+func dialActionInScope(s cedarJSONScope) bool {
+	if s.Op != "in" {
+		return false
+	}
+	for _, e := range s.Entities {
+		if e.Type == "Action" && e.ID == dialActionID {
+			return true
+		}
+	}
+	return false
+}
+
 func isDialActionScope(s cedarJSONScope) bool {
 	return s.Op == "==" && s.Entity != nil && s.Entity.Type == "Action" && s.Entity.ID == dialActionID
 }
