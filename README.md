@@ -311,7 +311,7 @@ limits:                        # optional; each at most the runtime's ceiling
 sandbox:                       # optional; grants within the runtime's --enable-sandbox-* flags
   filesystem:
     privateTmp: true                                # an empty, writable /tmp per request; nothing else is mountable
-  env: {LOG_LEVEL: debug}                           # non-secret configuration
+  env: [{name: LOG_LEVEL, value: debug}]            # non-secret configuration
   egress:
     http: [{host: api.example.com, methods: [GET]}] # HTTP through the host, within --sandbox-egress-policy
 config: {...}                  # optional; opaque, forwarded to the module
@@ -842,8 +842,8 @@ host; `go test -short` skips that. See [AGENTS.md](AGENTS.md) for the layout
 and conventions.
 
 Design documents live under `docs/` as one-pagers: the implemented ones
-(cache, module source schema, trust model, resource governance, sandbox)
-and the drafts of what comes next — admission and inspection tooling, the
-module manifest, the local loop, request-sourced secrets, governance and
-performance phases, guest language support, a Nix development environment.
+(cache, module source schema, trust model, resource governance, sandbox,
+admission and inspection tooling, the module manifest, request-sourced
+secrets, governance and performance phases) and the drafts of what comes next
+(guest language support, a Nix development environment).
 [AGENTS.md](AGENTS.md#key-reference-documents) lists them.
