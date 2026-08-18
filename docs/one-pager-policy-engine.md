@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft; Phase 1 (repository fence) implemented, Phase 2+ designed, revision 0.2
+* Status: Implemented, revision 0.3
 
 Whether to express function-wasm's sandbox admission decisions - egress rules,
 the repository and credential fences, the ceiling that narrows a Composition's
@@ -141,10 +141,16 @@ operator-authored-policy ergonomics, before touching any hot path:
 
 ## Phase 2+ feature designs
 
-With Phase 1 landed, this maps the remaining policy plane (the top rows of the
-layer map) into concrete, buildable features, each with a verdict, before any of
-them becomes in-tree code. Every one is grounded in the surface it would replace
-(`internal/admission`, `internal/egress`, `internal/sandbox`, `internal/module`).
+**Shipped in v0.2.0.** All of Phase 2+ is implemented behind the
+`--sandbox-policy-file` operator document: the grant policy (capabilities,
+ceiling and per-tenant conditions), the per-repository signature requirement,
+the SSRF CIDR compiler, and the credential fence. The designs and verdicts below
+are the record of the decision; the code matches them, with one change - the
+credential fence shipped in Cedar with the grant policy rather than staying Go
+(see its section). With Phase 1 landed, this mapped the remaining policy plane
+(the top rows of the layer map) into concrete features, each grounded in the
+surface it replaced (`internal/admission`, `internal/egress`, `internal/sandbox`,
+`internal/module`).
 
 ### The policy decision point (foundation)
 
@@ -211,16 +217,19 @@ be signed (a boolean, pre-crypto, reusing the `Repository` hierarchy); the cosig
 verification in `module.Verifier` does not move. Small surface, real
 expressiveness, independent of the rest.
 
-### Credential fence - defer, rides with grant policy
+### Credential fence - shipped in Cedar with grant policy
 
 ![Credential fence: Cedar-expressible but no correctness gain over set-membership](policy-engine-credential-fence.svg)
 
 Cedar-expressible (`spendCredential when { context.credential in allowedCreds &&
-resource in allowedRepos }`, co-locating the two checks now split across
-`module.admit`), but it is set membership with no boundary subtlety Cedar
-improves - unlike the repository fence, no correctness win. Its value (per-tenant
-credential rules) only lands once the operator authors policy, so it rides in the
-grant-policy work rather than leading. Keep the Go set-membership until then.
+resource in allowedRepos }`, co-locating the two checks previously split across
+`module.admit`), and it is set membership with no boundary subtlety Cedar
+improves - unlike the repository fence, no correctness win. It shipped in Cedar
+with the grant policy anyway (`internal/authz/credential_fence.cedar`, a
+`spendCredential` request from `module.admit`), co-locating the two-condition
+rule and reusing the boundary-correct `Repository` hierarchy; the credential half
+stays exact set membership, and both allow lists travel in the request context,
+never the policy text, so a Composition-authored entry cannot inject policy.
 
 ### SSRF CIDR rules - hybrid, Cedar-authored / Go-evaluated
 
@@ -242,7 +251,7 @@ not per hop.
 |---|---|---|
 | Grant policy (capabilities + ceiling + per-tenant) | **Build** - flagship | The only strictly-better surface; additive under the flags |
 | Per-repo signature requirement | **Build** | Per-repo beats all-or-nothing `--cosign-key`; crypto unchanged |
-| Credential fence | **Defer** | No correctness gain; rides with grant policy |
+| Credential fence | **Built** | Shipped in Cedar with grant policy; no correctness gain, but co-locates the two-condition rule |
 | SSRF CIDR rules | **Hybrid** | Cedar authors, a Go table evaluates on the hot path |
 | Egress per-request admit | **Stays Go** | Hot, per-redirect, already boundary-correct |
 
