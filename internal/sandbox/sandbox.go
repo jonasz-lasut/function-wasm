@@ -20,8 +20,13 @@ import (
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
-	"github.com/jonasz-lasut/function-wasm/internal/engine"
 )
+
+// privateTmpProbePrefix names the throwaway directory NewCeiling creates and
+// removes to prove $TMPDIR is writable. It only has to be a valid MkdirTemp
+// prefix; the engine names the real per-run directories itself, so this
+// validation package need not depend on the CGo engine to reproduce that name.
+const privateTmpProbePrefix = "function-wasm-sandbox-probe-"
 
 var (
 	envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -166,7 +171,7 @@ type Ceiling struct {
 func NewCeiling(o Options) (*Ceiling, error) {
 	c := &Ceiling{enablePrivateTmp: o.EnablePrivateTmp, enableEnv: o.EnableEnv}
 	if o.EnablePrivateTmp {
-		dir, err := os.MkdirTemp("", engine.PrivateTmpPrefix)
+		dir, err := os.MkdirTemp("", privateTmpProbePrefix)
 		if err != nil {
 			return nil, fmt.Errorf("--enable-sandbox-private-tmp: cannot create a private /tmp under %s (set TMPDIR to a writable directory): %w", os.TempDir(), err)
 		}
