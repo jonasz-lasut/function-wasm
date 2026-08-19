@@ -13,8 +13,10 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
+	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
 )
 
 // ScaffoldCmd prints Composition fragments for a module.
@@ -145,7 +147,114 @@ func compositionStep(name, functionName string, src v1beta1.ModuleSource, m *man
 			b.WriteString(indent(string(configYAML), "    "))
 		}
 	}
+	if skeleton := compositionPolicySkeleton(src, m); skeleton != "" {
+		b.WriteString(indent(skeleton, "    "))
+	}
 	return b.String(), nil
+}
+
+// compositionPolicySkeleton renders a commented compositionPolicy the author
+// can start from: the Cedar permits this module's manifest requirements would
+// need (grantEgress per egress host, usePrivateTmp, setEnv and spendCredential
+// per env binding) and, for an OCI source, a pullModule permit for its
+// repository - the one a module.from source needs. The whole block is
+// commented: the manifest is the request and the two Cedar layers decide, so a
+// skeleton never copies in a grant. Empty when nothing is derivable (a static
+// source with no requirements). The comments inside the block use Cedar's `//`
+// so the block is valid once uncommented.
+func compositionPolicySkeleton(src v1beta1.ModuleSource, m *manifest.Manifest) string {
+	var body []string
+	if m != nil && m.Requires != nil {
+		r := m.Requires
+		if r.Egress != nil {
+			for _, h := range egressHosts(r.Egress.HTTP) {
+				body = append(body,
+					"// egress "+h+" (grantEgress is also the host allowlist):",
+					`permit (principal, action == Action::"grantEgress", resource in HostPattern::"`+h+`");`)
+			}
+		}
+		if r.Filesystem != nil && r.Filesystem.PrivateTmp {
+			body = append(body,
+				"// the private /tmp the module requires:",
+				`permit (principal, action == Action::"usePrivateTmp", resource);`)
+		}
+		if len(r.Env) > 0 {
+			body = append(body,
+				"// the env the module binds from step credentials:",
+				`permit (principal, action == Action::"setEnv", resource);`)
+			for _, name := range credentialNames(r.Env) {
+				body = append(body, `permit (principal, action == Action::"spendCredential", resource == Credential::"`+name+`");`)
+			}
+		}
+	}
+	if repo := ociRepository(src); repo != "" {
+		body = append(body,
+			"// for a module.from source, permit pulling this repository (a static",
+			"// source needs no pullModule):",
+			`permit (principal, action == Action::"pullModule", resource in Repository::"`+repo+`");`)
+	}
+	if len(body) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# compositionPolicy is the composition author's Cedar layer - optional and\n")
+	b.WriteString("# narrowing-only. A static source needs none (sandbox actions are scoped\n")
+	b.WriteString("# default-permit; writing a permit for one opts into narrowing it). These\n")
+	b.WriteString("# permits, from this module's manifest, are a starting point, never a grant:\n")
+	b.WriteString("# compositionPolicy: |\n")
+	for _, line := range body {
+		b.WriteString("#   " + line + "\n")
+	}
+	return b.String()
+}
+
+// egressHosts lists the distinct hosts (or host patterns) of a module's egress
+// rules, first-seen order, so one grantEgress permit is emitted per host.
+func egressHosts(rules []egress.HTTPRule) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, r := range rules {
+		h := r.Host
+		if h == "" {
+			h = r.HostPattern
+		}
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		out = append(out, h)
+	}
+	return out
+}
+
+// credentialNames lists the distinct credential names a module's env bindings
+// spend, first-seen order.
+func credentialNames(bindings []sandbox.EnvBinding) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, b := range bindings {
+		name := b.FromCredential.Name
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// ociRepository is the "registry/repository" location of an OCI source (what a
+// pullModule permit matches), empty for a path source. The ref is pinned, so
+// name.NewDigest parses it the way internal/module does.
+func ociRepository(src v1beta1.ModuleSource) string {
+	if src.OCI == nil {
+		return ""
+	}
+	d, err := name.NewDigest(src.OCI.Ref)
+	if err != nil {
+		return ""
+	}
+	return d.Context().RegistryStr() + "/" + d.Context().RepositoryStr()
 }
 
 // configSkeleton derives a config block from the manifest's schema: every
