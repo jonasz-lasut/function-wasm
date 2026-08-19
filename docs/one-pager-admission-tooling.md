@@ -56,9 +56,8 @@ calls.
 
 ```shell
 function validate composition.yaml [more.yaml… | -] \
-  [--module-timeout 30s --module-memory-limit 512 --enable-sandbox-egress \
-   --sandbox-policy-file p.cedar --enable-sandbox-private-tmp --cosign-key k.pub \
-   --module-dir . …]                       # the serve ceilings, same flags, same env
+  [--module-timeout 30s --module-memory-limit 512 --sandbox-policy-file p.cedar \
+   --cosign-key k.pub --module-dir . …]    # the serve ceilings, same flags, same env
   [--function-name function-wasm]          # steps to consider (any function by default)
   [--xr xr.yaml]                           # materialise module.from against this composite
   [--resolve]                              # also fetch and inspect each module
@@ -167,13 +166,13 @@ push` and `oras push` produce, stay the recommended shape.
   `DeploymentRuntimeConfig`'s `args` keep working with no subcommand) and
   `validate`; the ceiling flags are one embedded `CeilingFlags` struct
   (`--module-dir`, `--max-module-size`, `--module-timeout`,
-  `--module-memory-limit`, `--cosign-key`, `--enable-sandbox-*`,
-  `--sandbox-policy-file`, `--egress-rate-limit-*`) with `ceilings()` and
+  `--module-memory-limit`, `--cosign-key`, `--sandbox-policy-file`,
+  `--egress-rate-limit-*`) with `ceilings()` and
   `resolver()`, so the
   flags an operator passes to `serve` are the flags `validate` takes.
   `run` (`docs/one-pager-local-loop.md`) will be a third command.
 - `cmd/function/validate.go` + `validate_test.go`: fixtures under
-  `testdata/validate/` that hit each refusal (`--enable-sandbox-*` off,
+  `testdata/validate/` that hit each refusal (a grant with no `--sandbox-policy-file`,
   a grant the operator policy refuses, `limits` above a ceiling, `from` without a
   policy, a tag instead of a digest, an Input of the wrong shape), the
   warnings, `--xr`, `--function-name`, stdin, JSON, exit codes, and

@@ -107,10 +107,10 @@ per operator flag ([docs/one-pager-sandbox.md](docs/one-pager-sandbox.md)):
 a Composition may grant its module a private `/tmp` for the request and
 environment variables (`sandbox.filesystem`, `sandbox.env`, `sandbox.envFrom` - see the Input
 reference; host directories are deliberately not mountable), and **HTTP
-egress through the host** (`sandbox.egress`,
-`--enable-sandbox-egress`) to call the APIs its Composition lists, with the
-host resolving, filtering, budgeting and auditing every request — see
-[HTTP egress](#http-egress).
+egress through the host** (`sandbox.egress`) to call the APIs its Composition
+lists, with the host resolving, filtering, budgeting and auditing every
+request — see [HTTP egress](#http-egress). Every capability is enabled by the
+operator's Cedar `--sandbox-policy-file`.
 
 ## Install
 
@@ -257,7 +257,7 @@ Crossplane never installs a function's Input CRD, so the runtime is the only
 gate a Composition's Input passes — and until now it was reached only by
 reconciling. `function validate` runs that gate offline: the runtime binary
 takes the same ceiling flags as when it serves and applies the same checks
-(`sandbox` grants against `--enable-sandbox-*` and the egress policy,
+(`sandbox` grants against the operator's Cedar `--sandbox-policy-file`,
 `limits` against `--module-timeout`/`--module-memory-limit`, `module` and
 `policy` shape) to every function-wasm step of the Compositions (or bare
 `Input` documents) you give it, printing the runtime's own words:
@@ -267,7 +267,7 @@ go run github.com/jonasz-lasut/function-wasm/cmd/function@latest validate \
   example/composition.yaml --module-dir=. --resolve
 # or, with the released image (its entrypoint is the runtime):
 docker run --rm -v "$PWD:/w" ghcr.io/jonasz-lasut/function-wasm:<version> validate /w/composition.yaml \
-  --enable-sandbox-egress --sandbox-policy-file /w/policy.cedar
+  --sandbox-policy-file /w/policy.cedar
 ```
 
 ```
@@ -308,7 +308,7 @@ policy:                        # optional; only fences a module chosen through m
 limits:                        # optional; each at most the runtime's ceiling
   timeout: 5s
   memory: 128Mi
-sandbox:                       # optional; grants within the runtime's --enable-sandbox-* flags
+sandbox:                       # optional; each capability enabled by the operator's Cedar --sandbox-policy-file
   filesystem:
     privateTmp: true                                # an empty, writable /tmp per request; nothing else is mountable
   env: [{name: LOG_LEVEL, value: debug}]            # non-secret configuration
@@ -336,12 +336,12 @@ Everything but the source is read from the Input: `policy`, `limits` and
 | `limits.timeout` | duration | wall-clock budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). The request deadline still applies if shorter |
 | `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`; at most `--module-memory-limit`, else a fatal result naming both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
 | `limits.concurrency` | int32 | at most N runs of this step at once, across all requests, keyed by the module's content digest. A further request waits under its own context; when the deadline passes first, it is a fatal result that consumed nothing and is not counted as a run. A value above `--max-concurrent-runs` is silently capped. No ceiling flag: this only narrows |
-| `sandbox` | object | grants beyond the default sandbox (nothing but the request), each within a ceiling the operator sets with an `--enable-sandbox-*` flag: a grant outside the ceiling is a fatal result naming the grant and the flag, before any module is resolved. Read from the Input only. Filesystem, environment and HTTP egress are implemented ([docs/one-pager-sandbox.md](docs/one-pager-sandbox.md)) |
-| `sandbox.filesystem.privateTmp` | bool | a private, empty, writable `/tmp` for the duration of the request — created under the runtime's `$TMPDIR` before the module runs and removed afterwards, whatever the outcome (`--enable-sandbox-private-tmp`) |
-| `sandbox.egress.http[]` | `{host \| hostPattern, methods, pathPrefix}` | HTTP(S) requests the host performs for the module (`wasmfn.HTTPClient()` in Go, the `wasmfn.http` import elsewhere): exactly one of `host` (exact name, port ignored) and `hostPattern` (`*.example.com`: every name under it, not the apex), at least one of `GET HEAD POST PUT PATCH DELETE OPTIONS`, and an optional `pathPrefix` the (normalized) path must start with. Rules for the same host add up. Needs `--enable-sandbox-egress`; the operator's Cedar `--sandbox-policy-file` (`grantEgress`) decides which callers may grant which hosts, default-deny, else a fatal result names the rule. See [HTTP egress](#http-egress) |
-| `sandbox.env[]` | `{name, value \| valueFrom}` | environment variables the module sees, exactly these and nothing of the runtime's; names are identifiers, no duplicates. A literal `value` may not contain NUL. A `valueFrom.credential` reads a key of a step credential (`--enable-sandbox-env`) |
+| `sandbox` | object | grants beyond the default sandbox (nothing but the request), each enabled by the operator's Cedar `--sandbox-policy-file`: a grant no policy permits is a fatal result, before any module is resolved. Read from the Input only. Filesystem, environment and HTTP egress are implemented ([docs/one-pager-sandbox.md](docs/one-pager-sandbox.md)) |
+| `sandbox.filesystem.privateTmp` | bool | a private, empty, writable `/tmp` for the duration of the request — created under the runtime's `$TMPDIR` before the module runs and removed afterwards, whatever the outcome (enabled by the policy's `usePrivateTmp`) |
+| `sandbox.egress.http[]` | `{host \| hostPattern, methods, pathPrefix}` | HTTP(S) requests the host performs for the module (`wasmfn.HTTPClient()` in Go, the `wasmfn.http` import elsewhere): exactly one of `host` (exact name, port ignored) and `hostPattern` (`*.example.com`: every name under it, not the apex), at least one of `GET HEAD POST PUT PATCH DELETE OPTIONS`, and an optional `pathPrefix` the (normalized) path must start with. Rules for the same host add up. The operator's Cedar `--sandbox-policy-file` (`grantEgress`) enables egress and decides which callers may grant which hosts, default-deny, else a fatal result names the rule. See [HTTP egress](#http-egress) |
+| `sandbox.env[]` | `{name, value \| valueFrom}` | environment variables the module sees, exactly these and nothing of the runtime's; names are identifiers, no duplicates. A literal `value` may not contain NUL. A `valueFrom.credential` reads a key of a step credential (enabled by the policy's `setEnv`) |
 | `sandbox.env[].valueFrom.credential` | `{name, key}` | reads the value from step credential `name`, key `key`; the pull credential (`module.oci.credentials`) is refused as a source |
-| `sandbox.envFrom[]` | `{credential, prefix}` | imports every key of a step credential as environment variables; `prefix` is prepended to each key. Keys that are not valid identifiers (after prefixing) refuse the run. A key colliding with an `env[]` name is refused. The pull credential is refused as a source (`--enable-sandbox-env`) |
+| `sandbox.envFrom[]` | `{credential, prefix}` | imports every key of a step credential as environment variables; `prefix` is prepended to each key. Keys that are not valid identifiers (after prefixing) refuse the run. A key colliding with an `env[]` name is refused. The pull credential is refused as a source (enabled by the policy's `setEnv`) |
 | `config` | object | opaque, passed to the module untouched inside the request input; a Go guest reads it with `wasmfn.GetConfig` |
 
 Letting each composite resource choose its module — the Composition names
@@ -401,12 +401,12 @@ A step may ask for less than the runtime allows, never more:
       memory: 128Mi      # ≤ --module-memory-limit
 ```
 
-Opening the sandbox: the operator enables each capability, the Composition
-asks for what its module needs, the module gets the intersection. With a
-runtime started with `--enable-sandbox-private-tmp --enable-sandbox-env`,
-this step's module scratches in an empty `/tmp` that is gone when the
+Opening the sandbox: the operator's Cedar `--sandbox-policy-file` enables each
+capability, the Composition asks for what its module needs, the module gets the
+intersection. With a policy that permits `usePrivateTmp` and `setEnv` for this
+caller, this step's module scratches in an empty `/tmp` that is gone when the
 request ends and sees environment variables - host directories are never
-mountable into a module, whatever the flags:
+mountable into a module, whatever the policy:
 
 ```yaml
     sandbox:
@@ -426,10 +426,10 @@ mountable into a module, whatever the flags:
         prefix: VAULT_                         # becomes VAULT_TOKEN, VAULT_ADDR, ...
 ```
 
-A `privateTmp`/`env`/`envFrom` grant without its `--enable-sandbox-*` flag is a
-fatal result naming the grant and the flag; the module never runs. The pull
-credential (`module.oci.credentials`) is refused as a source for `env` and
-`envFrom`: the module must never see the secret that fetched it.
+A `privateTmp`/`env`/`envFrom` grant no `--sandbox-policy-file` permits is a
+fatal result; the module never runs. The pull credential
+(`module.oci.credentials`) is refused as a source for `env` and `envFrom`: the
+module must never see the secret that fetched it.
 
 ### Module manifests
 
@@ -465,18 +465,20 @@ rules, follows redirects within them, enforces the operator's budgets,
 counts and logs every request, and hands the response back. Three parties,
 in the order they decide:
 
-1. **The operator** turns the capability on. The host allowlist and the SSRF
-   CIDR rules are authored in the Cedar `--sandbox-policy-file` (see [operator
-   grant policy](#operator-grant-policy)); the per-run budgets are fixed
-   defaults, and the one tunable budget - the rate limit - is a pair of flags:
+1. **The operator** turns the capability on. Egress is enabled, and its host
+   allowlist and SSRF CIDR rules are authored, in the Cedar `--sandbox-policy-file`
+   (see [operator grant policy](#operator-grant-policy)); the per-run budgets are
+   fixed defaults, and the one tunable budget - the rate limit - is a pair of
+   flags:
 
    ```shell
-   function --enable-sandbox-egress \
-     --sandbox-policy-file /etc/function-wasm/policy.cedar \
+   function --sandbox-policy-file /etc/function-wasm/policy.cedar \
      --egress-rate-limit-per-minute 60 --egress-rate-limit-burst 10
    ```
 
-   With `--enable-sandbox-egress` and no policy, any public host may be granted
+   With no `--sandbox-policy-file`, egress is not grantable at all: a
+   `sandbox.egress` grant is a fatal result before the module runs. A
+   `grantEgress` permit that matches any host opens egress to any public host
    within the fixed budgets (timeout 10s, maxRequests 16, maxResponseBytes 4 MiB,
    maxRedirects 5; response headers are capped separately at 64 KiB) and the
    default block list. The **host allowlist** is the Cedar `grantEgress` action -
@@ -540,8 +542,9 @@ in the order they decide:
    A host the operator's Cedar policy does not grant is a fatal result before
    the module runs (`sandbox.egress.http[0] GET to host "evil.example.com" is
    refused: the operator policy (--sandbox-policy-file) does not permit it`),
-   and so is a grant on a runtime without `--enable-sandbox-egress` (with no
-   policy, any public host is grantable). `sandbox` is read from the Input only:
+   and so is any egress grant on a runtime with no `--sandbox-policy-file` at all
+   (`sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is
+   required to grant egress (grantEgress)`). `sandbox` is read from the Input only:
    an XR author who picks a module through `module.from` cannot widen its egress.
 
 3. **The module** makes requests. In Go, `wasmfn.HTTPClient()` is an
@@ -591,9 +594,9 @@ your organisation signed run.
 ## How a request runs
 
 1. The Input is decoded, and what the Composition asks of the runtime is
-   settled: `sandbox` grants are checked against the runtime's
-   `--enable-sandbox-*` flags (an egress grant against the operator's
-   policy too), `limits` against the runtime's ceilings. A `module.from` source is then
+   settled: `sandbox` grants are checked against the operator's Cedar
+   `--sandbox-policy-file` (the sole enabler of each capability),
+   `limits` against the runtime's ceilings. A `module.from` source is then
    read from the observed composite resource (`type: OCI` with
    `from: status.module` expects `status.module` to be `{ref, credentials}`;
    a typo or a wrong shape is a fatal result naming the field) and checked
@@ -652,12 +655,9 @@ flags would admit.
 | `--max-concurrent-runs` | `MAX_CONCURRENT_RUNS` | `0` (unbounded) | module runs executing at once; a further request waits for a slot under its own deadline and, if that passes first, is a fatal result (`waiting for a run slot: context deadline exceeded`) without having run. Unbounded, concurrency is the caller's — Crossplane's reconcile workers |
 | `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | total linear-memory budget in MB across all running modules; a run reserves its effective limit (`limits.memory` or `--module-memory-limit`) from the pool before it starts and waits under its deadline when the pool is full. A step that states a small `limits.memory` gets more parallelism |
 | `--warm-modules` | `WARM_MODULES` | unset | modules loaded before the health service reports Serving — resolved, verified (`--cosign-key` applies), then compiled or mapped through the same caches a request uses: OCI references pinned to their manifest digest (`repo[:tag]@sha256:…`, pulled with the runtime's Docker config) and, with `--module-dir`, `path:<file>` entries. Repeatable or comma-separated. An entry that fails to load is logged with the reason and does not stop the pod from serving; that module is loaded on its first request as usual |
-| `--enable-sandbox-private-tmp` | `ENABLE_SANDBOX_PRIVATE_TMP` | `false` | let Compositions give a module a private, empty, writable `/tmp` per request (`sandbox.filesystem.privateTmp`), created under the runtime's `$TMPDIR` (probed at startup) and removed when the run ends. There is no byte quota: to bound what a module may write, point `TMPDIR` at a tmpfs `emptyDir` with a `sizeLimit` through a `DeploymentRuntimeConfig` |
-| `--enable-sandbox-env` | `ENABLE_SANDBOX_ENV` | `false` | let Compositions set the environment variables a module sees (`sandbox.env`, `sandbox.envFrom`); the runtime's own environment is never passed on |
-| `--enable-sandbox-egress` | `ENABLE_SANDBOX_EGRESS` | `false` | let Compositions grant modules HTTP(S) egress through the host (`sandbox.egress`); off, any such grant is a fatal result naming the flag. See [HTTP egress](#http-egress) |
-| `--egress-rate-limit-per-minute` | `EGRESS_RATE_LIMIT_PER_MINUTE` | `0` (off) | Sustained egress requests per minute per module digest (a process-wide token bucket). The one tunable egress budget; the rest are fixed (timeout 10s, maxRequests 16, maxResponseBytes 4 MiB, maxRedirects 5). The host allowlist and CIDR rules live in `--sandbox-policy-file` |
+| `--egress-rate-limit-per-minute` | `EGRESS_RATE_LIMIT_PER_MINUTE` | `0` (off) | Sustained egress requests per minute per module digest (a process-wide token bucket). The one tunable egress budget; the rest are fixed (timeout 10s, maxRequests 16, maxResponseBytes 4 MiB, maxRedirects 5). Enablement and the host allowlist and CIDR rules live in `--sandbox-policy-file` |
 | `--egress-rate-limit-burst` | `EGRESS_RATE_LIMIT_BURST` | `0` (derived) | Burst tokens for `--egress-rate-limit-per-minute`; `0` derives `max(1, requestsPerMinute)` |
-| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`). It may also carry the SSRF CIDR block/allow rules (`forbid`/`permit` on `Action::"dialAddress"` with `context.ip.isInRange(ip(…))`/`isLoopback()`), which compile at load into the egress block list (with the built-in default block list) - Cedar never runs on the dial path. Evaluated **default-deny** (a `forbid` wins) **after** the `--enable-sandbox-*` floor, so it only tightens: a capability a flag disabled is never grantable whatever the policy says, and a capability the policy does not permit is refused. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). Unset, no operator constraint applies and admission is identical to today. See [operator grant policy](#operator-grant-policy) |
+| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy - **the sole authority that enables a sandbox capability**: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`, also the host allowlist). It may also carry the SSRF CIDR block/allow rules (`forbid`/`permit` on `Action::"dialAddress"` with `context.ip.isInRange(ip(…))`/`isLoopback()`), which compile at load into the egress block list (with the built-in default block list) - Cedar never runs on the dial path. Evaluated **default-deny** (a `forbid` wins): a capability no permit matches is refused. Unset, no sandbox capability is grantable and a runtime offers only the default sandbox. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). See [operator grant policy](#operator-grant-policy) |
 | `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
@@ -670,8 +670,8 @@ between pods is safe: entries are content-addressed and written atomically,
 and artifacts of another wasmtime version are only removed once nothing has
 written them for a day, so a rolling upgrade does not thrash.
 
-Opening the sandbox is the same `DeploymentRuntimeConfig`: the flags go in
-`args`, and a tmpfs behind `TMPDIR` bounds the private `/tmp`:
+Opening the sandbox is the same `DeploymentRuntimeConfig`: mount the Cedar
+`--sandbox-policy-file`, and a tmpfs behind `TMPDIR` bounds the private `/tmp`:
 
 ```yaml
 spec:
@@ -682,29 +682,35 @@ spec:
           containers:
           - name: package-runtime
             args:
-            - --enable-sandbox-private-tmp
-            - --enable-sandbox-env
+            - --sandbox-policy-file=/etc/function-wasm/policy.cedar
             env:
             - name: TMPDIR
               value: /scratch
             volumeMounts:
+            - {name: policy, mountPath: /etc/function-wasm, readOnly: true}
             - {name: scratch, mountPath: /scratch}
           volumes:
+          - name: policy
+            configMap: {name: function-wasm-policy}
           - name: scratch
             emptyDir: {medium: Memory, sizeLimit: 64Mi}
 ```
 
+A fuller example with every operator-authorable option is in
+[`examples/deployment-runtime-config-cedar.yaml`](examples/deployment-runtime-config-cedar.yaml).
+
 ### Operator grant policy
 
-The `--enable-sandbox-*` flags are the hard floor: a capability a flag
-disables is never grantable. `--sandbox-policy-file` adds an optional
-[Cedar](https://www.cedarpolicy.com) document on top of that floor - the
-operator's grant policy - that decides *which callers* may be granted a
-capability the floor already allows. It is evaluated **default-deny** (a
-`forbid` overrides a `permit`), **AND-combined** with the floor, so it can
-only tighten. Without it, admission is identical to a runtime that never had
-it; the document lives on the operator boundary alone (never the module
-manifest or the Composition, which would let a module self-authorize).
+`--sandbox-policy-file` is the **sole authority that enables a sandbox
+capability**: a [Cedar](https://www.cedarpolicy.com) document, the operator's
+grant policy, that decides *which callers* may be granted a private `/tmp`
+(`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`, which is
+also the host allowlist). It is evaluated **default-deny** (a `forbid`
+overrides a `permit`): a capability no permit matches is refused. Without a
+`--sandbox-policy-file` no sandbox capability is grantable at all and a runtime
+offers only the default sandbox (nothing but the request). The document lives
+on the operator boundary alone (never the module manifest or the Composition,
+which would let a module self-authorize).
 
 The principal every rule sees is the caller: `principal.namespace` and
 `principal.xrKind` come from the observed composite resource (a
@@ -736,8 +742,6 @@ spec:
           containers:
           - name: package-runtime
             args:
-            - --enable-sandbox-private-tmp
-            - --enable-sandbox-egress
             - --sandbox-policy-file=/etc/function-wasm/policy.cedar
             volumeMounts:
             - {name: policy, mountPath: /etc/function-wasm, readOnly: true}
@@ -877,8 +881,8 @@ Input CRD), and [`function validate`](#validate-a-composition) runs the
 same code over a Composition offline. The sandbox protects the runtime
 process — and with it every other Composition sharing the Function — from a
 crashing, looping or memory-hungry module, and gives a module no filesystem,
-environment or network beyond what the Composition granted within the
-operator's `--enable-sandbox-*` flags: a private `/tmp` that exists for one
+environment or network beyond what the Composition granted and the operator's
+Cedar `--sandbox-policy-file` enabled: a private `/tmp` that exists for one
 request (host directories are never mountable — the request is a module's
 only view of the world beyond what it writes for itself), listed
 environment variables (non-secret

@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 0.3
+* Status: Implemented, revision 0.4
 
 Whether to express function-wasm's sandbox admission decisions - egress rules,
 the repository and credential fences, the ceiling that narrows a Composition's
@@ -98,8 +98,8 @@ manifest?" question:
   does not author `permit` either.
 - **On the operator boundary.** The `permit`/`forbid` document lives with the
   runtime - a flag pointing at a file, or a ConfigMap - authored and audited by
-  the operator, the same party who sets the `--enable-sandbox-*` flags and the
-  egress policy today. Grants and requirements remain data the policy reads.
+  the operator, the same party who runs the Deployment and mounts the policy today. Grants and
+  requirements remain data the policy reads.
 
 ## Costs and risks
 
@@ -180,9 +180,9 @@ Cedar answers only "permit or forbid?"; the imperative steps on either side
 
 ### Grant policy - build, the flagship
 
-![Grant policy: the enable flags are the hard floor, Cedar narrows within them](policy-engine-grant-policy.svg)
+![Grant policy: Cedar is the sole enabler, evaluated default-deny](policy-engine-grant-policy.svg)
 
-Capability enablement (`--enable-sandbox-*`), the ceiling intersection
+Capability enablement (`usePrivateTmp`/`setEnv`/`grantEgress`), the ceiling intersection
 (`sandbox.Ceiling.Grant`, `egress.Egress.Grant`) and limits collapse into one
 two-party model: the Composition's `sandbox`/`limits` block becomes the
 authorization *request*, the operator's policy decides. This is the one surface
@@ -190,12 +190,18 @@ where Cedar is strictly *better*, not just different syntax - per-tenant and
 conditional policy (`when { principal.namespace == "team-a" }`) is impossible
 today, where every Composition gets one flat ceiling.
 
-**The `--enable-sandbox-*` flags stay as the hard floor.** A capability a flag
-disables is never grantable, whatever the policy says; Cedar narrows *within* an
-enabled capability, never past it. The flags are retained for defense in depth (a
-policy misconfiguration cannot widen a capability), auditability (a boolean in a
-`DeploymentRuntimeConfig` is legible at a glance), and additivity (no policy file
-means today's behaviour).
+**The `--enable-sandbox-*` flags were dropped; the operator policy is the sole
+enabler (revision 0.4, Jonasz 2026-08-19).** The original design kept the three
+`--enable-sandbox-*` booleans as a hard floor the policy could only narrow. That
+was reversed: a private `/tmp`, environment and egress are already power-user
+configuration most modules never need, so requiring a Cedar `usePrivateTmp` /
+`setEnv` / `grantEgress` permit to enable each one - and refusing every sandbox
+grant when there is no `--sandbox-policy-file` at all - is the safer default and
+a single enablement surface, not two. The base function (run a module, no sandbox
+extras) still needs zero configuration. The `--egress-rate-limit-*` flags stay
+(tuning, not enablement); the egress mechanism is always built and gated by
+`grantEgress`; the startup `/tmp` probe runs only when the policy has a
+`usePrivateTmp` rule.
 
 **The `--sandbox-egress-policy` file, by contrast, ended up as Cedar (v0.2.0).**
 Its declarative parts are exactly what Cedar expresses: the host/pattern ceiling
@@ -272,8 +278,6 @@ limit - is a flag (`--egress-rate-limit-per-minute` / `--egress-rate-limit-burst
 
 ## Non-goals
 
-- Dropping the `--enable-sandbox-*` flags. They remain the hard floor the operator
-  policy narrows within, not a thing Cedar replaces (see grant policy above).
 - Replacing the SSRF dialer, the budgets, the rate limiter, the signature
   verifier, or the digest/fetch/tar mechanism with Cedar.
 - Cedar policy in the module manifest or the Composition Input (trust-model

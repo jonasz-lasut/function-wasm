@@ -24,8 +24,8 @@ gRPC codec (maintenance cost outweighs the savings for typical XR sizes).
 
 - **Ceilings are flags, budgets are Input fields, the Input only narrows.**
   A `limits` value above its ceiling is a fatal result naming both, as
-  `runOptions` does today; a capability without its flag is
-  `… is refused: the runtime was started without --enable-…`.
+  `runOptions` does today; a capability no policy enables is
+  `… is refused: the runtime has no --sandbox-policy-file, which is required to grant …`.
 - **Digests are stated, not discovered.** Every fetch stays verified
   against the stated digest, and the caches keep their keys.
 - **Metric cardinality stays bounded.** New label values are enumerations;

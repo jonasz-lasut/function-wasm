@@ -25,7 +25,7 @@ long-term cost — and presents the two ways to get there. Nothing here gates
 
 `sandbox.env` is `map[string]string` (`input/v1beta1/input.go`), literal
 and documented as non-secret; `internal/sandbox.Validate` checks keys and
-NUL-free values, `Ceiling.Grant` refuses it without `--enable-sandbox-env`,
+NUL-free values, admission refuses it without a policy `setEnv` permit,
 `engine.RunOptions.Env` becomes `WasiConfig.SetEnv` in
 `internal/engine/sandbox.go` (`configureSandbox`, sorted keys); no example
 or scaffold template uses `sandbox` yet. `sandbox.filesystem.privateTmp` is
@@ -182,10 +182,10 @@ one refusal is invariant 3 (`sandbox.env[1].valueFrom.credential names
 "registry", the credential that pulls the module: it is never handed to the
 guest`), checked after `FromComposite` settled which credential pulls.
 
-**Ceilings and flags.** None new. `valueFrom` and `envFrom` sit under
-`--enable-sandbox-env` (the existing `sandbox.env is refused: the runtime
-was started without --enable-sandbox-env`, and `sandbox.envFrom is refused:
-…`); `files` under `--enable-sandbox-private-tmp` and needs the grant
+**Ceilings and enablement.** None new. `valueFrom` and `envFrom` are enabled by
+the policy's `setEnv` (the existing `sandbox.env is refused: the operator policy
+(--sandbox-policy-file) does not permit it for this request`, and `sandbox.envFrom
+is refused: …`); `files` under the private `/tmp` (policy `usePrivateTmp`) and needs the grant
 (`sandbox.filesystem.files requires sandbox.filesystem.privateTmp: the
 private /tmp is the only directory a module is given`). Rationale: a module
 with a private `/tmp` and the request in hand can already write any
@@ -209,7 +209,7 @@ before the module is resolved (shape, flags) or before it runs (lookups):
 | pull credential named | invariant 3, above |
 | NUL byte in a value | `sandbox.env[2]: the value of AWS_SECRET_ACCESS_KEY contains a NUL byte, which WASI cannot pass` |
 | `files` without `privateTmp`; a path not under `/tmp/`, not normalized or set twice; over the caps | `sandbox.filesystem.files[1].path "/etc/ssl/ca.pem" must be under /tmp: the private /tmp is the only directory a module is given`; `… "/tmp/../x" must be normalized`; `sandbox.filesystem.files: 1200000 bytes exceed the 1048576-byte cap` |
-| grant without its flag | the existing `--enable-sandbox-*` messages |
+| grant no policy enables | the existing `--sandbox-policy-file` refusal messages |
 
 ## Mechanics
 
@@ -300,11 +300,11 @@ Nothing here gates `v0.1.0`.
   not a valid variable name (`.dockerconfigjson`) — refuse the run naming
   the key, or skip it as a Pod does (silently, with an event nobody reads
   in a function)? Recommendation: refuse; `env[].valueFrom` selects.
-- **Own flag for `files`?** `--enable-sandbox-files` would let an operator
+- **Own action for `files`?** A separate policy action would let an operator
   allow a private `/tmp` yet forbid the runtime writing request bytes into
   it. Recommendation: no — the guest can write the same bytes itself, so
-  the flag would only forbid the convenient path; keep `files` under
-  `--enable-sandbox-private-tmp`, revisit if an operator asks.
+  the action would only forbid the convenient path; keep `files` under the
+  private `/tmp`'s `usePrivateTmp` grant, revisit if an operator asks.
 - **Composite and context sources now or later?** Recommendation: later
   (Phasing 3) — a module can read both from its request, the SDK-in-env
   argument is weak for non-secret values, and the XR-fed-variable trust note

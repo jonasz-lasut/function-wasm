@@ -2,17 +2,16 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.6
+* Status: Implemented, revision 1.7
 
 How the sandbox grants a module *some* filesystem, network or environment
 access without giving up what makes it safe to run other people's modules.
 The Input types (`input/v1beta1`: `sandbox.filesystem`, `sandbox.egress`,
 `sandbox.env`, `sandbox.envFrom`, validated for shape by `internal/sandbox`) shipped in
 revision 0.3; revision 0.4 implemented the filesystem (phase 1) and
-environment (phase 3) grants with their operator flags, and phase 2 — HTTP
-egress through the host (`sandbox.egress`, `--enable-sandbox-egress`,
-`--sandbox-egress-policy`, the `wasmfn.http` import, `wasmfn.HTTPClient()`,
-`internal/egress`); revision 1.0 is the merged result, every phase but the
+environment (phase 3) grants, and phase 2 — HTTP
+egress through the host (`sandbox.egress`, the `wasmfn.http` import,
+`wasmfn.HTTPClient()`, `internal/egress`); revision 1.0 is the merged result, every phase but the
 component-model one implemented. Revision 1.1 removes host mounts (Jonasz,
 2026-08-16): a Composition can no longer map an operator-declared host
 directory into a module — the request is a module's only view of the world
@@ -20,16 +19,19 @@ beyond what it writes into its private `/tmp` — so the filesystem grant is
 `privateTmp` alone, and `--enable-sandbox-mounts`/`--sandbox-mount` are
 gone. Revision 1.5 adds the optional operator Cedar grant policy
 (`--sandbox-policy-file`): when set it narrows every sandbox capability grant -
-the private `/tmp`, environment and egress - per caller and per condition on top
-of the flags, evaluated default-deny so it only ever tightens, never widens
-(policy-engine one-pager). Status by phase:
+the private `/tmp`, environment and egress - per caller and per condition,
+evaluated default-deny. Revision 1.7 drops the `--enable-sandbox-*` flags
+(Jonasz, 2026-08-19): the Cedar policy is now the sole authority that enables a
+sandbox capability (`usePrivateTmp`, `setEnv`, `grantEgress`), so with no policy
+file every sandbox grant is refused and a runtime offers only the default
+sandbox - which is all most modules need (policy-engine one-pager). Status by phase:
 
 | phase | grant | status |
 |---|---|---|
 | 0 | Input types, shape validation | implemented |
-| 1 | `sandbox.filesystem.privateTmp` (`--enable-sandbox-private-tmp`); host mounts deliberately not offered | implemented |
-| 2 | `sandbox.egress.http` (`--enable-sandbox-egress`; host allowlist and CIDR rules in `--sandbox-policy-file`) | implemented |
-| 3 | `sandbox.env`, `sandbox.envFrom` (`--enable-sandbox-env`) | implemented |
+| 1 | `sandbox.filesystem.privateTmp` (policy `usePrivateTmp`); host mounts deliberately not offered | implemented |
+| 2 | `sandbox.egress.http` (policy `grantEgress`, also the host allowlist; CIDR rules `dialAddress`, in `--sandbox-policy-file`) | implemented |
+| 3 | `sandbox.env`, `sandbox.envFrom` (policy `setEnv`) | implemented |
 | 4 | WASI HTTP through components | not started |
 
 
@@ -99,25 +101,25 @@ tooling only, since Crossplane never installs the Input CRD) and
 names, normalized path prefixes, no NUL in an env value) and is the gate
 that always runs.
 
-Operator flags set the ceiling, one `--enable-sandbox-<feature>` switch per
-capability (off by default, `ENABLE_SANDBOX_<FEATURE>` in the environment)
-and `--sandbox-<feature>-…` for what it declares:
-`--enable-sandbox-private-tmp`, `--enable-sandbox-egress` (the host allowlist
-and CIDR block/allow rules are authored in the Cedar `--sandbox-policy-file`;
-the per-run budgets are fixed defaults and the rate limit is
-`--egress-rate-limit-per-minute`/`-burst`), `--enable-sandbox-env`. There is no flag that maps a host directory into a
-module: what a module can read is its request, what it can write is its
-private `/tmp`. `internal/sandbox.NewCeiling`, `internal/egress.New` and the
-`--sandbox-policy-file` loader check the flags once at startup - an unwritable
-`$TMPDIR` with the private `/tmp` enabled, or a `--sandbox-policy-file` that
-does not parse (a malformed ip-rule included) - and refuse to start rather
-than fail every request that would hit the mistake. At request time
-`Ceiling.Grant` and `Egress.Grant` turn the Input's `sandbox` into what the
-run gets, or a fatal result naming the grant and the flag
-(`sandbox.filesystem.privateTmp is refused: the runtime was started without
---enable-sandbox-private-tmp`); a host the operator's Cedar policy does not
-grant is `sandbox.egress.http[0] GET to host "evil.example.com" is refused:
-the operator policy (--sandbox-policy-file) does not permit it`, before the
+The operator's Cedar `--sandbox-policy-file` is the sole authority that enables a
+sandbox capability - `usePrivateTmp` for the private `/tmp`, `setEnv` for the
+environment, `grantEgress` for egress (also the host allowlist; the CIDR
+block/allow rules are `dialAddress`). It is evaluated default-deny, so with no
+policy file every sandbox grant is refused and a runtime offers only the default
+sandbox. The per-run egress budgets are fixed defaults and the rate limit is
+`--egress-rate-limit-per-minute`/`-burst`. There is no flag that maps a host
+directory into a module: what a module can read is its request, what it can
+write is its private `/tmp`. `internal/authz.LoadOperatorPolicy`,
+`internal/egress.New` and `internal/sandbox.NewCeiling` check the policy once at
+startup - a `--sandbox-policy-file` that does not parse (a malformed ip-rule
+included), or an unwritable `$TMPDIR` when the policy can grant a private `/tmp`
+- and refuse to start rather than fail every request that would hit the mistake.
+At request time `Ceiling.Grant` reads the shape and `admission.Admit` applies the
+policy, giving the run its sandbox or a fatal result: with no policy,
+`sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file,
+which is required to grant sandbox capabilities`; a host the operator's Cedar
+policy does not grant is `sandbox.egress.http[0] GET to host "evil.example.com"
+is refused: the operator policy (--sandbox-policy-file) does not permit it`, before the
 module is resolved.
 
 
@@ -227,20 +229,20 @@ module.
    first, with a "not implemented yet" refusal, so the schema was settled
    before any behaviour.
 1. **Filesystem (implemented):** the private `/tmp`
-   (`--enable-sandbox-private-tmp`). Smallest change, no ABI change. Named
+   (policy `usePrivateTmp`). Smallest change, no ABI change. Named
    read-only host mounts were built and then removed (revision 1.1): a
    module's inputs come through the request, not through the pod's
    filesystem.
 2. **HTTP egress (implemented):** the `wasmfn.http` import,
-   `wasmfn.HTTPClient()`, `--enable-sandbox-egress` with the host allowlist
-   and CIDR rules in the Cedar `--sandbox-policy-file`, metrics and audit logging; the ABI
+   `wasmfn.HTTPClient()`, the Cedar `--sandbox-policy-file` (`grantEgress` enabling
+   egress and the host allowlist, `dialAddress` the CIDR rules), metrics and audit logging; the ABI
    extension is in `docs/abi.md`, the WAT fixture in the engine tests and a
    Go guest fixture (`internal/testwasm/testdata/httpguest`) in the host
    tests. The TinyGo and Rust scaffolds carry a helper over the import
    (`http.go` + `http_wasip1.go`; `src/http.rs`) with a swappable host for
    native tests, and all three examples fetch `config.greetingUrl` through it,
    so the host tests run every guest with and without a grant.
-3. **Environment (implemented):** `--enable-sandbox-env`.
+3. **Environment (implemented):** the policy `setEnv` action.
 4. **WASI HTTP through components:** revisit when wasmtime-go supports the
    component model and at least one supported guest toolchain targets it.
 

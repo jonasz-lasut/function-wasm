@@ -13,22 +13,19 @@
   <!-- items -->
   <rect x="24" y="128" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
   <text x="38" y="141" font-size="11" font-weight="500" fill="#2c2a25">Capability enablement</text>
-  <text x="38" y="153" font-size="9" fill="#7a7668">--enable-sandbox-* &#8594; policy</text>
+  <text x="38" y="153" font-size="9" fill="#7a7668">the policy enables each capability</text>
 
   <rect x="24" y="166" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
-  <text x="38" y="179" font-size="11" font-weight="500" fill="#2c2a25">Ceiling &#8745; grant</text>
-  <text x="38" y="191" font-size="9" fill="#7a7668">narrow a Composition's grant</text>
+  <text x="38" y="179" font-size="11" font-weight="500" fill="#2c2a25">Egress host allowlist</text>
+  <text x="38" y="191" font-size="9" fill="#7a7668">operator grants which hosts (grantEgress)</text>
 
   <rect x="24" y="204" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
   <text x="38" y="217" font-size="11" font-weight="500" fill="#2c2a25">Egress admit</text>
   <text x="38" y="229" font-size="9" fill="#7a7668">host / method / path</text>
 
-  <!-- repository fence: implemented -->
-  <rect x="24" y="242" width="244" height="30" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.5"/>
-  <text x="38" y="255" font-size="11" font-weight="600" fill="#2c2a25">Repository fence</text>
+  <rect x="24" y="242" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
+  <text x="38" y="255" font-size="11" font-weight="500" fill="#2c2a25">Repository fence</text>
   <text x="38" y="267" font-size="9" fill="#7a7668">in-hierarchy, boundary-correct</text>
-  <rect x="216" y="248" width="44" height="16" rx="8" fill="#3d6b5e"/>
-  <text x="238" y="259" text-anchor="middle" font-size="8.5" font-weight="600" fill="#ffffff">&#10003; live</text>
 
   <rect x="24" y="280" width="244" height="30" rx="4" fill="#ffffff" stroke="#3d6b5e" stroke-width="1"/>
   <text x="38" y="293" font-size="11" font-weight="500" fill="#2c2a25">Credential fence</text>
@@ -101,7 +98,4 @@
   <text x="170" y="493" font-size="10" fill="#a09b8e">Cedar + Go (hybrid)</text>
   <rect x="312" y="484" width="14" height="10" rx="2" fill="#ffffff" stroke="#c5c1b7" stroke-width="0.9"/>
   <text x="332" y="493" font-size="10" fill="#a09b8e">Go only (mechanism)</text>
-  <rect x="486" y="483" width="30" height="12" rx="6" fill="#3d6b5e"/>
-  <text x="501" y="492" text-anchor="middle" font-size="8" font-weight="600" fill="#ffffff">&#10003;</text>
-  <text x="524" y="493" font-size="10" fill="#a09b8e">implemented (Phase 1)</text>
 </svg>
