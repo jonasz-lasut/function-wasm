@@ -31,7 +31,7 @@ policy:                                   # what an XR-chosen module may be and 
 limits:                                   # what this step's run may consume, ≤ the runtime's ceilings
   timeout: 5s
   memory: 128Mi
-sandbox:                                  # grants (sandbox one-pager) within the --enable-sandbox-* flags
+sandbox:                                  # grants (sandbox one-pager) enabled by the operator's Cedar --sandbox-policy-file
   filesystem: {privateTmp: true}          # a private /tmp; host directories are never mountable
   egress: {http: [{host | hostPattern, methods, pathPrefix}]}
   env: {KEY: value}
@@ -90,14 +90,13 @@ by the generated CRD under `package/input/`.
   methods, pathPrefix}`, `env[] {name, value | valueFrom}`, `envFrom[]
   {credential, prefix}`. The Go types, the CRD schema (with a CEL
   rule for host XOR hostPattern) and `internal/sandbox.Validate` check the
-  shape; `internal/sandbox.Ceiling` checks each grant against the operator's
-  `--enable-sandbox-*` flag and refuses it with a fatal result naming the
-  grant and the flag; `egress` is checked against the operator's egress
-  ceiling the same way (`internal/egress`). The private `/tmp`
-  (`--enable-sandbox-private-tmp`), `env` (`--enable-sandbox-env`) and
-  `egress` (`--enable-sandbox-egress`, with the host and CIDR rules in the
-  operator's `--sandbox-policy-file`) are all implemented; host directories
-  are deliberately not mountable. The
+  shape; the operator's Cedar `--sandbox-policy-file` is the sole enabler of
+  each grant and refuses one no policy permits with a fatal result naming the
+  grant; `egress` is compiled the same way (`internal/egress`). The private
+  `/tmp` (policy `usePrivateTmp`), `env` (`setEnv`) and `egress` (`grantEgress`,
+  also the host allowlist, with the CIDR rules `dialAddress` in the operator's
+  `--sandbox-policy-file`) are all implemented; host directories are
+  deliberately not mountable. The
   behaviour is the sandbox one-pager's.
 - `guestfn push` prints the module block in this shape (`type: OCI` +
   `oci.ref`); the scaffold templates and examples use `type: Path` for local

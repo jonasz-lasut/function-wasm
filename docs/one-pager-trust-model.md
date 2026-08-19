@@ -125,8 +125,8 @@ The whole `RunFunctionRequest` less the pull credential: observed and
 desired state, context, extra resources, `config`. It runs in a fresh
 wasmtime store with WASI preview 1 and no sockets, two host imports
 (`wasmfn.log`, and `wasmfn.http`, which performs a request only within a
-`sandbox.egress` grant on a runtime with `--enable-sandbox-egress` and
-refuses otherwise), a wall-clock deadline and a linear-memory cap; stdout
+`sandbox.egress` grant the operator's Cedar `--sandbox-policy-file` enables
+(`grantEgress`) and refuses otherwise), a wall-clock deadline and a linear-memory cap; stdout
 and stderr go to the pod's log. It has no pre-opened directories and no
 environment unless the Composition's `sandbox` grants them within the
 operator's flags: a private `/tmp` created for the request and removed after
@@ -169,7 +169,7 @@ own security fixes are judged alone.
 | XR author aims a credential at their host | refused unless `policy.credentialsAllowList` names the credential and `policy.repositoryAllowList` admits the host (above) |
 | XR author widens policy, limits or sandbox through the XR | impossible: they are top-level Input fields, only `module.from` is read from the XR |
 | XR author picks unsigned code | `--cosign-key` refuses it |
-| module exfiltrates a step credential | no network by default; the pull credential is withheld. With `--enable-sandbox-egress` a module reaches only the hosts, methods and paths its Composition's `sandbox.egress.http` rules grant (read from the Input only, never the XR), which the operator's Cedar `--sandbox-policy-file` (`grantEgress`) may narrow, over a default block list covering loopback, link-local, private and cluster ranges (`dialAddress` adds more) - every resolved address is judged, the checked address is dialled, and every request leaves an audit line with the module digest; `--cosign-key` is strongly recommended wherever egress is granted |
+| module exfiltrates a step credential | no network by default; the pull credential is withheld. Where the operator's Cedar `--sandbox-policy-file` grants egress (`grantEgress`) a module reaches only the hosts, methods and paths its Composition's `sandbox.egress.http` rules grant (read from the Input only, never the XR), which the operator's Cedar `--sandbox-policy-file` (`grantEgress`) may narrow, over a default block list covering loopback, link-local, private and cluster ranges (`dialAddress` adds more) - every resolved address is judged, the checked address is dialled, and every request leaves an audit line with the module digest; `--cosign-key` is strongly recommended wherever egress is granted |
 | module attacks the host | wasmtime sandbox; guest-controlled offsets are bounds-checked and sliced without overflow; host panics are recovered |
 | module reads or writes host files | never: host directories are not mountable into a module (no flag offers it); the only directory a module can be granted is its private `/tmp` — a fresh directory per request, removed afterwards, bounded by the filesystem behind `$TMPDIR`, with `..` escapes refused by wasmtime inside the pre-open (`EPERM`) |
 | module reads the runtime's environment | never: WASI environ is empty, or exactly the Composition's `sandbox.env` (non-secret by convention — the values are visible in the Composition) |

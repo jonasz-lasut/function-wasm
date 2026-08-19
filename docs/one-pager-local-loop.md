@@ -64,7 +64,7 @@ default; capturing stdout (`wasmfn.log` is the logging path).
 function run [fn.wasm] --request req.yaml|-            # a RunFunctionRequest (protojson, YAML or JSON): captured or hand-written
              [--xr xr.yaml]                            # instead of --request: a first-pass request built from an XR alone
              [--input input.yaml | --composition c.yaml [--step name]]   # the Input; default: the request's own
-             [--enable-sandbox-* --sandbox-egress-policy p.yaml --module-timeout … --cosign-key … --module-dir …]  # the serve ceilings
+             [--sandbox-policy-file p.cedar --module-timeout … --cosign-key … --module-dir …]  # the serve ceilings
              [--output yaml|json] [--summary text|json] [--watch] [--times N] [--debug-info]
 ```
 
