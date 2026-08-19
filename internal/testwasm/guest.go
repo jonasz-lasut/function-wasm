@@ -66,6 +66,19 @@ func BuildRustGuest(t *testing.T, dir string) []byte {
 // when zig is not on PATH.
 func BuildZigGuest(t *testing.T, dir string) []byte {
 	t.Helper()
+	return buildWithZig(t, dir)
+}
+
+// BuildCGuest compiles the C project in dir to a wasip1 reactor: a C guest
+// builds with zig too (zig cc behind its build.zig, which also compiles the
+// nanopb codec), so it is skipped when zig is not on PATH.
+func BuildCGuest(t *testing.T, dir string) []byte {
+	t.Helper()
+	return buildWithZig(t, dir)
+}
+
+func buildWithZig(t *testing.T, dir string) []byte {
+	t.Helper()
 	if _, err := exec.LookPath("zig"); err != nil {
 		t.Skip("zig not on PATH")
 	}

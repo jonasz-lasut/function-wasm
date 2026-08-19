@@ -1,0 +1,26 @@
+.{
+    .name = .hello_c,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xfa2d6c868f36eb28,
+    .dependencies = .{
+        // The protobuf codec: three C files, heap-allocating decode/encode
+        // (PB_ENABLE_MALLOC) over the structs nanopb_generator writes from the
+        // vendored proto (src/fnv1).
+        .nanopb = .{
+            .url = "https://github.com/nanopb/nanopb/archive/refs/tags/0.4.9.1.tar.gz",
+            .hash = "N-V-__8AAICJKABy-UAs4DC7b9y5IYGo9oikvDkYpvL9fnhc",
+        },
+        // JSON for the wasmfn.log and wasmfn.http payloads.
+        .cjson = .{
+            .url = "https://github.com/DaveGamble/cJSON/archive/refs/tags/v1.7.19.tar.gz",
+            .hash = "N-V-__8AAH5pEwA4X-pmguJGYCCUHeSluUGR7r3S4_kUSzW0",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "proto",
+    },
+}
