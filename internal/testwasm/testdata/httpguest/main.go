@@ -16,7 +16,7 @@ import (
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/jonasz-lasut/function-wasm/pkg/wasmfn"
+	"httpguest/internal/wasmfn"
 )
 
 type config struct {
