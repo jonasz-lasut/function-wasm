@@ -1,0 +1,55 @@
+# [[ .Name ]]
+
+A [Crossplane](https://crossplane.io) composition function in Zig, compiled to
+a wasip1 reactor of about 95 KB and run by
+[function-wasm](https://github.com/jonasz-lasut/function-wasm).
+
+- `proto/run_function.proto` is crossplane's `RunFunction` contract, vendored;
+  `zig build gen-proto` compiles it with [zig-protobuf](https://github.com/Arwalk/zig-protobuf)'s
+  `protoc-gen-zig` (needs `protoc`) into `src/fnv1`, which is checked in so a
+  plain `zig build` needs only zig.
+- `src/main.zig` — `runFunction` over the generated messages (edit this),
+  `handle` (decode, run, encode; errors become fatal results), the
+  `wasmfn.log` and `wasmfn.http` host imports, and the `wasmfn_alloc` /
+  `wasmfn_run` exports of the function-wasm
+  [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md).
+  Only the exports and the host imports are wasi-specific, so `zig build test`
+  runs the logic natively (a fake host is installed for the `wasmfn.http`
+  tests). `config.greetingUrl` fetches the greeting through the host, within
+  the egress grant of the module's manifest.
+
+```shell
+# Unit tests run natively.
+zig build test
+
+# Compile to a wasip1 module.
+guestfn build                       # zig build -Doptimize=ReleaseSmall → fn.wasm
+
+# Publish it as an OCI artifact; it prints the module block for the Composition.
+guestfn push ghcr.io/example/[[ .Name ]]:v0.1.0
+```
+
+Reference the module from a Composition step of function-wasm:
+
+```yaml
+- step: [[ .Name ]]
+  functionRef:
+    name: function-wasm
+  input:
+    apiVersion: wasm.fn.crossplane.io/v1beta1
+    kind: Input
+    module:
+      type: OCI
+      oci:                     # printed by guestfn push
+        ref: ghcr.io/example/[[ .Name ]]:v0.1.0@sha256:<manifest digest>
+    config:
+      greeting: hi
+```
+
+`example/` renders locally with the function-wasm runtime serving this
+directory (`--module-dir`) and `crossplane render`:
+
+```shell
+guestfn build
+crossplane render example/xr.yaml example/composition.yaml example/functions.yaml
+```

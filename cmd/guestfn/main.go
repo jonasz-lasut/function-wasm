@@ -67,7 +67,7 @@ type CLI struct {
 type InitCmd struct {
 	Dir string `arg:"" help:"Directory to create the project in."`
 
-	Lang       string `help:"Language of the project: go (function-sdk-go), tinygo (raw protobuf messages, ~1 MB modules) or rust (prost)." enum:"go,tinygo,rust" default:"go"`
+	Lang       string `help:"Language of the project: go (function-sdk-go), tinygo (raw protobuf messages, ~1 MB modules), rust (prost) or zig (zig-protobuf, ~95 KB)." enum:"go,tinygo,rust,zig" default:"go"`
 	Module     string `help:"Go module path of the project (go, tinygo). Defaults to the directory's base name."`
 	Name       string `help:"Short name used in docs and the example Composition, and the crate name for rust. Defaults to the module's last element or the directory's base name."`
 	SDKVersion string `help:"function-sdk-go version to require (go)." default:"${sdk_version}"`
@@ -109,7 +109,9 @@ func (c *InitCmd) Run(ctx context.Context, stdout io.Writer) error {
 		_, _ = fmt.Fprintf(stdout, "Created %s (module %s)\n", c.Dir, module)
 	}
 
-	if !c.Offline && c.Lang != scaffold.LangRust {
+	// Only the Go-toolchain flavours carry a go.mod to resolve; rust, zig and c
+	// vendor or fetch their dependencies through their own build systems.
+	if !c.Offline && (c.Lang == scaffold.LangGo || c.Lang == scaffold.LangTinyGo) {
 		if c.Lang == scaffold.LangGo {
 			if err := run(ctx, c.Dir, stdout, "go", "get", sdkModule+"@"+c.SDKVersion); err != nil {
 				return err
@@ -120,8 +122,11 @@ func (c *InitCmd) Run(ctx context.Context, stdout io.Writer) error {
 		}
 	}
 	test := "go test ./...        # edit fn.go, keep the tests passing"
-	if c.Lang == scaffold.LangRust {
+	switch c.Lang {
+	case scaffold.LangRust:
 		test = "cargo test           # edit src/lib.rs, keep the tests passing"
+	case scaffold.LangZig, scaffold.LangC:
+		test = "zig build test       # edit src/main.zig, keep the tests passing"
 	}
 	_, _ = fmt.Fprintf(stdout, "\nNext:\n  cd %s\n  %s\n  guestfn build        # fn.wasm\n  guestfn push <ref>   # publish, then reference the digest from a Composition\n", c.Dir, test)
 	return nil
@@ -131,7 +136,7 @@ func (c *InitCmd) Run(ctx context.Context, stdout io.Writer) error {
 type BuildCmd struct {
 	Dir     string `help:"Project directory." default:"." type:"existingdir"`
 	Output  string `short:"o" help:"Output file, relative to the project directory unless absolute." default:"fn.wasm"`
-	Lang    string `help:"Toolchain to use. auto picks rust for a Cargo.toml, tinygo for a go.mod that requires vtprotobuf, go otherwise." enum:"auto,go,tinygo,rust" default:"auto"`
+	Lang    string `help:"Toolchain to use. auto picks rust for a Cargo.toml, zig for a build.zig (zig and c guests), tinygo for a go.mod that requires vtprotobuf, go otherwise." enum:"auto,go,tinygo,rust,zig,c" default:"auto"`
 	WasmOpt bool   `help:"Run wasm-opt -Oz on the result (binaryen must be on PATH)."`
 }
 
@@ -293,9 +298,14 @@ func detectLang(dir string) (string, error) {
 	if _, err := os.Stat(filepath.Join(dir, "Cargo.toml")); err == nil {
 		return scaffold.LangRust, nil
 	}
+	// The zig and c guests both build with `zig build` (a build.zig); the
+	// language of the sources is the template's concern, not the toolchain's.
+	if _, err := os.Stat(filepath.Join(dir, "build.zig")); err == nil {
+		return scaffold.LangZig, nil
+	}
 	gomod, err := os.ReadFile(filepath.Join(dir, "go.mod")) //nolint:gosec // The user's own project directory.
 	if err != nil {
-		return "", fmt.Errorf("cannot tell the project's language: neither Cargo.toml nor go.mod in %s (use --lang)", dir)
+		return "", fmt.Errorf("cannot tell the project's language: no Cargo.toml, build.zig or go.mod in %s (use --lang)", dir)
 	}
 	if strings.Contains(string(gomod), "github.com/planetscale/vtprotobuf") {
 		return scaffold.LangTinyGo, nil
@@ -338,6 +348,20 @@ func buildGuest(ctx context.Context, lang, dir, out string, stdout io.Writer) er
 		wasm, err := os.ReadFile(matches[0])
 		if err != nil {
 			return err
+		}
+		if err := os.WriteFile(out, wasm, 0o600); err != nil { //nolint:gosec // out is the user's own --output flag.
+			return err
+		}
+	case scaffold.LangZig, scaffold.LangC:
+		if _, err := exec.LookPath("zig"); err != nil {
+			return errors.New("zig not found on PATH: install it from https://ziglang.org/download/ (it builds both the zig and c guests)")
+		}
+		if err := run(ctx, dir, stdout, "zig", "build", "-Doptimize=ReleaseSmall"); err != nil {
+			return err
+		}
+		wasm, err := os.ReadFile(filepath.Join(dir, "zig-out", "bin", "fn.wasm")) //nolint:gosec // zig build's own output.
+		if err != nil {
+			return fmt.Errorf("zig build produced no zig-out/bin/fn.wasm: %w", err)
 		}
 		if err := os.WriteFile(out, wasm, 0o600); err != nil { //nolint:gosec // out is the user's own --output flag.
 			return err
