@@ -379,3 +379,73 @@ spec:
 		t.Errorf("no-policy stdout: -want, +got:\n%s", diff)
 	}
 }
+
+// TestValidateResolvePathManifest pins that --resolve reads a path module's
+// manifest named by reference (module.manifestPath) under --module-dir and
+// decides its requests by the three layers - the local-dev loop for a module
+// that needs a capability, without an OCI push.
+func TestValidateResolvePathManifest(t *testing.T) {
+	wasm := testwasm.Fixed(t, &fnv1.RunFunctionResponse{}, testwasm.Options{})
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "fn.wasm"), wasm, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fn-manifest.yaml"), []byte("abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  egress:\n    http:\n    - host: api.example.com\n      methods: [GET]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	composition := filepath.Join(dir, "composition.yaml")
+	if err := os.WriteFile(composition, []byte(`apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: pathmanifest
+spec:
+  pipeline:
+  - step: needs-egress
+    functionRef: {name: function-wasm}
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module: {type: Path, path: fn.wasm, manifestPath: fn-manifest.yaml}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := "  module: " + digestOf(wasm) + ", " + humanBytes(len(wasm)) + ", ABI v1; manifest: greeter 0.1.0, requires egress api.example.com\n"
+	warnPath := "  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest\n"
+	warnUnsigned := "  warning: the module requires egress but is not signature-verified: no --cosign-key was given\n"
+
+	// The operator policy grants the module's egress ask; the path manifest is
+	// read from beside the module and summarised on the resolved line.
+	var stdout, stderr bytes.Buffer
+	cli := &CLI{}
+	cli.Validate.stderr = &stderr
+	ctx, err := parser(cli, &stdout).Parse([]string{"validate", composition, "--resolve", "--module-dir", dir, "--sandbox-policy-file", filepath.Join("testdata", "validate", "policy-permissive.cedar")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.Run(cli); err != nil {
+		t.Fatalf("Run(): unexpected error %v", err)
+	}
+	want := composition + ": Composition/pathmanifest pipeline[0] needs-egress: OK (path fn.wasm)\n" + resolved + warnPath + warnUnsigned
+	if diff := cmp.Diff(want, stdout.String()); diff != "" {
+		t.Errorf("granted stdout: -want, +got:\n%s", diff)
+	}
+
+	// Without an operator policy the same manifest's ask is refused.
+	stdout.Reset()
+	cli = &CLI{}
+	cli.Validate.stderr = &stderr
+	ctx, err = parser(cli, &stdout).Parse([]string{"validate", composition, "--resolve", "--module-dir", dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ctx.Run(cli)
+	var e exitError
+	if !errors.As(err, &e) || e.code != 1 {
+		t.Errorf("Run(): want exit 1, got %v", err)
+	}
+	want = composition + ": Composition/pathmanifest pipeline[0] needs-egress: refused: module module file fn.wasm requires egress (requires.egress.http), but the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)\n" + resolved + warnPath + warnUnsigned
+	if diff := cmp.Diff(want, stdout.String()); diff != "" {
+		t.Errorf("no-policy stdout: -want, +got:\n%s", diff)
+	}
+}
