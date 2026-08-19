@@ -65,10 +65,10 @@ Composition.
   or values, adds a sidecar resource, or reshapes the desired state to its
   conventions, in the language it prefers, without a change request against
   the Composition. The platform team keeps the guardrails: digest pinning,
-  a `policy` fencing which registries the team may pick from,
-  `--cosign-key` so only modules signed with the organisation's key run, and
-  the resource caps of the sandbox (`limits` per step, the runtime's flags
-  as ceilings).
+  a `compositionPolicy` (Cedar) fencing which registries the team may pick
+  from, `--cosign-key` so only modules signed with the organisation's key
+  run, and the resource caps of the sandbox (`limits` per step, the
+  runtime's flags as ceilings).
 - **Audit and compliance trails.** A module that runs last sees the complete
   observed and desired state. It can log a structured record of every
   reconcile — who requested what, which resources are about to change and how
@@ -99,18 +99,19 @@ Composition.
   across restarts, so a registry outage does not stop reconciling.
 
 What it is not for: anything that needs to reach out of the sandbox at run
-time beyond what a Composition explicitly grants and the operator allows. By
+time beyond what its manifest declares and the policy layers permit. By
 default a module gets no network, filesystem or environment; cluster state
 comes in through the request (observed state, required resources), and the
-module returns desired state. The sandbox opens selectively, one capability
-per operator flag ([docs/one-pager-sandbox.md](docs/one-pager-sandbox.md)):
-a Composition may grant its module a private `/tmp` for the request and
-environment variables (`sandbox.filesystem`, `sandbox.env`, `sandbox.envFrom` - see the Input
-reference; host directories are deliberately not mountable), and **HTTP
-egress through the host** (`sandbox.egress`) to call the APIs its Composition
-lists, with the host resolving, filtering, budgeting and auditing every
-request — see [HTTP egress](#http-egress). Every capability is enabled by the
-operator's Cedar `--sandbox-policy-file`.
+module returns desired state. The sandbox opens selectively, per capability
+([docs/one-pager-three-layer-authz.md](docs/one-pager-three-layer-authz.md),
+[docs/one-pager-sandbox.md](docs/one-pager-sandbox.md)): a module declares
+what it cannot run without in its manifest (`requires`) - a private `/tmp`
+for the request, environment variables bound to step credentials (host
+directories are deliberately not mountable), and **HTTP egress through the
+host** to call the APIs it lists, with the host resolving, filtering,
+budgeting and auditing every request - see [HTTP egress](#http-egress).
+Each capability is granted only when the Input's `compositionPolicy` and
+the operator's Cedar `--sandbox-policy-file` both permit it.
 
 ## Install
 
@@ -156,7 +157,7 @@ logs through the runtime. Your function knows nothing about WebAssembly, and
 go test ./...                                   # unit tests run natively
 guestfn build                                   # fn.wasm (wasip1); prints the ABI verdict and the manifest summary
 guestfn inspect fn.wasm                         # size, ABI verdict, exports, imports, memory
-guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest; prints the module and sandbox blocks for the Composition
+guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest; prints the module block and what the module requires
 ```
 
 `guestfn build` ends with the verdict the runtime reaches when it loads the
@@ -174,25 +175,25 @@ ghcr.io/example/greeter:v0.1.0` describes an artifact from its manifest
 module too; `--output json` for scripts.
 
 The scaffold also has a **`wasmfn.yaml`** — the module's manifest: what it
-declares about itself (`name`, `version`, `abi: 1`), the sandbox grants it
-cannot run without (`requires`: egress rules in the Input's own shape,
-`filesystem.privateTmp` — the scaffold requires nothing; environment
-variables are values a Composition sets, not a capability, so they are not
-a requirement) and the
+declares about itself (`name`, `version`, `abi: 1`), the sandbox
+capabilities it cannot run without (`requires`: egress rules,
+`filesystem.privateTmp`, `env` credential bindings - the scaffold requires
+nothing; non-secret configuration belongs in `config`, not env) and the
 JSON Schema of its `config` (the scaffold's covers `greeting` and
 `greetingUrl`). `guestfn build` validates it and checks the example
 Composition's `config` against the schema; `guestfn push` publishes it
 beside the module (`--manifest` names another file, `--module-version` and
 `--revision` override the version and set the revision annotation) and
-prints, under the `module:` block, the `sandbox:` block a Composition needs
-to satisfy it; the runtime then refuses a Composition that grants less than
-the module requires, before the module runs (see [Module
-manifests](#module-manifests)). `guestfn manifest validate` checks the
-file, `guestfn manifest show ghcr.io/example/greeter:v0.1.0` prints what a
-published module declares, and `guestfn scaffold composition --from
-ghcr.io/example/greeter:v0.1.0` (or `--from fn.wasm`) writes a Composition
-step — `module` pinned, `sandbox` from `requires`, a `config` skeleton from
-the schema; `--full` for a whole Composition.
+prints, under the `module:` block, the `requires:` block so a Composition
+author knows what the policy layers must permit; the runtime then refuses
+a module whose requirements the Input's `compositionPolicy` or the
+operator's `--sandbox-policy-file` does not permit, before the module runs
+(see [Module manifests](#module-manifests)). `guestfn manifest validate`
+checks the file, `guestfn manifest show ghcr.io/example/greeter:v0.1.0`
+prints what a published module declares, and `guestfn scaffold composition
+--from ghcr.io/example/greeter:v0.1.0` (or `--from fn.wasm`) writes a
+Composition step — `module` pinned, a `config` skeleton from the schema;
+`--full` for a whole Composition.
 
 `guestfn push` produces a CNCF wasm OCI artifact: one `application/wasm`
 layer, the manifest as an `application/vnd.wasmfn.manifest.v1+json` layer
@@ -257,10 +258,10 @@ Crossplane never installs a function's Input CRD, so the runtime is the only
 gate a Composition's Input passes — and until now it was reached only by
 reconciling. `function validate` runs that gate offline: the runtime binary
 takes the same ceiling flags as when it serves and applies the same checks
-(`sandbox` grants against the operator's Cedar `--sandbox-policy-file`,
-`limits` against `--module-timeout`/`--module-memory-limit`, `module` and
-`policy` shape) to every function-wasm step of the Compositions (or bare
-`Input` documents) you give it, printing the runtime's own words:
+(the Input's `compositionPolicy` compiled, `limits` against
+`--module-timeout`/`--module-memory-limit`, the `module` source's shape)
+to every function-wasm step of the Compositions (or bare `Input`
+documents) you give it, printing the runtime's own words:
 
 ```shell
 go run github.com/jonasz-lasut/function-wasm/cmd/function@latest validate \
@@ -271,13 +272,13 @@ docker run --rm -v "$PWD:/w" ghcr.io/jonasz-lasut/function-wasm:<version> valida
 ```
 
 ```
-composition.yaml: Composition/hello pipeline[0] hello: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, egress api.example.com)
-composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0] GET to host "evil.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it
+composition.yaml: Composition/hello pipeline[0] hello: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, compositionPolicy)
+composition.yaml: Composition/hello pipeline[1] labeler: refused: module oci ghcr.io/example/labeler@sha256:9d1c… requires egress GET to host "evil.example.com" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit
 ```
 
 `--xr xr.yaml` materialises `module.from` sources against that composite
 resource, as the observed XR would (without it a `from` source is checked
-for the `policy.repositoryAllowList` it requires and reported as the XR's
+for the `compositionPolicy` it requires and reported as the XR's
 choice); `--resolve` goes on to resolve, verify (`--cosign-key`) and fetch
 each module — OCI pulls use the local Docker config, never a step
 credential — and compiles it with wasmtime for the runtime's own verdict
@@ -302,51 +303,49 @@ module:                        # required
   http: {url, digest}
   path: fn.wasm
   from: status.module          # … or the observed XR field holding it
-policy:                        # optional; only fences a module chosen through module.from
-  repositoryAllowList: ["ghcr.io/example-org/"]
-  credentialsAllowList: ["registry"]
+compositionPolicy: |           # optional; the composition author's own Cedar layer
+  permit (principal, action == Action::"pullModule",
+          resource in Repository::"ghcr.io/example-org");
 limits:                        # optional; each at most the runtime's ceiling
   timeout: 5s
   memory: 128Mi
-sandbox:                       # optional; each capability enabled by the operator's Cedar --sandbox-policy-file
-  filesystem:
-    privateTmp: true                                # an empty, writable /tmp per request; nothing else is mountable
-  env: [{name: LOG_LEVEL, value: debug}]            # non-secret configuration
-  egress:
-    http: [{host: api.example.com, methods: [GET]}] # HTTP through the host; the operator's --sandbox-policy-file grantEgress decides
 config: {...}                  # optional; opaque, forwarded to the module
 ```
 
-Everything but the source is read from the Input: `policy`, `limits` and
-`sandbox` are the Composition's, never the composite resource's.
+Everything but the source is read from the Input: `compositionPolicy` and
+`limits` are the Composition's, never the composite resource's. There is no
+`sandbox` block: a module declares the capabilities it cannot run without
+in its manifest (`requires` - see [Module manifests](#module-manifests)),
+and each is granted only when the Input's `compositionPolicy` and the
+operator's Cedar `--sandbox-policy-file` both permit it
+([docs/one-pager-three-layer-authz.md](docs/one-pager-three-layer-authz.md)).
 
 | field | type | description |
 |---|---|---|
 | `module` | object | **required** — where the module comes from |
 | `module.type` | string | **required** — `OCI`, `HTTP` or `Path`. Exactly one of the object it names (`oci`, `http`, `path`) or `module.from` is set, and no object of another type may be present. The runtime checks it on every request — the Input's CRD (with the same rules as CEL) is never installed by Crossplane; a function input is part of a Composition, not an object, so its schema only serves tooling that validates against it (`crossplane resource validate` with the package's `input/` directory) and IDEs |
 | `module.oci.ref` | string | OCI artifact reference **pinned to its manifest digest**, `registry/repo@sha256:…`, as `guestfn push` prints it. The manifest digest pins the module (the manifest states its layer's digest; both are verified on fetch) and addresses the caches. A tag alone is not accepted (tags can be moved; the runtime resolves nothing at request time); `registry/repo:tag@sha256:…` is fine — the digest is what is fetched, the tag is human-readable context and may even no longer exist. The module is the `application/wasm` (or `vnd.wasm` content) layer, or the only layer; a tar layer (a `FROM scratch` image) must hold it at exactly `/fn.wasm` |
-| `module.oci.credentials` | string | name of a pipeline-step credential (a Secret with `.dockerconfigjson`, or `username` and `password` keys) used to pull. Without it the runtime's Docker config (`DOCKER_CONFIG`) and anonymous access are tried. An object read through `module.from` may name one only when `policy.credentialsAllowList` lists it (see `policy`) |
+| `module.oci.credentials` | string | name of a pipeline-step credential (a Secret with `.dockerconfigjson`, or `username` and `password` keys) used to pull. Without it the runtime's Docker config (`DOCKER_CONFIG`) and anonymous access are tried. An object read through `module.from` may name one only where the `compositionPolicy` permits `spendCredential` for it on the ref's repository |
 | `module.http.url` | string | download the module over HTTP(S) |
 | `module.http.digest` | string | **required** — `sha256:<hex>` of the module; the download is verified against it |
 | `module.path` | string | a file relative to the runtime's `--module-dir`; refused unless that flag is set — local rendering and volume-mounted modules; carries no digest |
-| `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names — an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` — e.g. `status.module`; read on every request and decoded strictly (a typo or a wrong shape is a fatal result naming the field), so each XR can choose its module. What it may choose is fenced by `policy` |
-| `policy` | object | fences a module chosen through `module.from`; ignored for a source the Composition names statically (that source is trusted as the Composition is) |
-| `policy.repositoryAllowList` | []string | path prefixes an XR-chosen `oci.ref` (or `http.url`) must lie within, e.g. `ghcr.io/example-org`. Matched at a path or host boundary: a prefix admits the location equal to it or one it fences with a following `/`, so `ghcr.io/example-org` admits `ghcr.io/example-org/mod` but never the sibling namespace `ghcr.io/example-org-other/...` (a trailing slash is optional). Matched against the normalized location (`registry/repository` for OCI, `scheme://host/path` for HTTP; a ref or URL with dot segments is refused). A ref outside every prefix is a fatal result naming the policy and the ref. **Required whenever `module.from` names an `OCI` or `HTTP` source** — an unfenced XR author could point the runtime at any host and read what its answer says |
-| `policy.credentialsAllowList` | []string | step credentials an XR-chosen `oci` object may name, spent only on a ref `repositoryAllowList` admits — so it requires `repositoryAllowList` (`policy.credentialsAllowList requires policy.repositoryAllowList` otherwise). Absent or empty, an XR object naming credentials is refused: the XR author would otherwise choose the registry host the secret is sent to |
+| `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names — an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` — e.g. `status.module`; read on every request and decoded strictly (a typo or a wrong shape is a fatal result naming the field), so each XR can choose its module. What it may choose is fenced by `compositionPolicy` (`pullModule`, default-deny) |
+| `compositionPolicy` | string | the composition author's own Cedar policy layer, over the same schema as the operator's `--sandbox-policy-file` (actions `pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv`; a `Request` principal carrying `namespace` and `xrKind`; `Repository`, `HostPattern`, `Capability` and `Credential` entities). AND-combined with the module's manifest and the operator's policy, so it can only narrow. Two regimes: a sandbox action it scopes no rule for is not narrowed (the operator and the manifest decide alone), while a module chosen through `module.from` is refused unless a `pullModule` permit matches its normalized location - matched over a boundary-correct `Repository` hierarchy, so `Repository::"ghcr.io/example-org"` admits `ghcr.io/example-org/mod` but never the sibling namespace `ghcr.io/example-org-other/...` - and may spend a step credential only where a `spendCredential` permit matches (`context.repository` carries the ref's location). **Required whenever `module.from` names an `OCI` or `HTTP` source** — an unfenced XR author could point the runtime at any host and read what its answer says. Read from the Input only; malformed Cedar is a fatal result at admission |
 | `limits.timeout` | duration | wall-clock budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). The request deadline still applies if shorter |
 | `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`; at most `--module-memory-limit`, else a fatal result naming both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
 | `limits.concurrency` | int32 | at most N runs of this step at once, across all requests, keyed by the module's content digest. A further request waits under its own context; when the deadline passes first, it is a fatal result that consumed nothing and is not counted as a run. A value above `--max-concurrent-runs` is silently capped. No ceiling flag: this only narrows |
-| `sandbox` | object | grants beyond the default sandbox (nothing but the request), each enabled by the operator's Cedar `--sandbox-policy-file`: a grant no policy permits is a fatal result, before any module is resolved. Read from the Input only. Filesystem, environment and HTTP egress are implemented ([docs/one-pager-sandbox.md](docs/one-pager-sandbox.md)) |
-| `sandbox.filesystem.privateTmp` | bool | a private, empty, writable `/tmp` for the duration of the request — created under the runtime's `$TMPDIR` before the module runs and removed afterwards, whatever the outcome (enabled by the policy's `usePrivateTmp`) |
-| `sandbox.egress.http[]` | `{host \| hostPattern, methods, pathPrefix}` | HTTP(S) requests the host performs for the module (`wasmfn.HTTPClient()` in Go, the `wasmfn.http` import elsewhere): exactly one of `host` (exact name, port ignored) and `hostPattern` (`*.example.com`: every name under it, not the apex), at least one of `GET HEAD POST PUT PATCH DELETE OPTIONS`, and an optional `pathPrefix` the (normalized) path must start with. Rules for the same host add up. The operator's Cedar `--sandbox-policy-file` (`grantEgress`) enables egress and decides which callers may grant which hosts, default-deny, else a fatal result names the rule. See [HTTP egress](#http-egress) |
-| `sandbox.env[]` | `{name, value \| valueFrom}` | environment variables the module sees, exactly these and nothing of the runtime's; names are identifiers, no duplicates. A literal `value` may not contain NUL. A `valueFrom.credential` reads a key of a step credential (enabled by the policy's `setEnv`) |
-| `sandbox.env[].valueFrom.credential` | `{name, key}` | reads the value from step credential `name`, key `key`; the pull credential (`module.oci.credentials`) is refused as a source |
-| `sandbox.envFrom[]` | `{credential, prefix}` | imports every key of a step credential as environment variables; `prefix` is prepended to each key. Keys that are not valid identifiers (after prefixing) refuse the run. A key colliding with an `env[]` name is refused. The pull credential is refused as a source (enabled by the policy's `setEnv`) |
-| `config` | object | opaque, passed to the module untouched inside the request input; a Go guest reads it with `wasmfn.GetConfig` |
+| `config` | object | opaque, passed to the module untouched inside the request input; a Go guest reads it with `wasmfn.GetConfig`. Non-secret module configuration belongs here - the module's environment comes only from its manifest's `requires.env` credential bindings |
+
+What a module gets of the sandbox is not an Input field: its manifest's
+`requires` (egress rules, `filesystem.privateTmp`, `env` credential
+bindings) is the request, and each requested capability is granted only
+when the `compositionPolicy` and the operator's `--sandbox-policy-file`
+both permit it - see [Module manifests](#module-manifests) and
+[HTTP egress](#http-egress).
 
 Letting each composite resource choose its module — the Composition names
-the type and the XR field, the field holds the source, the policy says what
-it may hold:
+the type and the XR field, the field holds the source, the
+`compositionPolicy` says what it may hold:
 
 ```yaml
     input:
@@ -355,8 +354,9 @@ it may hold:
       module:
         type: OCI
         from: spec.module           # spec.module: {ref: ghcr.io/example-org/greeter@sha256:…}
-      policy:
-        repositoryAllowList: ["ghcr.io/example-org/"]
+      compositionPolicy: |
+        permit (principal, action == Action::"pullModule",
+                resource in Repository::"ghcr.io/example-org");
 ```
 
 Credentials for a step are declared on the pipeline step:
@@ -381,16 +381,20 @@ Credentials for a step are declared on the pipeline step:
         credentials: registry
 ```
 
-An XR-chosen module may spend that credential only if the policy allows
-it, and only within the repositories the policy admits:
+An XR-chosen module may spend that credential only if the
+`compositionPolicy` permits it (`spendCredential`), and only for a
+repository a `pullModule` permit admits (the pull check runs first, and
+`context.repository` carries the ref's location):
 
 ```yaml
     module:
       type: OCI
       from: status.module           # status.module: {ref: ghcr.io/example-org/…@sha256:…, credentials: registry}
-    policy:
-      repositoryAllowList: ["ghcr.io/example-org/"]
-      credentialsAllowList: ["registry"]
+    compositionPolicy: |
+      permit (principal, action == Action::"pullModule",
+              resource in Repository::"ghcr.io/example-org");
+      permit (principal, action == Action::"spendCredential", resource == Credential::"registry")
+      when { context.repository in Repository::"ghcr.io/example-org" };
 ```
 
 A step may ask for less than the runtime allows, never more:
@@ -401,35 +405,31 @@ A step may ask for less than the runtime allows, never more:
       memory: 128Mi      # ≤ --module-memory-limit
 ```
 
-Opening the sandbox: the operator's Cedar `--sandbox-policy-file` enables each
-capability, the Composition asks for what its module needs, the module gets the
-intersection. With a policy that permits `usePrivateTmp` and `setEnv` for this
-caller, this step's module scratches in an empty `/tmp` that is gone when the
-request ends and sees environment variables - host directories are never
-mountable into a module, whatever the policy:
+Opening the sandbox: the module's manifest asks, the Input's
+`compositionPolicy` and the operator's Cedar `--sandbox-policy-file` must
+both permit, and the module gets exactly its request. A module that
+scratches in `/tmp` and reads `$DATABASE_URL` declares, in its
+`wasmfn.yaml`:
 
 ```yaml
-    sandbox:
-      filesystem:
-        privateTmp: true
-      env:
-      - name: LOG_LEVEL
-        value: debug                           # literal: never a secret
-      - name: AWS_ACCESS_KEY_ID
-        valueFrom:
-          credential:
-            name: aws                          # step credential "aws", key "access_key_id"
-            key: access_key_id
-      envFrom:
-      - credential:
-          name: vault                          # every key of step credential "vault"
-        prefix: VAULT_                         # becomes VAULT_TOKEN, VAULT_ADDR, ...
+requires:
+  filesystem: {privateTmp: true}
+  env:
+  - name: DATABASE_URL
+    fromCredential:
+      name: db                               # step credential "db", key "url"
+      key: url
 ```
 
-A `privateTmp`/`env`/`envFrom` grant no `--sandbox-policy-file` permits is a
-fatal result; the module never runs. The pull credential
-(`module.oci.credentials`) is refused as a source for `env` and `envFrom`: the
-module must never see the secret that fetched it.
+The private `/tmp` is granted where both Cedar layers permit
+`usePrivateTmp`; an env binding needs `setEnv` and `spendCredential` in
+both. A requirement either layer does not permit (or any requirement on a
+runtime with no `--sandbox-policy-file`) is a fatal result; the module
+never runs. Non-secret configuration (`LOG_LEVEL: debug`) is not env - put
+it in `config`, which the guest reads with `wasmfn.GetConfig`. The pull
+credential (`module.oci.credentials`) is refused as a binding source: the
+module must never see the secret that fetched it. Host directories are
+never mountable into a module, whatever the policy.
 
 ### Module manifests
 
@@ -437,33 +437,35 @@ A module published with `guestfn push` from a project that has a
 `wasmfn.yaml` carries a **manifest** beside it in the same OCI artifact (a
 second layer, `application/vnd.wasmfn.manifest.v1+json`, covered by the
 manifest digest the Composition pins and by a cosign signature): the
-sandbox grants it cannot run without (`requires`: egress rules in the
-Input's own shape and `filesystem.privateTmp` — never `env`: variables are
-values the Composition sets, not a capability), a JSON Schema for
-its `config`, its ABI and the oldest runtime that serves it. The runtime
-reads it once per digest (into `/tmp/function-wasm-cache/manifests`) and,
-after admission and load, holds it against what the Composition granted —
-**narrowing only**: a manifest can make a run fail earlier and say why, it
-can never make a run possible or widen a grant. An unmet requirement is a
-fatal result before the module runs — `module oci ghcr.io/example/greeter@sha256:… requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/, which the Composition does not grant`,
-`… requires sandbox.filesystem.privateTmp, which the Composition does not grant`,
+sandbox capabilities it cannot run without (`requires`: egress rules,
+`filesystem.privateTmp`, `env` credential bindings - non-secret
+configuration is the Input's `config`), a JSON Schema for its `config`,
+its ABI and the oldest runtime that serves it. The runtime reads it once
+per digest (into `/tmp/function-wasm-cache/manifests`) and, after
+admission and load, decides each requirement by the three-layer rule —
+the manifest requests, the `compositionPolicy` and the operator's
+`--sandbox-policy-file` permit - **narrowing only**: a manifest can make a
+run fail earlier and say why, it can never make a run possible or widen a
+grant. A requirement a layer does not permit is a fatal result before the
+module runs — `module oci ghcr.io/example/greeter@sha256:… requires egress GET to host "api.example.com" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit`,
+`… requires a private /tmp (requires.filesystem.privateTmp), which the compositionPolicy does not permit for this request`,
 `… requires runtime v0.3.0 or newer, this is v0.2.1` — and so is a
 `config` outside the schema: `… config does not match the module's schema:
 /greeting: got number, want string`. A module without a manifest, and every
-`path` or `http` source, runs as before. `guestfn push` prints the
-`sandbox:` block a Composition needs under the `module:` block, `guestfn
-inspect <ref>` shows what a module requires, and `function validate
---resolve` applies the same check offline.
+`path` or `http` source, gets the default sandbox (nothing but the
+request). `guestfn push` prints the `requires:` block under the `module:`
+block, `guestfn inspect <ref>` shows what a module requires, and `function
+validate --resolve` applies the same check offline.
 
 ## HTTP egress
 
 A module can be granted HTTP(S) requests **through the host**: it never
 opens a socket (wasip1 has none), it asks the runtime, and the runtime
 resolves the name, refuses addresses on its block list, terminates TLS with
-its own roots, checks the host, method and path against the Composition's
-rules, follows redirects within them, enforces the operator's budgets,
-counts and logs every request, and hands the response back. Three parties,
-in the order they decide:
+its own roots, checks the host, method and path against the rules its
+manifest declared and the policy layers granted, follows redirects within
+them, enforces the operator's budgets, counts and logs every request, and
+hands the response back. Three parties, in the order they decide:
 
 1. **The operator** turns the capability on. Egress is enabled, and its host
    allowlist and SSRF CIDR rules are authored, in the Cedar `--sandbox-policy-file`
@@ -477,7 +479,7 @@ in the order they decide:
    ```
 
    With no `--sandbox-policy-file`, egress is not grantable at all: a
-   `sandbox.egress` grant is a fatal result before the module runs. A
+   module that requires it is a fatal result before it runs. A
    `grantEgress` permit that matches any host opens egress to any public host
    within the fixed budgets (timeout 10s, maxRequests 16, maxResponseBytes 4 MiB,
    maxRedirects 5; response headers are capped separately at 64 KiB) and the
@@ -520,32 +522,36 @@ in the order they decide:
    policy refused; the resolved address and the block-list entry stay in the
    runtime's audit line.
 
-2. **The Composition** grants what its module needs, within the ceiling:
+2. **The module** declares what it needs in its manifest, and the
+   Composition may narrow it. The manifest's `requires.egress.http` rules -
+   exactly one of `host` (exact name) and `hostPattern` (`*.example.com`:
+   every name under it, not the apex), at least one of
+   `GET HEAD POST PUT PATCH DELETE OPTIONS`, an optional `pathPrefix` the
+   (normalized) path must start with - are the module's ask:
 
    ```yaml
-       input:
-         apiVersion: wasm.fn.crossplane.io/v1beta1
-         kind: Input
-         module:
-           type: OCI
-           oci: {ref: ghcr.io/example/pricing@sha256:…}
-         sandbox:
-           egress:
-             http:
-             - host: api.example.com
-               methods: [GET]
-               pathPrefix: /v1/prices/
-             - hostPattern: "*.googleapis.com"
-               methods: [GET, POST]
+   # wasmfn.yaml
+   requires:
+     egress:
+       http:
+       - host: api.example.com
+         methods: [GET]
+         pathPrefix: /v1/prices/
+       - hostPattern: "*.googleapis.com"
+         methods: [GET, POST]
    ```
 
-   A host the operator's Cedar policy does not grant is a fatal result before
-   the module runs (`sandbox.egress.http[0] GET to host "evil.example.com" is
-   refused: the operator policy (--sandbox-policy-file) does not permit it`),
-   and so is any egress grant on a runtime with no `--sandbox-policy-file` at all
-   (`sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is
-   required to grant egress (grantEgress)`). `sandbox` is read from the Input only:
-   an XR author who picks a module through `module.from` cannot widen its egress.
+   The Input's `compositionPolicy` narrows only when it scopes
+   `grantEgress`: then a rule no permit matches is refused. A rule the
+   operator's Cedar policy does not permit is a fatal result before the
+   module runs (`module oci … requires egress GET to host
+   "evil.example.com" (requires.egress.http[0]), which the operator policy
+   (--sandbox-policy-file) does not permit`), and so is any egress
+   requirement on a runtime with no `--sandbox-policy-file` at all (`…
+   requires egress (requires.egress.http), but the runtime has no
+   --sandbox-policy-file, which is required to grant egress (grantEgress)`).
+   An XR author who picks a module through `module.from` picks its manifest
+   with it, but both Cedar layers still gate every rule it declares.
 
 3. **The module** makes requests. In Go, `wasmfn.HTTPClient()` is an
    `*http.Client` whose transport is the host, so anything that takes a
@@ -594,15 +600,17 @@ your organisation signed run.
 ## How a request runs
 
 1. The Input is decoded, and what the Composition asks of the runtime is
-   settled: `sandbox` grants are checked against the operator's Cedar
-   `--sandbox-policy-file` (the sole enabler of each capability),
-   `limits` against the runtime's ceilings. A `module.from` source is then
-   read from the observed composite resource (`type: OCI` with
-   `from: status.module` expects `status.module` to be `{ref, credentials}`;
-   a typo or a wrong shape is a fatal result naming the field) and checked
-   against `policy`. Resolving does no I/O: the **digest** that pins the
-   module comes from the Input — the manifest digest of an OCI reference,
-   `http.digest` for a URL — or from hashing a served file when it changes.
+   settled: the `compositionPolicy` is compiled (content-hash cached;
+   malformed Cedar is a fatal result), `limits` are checked against the
+   runtime's ceilings. A `module.from` source is then read from the
+   observed composite resource (`type: OCI` with `from: status.module`
+   expects `status.module` to be `{ref, credentials}`; a typo or a wrong
+   shape is a fatal result naming the field) and fenced by the
+   `compositionPolicy` (`pullModule` for its repository, `spendCredential`
+   for a named credential - default-deny for XR-chosen sources). Resolving
+   does no I/O: the **digest** that pins the module comes from the Input —
+   the manifest digest of an OCI reference, `http.digest` for a URL — or
+   from hashing a served file when it changes.
 2. The digest is looked up in the caches — compiled modules in memory (kept
    ten minutes after their last use), then wasmtime artifacts on disk, then
    fetched modules on disk under `/tmp/function-wasm-cache`. Only a module
@@ -612,13 +620,17 @@ your organisation signed run.
    provide, is refused here — and its artifact written to disk. Restarts and
    registry outages need no network. Details in
    [docs/one-pager-cache.md](docs/one-pager-cache.md). The module's
-   [manifest](#module-manifests), if its artifact carries one, is then held
-   against what step 1 granted: an unmet requirement or a `config` outside
-   the module's schema is a fatal result before anything runs.
+   [manifest](#module-manifests), if its artifact carries one, is then the
+   module's ask: each `requires` capability must be permitted by the
+   Input's `compositionPolicy` and the operator's `--sandbox-policy-file`
+   (AND-combined - a manifest can only make a run fail earlier), and a
+   `config` outside the module's schema is a fatal result before anything
+   runs.
 3. Every request gets a fresh instance (about ten milliseconds): WASI with no
-   network access, and no filesystem or environment beyond what `sandbox`
-   granted — a private `/tmp` created for this request and removed after
-   it, exactly the listed environment variables; HTTP requests, if granted, go through the host
+   network access, and no filesystem or environment beyond what the three
+   layers granted - a private `/tmp` created for this request and removed
+   after it, exactly the environment variables its manifest binds to step
+   credentials; HTTP requests, if granted, go through the host
    ([HTTP egress](#http-egress)); guest logs flow into the runtime's logger
    with the module reference attached; stdout and stderr are the pod's, so a
    Go panic's stack shows up in `kubectl logs`.
@@ -657,7 +669,7 @@ flags would admit.
 | `--warm-modules` | `WARM_MODULES` | unset | modules loaded before the health service reports Serving — resolved, verified (`--cosign-key` applies), then compiled or mapped through the same caches a request uses: OCI references pinned to their manifest digest (`repo[:tag]@sha256:…`, pulled with the runtime's Docker config) and, with `--module-dir`, `path:<file>` entries. Repeatable or comma-separated. An entry that fails to load is logged with the reason and does not stop the pod from serving; that module is loaded on its first request as usual |
 | `--egress-rate-limit-per-minute` | `EGRESS_RATE_LIMIT_PER_MINUTE` | `0` (off) | Sustained egress requests per minute per module digest (a process-wide token bucket). The one tunable egress budget; the rest are fixed (timeout 10s, maxRequests 16, maxResponseBytes 4 MiB, maxRedirects 5). Enablement and the host allowlist and CIDR rules live in `--sandbox-policy-file` |
 | `--egress-rate-limit-burst` | `EGRESS_RATE_LIMIT_BURST` | `0` (derived) | Burst tokens for `--egress-rate-limit-per-minute`; `0` derives `max(1, requestsPerMinute)` |
-| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy - **the sole authority that enables a sandbox capability**: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`, also the host allowlist). It may also carry the SSRF CIDR block/allow rules (`forbid`/`permit` on `Action::"dialAddress"` with `context.ip.isInRange(ip(…))`/`isLoopback()`), which compile at load into the egress block list (with the built-in default block list) - Cedar never runs on the dial path. Evaluated **default-deny** (a `forbid` wins): a capability no permit matches is refused. Unset, no sandbox capability is grantable and a runtime offers only the default sandbox. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). See [operator grant policy](#operator-grant-policy) |
+| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy - the operator layer of the three-layer capability decision and **the sole authority that enables a sandbox capability**: which callers (by `principal.namespace`, `principal.xrKind`) a module's manifest may be granted a private `/tmp` (`usePrivateTmp`), environment bound to step credentials (`setEnv`, `spendCredential`) or egress (`grantEgress`, also the host allowlist) for. It may also carry the SSRF CIDR block/allow rules (`forbid`/`permit` on `Action::"dialAddress"` with `context.ip.isInRange(ip(…))`/`isLoopback()`), which compile at load into the egress block list (with the built-in default block list) - Cedar never runs on the dial path. Evaluated **default-deny** (a `forbid` wins): a capability no permit matches is refused. Unset, no sandbox capability is grantable and a runtime offers only the default sandbox. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). See [operator grant policy](#operator-grant-policy) |
 | `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
@@ -703,14 +715,17 @@ A fuller example with every operator-authorable option is in
 
 `--sandbox-policy-file` is the **sole authority that enables a sandbox
 capability**: a [Cedar](https://www.cedarpolicy.com) document, the operator's
-grant policy, that decides *which callers* may be granted a private `/tmp`
-(`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`, which is
-also the host allowlist). It is evaluated **default-deny** (a `forbid`
-overrides a `permit`): a capability no permit matches is refused. Without a
+grant policy and the top layer of the three-layer decision, that decides
+*which callers* a module's manifest may be granted a private `/tmp`
+(`usePrivateTmp`), environment bound to step credentials (`setEnv`,
+`spendCredential`) or egress (`grantEgress`, which is also the host
+allowlist) for. It is evaluated **default-deny** (a `forbid` overrides a
+`permit`): a capability no permit matches is refused. Without a
 `--sandbox-policy-file` no sandbox capability is grantable at all and a runtime
 offers only the default sandbox (nothing but the request). The document lives
-on the operator boundary alone (never the module manifest or the Composition,
-which would let a module self-authorize).
+on the operator boundary alone - a module's manifest can only request, and
+the Input's `compositionPolicy` can only narrow, so neither can widen past
+it.
 
 The principal every rule sees is the caller: `principal.namespace` and
 `principal.xrKind` come from the observed composite resource (a
@@ -751,7 +766,7 @@ spec:
 ```
 
 Because the policy is default-deny, a document that governs one capability
-refuses every *other* capability a Composition asks for unless it also
+refuses every *other* capability a module requires unless it also
 permits it: with a `--sandbox-policy-file` set, permit every capability you mean to
 allow. `function validate --sandbox-policy-file …` reports the same verdicts offline
 (the principal comes from `--xr`, else a zero principal that matches no
@@ -864,34 +879,36 @@ credentials, exactly as a native function would — except the credential that
 pulled it (`module.oci.credentials`), which is the host's and never reaches
 the guest. With `module.from` the **composite resource's author** picks the
 module — use it where XR authors are trusted to, fence what they can pick
-with `policy.repositoryAllowList` (required for `OCI` and `HTTP` sources:
-without it the XR author would point the runtime at any host and read what
-its answer says), and restrict it to signed code with `--cosign-key`. A source read from the XR may name a step credential only
-when `policy.credentialsAllowList` lists it, and only for a repository
-`policy.repositoryAllowList` admits: otherwise the XR author would pick the
+with the `compositionPolicy`'s `pullModule` permits (required for `OCI` and
+`HTTP` sources: without them the XR author would point the runtime at any
+host and read what its answer says), and restrict it to signed code with
+`--cosign-key`. A source read from the XR may name a step credential only
+where a `spendCredential` permit matches it, and only for a repository a
+`pullModule` permit admits: otherwise the XR author would pick the
 registry host the secret is sent to, and a registry that answers with a
-`Basic` challenge receives it — without such a policy an XR-chosen module is
+`Basic` challenge receives it — without such a permit an XR-chosen module is
 pulled with the runtime's own Docker config (mount one through a
 `DeploymentRuntimeConfig` and set `DOCKER_CONFIG`; credentials there are
-bound to their registry host) or anonymously. `policy`, `limits` and
-`sandbox` are read from the Input only, so an XR author can choose code, not
+bound to their registry host) or anonymously. `compositionPolicy` and
+`limits` are read from the Input only, so an XR author can choose code, not
 widen its permissions, grants or budget; every one of these rules is
 enforced by the runtime on every request (Crossplane never installs the
 Input CRD), and [`function validate`](#validate-a-composition) runs the
 same code over a Composition offline. The sandbox protects the runtime
 process — and with it every other Composition sharing the Function — from a
 crashing, looping or memory-hungry module, and gives a module no filesystem,
-environment or network beyond what the Composition granted and the operator's
-Cedar `--sandbox-policy-file` enabled: a private `/tmp` that exists for one
+environment or network beyond what its manifest requires and both Cedar
+layers (the Input's `compositionPolicy` and the operator's
+`--sandbox-policy-file`) permit: a private `/tmp` that exists for one
 request (host directories are never mountable — the request is a module's
-only view of the world beyond what it writes for itself), listed
-environment variables (non-secret
-by convention — the values are visible in the Composition), and HTTP
-requests through the host to the hosts, methods and paths it lists within
-the operator's policy (block list, budgets). A module granted egress can
-send whatever its request carries — step credentials included — to those
-hosts, which is why the grant is the Composition's alone (never readable
-through `module.from`), every request leaves an audit line with the module
+only view of the world beyond what it writes for itself), exactly the
+environment variables its manifest binds to step credentials (non-secret
+configuration travels in `config`), and HTTP requests through the host to
+the hosts, methods and paths its manifest lists within both policies
+(block list, budgets). A module granted egress can send whatever its
+request carries — step credentials included — to those hosts, which is why
+the grant is the policy layers' alone (a manifest can only ask, and an XR
+author widens nothing), every request leaves an audit line with the module
 digest, and `--cosign-key` is strongly recommended wherever egress is
 granted. Every remote module is pinned by a digest the Composition states —
 the OCI reference's manifest digest (the manifest names the layer's digest,
@@ -946,7 +963,8 @@ and conventions.
 
 Design documents live under `docs/` as one-pagers: the implemented ones
 (cache, module source schema, trust model, resource governance, sandbox,
-admission and inspection tooling, the module manifest, request-sourced
-secrets, governance and performance phases) and the drafts of what comes next
-(guest language support, a Nix development environment).
+admission and inspection tooling, the module manifest, the three-layer
+authorization model, governance and performance phases) and the drafts of
+what comes next (guest language support, sandbox requests for
+manifest-less sources, a Nix development environment).
 [AGENTS.md](AGENTS.md#key-reference-documents) lists them.
