@@ -61,6 +61,7 @@ var examples = map[string]Options{
 	LangTinyGo: {Lang: LangTinyGo, Module: "github.com/jonasz-lasut/function-wasm/examples/hello-tinygo", GoVersion: "1.26.6"},
 	LangRust:   {Lang: LangRust, Name: "hello-rust"},
 	LangZig:    {Lang: LangZig, Name: "hello-zig"},
+	LangC:      {Lang: LangC, Name: "hello-c"},
 }
 
 // TestRenderMatchesExample keeps each scaffold and its example the same
@@ -118,10 +119,21 @@ func TestRenderOptions(t *testing.T) {
 			opts:   Options{Lang: LangRust},
 			err:    "a name is required",
 		},
+		"CNeedsName": {
+			reason: "C has no module path either.",
+			opts:   Options{Lang: LangC},
+			err:    "a name is required",
+		},
+		"CFingerprint": {
+			reason: "The C flavour builds with zig too, so its build.zig.zon gets the project's own identifier and fingerprint.",
+			opts:   Options{Lang: LangC, Name: "my-fn"},
+			file:   "build.zig.zon",
+			want:   []string{".name = .my_fn,", ".fingerprint = 0x"},
+		},
 		"UnknownLang": {
 			reason: "Unknown languages are refused.",
 			opts:   Options{Lang: "cobol", Name: "x"},
-			err:    `unsupported language "cobol"; one of go, tinygo, rust, zig`,
+			err:    `unsupported language "cobol"; one of go, tinygo, rust, zig, c`,
 		},
 		"NameFromModule": {
 			reason: "The name defaults to the module's last element.",

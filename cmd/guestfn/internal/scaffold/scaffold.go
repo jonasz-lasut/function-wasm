@@ -1,9 +1,10 @@
-// Package scaffold renders a new guest project in one of three flavours: Go
+// Package scaffold renders a new guest project in one of five flavours: Go
 // with function-sdk-go (its ABI glue vendored in internal/wasmfn), TinyGo over
-// generated protobuf messages, or Rust with prost. Each template set is the
-// matching example guest of this repository (examples/hello-go, hello-tinygo,
-// hello-rust) with the module path and name parameterised; tests keep them
-// identical.
+// generated protobuf messages, Rust with prost, Zig with zig-protobuf, or C
+// with nanopb (built by zig cc). Each template set is the matching example
+// guest of this repository (examples/hello-go, hello-tinygo, hello-rust,
+// hello-zig, hello-c) with the module path and name parameterised; tests keep
+// them identical.
 package scaffold
 
 import (
@@ -34,14 +35,14 @@ const (
 
 // Langs lists the scaffoldable languages, default first. A language joins this
 // list once its template set and golden exist under templates/ and testdata/.
-var Langs = []string{LangGo, LangTinyGo, LangRust, LangZig}
+var Langs = []string{LangGo, LangTinyGo, LangRust, LangZig, LangC}
 
 // Options parameterise a scaffold.
 type Options struct {
 	// Lang selects the template set; empty means LangGo.
 	Lang string
 	// Module is the Go module path of the guest, e.g. github.com/me/my-fn.
-	// Required for Go and TinyGo; Rust projects have no module path.
+	// Required for Go and TinyGo; Rust, Zig and C projects have no module path.
 	Module string
 	// Name is the guest's short name: the crate name for Rust, and what docs
 	// and the example Composition call the guest. Empty derives it from the
@@ -110,7 +111,8 @@ func render(name string, content []byte, o Options) ([]byte, error) {
 	// .name field (kebab-case projects need the dashes replaced); zigfp is the
 	// build.zig.zon fingerprint, whose high 32 bits Zig requires to be the
 	// CRC-32 of that identifier (the low 32 are a package id, fixed here since a
-	// wasm guest is never published as a Zig package).
+	// wasm guest is never published as a Zig package). The zig and c flavours
+	// both build with zig, so both use them.
 	funcs := template.FuncMap{
 		"zigid": zigIdent,
 		"zigfp": func(s string) string {

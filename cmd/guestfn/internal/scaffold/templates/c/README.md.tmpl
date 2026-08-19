@@ -1,0 +1,62 @@
+# [[ .Name ]]
+
+A [Crossplane](https://crossplane.io) composition function in C, compiled to a
+wasip1 reactor of about 70 KB by `zig cc` and run by
+[function-wasm](https://github.com/jonasz-lasut/function-wasm). No wasi-sdk:
+the one `zig` binary is the C toolchain, the build system and the package
+fetcher.
+
+- `proto/run_function.proto` is crossplane's `RunFunction` contract, vendored
+  (with the `google/protobuf` types it imports); `zig build gen-proto` compiles
+  it with [nanopb](https://jpa.kapsi.fi/nanopb/)'s generator (`pip install
+  nanopb`) into `src/fnv1`, which is checked in so a plain `zig build` needs
+  only zig. The `.options` files beside the protos make every string, map and
+  repeated field heap allocated, so no field is bounded by the codec.
+- `src/fn.c` - `run_function` over the generated structs (edit this).
+  `src/structpb.h` reads and builds `google.protobuf.Struct` values (the
+  Input's `config`, every resource); `src/wasmfn.h` is the function-wasm
+  [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md)
+  glue: the `wasmfn_alloc` / `wasmfn_run` exports, the handle (decode, run,
+  encode; errors become fatal results), the `wasmfn.log` logger and the
+  `wasmfn.http` client. Only the exports and the host imports are
+  wasi-specific, so `zig build test` runs `src/fn_test.c` natively (a fake host
+  is installed for the `wasmfn.http` tests). `config.greetingUrl` fetches the
+  greeting through the host, within the egress grant of the module's manifest.
+- `build.zig` builds both (a wasm32-wasi reactor and the native test binary)
+  from the same sources, nanopb and cJSON from `build.zig.zon`.
+
+```shell
+# Unit tests run natively.
+zig build test
+
+# Compile to a wasip1 module.
+guestfn build                       # zig build -Doptimize=ReleaseSmall → fn.wasm
+
+# Publish it as an OCI artifact; it prints the module block for the Composition.
+guestfn push ghcr.io/example/[[ .Name ]]:v0.1.0
+```
+
+Reference the module from a Composition step of function-wasm:
+
+```yaml
+- step: [[ .Name ]]
+  functionRef:
+    name: function-wasm
+  input:
+    apiVersion: wasm.fn.crossplane.io/v1beta1
+    kind: Input
+    module:
+      type: OCI
+      oci:                     # printed by guestfn push
+        ref: ghcr.io/example/[[ .Name ]]:v0.1.0@sha256:<manifest digest>
+    config:
+      greeting: hi
+```
+
+`example/` renders locally with the function-wasm runtime serving this
+directory (`--module-dir`) and `crossplane render`:
+
+```shell
+guestfn build
+crossplane render example/xr.yaml example/composition.yaml example/functions.yaml
+```
