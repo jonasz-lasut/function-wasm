@@ -208,11 +208,12 @@ components; only a Go *guest* under ABI v2 would. The design rationale lives in
 
 `examples/hello-go` (Go with function-sdk-go and the vendored `internal/wasmfn`
 glue), `examples/hello-tinygo` (TinyGo, protobuf-go types + vtprotobuf codecs),
-`examples/hello-rust` (Rust, prost) and `examples/hello-zig` (Zig, zig-protobuf)
-implement this contract for the same function — they are what
-`guestfn init --lang go|tinygo|rust|zig` scaffolds; all but the Go one carry
-the ABI glue in the open — about forty lines each, plus the `wasmfn.http`
-helper — and are the reference for other languages.
+`examples/hello-rust` (Rust, prost), `examples/hello-zig` (Zig, zig-protobuf)
+and `examples/hello-c` (C built by `zig cc`, nanopb) implement this contract
+for the same function — they are what `guestfn init --lang
+go|tinygo|rust|zig|c` scaffolds; all but the Go one carry the ABI glue in the
+open — about forty lines each, plus the `wasmfn.http` helper — and are the
+reference for other languages.
 
 ## Go guests
 
