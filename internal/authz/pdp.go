@@ -57,9 +57,9 @@ func (p Principal) entity() types.Entity {
 }
 
 // EgressGrant is one egress request the operator policy judges: a single host
-// or host pattern, one method, and the rule's path prefix. A Composition's
-// sandbox.egress.http rule with several methods is judged once per method, so a
-// policy can key on context.method.
+// or host pattern, one method, and the rule's path prefix. A module
+// manifest's requires.egress.http rule with several methods is judged once
+// per method, so a policy can key on context.method.
 type EgressGrant struct {
 	Host        string
 	HostPattern string

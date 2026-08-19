@@ -199,8 +199,8 @@ func Validate(src v1beta1.ModuleSource) error {
 var repositorySegment = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 
 // ociLocation checks an OCI reference and returns "registry/repository" —
-// what policy.repositoryAllowList prefixes are matched against — without
-// the tag or digest.
+// what the compositionPolicy's pullModule permits are matched against —
+// without the tag or digest.
 func ociLocation(ref string) (string, error) {
 	d, err := name.NewDigest(ref)
 	if err != nil {
@@ -216,8 +216,8 @@ func ociLocation(ref string) (string, error) {
 }
 
 // httpLocation checks a module URL and returns "scheme://host/path" —
-// what policy.repositoryAllowList prefixes are matched against — with the
-// host lowercased and the path required to be normalized, so a prefix
+// what the compositionPolicy's pullModule permits are matched against —
+// with the host lowercased and the path required to be normalized, so a prefix
 // cannot be escaped with dot segments the server would collapse; the query
 // is not part of the location.
 func httpLocation(raw string) (string, error) {
