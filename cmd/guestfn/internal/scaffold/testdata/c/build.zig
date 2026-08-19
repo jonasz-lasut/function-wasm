@@ -10,9 +10,10 @@ const codec_sources = [_][]const u8{
 };
 // Every C file sees the same nanopb configuration: heap-allocated dynamic
 // fields and 32-bit sizes, so a string, a map or a bytes field is never
-// bounded by the codec. The guest's own sources are held to -Werror.
+// bounded by the codec. The guest's own sources are held to -Werror; gnu11
+// rather than c11 because glibc hides POSIX's strdup under strict ISO C.
 const pb_flags = [_][]const u8{ "-DPB_ENABLE_MALLOC=1", "-DPB_FIELD_32BIT=1" };
-const guest_flags = pb_flags ++ [_][]const u8{ "-std=c11", "-Wall", "-Wextra", "-Werror" };
+const guest_flags = pb_flags ++ [_][]const u8{ "-std=gnu11", "-Wall", "-Wextra", "-Werror" };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
