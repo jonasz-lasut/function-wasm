@@ -87,7 +87,11 @@ jobs:
         run: "curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh"
 
       - name: Build Package
-        run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/ --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
+        # --examples-root must point at a directory of Crossplane example objects
+        # only. The default (./examples) recurses into the guest projects and
+        # their wasmfn.yaml module manifests (no Kind), which xpkg build cannot
+        # parse; point it at one guest's example/ dir instead.
+        run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/ --examples-root=examples/hello-go/example --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
 
       - name: Upload Single-Platform Package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
