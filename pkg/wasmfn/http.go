@@ -29,7 +29,7 @@ type hostRequest struct {
 
 // hostResponse is what wasmfn.http returns: the server's status, headers and
 // body, or Status 0 and an Error when the host did not perform the request
-// (no sandbox.egress grant, a host or method outside it, a budget, a
+// (no egress grant, a host or method outside it, a budget, a
 // transport failure).
 type hostResponse struct {
 	Status  int                 `json:"status"`
@@ -39,8 +39,9 @@ type hostResponse struct {
 }
 
 // HTTPClient returns an *http.Client whose transport performs each request
-// through the host — the wasmfn.http import — within the sandbox.egress
-// grant of the Composition that runs the module. Anything that takes an
+// through the host — the wasmfn.http import — within the egress grant the
+// module's manifest requires (requires.egress.http), as the runtime's
+// policy layers permit it. Anything that takes an
 // *http.Client (cloud SDKs, generated API clients) works unchanged; the host
 // resolves names, refuses what the grant or its policy does not admit,
 // terminates TLS, follows redirects within the grant and enforces the
