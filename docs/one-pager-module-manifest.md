@@ -17,7 +17,10 @@ decision (docs/one-pager-three-layer-authz.md), granted only where the
 Input's `compositionPolicy` and the operator's `--sandbox-policy-file` both
 permit. Revision 1.1 records that change: `requires` gained `env`
 credential bindings and its check became the three-layer decision. Modules
-served as `path` or `http` sources carry no manifest.
+served as `path` or `http` sources have no artifact layer, but may name
+their `wasmfn.yaml` manifest by reference
+(docs/one-pager-manifest-less-sources.md) - loaded through the same
+`Ref.Manifest` seam and decided by the same layers.
 
 
 ## Before this
@@ -227,9 +230,10 @@ anything from the composite resource.
   just ruled out. As a second layer of the artifact the manifest is
   covered by the same digest and signature, needs no parser at all, and
   `oras push` can produce it. The cost accepted: `path` and `http` sources
-  carry no manifest (a Composition that names one gets no manifest check),
-  and `guestfn manifest set` — embedding into an existing module — has no
-  meaning and does not exist.
+  carry no artifact layer, so they name their `wasmfn.yaml` by reference
+  instead (`manifestURL`/`manifestDigest`, `manifestPath`;
+  docs/one-pager-manifest-less-sources.md), and `guestfn manifest set` —
+  embedding into an existing module — has no meaning and does not exist.
 - **Environment variables are not a requirement** (Jonasz, 2026-08-17;
   **superseded** by the three-layer model, 2026-08-19): the draft let a
   module list the `env` keys it reads; dropped before it shipped, because

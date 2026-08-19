@@ -2,16 +2,18 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 2.0
+* Status: Implemented, revision 2.1
 
 The shape of the Input before `v0.1.0` freezes it: a discriminated `module`
 instead of six sibling fields, with top-level siblings owned by the
 Composition. Raised by the 2026-08-16 architecture review; revision 1.0 is
-what shipped, revision 1.1 recorded the `sandbox` grants that landed, and
+what shipped, revision 1.1 recorded the `sandbox` grants that landed,
 revision 2.0 records the three-layer authorization change
 (docs/one-pager-three-layer-authz.md): `policy` and `sandbox` left the
 Input, replaced by `compositionPolicy` (raw Cedar) and the module
-manifest's `requires`. This document is the authoritative shape and holds
+manifest's `requires`; revision 2.1 adds a manifest by reference for
+manifest-less sources (`http.manifestURL`/`manifestDigest`,
+`manifestPath`; docs/one-pager-manifest-less-sources.md). This document is the authoritative shape and holds
 every Input field: the trust-model one-pager describes what the
 `compositionPolicy` fence means, the resource-governance one-pager
 `limits`, the sandbox one-pager the capabilities a manifest may request.
@@ -26,8 +28,8 @@ module:                                   # what runs — required
   oci:                                    # exactly one of the typed object …
     ref: ghcr.io/example/greeter:v1@sha256:…
     credentials: registry
-  # http: {url, digest}
-  # path: fn.wasm
+  # http: {url, digest, manifestURL?, manifestDigest?}   # a manifest-less source may name its wasmfn.yaml
+  # path: fn.wasm                          # with, optionally, manifestPath: fn-manifest.yaml (under --module-dir)
   # from: status.module                   # … or the XR field holding it (an object of `type`)
 compositionPolicy: |                      # the composition author's Cedar layer (three-layer-authz one-pager)
   permit (principal, action == Action::"pullModule",
@@ -99,6 +101,16 @@ The shape above is implemented in `input/v1beta1/input.go`, enforced by
   (`usePrivateTmp`, `setEnv` ∧ `spendCredential`, `grantEgress` - also the
   host allowlist, with the CIDR rules `dialAddress`). Host directories are
   deliberately not mountable. The behaviour is the sandbox one-pager's.
+- A manifest-less source may carry that manifest **by reference**
+  (docs/one-pager-manifest-less-sources.md): `module.http.manifestURL` with
+  `module.http.manifestDigest` (both set together, the manifest pinned like
+  the module) names a `wasmfn.yaml` served beside the module;
+  `module.manifestPath` (only with `type: Path`) names one under
+  `--module-dir`. The runtime loads it as the request layer through the same
+  `module.Ref.Manifest` seam an OCI manifest layer uses, so the three-layer
+  decision is identical. For a `module.from` http source the `manifestURL` is
+  fenced by `pullModule` like the module URL; `manifestPath` is read from the
+  Input only.
 - `guestfn push` prints the module block in this shape (`type: OCI` +
   `oci.ref`); the scaffold templates and examples use `type: Path` for local
   rendering.

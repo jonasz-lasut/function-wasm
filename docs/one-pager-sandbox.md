@@ -263,9 +263,12 @@ module.
 
 ## Open questions
 
-- Manifest-less sources (`path`, `http`, an OCI artifact without a manifest
-  layer) have no way to ask for a capability; an inline `request` on the
-  Input is designed separately (docs/one-pager-manifest-less-sources.md).
+- A `path` or `http` source has no artifact layer to carry a manifest, but
+  may name its `wasmfn.yaml` by reference (`http.manifestURL`/`manifestDigest`,
+  `manifestPath`) - the request layer for a source that carries no OCI layer,
+  gated by the same two Cedar layers (docs/one-pager-manifest-less-sources.md,
+  implemented). An OCI artifact pushed without a manifest layer still asks for
+  nothing.
 - Per-request budgets in the egress policy file only, or lowerable per Input
   the way `limits` narrows the run's timeout and memory? (v0.2.0 fixed them as defaults, not a file or per Input, with the rate
   limit a flag; the run's `limits.timeout` still bounds every
