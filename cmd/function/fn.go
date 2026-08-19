@@ -39,15 +39,16 @@ type Function struct {
 	engine   *engine.Engine
 	modules  *engine.Cache
 	resolver *module.Resolver
-	// sandbox is the operator's ceiling for the Input's sandbox grants
-	// (--enable-sandbox-*); nil allows nothing but the default sandbox.
+	// sandbox marks the sandbox startup checks as passed (the $TMPDIR probe); it
+	// carries no capability state, since enablement is the policy's decision.
 	sandbox *sandbox.Ceiling
-	// egress is the operator's HTTP egress ceiling (--enable-sandbox-egress; the
-	// host allowlist and CIDR rules are Cedar's, in --sandbox-policy-file); nil
-	// refuses every sandbox.egress grant.
+	// egress is the HTTP egress mechanism (the SSRF block list, fixed budgets,
+	// the operator's Cedar CIDR rules and rate limit); always built, its use
+	// gated by the policy's grantEgress. Nil refuses every sandbox.egress grant.
 	egress *egress.Egress
-	// policy is the operator's grant policy (--sandbox-policy-file); nil adds no
-	// constraint, so admission is identical to a runtime without one.
+	// policy is the operator's grant policy (--sandbox-policy-file), the sole
+	// authority that enables a sandbox capability; nil refuses every sandbox
+	// grant, so a runtime offers only the default sandbox.
 	policy *authz.OperatorPolicy
 
 	// manifests is the on-disk store of module manifests by digest, kept

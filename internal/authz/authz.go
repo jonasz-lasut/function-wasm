@@ -9,10 +9,12 @@
 //     request context, never in the policy text, so a Composition-authored
 //     entry cannot inject Cedar policy.
 //   - The operator's grant policy (OperatorPolicy), compiled from --sandbox-policy-file
-//     and immutable for the process. It decides whether a caller may be granted
-//     a sandbox capability (private /tmp, environment, egress). It is a separate
-//     PolicySet, AND-combined with the built-in fences and the --enable-sandbox-*
-//     floor: it can only tighten, never widen. Absent, it adds no constraint.
+//     and immutable for the process. It is the sole authority that enables a
+//     sandbox capability (private /tmp, environment, egress): a capability is
+//     granted only where a permit matches, and the default sandbox (nothing but
+//     the request) is all a runtime with no --sandbox-policy-file offers. It is a
+//     separate PolicySet, AND-combined with the built-in fences, and evaluates
+//     default-deny.
 //
 // Repositories and host patterns are modelled as Cedar entity hierarchies: a
 // location's ancestors are its path-boundary prefixes (a repository) or its DNS

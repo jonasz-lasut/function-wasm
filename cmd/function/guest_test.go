@@ -126,7 +126,7 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: ceiling}
+	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: ceiling, policy: permissiveSandboxPolicy(t)}
 	greetingsHost, _, _ := net.SplitHostPort(strings.TrimPrefix(greetings.URL, "http://"))
 	egressGrant := `"sandbox":{"egress":{"http":[{"host":"` + greetingsHost + `","methods":["GET"]}]}}`
 

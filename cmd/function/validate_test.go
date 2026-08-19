@@ -50,11 +50,11 @@ func TestValidate(t *testing.T) {
 			args:   []string{fixture("refusals.yaml")},
 			want: want{
 				stdout: strings.Join([]string{
-					fixture("refusals.yaml") + ": Composition/refusals pipeline[0] egress-without-flag: refused: sandbox.egress is refused: the runtime was started without --enable-sandbox-egress",
+					fixture("refusals.yaml") + ": Composition/refusals pipeline[0] egress-without-policy: refused: sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)",
 					fixture("refusals.yaml") + ": Composition/refusals pipeline[1] limits-over-ceiling: refused: limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi",
 					fixture("refusals.yaml") + ": Composition/refusals pipeline[2] from-without-policy: refused: cannot resolve module: module.from: status.module of the composite resource names a OCI source, but policy.repositoryAllowList is not set: a module the composite resource chooses must be fenced to repositories the Composition names, or its author could point the runtime at any host",
 					fixture("refusals.yaml") + `: Composition/refusals pipeline[3] tag-not-digest: refused: cannot resolve module: module.oci.ref "ghcr.io/example/greeter:v1" must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported`,
-					fixture("refusals.yaml") + ": Composition/refusals pipeline[4] private-tmp-without-flag: refused: sandbox.filesystem.privateTmp is refused: the runtime was started without --enable-sandbox-private-tmp",
+					fixture("refusals.yaml") + ": Composition/refusals pipeline[4] private-tmp-without-policy: refused: sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities",
 					fixture("refusals.yaml") + ": Composition/refusals pipeline[7] wrong-shape: refused: cannot decode the Input: json: cannot unmarshal string into Go struct field Input.module of type v1beta1.ModuleSource",
 					fixture("refusals.yaml") + ": Input[1] bare: OK (http https://example.com/fn.wasm)",
 					"",
@@ -63,8 +63,8 @@ func TestValidate(t *testing.T) {
 			},
 		},
 		"EgressGranted": {
-			reason: "With the sandbox flags every granted host is admitted and listed; the operator host allowlist is Cedar's grantEgress (the OperatorPolicy cases), so no host ceiling refuses here; egress without --cosign-key is a warning.",
-			args:   []string{fixture("egress.yaml"), "--enable-sandbox-egress", "--enable-sandbox-env", "--enable-sandbox-private-tmp"},
+			reason: "With a policy that enables every capability, every granted host is admitted and listed; the operator host allowlist is Cedar's grantEgress (the OperatorPolicy cases), so no host ceiling refuses here; egress without --cosign-key is a warning.",
+			args:   []string{fixture("egress.yaml"), "--sandbox-policy-file", fixture("policy-permissive.cedar")},
 			want: want{
 				stdout: fixture("egress.yaml") + ": Composition/egress pipeline[0] greeter: OK (oci ghcr.io/example/greeter:v1@" + testDigest + ", limits timeout 5s memory 128Mi, egress api.example.com, private /tmp, env GREETING_STYLE)\n" +
 					"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n" +
@@ -73,8 +73,8 @@ func TestValidate(t *testing.T) {
 			},
 		},
 		"OperatorPolicy": {
-			reason: "With --sandbox-policy-file the operator grant policy narrows within the floor: it permits the egress it grants but, default-deny, refuses the private /tmp the flag enabled.",
-			args:   []string{fixture("operator-policy.yaml"), "--enable-sandbox-egress", "--enable-sandbox-private-tmp", "--sandbox-policy-file", fixture("policy.cedar")},
+			reason: "The operator grant policy enables what it permits: the egress it grants, but not the private /tmp (default-deny, no usePrivateTmp permit).",
+			args:   []string{fixture("operator-policy.yaml"), "--sandbox-policy-file", fixture("policy.cedar")},
 			want: want{
 				stdout: fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[0] egress-ok: OK (oci ghcr.io/example/greeter@" + testDigest + ", egress api.example.com)\n" +
 					"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n" +
@@ -83,17 +83,17 @@ func TestValidate(t *testing.T) {
 			},
 		},
 		"OperatorPolicyAbsent": {
-			reason: "Without --sandbox-policy-file the same Composition against the same flags is admitted throughout: the policy is purely additive.",
-			args:   []string{fixture("operator-policy.yaml"), "--enable-sandbox-egress", "--enable-sandbox-private-tmp"},
+			reason: "Without --sandbox-policy-file the policy enables nothing: the same Composition is refused at every grant.",
+			args:   []string{fixture("operator-policy.yaml")},
 			want: want{
-				stdout: fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[0] egress-ok: OK (oci ghcr.io/example/greeter@" + testDigest + ", egress api.example.com)\n" +
-					"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n" +
-					fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[1] tmp-denied: OK (oci ghcr.io/example/greeter@" + testDigest + ", private /tmp)\n",
+				stdout: fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[0] egress-ok: refused: sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)\n" +
+					fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[1] tmp-denied: refused: sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities\n",
+				exit: 1,
 			},
 		},
 		"OperatorPolicyEnvEgressDenied": {
 			reason: "The operator grant policy refuses the environment and egress it does not permit (default-deny), the same refusals the request path emits, so both surface in validate.",
-			args:   []string{fixture("operator-policy-denied.yaml"), "--enable-sandbox-env", "--enable-sandbox-egress", "--sandbox-policy-file", fixture("policy-strict.cedar")},
+			args:   []string{fixture("operator-policy-denied.yaml"), "--sandbox-policy-file", fixture("policy-strict.cedar")},
 			want: want{
 				stdout: fixture("operator-policy-denied.yaml") + ": Composition/operator-policy-denied pipeline[0] env-denied: refused: sandbox.env is refused: the operator policy (--sandbox-policy-file) does not permit it for this request\n" +
 					fixture("operator-policy-denied.yaml") + `: Composition/operator-policy-denied pipeline[1] egress-denied: refused: sandbox.egress.http[0] GET to host "api.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it` + "\n",
@@ -108,12 +108,12 @@ func TestValidate(t *testing.T) {
 				exit:   1,
 			},
 		},
-		"EgressWithoutFlags": {
-			reason: "The same Composition against a runtime with nothing enabled is refused at the first grant.",
+		"EgressWithoutPolicy": {
+			reason: "The same Composition against a runtime with no --sandbox-policy-file is refused at the first grant.",
 			args:   []string{fixture("egress.yaml")},
 			want: want{
-				stdout: fixture("egress.yaml") + ": Composition/egress pipeline[0] greeter: refused: sandbox.filesystem.privateTmp is refused: the runtime was started without --enable-sandbox-private-tmp\n" +
-					fixture("egress.yaml") + ": Composition/egress pipeline[1] labeler: refused: sandbox.egress is refused: the runtime was started without --enable-sandbox-egress\n",
+				stdout: fixture("egress.yaml") + ": Composition/egress pipeline[0] greeter: refused: sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities\n" +
+					fixture("egress.yaml") + ": Composition/egress pipeline[1] labeler: refused: sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)\n",
 				exit: 1,
 			},
 		},
@@ -381,7 +381,7 @@ spec:
 	var stdout, stderr bytes.Buffer
 	cli := &CLI{}
 	cli.Validate.stderr = &stderr
-	ctx, err := parser(cli, &stdout).Parse([]string{"validate", composition, "--resolve", "--enable-sandbox-egress"})
+	ctx, err := parser(cli, &stdout).Parse([]string{"validate", composition, "--resolve", "--sandbox-policy-file", filepath.Join("testdata", "validate", "policy-permissive.cedar")})
 	if err != nil {
 		t.Fatal(err)
 	}

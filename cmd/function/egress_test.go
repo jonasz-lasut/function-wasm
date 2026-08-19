@@ -20,6 +20,7 @@ import (
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/resource"
 
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
@@ -41,18 +42,19 @@ func egressRules(rules ...map[string]any) map[string]any {
 	return map[string]any{"egress": map[string]any{"http": list}}
 }
 
-// TestRunFunctionEgress pins how a sandbox.egress grant is admitted before
-// any module runs: refused without the flag, otherwise compiled and the module
-// runs. The operator host allowlist is Cedar's grantEgress (see validate_test).
+// TestRunFunctionEgress pins how a sandbox.egress grant is admitted before any
+// module runs: refused with no --sandbox-policy-file to grant it, otherwise
+// compiled and the module runs. The operator host allowlist is Cedar's
+// grantEgress (see validate_test).
 func TestRunFunctionEgress(t *testing.T) {
 	moduleDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(moduleDir, "fn.wasm"), testwasm.Fixed(t, guestResponse(), testwasm.Options{}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// An enabled egress ceiling. The operator host allowlist is Cedar's
-	// (grantEgress, at admission); with no operator policy any granted host is
-	// admitted, so this exercises the grant-compile and run path, not host
-	// capping (that is the OperatorPolicy* cases in validate_test).
+	// The egress mechanism. The operator host allowlist is Cedar's (grantEgress,
+	// at admission); the permissive policy admits any granted host, so this
+	// exercises the grant-compile and run path, not host capping (that is the
+	// OperatorPolicy* cases in validate_test).
 	open, err := egress.New()
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +62,7 @@ func TestRunFunctionEgress(t *testing.T) {
 
 	type args struct {
 		egress *egress.Egress
+		policy *authz.OperatorPolicy
 		req    *fnv1.RunFunctionRequest
 	}
 	type want struct {
@@ -70,17 +73,17 @@ func TestRunFunctionEgress(t *testing.T) {
 		args   args
 		want   want
 	}{
-		"Disabled": {
-			reason: "Without --enable-sandbox-egress a grant is a fatal result naming the flag, before the module is resolved.",
+		"NoPolicy": {
+			reason: "With no --sandbox-policy-file to grant egress, a grant is a fatal result, before the module is resolved.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:  &fnv1.RequestMeta{Tag: "hello"},
 				Input: inputWith(t, map[string]any{"module": pathModule("missing.wasm"), "sandbox": egressRules(map[string]any{"host": "api.example.com", "methods": []any{"GET"}})}),
 			}},
-			want: want{rsp: fatal("sandbox.egress is refused: the runtime was started without --enable-sandbox-egress")},
+			want: want{rsp: fatal("sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)")},
 		},
 		"Granted": {
-			reason: "A grant lets the module run; a module that never calls the import is unaffected. Host capping is Cedar's grantEgress, exercised in validate's OperatorPolicy cases, not here.",
-			args: args{egress: open, req: &fnv1.RunFunctionRequest{
+			reason: "A policy grant lets the module run; a module that never calls the import is unaffected. Host capping is Cedar's grantEgress, exercised in validate's OperatorPolicy cases, not here.",
+			args: args{egress: open, policy: permissiveSandboxPolicy(t), req: &fnv1.RunFunctionRequest{
 				Meta:  &fnv1.RequestMeta{Tag: "hello"},
 				Input: inputWith(t, map[string]any{"module": pathModule("fn.wasm"), "sandbox": egressRules(map[string]any{"host": "api.example.com", "methods": []any{"GET"}}, map[string]any{"hostPattern": "*.eu.internal.example.com", "methods": []any{"POST"}, "pathPrefix": "/v1/"})}),
 			}},
@@ -99,7 +102,7 @@ func TestRunFunctionEgress(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: tc.args.egress}
+			f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: tc.args.egress, policy: tc.args.policy}
 			rsp, err := f.RunFunction(context.Background(), tc.args.req)
 			if err != nil {
 				t.Fatalf("\n%s\nRunFunction(): unexpected error %v", tc.reason, err)
@@ -141,7 +144,7 @@ func TestRunFunctionEgressGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := newRecorder()
-	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: ceiling}
+	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: ceiling, policy: permissiveSandboxPolicy(t)}
 	audit := "Module HTTP request tag=hello module=module file httpguest.wasm digest=" + digestOf(wasm) + " method="
 
 	normal := func(msg string) *fnv1.RunFunctionResponse {

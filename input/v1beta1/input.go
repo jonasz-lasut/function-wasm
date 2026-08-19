@@ -43,10 +43,9 @@ type Input struct {
 	Limits *Limits `json:"limits,omitempty"`
 
 	// Sandbox grants the module filesystem, egress or environment access
-	// beyond the default sandbox (nothing), each within a ceiling the
-	// operator set with an --enable-sandbox-* flag; a grant outside the
-	// ceiling is a fatal result naming the grant and the flag. Read from the
-	// Input only.
+	// beyond the default sandbox (nothing). Each capability is enabled by the
+	// operator's Cedar --sandbox-policy-file; a grant no policy permits is a
+	// fatal result. Read from the Input only.
 	// +optional
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
@@ -243,10 +242,10 @@ type Sandbox struct {
 	Egress *SandboxEgress `json:"egress,omitempty"`
 
 	// Env sets the environment variables the module sees - exactly these,
-	// never the runtime's (--enable-sandbox-env). Each entry names one
-	// variable with a literal value or a reference to a step credential's
-	// key. A name set twice (across Env and every EnvFrom import) is
-	// refused.
+	// never the runtime's (enabled by the operator policy's setEnv). Each
+	// entry names one variable with a literal value or a reference to a step
+	// credential's key. A name set twice (across Env and every EnvFrom import)
+	// is refused.
 	// +optional
 	Env []EnvVar `json:"env,omitempty"`
 
@@ -323,7 +322,7 @@ type SandboxFilesystem struct {
 	// PrivateTmp pre-opens a private, empty, writable /tmp for the duration
 	// of the request, created under the runtime's $TMPDIR before the module
 	// runs and removed when the run ends whatever its outcome - systemd's
-	// PrivateTmp (--enable-sandbox-private-tmp).
+	// PrivateTmp (enabled by the operator policy's usePrivateTmp).
 	// +optional
 	PrivateTmp bool `json:"privateTmp,omitempty"`
 }
@@ -332,10 +331,10 @@ type SandboxFilesystem struct {
 // the host on the guest's behalf (the wasmfn.http import), never raw sockets.
 type SandboxEgress struct {
 	// HTTP lists the requests the host will perform for the guest; anything
-	// not matched by an entry is refused. --enable-sandbox-egress enables
-	// egress; the operator's Cedar --sandbox-policy-file narrows the host
-	// allowlist (grantEgress) and adds CIDR rules (dialAddress), and the
-	// per-request budgets are fixed defaults.
+	// not matched by an entry is refused. The operator's Cedar
+	// --sandbox-policy-file enables egress and sets the host allowlist
+	// (grantEgress) and the CIDR rules (dialAddress); the per-request budgets
+	// are fixed defaults.
 	// +optional
 	HTTP []SandboxHTTPRule `json:"http,omitempty"`
 }

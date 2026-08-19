@@ -1,9 +1,9 @@
 // Package egress performs HTTP requests on behalf of a running module - the
-// host side of the wasmfn.http import (docs/abi.md) - within the operator's
-// ceiling (--enable-sandbox-egress) narrowed by the Composition's sandbox.egress
-// grant. The operator's host allowlist and CIDR block/allow rules are authored
-// in Cedar (--sandbox-policy-file, internal/authz): the host allowlist is the
-// grantEgress decision applied at admission, and the CIDR rules compile to
+// host side of the wasmfn.http import (docs/abi.md) - within the Composition's
+// sandbox.egress grant. Egress is enabled, and its host allowlist and CIDR
+// block/allow rules are authored, in the operator's Cedar --sandbox-policy-file
+// (internal/authz): the host allowlist is the grantEgress decision applied at
+// admission, and the CIDR rules compile to
 // prefixes passed in as options. The per-run budgets are fixed and the rate
 // limit is a flag. The guest never opens a socket: the host resolves the name,
 // refuses addresses on the block list, terminates TLS with its own roots,
