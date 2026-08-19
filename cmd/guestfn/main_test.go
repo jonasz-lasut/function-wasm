@@ -90,8 +90,8 @@ func TestParseAndRun(t *testing.T) {
 	}
 }
 
-// TestInitBuild scaffolds a project against the SDK checkout in this
-// repository and compiles it to wasm with the Go toolchain: the scaffold must
+// TestInitBuild scaffolds a project (with its vendored internal/wasmfn glue)
+// and compiles it to wasm with the Go toolchain: the scaffold must
 // build, not just render.
 func TestInitBuild(t *testing.T) {
 	if testing.Short() {

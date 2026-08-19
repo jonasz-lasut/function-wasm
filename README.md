@@ -147,11 +147,13 @@ func init() { wasmfn.Register(&Function{log: wasmfn.NewLogger()}) }
 func main() {}
 ```
 
-`wasmfn` (`github.com/jonasz-lasut/function-wasm/pkg/wasmfn`) is the guest SDK: it
-exports the entry points the runtime calls, decodes the request, calls your
-`RunFunction`, encodes the response, and gives you a `logging.Logger` that
-logs through the runtime. Your function knows nothing about WebAssembly, and
-`wasmfn.GetConfig(req, &cfg)` hands you the Input's `config` block.
+The scaffold also vendors a small `internal/wasmfn` package the project owns
+(there is no external SDK to depend on): it exports the entry points the
+runtime calls, decodes the request, calls your `RunFunction`, encodes the
+response, and gives you a `logging.Logger` that logs through the runtime. Your
+function knows nothing about WebAssembly, and `wasmfn.GetConfig(req, &cfg)`
+hands you the Input's `config` block. Edit it if you need to; it is yours, like
+the ABI glue the TinyGo and Rust scaffolds carry.
 
 ```shell
 go test ./...                                   # unit tests run natively
@@ -228,16 +230,17 @@ same greeting function each time:
 
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
 |---|---|---|---|---|
-| `go` (default) | [`examples/hello-go`](examples/hello-go) | Go + `wasmfn` + function-sdk-go | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
+| `go` (default) | [`examples/hello-go`](examples/hello-go) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
 | `tinygo` | [`examples/hello-tinygo`](examples/hello-tinygo) | [TinyGo](https://tinygo.org) | protobuf-go message types + [vtprotobuf](https://github.com/planetscale/vtprotobuf)'s reflection-free codecs, generated from the vendored proto (shipped pre-generated; `go generate` + protoc to redo) | ~1.8 MB |
 | `rust` | [`examples/hello-rust`](examples/hello-rust) | Rust, `wasm32-wasip1` (`cargo`, `protoc`) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~250 KB |
 
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo;
-a `go.mod` requiring vtprotobuf but not `wasmfn` → tinygo; otherwise go) or
-takes `--lang`. The TinyGo and Rust flavours carry their ~40 lines of ABI glue
-and a small HTTP helper over `wasmfn.http` in the open; each example has a
-`make render-check` that runs it through the runtime, and the root tests run
-all three through the host as well — with and without an egress grant.
+a `go.mod` requiring vtprotobuf → tinygo; otherwise go) or takes `--lang`. All
+three flavours carry their ABI glue in the open — the Go scaffold vendors it
+under `internal/wasmfn`, TinyGo and Rust carry theirs beside the module — with
+a small HTTP helper over `wasmfn.http`; each example has a `make render-check`
+that runs it through the runtime, and the root tests run all three through the
+host as well — with and without an egress grant.
 
 ### Render locally
 
@@ -831,7 +834,7 @@ which is the point.
 What a request and a module cost depends almost entirely on the guest's
 toolchain — the host adds about 60 µs. Measured on linux/arm64 with the
 example guests (a `function-sdk-go` Go guest, a raw-proto Go guest using
-only `wasmfn`, TinyGo, Rust):
+only the vendored glue, TinyGo, Rust):
 
 | | Go (~75 MB) | Go, raw proto (~20 MB) | TinyGo (~1.4 MB) | Rust (~150 KB) |
 |---|---|---|---|---|
@@ -959,8 +962,7 @@ fail-closed.
 
 ```shell
 go build ./... && go vet ./... && go test -race ./...    # host, CLI, engine (needs a C compiler: wasmtime-go is CGo)
-(cd pkg/wasmfn && go test ./... && GOOS=wasip1 GOARCH=wasm go vet ./...)
-(cd examples/hello-go && go test ./...)
+(cd examples/hello-go && go test ./...)                  # the example guest and its vendored internal/wasmfn glue
 golangci-lint run ./...
 go generate ./...                                        # Input CRD, guestfn scaffold golden
 make -C examples/hello-go render-check                      # function validate + crossplane render through the real runtime
