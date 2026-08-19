@@ -251,6 +251,41 @@ func TestInitBuildRust(t *testing.T) {
 	}
 }
 
+// TestInitBuildZigC scaffolds the two zig-built flavours (zig, and c behind
+// zig cc) and compiles them with zig, then runs their native tests; the
+// checked-in codecs must match the generated code the templates carry.
+func TestInitBuildZigC(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping scaffold build in -short mode")
+	}
+	if _, err := exec.LookPath("zig"); err != nil {
+		t.Skip("zig not on PATH")
+	}
+	for _, lang := range []string{"zig", "c"} {
+		t.Run(lang, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "greeter")
+			var out bytes.Buffer
+			ctx, err := parser(&out).Parse([]string{"init", dir, "--lang", lang})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ctx.Run(); err != nil {
+				t.Fatalf("init: %v\n%s", err, out.String())
+			}
+			if !strings.Contains(out.String(), "(project greeter)") {
+				t.Errorf("unexpected init output:\n%s", out.String())
+			}
+			if err := (&BuildCmd{Dir: dir, Output: "fn.wasm", Lang: "auto"}).Run(context.Background(), &out); err != nil {
+				t.Fatalf("build: %v\n%s", err, out.String())
+			}
+			assertWasm(t, filepath.Join(dir, "fn.wasm"))
+			if err := run(context.Background(), dir, &out, "zig", "build", "test"); err != nil {
+				t.Fatalf("zig build test in the scaffold: %v\n%s", err, out.String())
+			}
+		})
+	}
+}
+
 func assertWasm(t *testing.T, path string) {
 	t.Helper()
 	wasm, err := os.ReadFile(path)

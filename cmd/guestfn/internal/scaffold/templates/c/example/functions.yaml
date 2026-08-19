@@ -1,0 +1,12 @@
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-wasm
+  annotations:
+    # Development runtime: run the function-wasm runtime locally, serving this
+    # directory, e.g. from a checkout of function-wasm:
+    #   go run ./cmd/function --insecure --debug --module-dir=<this directory>
+    render.crossplane.io/runtime: Development
+spec:
+  package: ghcr.io/jonasz-lasut/function-wasm:v0.1.0
