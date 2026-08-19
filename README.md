@@ -328,7 +328,10 @@ operator's Cedar `--sandbox-policy-file` both permit it
 | `module.oci.credentials` | string | name of a pipeline-step credential (a Secret with `.dockerconfigjson`, or `username` and `password` keys) used to pull. Without it the runtime's Docker config (`DOCKER_CONFIG`) and anonymous access are tried. An object read through `module.from` may name one only where the `compositionPolicy` permits `spendCredential` for it on the ref's repository |
 | `module.http.url` | string | download the module over HTTP(S) |
 | `module.http.digest` | string | **required** — `sha256:<hex>` of the module; the download is verified against it |
+| `module.http.manifestURL` | string | *optional* — a `wasmfn.yaml` served beside the module, its request layer (the three-layer model's manifest for a source that carries no OCI layer). Set with `module.http.manifestDigest`; without it an HTTP source carries no manifest and gets only the default sandbox. For a `module.from` http source it is fenced by `compositionPolicy` `pullModule` like the module URL |
+| `module.http.manifestDigest` | string | `sha256:<hex>` of the manifest, verified against it; **required with** `module.http.manifestURL`, refused without it |
 | `module.path` | string | a file relative to the runtime's `--module-dir`; refused unless that flag is set — local rendering and volume-mounted modules; carries no digest |
+| `module.manifestPath` | string | *optional*, `type: Path` only — a `wasmfn.yaml` under `--module-dir`, the request layer for a Path module, so a local or volume-mounted module can declare the capabilities it needs. Read from the Input only (never through `module.from`) and re-read each request, so a local edit takes effect without a restart |
 | `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names — an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` — e.g. `status.module`; read on every request and decoded strictly (a typo or a wrong shape is a fatal result naming the field), so each XR can choose its module. What it may choose is fenced by `compositionPolicy` (`pullModule`, default-deny) |
 | `compositionPolicy` | string | the composition author's own Cedar policy layer, over the same schema as the operator's `--sandbox-policy-file` (actions `pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv`; a `Request` principal carrying `namespace` and `xrKind`; `Repository`, `HostPattern`, `Capability` and `Credential` entities). AND-combined with the module's manifest and the operator's policy, so it can only narrow. Two regimes: a sandbox action it scopes no rule for is not narrowed (the operator and the manifest decide alone), while a module chosen through `module.from` is refused unless a `pullModule` permit matches its normalized location - matched over a boundary-correct `Repository` hierarchy, so `Repository::"ghcr.io/example-org"` admits `ghcr.io/example-org/mod` but never the sibling namespace `ghcr.io/example-org-other/...` - and may spend a step credential only where a `spendCredential` permit matches (`context.repository` carries the ref's location). **Required whenever `module.from` names an `OCI` or `HTTP` source** — an unfenced XR author could point the runtime at any host and read what its answer says. Read from the Input only; malformed Cedar is a fatal result at admission |
 | `limits.timeout` | duration | wall-clock budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). The request deadline still applies if shorter |
@@ -451,9 +454,11 @@ module runs — `module oci ghcr.io/example/greeter@sha256:… requires egress G
 `… requires a private /tmp (requires.filesystem.privateTmp), which the compositionPolicy does not permit for this request`,
 `… requires runtime v0.3.0 or newer, this is v0.2.1` — and so is a
 `config` outside the schema: `… config does not match the module's schema:
-/greeting: got number, want string`. A module without a manifest, and every
-`path` or `http` source, gets the default sandbox (nothing but the
-request). `guestfn push` prints the `requires:` block under the `module:`
+/greeting: got number, want string`. A module without a manifest gets the
+default sandbox (nothing but the request); a `path` or `http` source has no
+OCI manifest layer but may name its `wasmfn.yaml` by reference
+(`module.manifestPath`, `module.http.manifestURL`/`manifestDigest`) to carry
+one too. `guestfn push` prints the `requires:` block under the `module:`
 block, `guestfn inspect <ref>` shows what a module requires, and `function
 validate --resolve` applies the same check offline.
 

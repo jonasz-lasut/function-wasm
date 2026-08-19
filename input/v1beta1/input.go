@@ -89,6 +89,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.type == 'OCI' ? (has(self.oci) != has(self.from)) : !has(self.oci)",message="type OCI needs exactly one of oci and from, and oci is only allowed with type OCI"
 // +kubebuilder:validation:XValidation:rule="self.type == 'HTTP' ? (has(self.http) != has(self.from)) : !has(self.http)",message="type HTTP needs exactly one of http and from, and http is only allowed with type HTTP"
 // +kubebuilder:validation:XValidation:rule="self.type == 'Path' ? (has(self.path) != has(self.from)) : !has(self.path)",message="type Path needs exactly one of path and from, and path is only allowed with type Path"
+// +kubebuilder:validation:XValidation:rule="!has(self.manifestPath) || self.type == 'Path'",message="manifestPath is only allowed with type Path"
 type ModuleSource struct {
 	// Type is the kind of source: OCI (an artifact in a registry, the oci
 	// object), HTTP (a URL, the http object) or Path (a file under the
@@ -113,6 +114,16 @@ type ModuleSource struct {
 	// field holding the string.
 	// +optional
 	Path string `json:"path,omitempty"`
+
+	// ManifestPath optionally names the module's wasmfn.yaml manifest file,
+	// relative to --module-dir - the request layer for a Path source
+	// (docs/one-pager-three-layer-authz.md), letting a Path module declare the
+	// capabilities it needs like an OCI artifact does. Valid only with type
+	// Path; without it a Path source carries no manifest and gets only the
+	// default sandbox. Read from the Input only, never through module.from: an
+	// XR author chooses the module file, not what its manifest requests.
+	// +optional
+	ManifestPath string `json:"manifestPath,omitempty"`
 
 	// From names a field of the observed composite resource, under spec or
 	// status, that holds the source Type names — an {ref, credentials}
@@ -156,6 +167,7 @@ type OCISource struct {
 }
 
 // HTTPSource is a module served over HTTP(S).
+// +kubebuilder:validation:XValidation:rule="has(self.manifestURL) == has(self.manifestDigest)",message="manifestURL and manifestDigest must be set together"
 type HTTPSource struct {
 	// URL of the module.
 	// +kubebuilder:validation:Pattern=`^https?://`
@@ -165,6 +177,23 @@ type HTTPSource struct {
 	// verified against it and it addresses the module in the caches.
 	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	Digest string `json:"digest"`
+
+	// ManifestURL optionally locates the module's wasmfn.yaml manifest, served
+	// over HTTP(S) beside the module - the module's request layer, authored by
+	// the module author (docs/one-pager-three-layer-authz.md). Without it an
+	// HTTP source carries no manifest and gets only the default sandbox.
+	// ManifestDigest pins it, so it must be set with it. When the source is
+	// chosen by the composite resource (module.from), the manifest URL is
+	// fenced by the compositionPolicy's pullModule rules like the module URL.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^https?://`
+	ManifestURL string `json:"manifestURL,omitempty"`
+
+	// ManifestDigest is the sha256 of the manifest, sha256:<hex>; the download
+	// is verified against it. Required with ManifestURL, refused without it.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	ManifestDigest string `json:"manifestDigest,omitempty"`
 }
 
 // Limits narrow one run's budget below the runtime's ceilings. Each is
