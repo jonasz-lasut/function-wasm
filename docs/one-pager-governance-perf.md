@@ -25,7 +25,7 @@ gRPC codec (maintenance cost outweighs the savings for typical XR sizes).
 - **Ceilings are flags, budgets are Input fields, the Input only narrows.**
   A `limits` value above its ceiling is a fatal result naming both, as
   `runOptions` does today; a capability no policy enables is
-  `… is refused: the runtime has no --sandbox-policy-file, which is required to grant …`.
+  `requires …, but the runtime has no --sandbox-policy-file, which is required to grant …`.
 - **Digests are stated, not discovered.** Every fetch stays verified
   against the stated digest, and the caches keep their keys.
 - **Metric cardinality stays bounded.** New label values are enumerations;
@@ -57,7 +57,7 @@ limit the guest reads `sandbox.egress: the module's request rate exceeds
 the egress policy's rateLimit` - `outcome=budget`, never a trap - and
 retries next reconcile. Set by the operator flags, like the other budgets; a Composition cannot raise it. Idle entries are swept every ten minutes.
 Deferred: a per-host bucket (protects a third party across modules - needs
-a bounded key set first), a Composition-lowerable `sandbox.egress.rateLimit`.
+a bounded key set first), a Composition-lowerable egress rate limit.
 
 Response caching was considered and dropped: the invalidation semantics
 (TTL, Cache-Control, key correctness across headers) add complexity out of
@@ -118,7 +118,7 @@ acquisition order, bounded by `ctx`).
 | ~~4~~ | ~~registry mirror, OCI layout, precompile~~ | - | **Dropped** (path mode covers air-gapped) |
 | ~~5~~ | ~~raw-bytes codec~~ | - | **Dropped** (maintenance cost outweighs savings) |
 
-Every phase is additive — new optional `limits`/`sandbox` fields, new
+Every phase is additive — new optional `limits` fields, new
 flags, new policy-file sections (a strict-parsed file with a new section
 needs the runtime that knows it, a runtime concern, not an Input one), new
 enumeration values on existing metric labels. Nothing here gates `v0.1.0`.

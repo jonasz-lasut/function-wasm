@@ -2,15 +2,14 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.7
+* Status: Implemented, revision 1.8
 
 How the sandbox grants a module *some* filesystem, network or environment
 access without giving up what makes it safe to run other people's modules.
-The Input types (`input/v1beta1`: `sandbox.filesystem`, `sandbox.egress`,
-`sandbox.env`, `sandbox.envFrom`, validated for shape by `internal/sandbox`) shipped in
-revision 0.3; revision 0.4 implemented the filesystem (phase 1) and
+The Input's `sandbox` types shipped in revision 0.3 (validated for shape by
+`internal/sandbox`); revision 0.4 implemented the filesystem (phase 1) and
 environment (phase 3) grants, and phase 2 — HTTP
-egress through the host (`sandbox.egress`, the `wasmfn.http` import,
+egress through the host (the `wasmfn.http` import,
 `wasmfn.HTTPClient()`, `internal/egress`); revision 1.0 is the merged result, every phase but the
 component-model one implemented. Revision 1.1 removes host mounts (Jonasz,
 2026-08-16): a Composition can no longer map an operator-declared host
@@ -24,14 +23,20 @@ evaluated default-deny. Revision 1.7 drops the `--enable-sandbox-*` flags
 (Jonasz, 2026-08-19): the Cedar policy is now the sole authority that enables a
 sandbox capability (`usePrivateTmp`, `setEnv`, `grantEgress`), so with no policy
 file every sandbox grant is refused and a runtime offers only the default
-sandbox - which is all most modules need (policy-engine one-pager). Status by phase:
+sandbox - which is all most modules need (policy-engine one-pager).
+Revision 1.8 moves the ask out of the Input entirely (the three-layer-authz
+one-pager): the `sandbox` block is gone from `input/v1beta1`; a module
+declares what it cannot run without in its manifest's `requires` (egress
+rules, `filesystem.privateTmp`, env credential bindings), the Input's
+`compositionPolicy` may narrow it, and the operator's Cedar policy must
+permit it - the mechanics below are unchanged. Status by phase:
 
-| phase | grant | status |
+| phase | capability | status |
 |---|---|---|
-| 0 | Input types, shape validation | implemented |
-| 1 | `sandbox.filesystem.privateTmp` (policy `usePrivateTmp`); host mounts deliberately not offered | implemented |
-| 2 | `sandbox.egress.http` (policy `grantEgress`, also the host allowlist; CIDR rules `dialAddress`, in `--sandbox-policy-file`) | implemented |
-| 3 | `sandbox.env`, `sandbox.envFrom` (policy `setEnv`) | implemented |
+| 0 | Input types, shape validation (since moved to the manifest's `requires`) | implemented |
+| 1 | `requires.filesystem.privateTmp` (policy `usePrivateTmp`); host mounts deliberately not offered | implemented |
+| 2 | `requires.egress.http` (policy `grantEgress`, also the host allowlist; CIDR rules `dialAddress`, in `--sandbox-policy-file`) | implemented |
+| 3 | `requires.env` credential bindings (policy `setEnv` ∧ `spendCredential`) | implemented |
 | 4 | WASI HTTP through components | not started |
 
 
@@ -52,13 +57,14 @@ file a sidecar wrote — which is what the grants below are for.
 
 ## Principles
 
-1. **Capabilities are explicit grants.** Nothing is ambient. The operator
-   sets a ceiling with runtime flags; a Composition asks for what its module
-   needs; the module gets the intersection. Deny by default.
-2. **The Composition asks, never the composite resource.** Sandbox settings
-   live next to `module` in the Input and are not readable through
-   `module.from` — an XR author who can pick a module must not be able to
-   widen its permissions.
+1. **Capabilities are explicit grants.** Nothing is ambient. The module's
+   manifest asks; the Input's `compositionPolicy` and the operator's Cedar
+   policy must both permit; the module gets exactly its admitted request.
+   Deny by default at the operator.
+2. **The policy layers are the Composition's and the operator's, never the
+   composite resource's.** `compositionPolicy` is read from the Input only,
+   not through `module.from` — an XR author who can pick a module must not
+   be able to widen what modules may do.
 3. **The host enforces, the guest asks.** Filesystem paths and network
    requests are checked on the host side against the grant; policy is never
    trusted to the module.
@@ -68,21 +74,23 @@ file a sidecar wrote — which is what the grants below are for.
 5. **The ABI stays language-agnostic.** New capabilities are either WASI
    itself or a host import with a documented byte-level contract, so Rust
    and TinyGo guests are not second-class.
-6. **A module may declare a grant as required, never take it.** The module
-   manifest (`docs/one-pager-module-manifest.md`) lists the egress rules
-   and the private `/tmp` a module cannot run without; the runtime
-   refuses a Composition that grants less, before the run — the manifest
-   narrows, the Composition still asks and the operator still caps.
+6. **A module may request a capability, never take it.** The module
+   manifest (`docs/one-pager-module-manifest.md`) lists the egress rules,
+   the private `/tmp` and the env bindings a module cannot run without -
+   the request of the three-layer decision
+   (`docs/one-pager-three-layer-authz.md`); the runtime refuses a module a
+   policy layer does not permit, before the run - the manifest can only
+   make a run fail earlier, the Cedar layers grant.
 
 ## Shape
 
+The ask lives in the module's manifest (`wasmfn.yaml` →
+the artifact's manifest layer; the module-manifest one-pager), not in the
+Input:
+
 ```yaml
-apiVersion: wasm.fn.crossplane.io/v1beta1
-kind: Input
-module:                          # the module-source-schema one-pager's shape
-  type: OCI
-  oci: {ref: ghcr.io/example/greeter:v1@sha256:…}
-sandbox:                         # a top-level sibling of module, policy and limits
+# wasmfn.yaml
+requires:
   filesystem:
     privateTmp: true             # a private, empty, writable /tmp for the duration of the request; nothing else is mountable
   egress:
@@ -90,23 +98,25 @@ sandbox:                         # a top-level sibling of module, policy and lim
     - host: api.example.com      # exact host, or hostPattern: "*.internal.example.com" — exactly one
       methods: [GET, POST]       # at least one; nothing is admitted implicitly
       pathPrefix: /v1/           # optional
-  env:                           # non-secret configuration; secrets keep coming through step credentials
-    LOG_LEVEL: debug
+  env:                           # secret env: bindings to step credentials; non-secret configuration is the Input's config
+  - name: DATABASE_URL
+    fromCredential: {name: db, key: url}
 ```
 
-These types ship in `input/v1beta1` with the CRD schema (a CEL rule for
-host XOR hostPattern, patterns for host patterns and path prefixes — for
-tooling only, since Crossplane never installs the Input CRD) and
-`internal/sandbox.Validate`, which enforces the same rules (plus: bare host
-names, normalized path prefixes, no NUL in an env value) and is the gate
-that always runs.
+The shapes are enforced by `internal/egress.ValidateRules` (host XOR
+hostPattern, bare host names, normalized path prefixes) and
+`internal/sandbox.ValidateBindings` (identifier names, credential name and
+key) when the manifest is loaded or parsed - the gate that always runs.
 
 The operator's Cedar `--sandbox-policy-file` is the sole authority that enables a
-sandbox capability - `usePrivateTmp` for the private `/tmp`, `setEnv` for the
-environment, `grantEgress` for egress (also the host allowlist; the CIDR
-block/allow rules are `dialAddress`). It is evaluated default-deny, so with no
-policy file every sandbox grant is refused and a runtime offers only the default
-sandbox. The per-run egress budgets are fixed defaults and the rate limit is
+sandbox capability - `usePrivateTmp` for the private `/tmp`, `setEnv` (with
+`spendCredential` per binding) for the environment, `grantEgress` for egress
+(also the host allowlist; the CIDR block/allow rules are `dialAddress`). It is
+evaluated default-deny, so with no policy file every requirement is refused and
+a runtime offers only the default sandbox. The Input's `compositionPolicy` may
+narrow any of those actions further (scoped default-permit: it narrows only the
+actions it writes rules for - the three-layer-authz one-pager). The per-run
+egress budgets are fixed defaults and the rate limit is
 `--egress-rate-limit-per-minute`/`-burst`. There is no flag that maps a host
 directory into a module: what a module can read is its request, what it can
 write is its private `/tmp`. `internal/authz.LoadOperatorPolicy`,
@@ -114,13 +124,13 @@ write is its private `/tmp`. `internal/authz.LoadOperatorPolicy`,
 startup - a `--sandbox-policy-file` that does not parse (a malformed ip-rule
 included), or an unwritable `$TMPDIR` when the policy can grant a private `/tmp`
 - and refuse to start rather than fail every request that would hit the mistake.
-At request time `Ceiling.Grant` reads the shape and `admission.Admit` applies the
-policy, giving the run its sandbox or a fatal result: with no policy,
-`sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file,
-which is required to grant sandbox capabilities`; a host the operator's Cedar
-policy does not grant is `sandbox.egress.http[0] GET to host "evil.example.com"
-is refused: the operator policy (--sandbox-policy-file) does not permit it`, before the
-module is resolved.
+Between load and run `admission.AdmitRequires` decides the module's ask,
+giving the run its sandbox or a fatal result: with no policy, `module …
+requires a private /tmp (requires.filesystem.privateTmp), but the runtime has
+no --sandbox-policy-file, which is required to grant sandbox capabilities`; a
+host the operator's Cedar policy does not grant is `module … requires egress
+GET to host "evil.example.com" (requires.egress.http[0]), which the operator
+policy (--sandbox-policy-file) does not permit`.
 
 
 ## Mechanics
@@ -187,18 +197,19 @@ call — and the host function cannot be replaced without forking the SDK. It
 does not meet the requirements above; the decision to keep this import is
 recorded in AGENTS.md ("Not Extism").
 
-**Environment — `SetEnv` from the grant (implemented).** `sandbox.env[]`
-(list of `{name, value | valueFrom}`) and `sandbox.envFrom[]` (list of
-`{credential, prefix}`) become `WasiConfig.SetEnv(keys, values)` on the
-run's store, sorted by key; the runtime's own environment is never
-inherited, and without a grant the guest's `environ` is empty. Literal
-values are set directly; `valueFrom.credential` reads a key of a step
-credential; `envFrom` imports every key of a credential (with an optional
-prefix). The pull credential (`module.oci.credentials`) is refused as a
-source for both - the module must never see the secret that fetched it.
-Resolution happens after `registryAuth` (`sandbox.Materialize` in `fn.go`),
-the first point where the pull credential's name is known; shape validation
-(`Validate`) and the ceiling check (`Grant`) run at admission.
+**Environment — `SetEnv` from the admitted bindings (implemented).** The
+manifest's `requires.env` bindings (`{name, fromCredential: {name, key}}`)
+become `WasiConfig.SetEnv(keys, values)` on the run's store, sorted by key;
+the runtime's own environment is never inherited, and without a granted
+binding the guest's `environ` is empty. Each binding reads one key of a
+step credential and is gated by `setEnv` and `spendCredential` in both
+Cedar layers; literal values are deliberately not expressible - non-secret
+configuration is the Input's `config`, read through `wasmfn.GetConfig`. The
+pull credential (`module.oci.credentials`) is refused as a source - the
+module must never see the secret that fetched it. Resolution happens once
+the manifest is read (`sandbox.Materialize` in `fn.go`), against the
+request's own credentials; shape validation (`ValidateBindings`) runs with
+the manifest, the policy decision in `admission.AdmitRequires`.
 
 ## Threat model in one paragraph
 
@@ -214,8 +225,9 @@ removed at the end — one module cannot leave state for the next or read
 another's. It has no byte quota of its own: it is bounded by the filesystem
 behind the runtime's `$TMPDIR` — point it at a tmpfs `emptyDir` with a
 `sizeLimit` to cap what one request may write (a full tmpfs fails the
-guest's write, not the runtime). Environment values are as
-public as the Composition that carries them. All grants keep the existing
+guest's write, not the runtime). Environment values come only from step
+credentials the pipeline step already receives - a binding widens nothing
+the request did not carry. All grants keep the existing
 per-request deadline and memory cap; the HTTP budgets add response size and
 request count. Nothing here changes the fact that the module runs with the
 trust the Composition author gave it — the sandbox protects the runtime and
@@ -224,10 +236,11 @@ module.
 
 ## Phasing
 
-0. **Input types (implemented):** `sandbox.filesystem.privateTmp`,
-   `sandbox.egress.http[]`, `sandbox.env[]`, `sandbox.envFrom[]` with shape validation - shipped
-   first, with a "not implemented yet" refusal, so the schema was settled
-   before any behaviour.
+0. **Input types (implemented, since superseded):** the `sandbox` subtree
+   with shape validation - shipped first, with a "not implemented yet"
+   refusal, so the schema was settled before any behaviour; the ask later
+   moved to the manifest's `requires` (revision 1.8, the three-layer-authz
+   one-pager).
 1. **Filesystem (implemented):** the private `/tmp`
    (policy `usePrivateTmp`). Smallest change, no ABI change. Named
    read-only host mounts were built and then removed (revision 1.1): a
@@ -242,16 +255,17 @@ module.
    (`http.go` + `http_wasip1.go`; `src/http.rs`) with a swappable host for
    native tests, and all three examples fetch `config.greetingUrl` through it,
    so the host tests run every guest with and without a grant.
-3. **Environment (implemented):** the policy `setEnv` action.
+3. **Environment (implemented):** the policy `setEnv` action; env is a
+   manifest `requires.env` credential binding, gated by `setEnv` and
+   `spendCredential`.
 4. **WASI HTTP through components:** revisit when wasmtime-go supports the
    component model and at least one supported guest toolchain targets it.
 
 ## Open questions
 
-- Should `sandbox` be allowed at all with `module.from` sources, or only for
-  modules the Composition names statically? (Default proposal, and what is
-  implemented: allowed, since the grant is the Composition's; a stricter mode
-  could refuse the pairing.)
+- Manifest-less sources (`path`, `http`, an OCI artifact without a manifest
+  layer) have no way to ask for a capability; an inline `request` on the
+  Input is designed separately (docs/one-pager-manifest-less-sources.md).
 - Per-request budgets in the egress policy file only, or lowerable per Input
   the way `limits` narrows the run's timeout and memory? (v0.2.0 fixed them as defaults, not a file or per Input, with the rate
   limit a flag; the run's `limits.timeout` still bounds every

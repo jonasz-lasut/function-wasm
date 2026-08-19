@@ -170,10 +170,13 @@ behaviour is identical.
   hierarchies, `in` respects the boundary), `Capability` and `Credential`.
   **Actions** are `pullModule` (live), `grantEgress`, `usePrivateTmp`, `setEnv`,
   `spendCredential`, `requireSignature`.
-- **Evaluation** is default-deny, `forbid` wins. The always-on built-in fence
-  (the Composition's allow list in context, injection-safe) and the operator
-  document are **separate PolicySets, AND-combined**, so an operator document can
-  only tighten, never widen the fence.
+- **Evaluation** is default-deny, `forbid` wins. The layers are **separate
+  PolicySets, AND-combined**, so one document can only tighten, never widen
+  another. Originally the built-in fences (the Composition's allow lists in
+  context, injection-safe) beside the operator document; since the
+  three-layer model (docs/one-pager-three-layer-authz.md) the fences are
+  subsumed by the Input's `compositionPolicy`, the composition author's own
+  PolicySet over the same schema.
 
 Cedar answers only "permit or forbid?"; the imperative steps on either side
 (normalize, resolve, enforce) stay Go.
