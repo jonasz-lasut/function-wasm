@@ -51,15 +51,18 @@ type Function struct {
 	// grant, so a runtime offers only the default sandbox.
 	policy *authz.OperatorPolicy
 
-	// manifests is the on-disk store of module manifests by digest, kept
-	// beside the compiled artifacts so an artifact hit — a warm volume, a
-	// restart — needs no registry read to learn what a module requires; nil
-	// (tests) means every process reads it from the source once. An empty
-	// entry records that a module has none.
+	// manifests is the on-disk store of module manifests by manifest key
+	// (module.Ref.ManifestKey - the manifest's own identity, not the module
+	// digest), kept beside the compiled artifacts so an artifact hit — a warm
+	// volume, a restart — needs no registry read to learn what a module
+	// requires; nil (tests) means every process reads it from the source once.
+	// An empty entry records that a module has none.
 	manifests *cache.Store
-	// parsed caches each digest's parsed manifest (nil for a module without
-	// one) so its schema is compiled once per process, like the module.
-	parsed sync.Map // digest → *manifest.Manifest
+	// parsed caches each manifest key's parsed manifest (nil for a module
+	// without one) so its schema is compiled once per process, like the module.
+	// A source with no cacheable manifest key (a path source, read fresh) is
+	// absent here.
+	parsed sync.Map // manifest key → *manifest.Manifest
 	// stepSlots bounds per-step concurrency (limits.concurrency), keyed by
 	// the module's digest. main always sets it; nil (tests) disables the
 	// per-step bound rather than panicking.
@@ -236,17 +239,29 @@ func requiresOf(m *manifest.Manifest) *manifest.Requires {
 }
 
 // manifestFor returns a module's parsed manifest, nil when it carries none:
-// from memory, then the on-disk store, then the source (the artifact's
-// manifest layer), read once per digest per volume and parsed once per
-// process. A manifest that does not parse or validate refuses the module.
+// from memory, then the on-disk store, then the source (the artifact's manifest
+// layer, or the wasmfn.yaml an http/path source names by reference), read once
+// per manifest key per volume and parsed once per process. The key is the
+// manifest's own identity (ref.ManifestKey), not the module digest, since a
+// manifest-less source names its manifest separately; when it is empty the
+// manifest is read fresh every request (a path file may change) and not cached.
+// A manifest that does not parse or validate refuses the module.
 func (f *Function) manifestFor(ctx context.Context, ref *module.Ref) (*manifest.Manifest, error) {
-	if v, ok := f.parsed.Load(ref.Digest); ok {
+	key := ref.ManifestKey()
+	if key == "" {
+		raw, _, err := ref.Manifest(ctx)
+		if err != nil {
+			return nil, manifestReadError(err, ref.Description)
+		}
+		return parseModuleManifest(raw, ref.Description)
+	}
+	if v, ok := f.parsed.Load(key); ok {
 		m, _ := v.(*manifest.Manifest)
 		return m, nil
 	}
 	raw, ok := []byte(nil), false
 	if f.manifests != nil {
-		raw, ok = f.manifests.Get(ref.Digest)
+		raw, ok = f.manifests.Get(key)
 	}
 	if !ok {
 		var err error
@@ -257,14 +272,14 @@ func (f *Function) manifestFor(ctx context.Context, ref *module.Ref) (*manifest.
 			// An empty entry records "no manifest": the next process asks
 			// the registry nothing. A full or read-only store only costs
 			// the next process the read.
-			_ = f.manifests.Put(ref.Digest, raw)
+			_ = f.manifests.Put(key, raw)
 		}
 	}
 	m, err := parseModuleManifest(raw, ref.Description)
 	if err != nil {
 		return nil, err
 	}
-	f.parsed.Store(ref.Digest, m)
+	f.parsed.Store(key, m)
 	return m, nil
 }
 

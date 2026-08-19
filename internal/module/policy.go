@@ -58,7 +58,7 @@ func admit(from string, src v1beta1.ModuleSource, comp *authz.CompositionPolicy,
 		location, err = ociLocation(src.OCI.Ref)
 	case v1beta1.ModuleTypeHTTP:
 		field = "url"
-		location, err = httpLocation(src.HTTP.URL)
+		location, err = httpLocation("module.http.url", src.HTTP.URL)
 	case v1beta1.ModuleTypePath:
 		return nil
 	}
@@ -70,6 +70,19 @@ func admit(from string, src v1beta1.ModuleSource, comp *authz.CompositionPolicy,
 	}
 	if !comp.PermitsPullModule(principal, location) {
 		return fmt.Errorf("module.from: %s of the composite resource names %s %q, which the compositionPolicy does not permit (pullModule)", from, field, location)
+	}
+	// A manifest the composite resource chose to fetch by URL is fenced like
+	// the module: its own location must be pullModule-permitted, or its author
+	// could point the runtime at any host. A static manifestPath (Path) has no
+	// host and never reaches here.
+	if src.Type == v1beta1.ModuleTypeHTTP && src.HTTP.ManifestURL != "" {
+		manifestLoc, err := httpLocation("module.http.manifestURL", src.HTTP.ManifestURL)
+		if err != nil {
+			return fmt.Errorf("module.from: %s of the composite resource: %w", from, err)
+		}
+		if !comp.PermitsPullModule(principal, manifestLoc) {
+			return fmt.Errorf("module.from: %s of the composite resource names manifestURL %q, which the compositionPolicy does not permit (pullModule)", from, manifestLoc)
+		}
 	}
 	if src.Type != v1beta1.ModuleTypeOCI || src.OCI.Credentials == "" {
 		return nil

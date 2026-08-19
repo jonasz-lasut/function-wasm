@@ -55,6 +55,9 @@ func (r *Resolver) resolveOCI(ctx context.Context, src v1beta1.ModuleSource, aut
 	out := &Ref{
 		Digest:      ref.DigestStr(),
 		Description: "oci " + src.OCI.Ref,
+		// The manifest layer is part of the artifact the manifest digest pins,
+		// so the artifact digest keys it in the caches.
+		manifestKey: ref.DigestStr(),
 		fetch: timed("oci", func(ctx context.Context) ([]byte, error) {
 			opts := append(opts, remote.WithContext(ctx))
 			layer, err := moduleLayer(ref, opts)

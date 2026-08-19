@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 )
 
 // fileStamp remembers the digest of a served file by size and modification
@@ -24,21 +24,15 @@ type fileStamp struct {
 }
 
 func (r *Resolver) resolvePath(src v1beta1.ModuleSource) (*Ref, error) {
-	if r.opts.Dir == "" {
-		return nil, errors.New("module.path is refused: the function was started without --module-dir")
-	}
-	if filepath.IsAbs(src.Path) {
-		return nil, fmt.Errorf("module.path %q must be relative to the module directory", src.Path)
-	}
-	full := filepath.Join(r.opts.Dir, src.Path)
-	if rel, err := filepath.Rel(r.opts.Dir, full); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("module.path %q escapes the module directory", src.Path)
+	full, err := r.confinedPath("module.path", src.Path)
+	if err != nil {
+		return nil, err
 	}
 	digest, err := r.fileDigest(full)
 	if err != nil {
 		return nil, err
 	}
-	return &Ref{
+	out := &Ref{
 		Digest:      digest,
 		Description: "module file " + src.Path,
 		// Served files are on disk already; the blob store is skipped.
@@ -60,7 +54,49 @@ func (r *Resolver) resolvePath(src v1beta1.ModuleSource) (*Ref, error) {
 			}
 			return b, nil
 		}),
-	}, nil
+	}
+	// The module's manifest, when the source names one: a wasmfn.yaml under
+	// --module-dir, read fresh each request and normalized to JSON like an OCI
+	// manifest layer. It carries no digest - the directory is the operator's.
+	if src.ManifestPath != "" {
+		manifestFull, err := r.confinedPath("module.manifestPath", src.ManifestPath)
+		if err != nil {
+			return nil, err
+		}
+		out.manifest = func(context.Context) ([]byte, bool, error) {
+			f, err := os.Open(manifestFull) //nolint:gosec // manifestFull is confined to the module directory above.
+			if err != nil {
+				return nil, false, fmt.Errorf("cannot read manifest file: %w", err)
+			}
+			defer func() { _ = f.Close() }()
+			b, err := readCapped(f, manifest.MaxSize)
+			if err != nil {
+				return nil, false, err
+			}
+			j, err := manifestJSON(b)
+			if err != nil {
+				return nil, false, err
+			}
+			return j, true, nil
+		}
+	}
+	return out, nil
+}
+
+// confinedPath resolves rel under the module directory, refusing an absolute
+// path or one that escapes the directory; field names it in the errors.
+func (r *Resolver) confinedPath(field, rel string) (string, error) {
+	if r.opts.Dir == "" {
+		return "", fmt.Errorf("%s is refused: the function was started without --module-dir", field)
+	}
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("%s %q must be relative to the module directory", field, rel)
+	}
+	full := filepath.Join(r.opts.Dir, rel)
+	if rl, err := filepath.Rel(r.opts.Dir, full); err != nil || rl == ".." || strings.HasPrefix(rl, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s %q escapes the module directory", field, rel)
+	}
+	return full, nil
 }
 
 func (r *Resolver) fileDigest(path string) (string, error) {
