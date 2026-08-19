@@ -2,12 +2,12 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.3
+* Status: Implemented, revision 1.4
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. Written after the 2026-08-16 review,
 which found two ways the previous model leaked; both are closed here.
-Revision 1.1 adds the Composition-owned `policy` that fences XR-chosen
+Revision 1.1 added the Composition-owned `policy` that fenced XR-chosen
 modules — the Input shape is the module-source-schema one-pager's; revision
 1.2 records the sandbox's grants — filesystem and environment, and what
 enforces the network boundary now that HTTP egress through the host is
@@ -15,7 +15,11 @@ implemented (sandbox one-pager, revision 1.0); revision 1.3 records the
 operator-authored Cedar grant policy (`--sandbox-policy-file`) that narrows the
 sandbox grants per caller and the per-repository signature requirement that makes
 `--cosign-key` per-repository, both on the operator boundary only (policy-engine
-one-pager). Everything below is implemented.
+one-pager). Revision 1.4 records the three-layer authorization model
+(three-layer-authz one-pager): the `policy` allowlists became the Input's
+`compositionPolicy` (Cedar), the `sandbox` block became the module
+manifest's `requires`, and every capability is the AND of manifest ∧
+composition layer ∧ operator layer. Everything below is implemented.
 
 
 ## Parties
@@ -25,17 +29,21 @@ one-pager). Everything below is implemented.
   the pod — its volume, its network policy, its resource limits.
 - A **Composition author** references a module in a pipeline step's Input
   (`module.type` + `oci`/`http`/`path`), states its digest, may name a step
-  credential for the pull, sets the `policy` for modules the XR may choose,
-  the `limits` of the run, and passes `config`. They are trusted with the
-  request their step receives, exactly as the author of a native function's
-  Composition is.
+  credential for the pull, sets the `compositionPolicy` - their own Cedar
+  layer, fencing modules the XR may choose and optionally narrowing
+  sandbox capabilities - the `limits` of the run, and passes `config`.
+  They are trusted with the request their step receives, exactly as the
+  author of a native function's Composition is.
 - A **composite resource author** may, when the Composition says so
   (`module.from`), choose which module runs by writing a field of their XR.
-  They are trusted with less: they can pick code — within the Composition's
-  `policy` — not widen what it may do or spend what it may not: `policy`,
-  `limits` and `sandbox` are read from the Input only.
-- A **module author** publishes signed or unsigned artifacts; their code
-  runs in the sandbox with whatever the request carries.
+  They are trusted with less: they can pick code — within the
+  `compositionPolicy`'s `pullModule` permits — not widen what it may do or
+  spend what it may not: `compositionPolicy` and `limits` are read from
+  the Input only.
+- A **module author** publishes signed or unsigned artifacts, declaring in
+  the manifest what the module cannot run without (`requires`); their code
+  runs in the sandbox with whatever the request carries, and a manifest
+  can only make a run fail earlier, never widen it.
 
 ## What pins the code
 
@@ -65,49 +73,51 @@ startup when a key is set but the policy requires nothing (policy-engine
 one-pager). The choice of *which* repositories must be signed is operator
 policy; the crypto is unchanged.
 
-## Credentials and `policy`
+## Credentials and the `compositionPolicy` fence
 
 A step credential (`module.oci.credentials`) is spent on a module the
 Composition itself names, or on an XR-chosen module the Composition's
-`policy` explicitly allows. Without such a policy a source read from the XR
-may not name one: the XR author would also pick the registry host, and a
-registry that answers with a `Basic` challenge receives the secret — the
-review demonstrated it, credential captured. XR-chosen modules are then
-pulled with the runtime's own Docker config (`DOCKER_CONFIG`, mounted by
-the operator; its entries are bound to their registry host) or anonymously;
-an XR object with `credentials` is a fatal result explaining why and
-pointing at the policy.
+`compositionPolicy` explicitly permits. Without such a permit a source read
+from the XR may not name one: the XR author would also pick the registry
+host, and a registry that answers with a `Basic` challenge receives the
+secret — the review demonstrated it, credential captured. XR-chosen modules
+are then pulled with the runtime's own Docker config (`DOCKER_CONFIG`,
+mounted by the operator; its entries are bound to their registry host) or
+anonymously; an XR object with `credentials` is a fatal result explaining
+why and pointing at the policy.
 
-The Composition-owned `policy` — a top-level Input field, never read
-through `module.from` — fences what an XR-chosen module may be and spend:
+The Composition-owned `compositionPolicy` — a top-level Input field, never
+read through `module.from` — fences what an XR-chosen module may be and
+spend:
 
 ```yaml
 module:
   type: OCI
   from: status.module                       # the XR names {ref, credentials}
-policy:
-  repositoryAllowList: ["ghcr.io/example-org/"]   # prefixes the XR's ref must match
-  credentialsAllowList: ["registry"]              # step credentials the XR object may name
+compositionPolicy: |
+  permit (principal, action == Action::"pullModule",
+          resource in Repository::"ghcr.io/example-org");
+  permit (principal, action == Action::"spendCredential", resource == Credential::"registry")
+  when { context.repository in Repository::"ghcr.io/example-org" };
 ```
 
-- `policy.repositoryAllowList`: an XR-chosen `ref` (or `url` for `HTTP`)
-  must lie within one of the entries — prefixes over the normalized location
-  (`registry/repository`, `scheme://host/path`) matched at a path or host
-  boundary, so a prefix never admits a sibling namespace or adjacent host (a
-  trailing slash is optional), and a ref or URL with dot segments is refused
-  before matching; anything else is a fatal result naming the policy and the
-  ref. Required whenever `module.from` names an OCI or HTTP source: an
-  unfenced XR author could point the runtime at any host and read what its
-  answer says.
-- `policy.credentialsAllowList`: the step credentials an XR-chosen object may
-  name, spent only on a ref the repository list admits — the repository check
-  runs first, so a listed credential never reaches a host the Composition did
-  not admit, and a credentials list without a repository list is refused by
-  the CRD and the runtime (`policy.credentialsAllowList requires
-  policy.repositoryAllowList`). Absent or empty, none — the rule above. A
-  credential outside the list is a fatal result.
+- `pullModule`: an XR-chosen `ref` (or `url` for `HTTP`) must be permitted
+  for its normalized location (`registry/repository`, `scheme://host/path`)
+  over the boundary-correct `Repository` hierarchy, so a permitted prefix
+  never admits a sibling namespace or adjacent host (a trailing slash is
+  optional), and a ref or URL with dot segments is refused before matching;
+  anything else is a fatal result naming the policy and the ref. A
+  `compositionPolicy` is required whenever `module.from` names an OCI or
+  HTTP source: an unfenced XR author could point the runtime at any host
+  and read what its answer says.
+- `spendCredential`: the step credentials an XR-chosen object may name,
+  spent only on a ref `pullModule` admits — the pull check runs first, so
+  a permitted credential never reaches a host the Composition did not
+  admit, and `context.repository` lets a permit co-locate credential and
+  repository. With no matching permit, none — the rule above. A credential
+  no permit names is a fatal result.
 
-A static source is not subject to the policy: the Composition named it and
+A static source is not subject to the fence: the Composition named it and
 is trusted with it. `internal/module/policy.go` is the one place the rule
 lives.
 
@@ -115,25 +125,26 @@ The credential that pulled the module is the host's: it is removed from the
 request before the guest sees it. Every other step credential is forwarded,
 as it would be to a native function — the Composition author declared them
 for the step. Without an egress grant the guest cannot phone home with
-them (no network); with one, it can reach only the hosts the Composition
-listed, within the operator's policy — the grant is the Composition's
-alone, so nothing an XR author writes widens where a credential may go.
+them (no network); with one, it can reach only the hosts its manifest
+listed, within both Cedar layers — the grant is the policy layers' alone,
+so nothing an XR author writes widens where a credential may go.
 
 ## What the guest sees and can do
 
 The whole `RunFunctionRequest` less the pull credential: observed and
 desired state, context, extra resources, `config`. It runs in a fresh
 wasmtime store with WASI preview 1 and no sockets, two host imports
-(`wasmfn.log`, and `wasmfn.http`, which performs a request only within a
-`sandbox.egress` grant the operator's Cedar `--sandbox-policy-file` enables
+(`wasmfn.log`, and `wasmfn.http`, which performs a request only within an
+egress grant its manifest requires and both Cedar layers permit
 (`grantEgress`) and refuses otherwise), a wall-clock deadline and a linear-memory cap; stdout
 and stderr go to the pod's log. It has no pre-opened directories and no
-environment unless the Composition's `sandbox` grants them within the
-operator's flags: a private `/tmp` created for the request and removed after
+environment unless its manifest's `requires` asks and the policy layers
+permit: a private `/tmp` created for the request and removed after
 it (the only directory a module is ever given — host directories are
 deliberately not mountable, so no operator path is readable by a module),
-exactly the listed environment variables — never the runtime's own
-environment. Grants are read from the Input only, so an XR author cannot
+exactly the environment variables its bindings resolve from step
+credentials — never the runtime's own environment. The policy layers are
+read from the Input and the operator's file only, so an XR author cannot
 widen them.
 
 Everything it produces leaves in the response, which the host forwards
@@ -145,10 +156,11 @@ one-pager for the bounds).
 
 An XR author who can pick a module can, through it, write desired state and
 results into their own XR — the same power any module of that Composition
-has over that XR. They cannot pick a module outside the Composition's
-`policy.repositoryAllowList` or one the runtime's signature policy refuses,
-spend a step credential the Composition did not list for that repository,
-widen the run's `limits` or the sandbox, or read another XR's request.
+has over that XR. They cannot pick a module outside the
+`compositionPolicy`'s `pullModule` permits or one the runtime's signature
+policy refuses, spend a step credential no `spendCredential` permit names
+for that repository, widen the run's `limits` or the sandbox, or read
+another XR's request.
 
 ## Supply chain of the runtime itself
 
@@ -166,15 +178,15 @@ own security fixes are judged alone.
 | tag moved to malicious content | tags alone are refused; a tag next to a digest is decoration |
 | registry or CDN serves other bytes | manifest verified against the reference, layer against the manifest, module against the layer digest — twice (registry client, host) |
 | tampered cache volume | blobs verified against their name on every read; artifacts validated by wasmtime; signature checked before any tier |
-| XR author aims a credential at their host | refused unless `policy.credentialsAllowList` names the credential and `policy.repositoryAllowList` admits the host (above) |
-| XR author widens policy, limits or sandbox through the XR | impossible: they are top-level Input fields, only `module.from` is read from the XR |
+| XR author aims a credential at their host | refused unless a `compositionPolicy` `spendCredential` permit names the credential and a `pullModule` permit admits the host (above) |
+| XR author widens the policy, limits or sandbox through the XR | impossible: `compositionPolicy` and `limits` are top-level Input fields, only `module.from` is read from the XR, and the sandbox is the manifest's ask under both Cedar layers |
 | XR author picks unsigned code | `--cosign-key` refuses it |
-| module exfiltrates a step credential | no network by default; the pull credential is withheld. Where the operator's Cedar `--sandbox-policy-file` grants egress (`grantEgress`) a module reaches only the hosts, methods and paths its Composition's `sandbox.egress.http` rules grant (read from the Input only, never the XR), which the operator's Cedar `--sandbox-policy-file` (`grantEgress`) may narrow, over a default block list covering loopback, link-local, private and cluster ranges (`dialAddress` adds more) - every resolved address is judged, the checked address is dialled, and every request leaves an audit line with the module digest; `--cosign-key` is strongly recommended wherever egress is granted |
+| module exfiltrates a step credential | no network by default; the pull credential is withheld. Where both Cedar layers permit egress (`grantEgress`) a module reaches only the hosts, methods and paths its own manifest's `requires.egress.http` rules declare, over a default block list covering loopback, link-local, private and cluster ranges (`dialAddress` adds more) - every resolved address is judged, the checked address is dialled, and every request leaves an audit line with the module digest; `--cosign-key` is strongly recommended wherever egress is granted |
 | module attacks the host | wasmtime sandbox; guest-controlled offsets are bounds-checked and sliced without overflow; host panics are recovered |
 | module reads or writes host files | never: host directories are not mountable into a module (no flag offers it); the only directory a module can be granted is its private `/tmp` — a fresh directory per request, removed afterwards, bounded by the filesystem behind `$TMPDIR`, with `..` escapes refused by wasmtime inside the pre-open (`EPERM`) |
-| module reads the runtime's environment | never: WASI environ is empty, or exactly the Composition's `sandbox.env` (non-secret by convention — the values are visible in the Composition) |
+| module reads the runtime's environment | never: WASI environ is empty, or exactly the manifest's `requires.env` bindings resolved from step credentials the request already carried |
 | module starves the runtime | deadline, memory cap, compile semaphore, bounded tiers |
-| SSRF through `module.from` (`type: HTTP` or `OCI`) | `policy.repositoryAllowList` is required for an XR-chosen network source, so the runtime only fetches from repositories the Composition named; prefixes match a normalized location and dot segments are refused, so a prefix cannot be escaped; the runtime only GETs; restrict the pod's egress with a NetworkPolicy where internal endpoints matter |
+| SSRF through `module.from` (`type: HTTP` or `OCI`) | a `compositionPolicy` `pullModule` permit is required for an XR-chosen network source, so the runtime only fetches from repositories the Composition permitted; permits match a normalized location over the boundary-correct hierarchy and dot segments are refused, so a prefix cannot be escaped; the runtime only GETs; restrict the pod's egress with a NetworkPolicy where internal endpoints matter |
 | decompression bomb in a tar layer | extraction bounded at eight times the module size limit |
 
 ## What comes next
@@ -182,10 +194,10 @@ own security fixes are judged alone.
 The sandbox one-pager designs grants — a private `/tmp`, HTTP egress through
 the host, environment variables — that widen what a module can reach (host
 mounts were built and then removed: a module's inputs come through the
-request). All of them are implemented (revision 1.1 of that one-pager) under
-the rules here: grants are the Composition's (never read
-from the XR), egress keeps step credentials from leaving through any host
-the Composition did not list (the grant names hosts, methods and paths; the
-operator's policy caps the hosts and blocks internal ranges), and
+request). All of them are implemented under the rules here: the ask is the
+module manifest's, the grant the policy layers' (never read from the XR),
+egress keeps step credentials from leaving through any host the manifest
+did not list and a layer refuses (the rules name hosts, methods and paths;
+the operator's policy caps the hosts and blocks internal ranges), and
 `--cosign-key` is strongly recommended wherever egress is granted.
 

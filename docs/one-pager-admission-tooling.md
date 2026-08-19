@@ -17,12 +17,13 @@ artifact specification requires. No new trust surface, no new Input field.
 
 ## Before this
 
-Every rule of the Input — `module.Validate`, `module.ValidatePolicy`,
-`sandbox.Validate`, `sandbox.Ceiling.Grant`, `egress.Grant`, `runOptions` —
-runs inside `RunFunction`, and nowhere else. A Composition author learns
-that `sandbox.egress.http[0].host "x" is outside the runtime's egress
-policy` from an XR condition after a reconcile; an operator who tightens
-`--sandbox-egress-policy` learns which Compositions broke from the same
+Every rule of the Input — at the time `module.Validate`,
+`module.ValidatePolicy`, `sandbox.Validate`, `sandbox.Ceiling.Grant`,
+`egress.Grant`, `runOptions` —
+ran inside `RunFunction`, and nowhere else. A Composition author learned
+that a step was refused, in the runtime's words, from an XR condition
+after a reconcile; an operator who tightened
+the egress policy learned which Compositions broke from the same
 place, one XR at a time; `crossplane beta validate` can check the Input's
 *shape* against `package/input/` but knows nothing of the operator's
 ceilings. A wrong module — an export missing, an import outside
@@ -68,17 +69,17 @@ Input documents are found in each file: every `pipeline[].input` of kind
 `Input` in `wasm.fn.crossplane.io/v1beta1` of a `Composition`, or a bare
 `Input` document; multi-document YAML and `-` for stdin. For each step the
 tool runs exactly what `RunFunction` runs before it resolves anything —
-`sandbox.Validate`, `Ceiling.Grant`, `egress.Grant`, `runOptions`,
-`module.Validate`, `ValidatePolicy` — and, with `--xr`, `FromComposite`
+the `compositionPolicy` compiled, `runOptions`, `module.Validate` — and,
+with `--xr`, `FromComposite`
 against that composite resource; without one, a `module.from` source is
-reported as chosen by the XR and its `policy` checked for shape and for the
-rule the runtime enforces (`module.from` with `OCI`/`HTTP` requires
-`repositoryAllowList`). One line per step, the runtime's own strings:
+reported as chosen by the XR and checked for the rule the runtime enforces
+(`module.from` with `OCI`/`HTTP` requires a `compositionPolicy`,
+`module.ValidateFrom`). One line per step, the runtime's own strings:
 
 ```
-composition.yaml: Composition/hello pipeline[0] greeter: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, egress api.example.com)
-  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given
-composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0] GET to host "evil.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it
+composition.yaml: Composition/hello pipeline[0] greeter: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, compositionPolicy)
+  warning: the module requires egress but is not signature-verified: no --cosign-key was given
+composition.yaml: Composition/hello pipeline[1] labeler: refused: module oci ghcr.io/example/labeler@sha256:9d1c… requires egress GET to host "evil.example.com" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit
 ```
 
 `--resolve` goes one step further: `Resolve` + `Verify` (with `--cosign-key`)
@@ -154,12 +155,15 @@ push` and `oras push` produce, stay the recommended shape.
 
 - `internal/admission` (new): `Admit(in *v1beta1.Input, c Ceilings)
   (Admitted, error)` with `Ceilings{Engine engine.Config; Sandbox
-  *sandbox.Ceiling; Egress *egress.Egress}` and `Admitted{Options
-  engine.RunOptions; Grant sandbox.Grant; HTTP *egress.Grant}` — steps 1–2
+  *sandbox.Ceiling; Egress *egress.Egress; Policy *authz.OperatorPolicy}`
+  and `Admitted{Options engine.RunOptions; Concurrency int; Composition
+  *authz.CompositionPolicy}` — step 1
   of `RunFunction` behind one function `RunFunction` and `function
   validate` share (`--xr` then runs `FromComposite`, as `RunFunction` does;
   without it `module.ValidateFrom` applies the fence a `from` source
-  requires); the refusal messages are unchanged, so `TestRunFunction`'s
+  requires; under `--resolve`, `AdmitRequires` decides the fetched
+  manifest's ask); the refusal messages are identical in both paths, so
+  `TestRunFunction`'s
   refusal cases keep passing. `runOptions` moved there from `cmd/function`.
 - `cmd/function/main.go`: kong subcommands — `serve` (`default:"withargs"`,
   so `function --insecure --debug --module-dir=.` and a
@@ -172,9 +176,12 @@ push` and `oras push` produce, stay the recommended shape.
   flags an operator passes to `serve` are the flags `validate` takes.
   `run` (`docs/one-pager-local-loop.md`) will be a third command.
 - `cmd/function/validate.go` + `validate_test.go`: fixtures under
-  `testdata/validate/` that hit each refusal (a grant with no `--sandbox-policy-file`,
-  a grant the operator policy refuses, `limits` above a ceiling, `from` without a
-  policy, a tag instead of a digest, an Input of the wrong shape), the
+  `testdata/validate/` that hit each refusal (a requirement with no
+  `--sandbox-policy-file`, one the operator policy refuses, `limits` above
+  a ceiling, `from` without a
+  `compositionPolicy`, malformed `compositionPolicy` Cedar, the removed
+  `policy`/`sandbox` fields, a tag instead of a digest, an Input of the
+  wrong shape), the
   warnings, `--xr`, `--function-name`, stdin, JSON, exit codes, and
   `--resolve` over fixture modules (an ABI v1 one, one without `wasmfn_run`,
   bytes that are not wasm, a missing file).

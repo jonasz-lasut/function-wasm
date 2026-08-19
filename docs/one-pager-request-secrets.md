@@ -2,24 +2,39 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.0 (env retyped and envFrom; files not implemented)
+* Status: Superseded by docs/one-pager-three-layer-authz.md (was:
+  Implemented, revision 1.0 - env retyped and envFrom; files never
+  implemented)
+
+> **Superseded.** The `sandbox.env`/`sandbox.envFrom`/`valueFrom` delivery
+> this document designed left the Input with the three-layer authorization
+> model (docs/one-pager-three-layer-authz.md): non-secret configuration is
+> the Input's `config` (read via `wasmfn.GetConfig`), and secret env is a
+> module manifest `requires.env` credential binding
+> (`{name, fromCredential: {name, key}}`), resolved from the request's step
+> credentials by `sandbox.Materialize` and gated by both Cedar layers
+> (`setEnv` ∧ `spendCredential`). The bulk-import `envFrom` shape was
+> dropped. Request-delivered *files* remain unbuilt. The rest of this
+> document is kept as the historical record of the env shape decision - its
+> invariants (values only from the request, the pull credential withheld,
+> nothing logged) survive in the binding model.
 
 A module that talks to a cloud API through `wasmfn.HTTPClient()` usually
 does so through an SDK, and SDKs find their credentials where they always
 have: in the environment (`AWS_ACCESS_KEY_ID`, `VAULT_TOKEN`) or in a file
 the environment points at (`GOOGLE_APPLICATION_CREDENTIALS`, `KUBECONFIG`,
-`AWS_SHARED_CREDENTIALS_FILE`). Today the guest receives step credentials
-inside its `RunFunctionRequest` and would have to copy them into its own
-environment or `/tmp` before the SDK's auth chain runs — possible in Go,
-awkward in TinyGo and Rust, repeated by every module author. This document
-designs `sandbox` grants that let the *runtime* do that copy, from the
-request and only from the request: environment variables whose value is a
-key of a step credential, and files written into the private `/tmp` before
-the run. Nothing comes from the host's filesystem or environment,
-consistent with the decision that host directories are not mountable. It
-also settles the shape of `sandbox.env` for good — the one decision with a
-long-term cost — and presents the two ways to get there. Nothing here gates
-`v0.1.0`.
+`AWS_SHARED_CREDENTIALS_FILE`). At the time the guest received step
+credentials inside its `RunFunctionRequest` and would have had to copy them
+into its own environment or `/tmp` before the SDK's auth chain ran —
+possible in Go, awkward in TinyGo and Rust, repeated by every module
+author. This document designed `sandbox` grants that let the *runtime* do
+that copy, from the request and only from the request: environment
+variables whose value is a key of a step credential, and files written into
+the private `/tmp` before the run. Nothing comes from the host's filesystem
+or environment, consistent with the decision that host directories are not
+mountable. It also settled the shape of the env grant — the one decision
+with a long-term cost — and presented the two ways to get there. Nothing
+here gated `v0.1.0`.
 
 ## Today
 
