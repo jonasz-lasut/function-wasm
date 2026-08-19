@@ -172,7 +172,7 @@ the grant, each hop re-checked and audited; as in Go's `net/http`,
 `Authorization` and `Cookie` headers survive a redirect to the same host and
 are dropped on a redirect elsewhere. A refused request is never a trap.
 
-The Go SDK's `wasmfn.HTTPClient()` returns an `*http.Client` whose transport
+The Go glue's `wasmfn.HTTPClient()` returns an `*http.Client` whose transport
 speaks this protocol; the TinyGo and Rust scaffolds carry `http.go` and
 `src/http.rs` — the same protocol over their own allocator export, about a
 hundred lines each — the reference for other languages.
@@ -187,9 +187,26 @@ would keep serving v1 modules. Host imports are added within ABI v1 as
 optional imports (`wasmfn.http` was): a module that does not import one is
 unaffected, and their JSON payloads may gain fields.
 
+This ABI is a **WASI Preview 1 core module** contract (WASI 0.1): a raw
+module with linear-memory, pointer-typed exports. That is one of the two WASI
+execution models; the other is the **Component Model** (WASI 0.2, and the
+async 0.3), a different binary format of WIT-typed worlds. A future **ABI v2**
+would adopt it — a WIT world mirroring `RunFunctionRequest`/`Response`, with
+`wasi:http` behind the same host policy — and would let toolchains that only
+emit components (`componentize-py`, `componentize-dotnet`, JS→component) run
+without the core-module reactor shape this ABI requires. It is not in scope
+here and is gated on the **wasmtime-go binding**, not on the engine:
+Wasmtime itself is the reference component host (the Rust `wasmtime` crate has
+full component support), and the bundled C-API exposes the component calls,
+but the Go wrappers are not written yet
+([wasmtime-go#280](https://github.com/bytecodealliance/wasmtime-go/issues/280),
+PRs #290/#291/#292). A Go host never needs a Go component *target* to run
+components; only a Go *guest* under ABI v2 would. The design rationale lives in
+`docs/one-pager-language-support.md`.
+
 ## Examples
 
-`examples/hello-go` (Go with `wasmfn` and function-sdk-go), `examples/hello-tinygo`
+`examples/hello-go` (Go with function-sdk-go and the vendored `internal/wasmfn` glue), `examples/hello-tinygo`
 (TinyGo, protobuf-go types + vtprotobuf codecs) and `examples/hello-rust`
 (Rust, prost) implement this contract for the same function — they are what
 `guestfn init --lang go|tinygo|rust` scaffolds; the last two carry the ABI

@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.1
+* Status: Draft, revision 0.2
 
 Which languages a function-wasm module can be written in today, which could
 come next and at what cost, which are blocked and by what, and what
@@ -37,10 +37,12 @@ exceptions and threads proposals themselves are C-API properties the
 binding does not expose (`wasm_gc`, `wasm_exceptions`, `wasm_threads`,
 documented `false` by default in the bundled `config.h`), so a toolchain
 that emits wasm-gc (Kotlin/Wasm, OCaml, Java) is a per-proposal check —
-possibly a small binding change — not a settled yes. The engine *can* load
-a component but cannot call one or give it host functions or WASIp2
-(upstream PRs open since 2026-08-01), so component-only toolchains are
-blocked by the ABI, not by a flag.
+possibly a small binding change — not a settled yes. The **wasmtime-go
+binding** *can* load a component but cannot call one, give it host functions
+or register WASIp2 (the C-API and the Rust engine can; the Go wrappers are
+missing — [wasmtime-go#280](https://github.com/bytecodealliance/wasmtime-go/issues/280),
+PRs #290/#291/#292, draft), so component-only toolchains are blocked by the
+binding and the ABI, not by a wasm-proposal flag. See "What gates ABI v2" below.
 
 ## What "supported" means here
 
@@ -97,13 +99,50 @@ Effort below is graded against the Rust flavour (S/S/S — already built) as
 | Ruby (ruby.wasm) | docs: reactor confirmed | — | no pure-Ruby protobuf found | L–XL / L / M | not now |
 | Grain, MoonBit, OCaml (wasm_of_ocaml), Lua | thin docs / component-oriented / WASI runtime PR open / embed the C VM | — | none, none, none, nanopb via C | unscored / M | not now (Lua only if a use case appears) |
 
-The blocked group shares one cause: their toolchains emit components or
-Command modules, and ABI v1 is a raw-pointer core-module contract. The
-unlock is a component-shaped ABI ("ABI v2": a WIT world mirroring
-`RunFunctionRequest`/`Response`, `wasi:http` behind the same host policy),
-which waits on wasmtime-go's component calls/host functions and, for Go
-guests, a `wasip3` target — a separate decision (`docs/one-pager-sandbox.md`
-phase 4 names the same dependency for `wasi:http`), not taken here.
+The blocked group shares one cause, worth stating precisely because it is
+easy to misattribute. There are **two WASI execution models**: **Preview 1**
+(WASI 0.1, `wasip1`) is a *core module* — functions imported from the
+`wasi_snapshot_preview1` namespace, a linear-memory raw-pointer ABI — and the
+**Component Model** (WASI 0.2, and the async 0.3) is a different binary format
+of WIT-typed worlds over the Canonical ABI. ABI v1 is a Preview 1 contract; the
+blocked toolchains emit **components** (`componentize-py`,
+`componentize-dotnet`, a JS→component path) or **Command** modules (the
+official CPython `wasip1` build, `javy build`) — the wrong *shape*, one layer
+below the payload, so the JSON payload mode below does nothing for them.
+
+## What gates ABI v2 (and what does not)
+
+The unlock is a component-shaped **ABI v2**: a WIT world mirroring
+`RunFunctionRequest`/`Response`, `wasi:http` behind the same host policy. What
+gates it is a common source of confusion, so, precisely:
+
+- **Not Wasmtime the engine.** Wasmtime *is* the reference component host: the
+  Rust `wasmtime` crate has full component support (`wasmtime::component`,
+  `bindgen!` from a WIT world, resources, async, WASI 0.2 via `wasmtime-wasi`,
+  and the WASI 0.3 async work). The engine has done this for years.
+- **The wasmtime-go binding** — the whole host-side gap. function-wasm hosts
+  through wasmtime-go (CGo over libwasmtime); the bundled C-API already exposes
+  the component calls (`wasmtime_component_func_call`,
+  `..._linker_instance_add_func`, `..._add_wasip2`, `add_wasi_http`), but the
+  **Go binding does not wrap them yet**. A binding-maturity issue, not an engine
+  or language one. Tracked upstream as
+  [wasmtime-go#280](https://github.com/bytecodealliance/wasmtime-go/issues/280)
+  and delivered by #290 (component calls + values), #291 (host functions +
+  resources) and #292 (synchronous WASIp2 registration), all draft as of
+  2026-08-18. Fallback: a CGo shim against the bundled headers inside
+  `internal/engine` (the one package allowed to import wasmtime) — possible, but
+  it forks the binding surface.
+- **Not Go-the-guest-language, for the host.** A host *runs* components by
+  lifting/lowering through the C-API; Go never needs a component target to be a
+  component host. Go's component support gates only **Go guests under ABI v2** —
+  optional, since Go guests keep ABI v1 and lose nothing. Even there, TinyGo
+  (wasip2 + wit-bindgen-go) is ahead of mainline Go, and a mainline Go guest
+  could reach v2 by wrapping a `wasip1` core module with the preview1 adapter
+  plus bindings tooling.
+
+So ABI v2 is a deliberate design decision gated on the **binding**, not on
+Wasmtime and not (for the host) on Go. `docs/one-pager-sandbox.md` phase 4 names
+the same dependency for `wasi:http`. It is not taken here.
 
 ## Proposal
 
@@ -183,7 +222,11 @@ module or Composition relies on.
 3. Carry an optional JSON payload mode (`wasmfn_run_json`) at all, or keep
    ABI v1 protobuf-only for good?
 4. Is ABI v2 (component world) ever in scope? "Yes, eventually" turns the
-   blocked verdicts into "pending a decision"; "no" makes them final.
+   blocked verdicts into "pending a decision"; "no" makes them final. Its
+   host-side dependency is concrete and tracked: wasmtime-go component calls +
+   host functions ([#280](https://github.com/bytecodealliance/wasmtime-go/issues/280),
+   PRs #290/#291/#292), not anything Wasmtime or Go-the-guest-language lacks
+   (see "What gates ABI v2").
 5. Timebox the AssemblyScript and Swift spikes before any scaffold work
    (recommended: half a day each), or fold the spike into the first PR?
 6. How should wasi-sdk be distributed to contributors and CI (README
