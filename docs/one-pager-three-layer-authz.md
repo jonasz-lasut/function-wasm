@@ -2,7 +2,8 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft (implementer's brief)
+* Status: Implemented, revision 1.0 (the inline `request` for manifest-less
+  sources stays a separate Draft: docs/one-pager-manifest-less-sources.md)
 
 ## Summary
 
