@@ -3,6 +3,7 @@
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
 * Status: Draft
+* Tracking: https://github.com/jonasz-lasut/function-wasm/issues/30 (deferred past 0.2)
 
 ## Context
 
