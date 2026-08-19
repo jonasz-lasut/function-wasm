@@ -57,7 +57,7 @@ calls.
 ```shell
 function validate composition.yaml [more.yaml… | -] \
   [--module-timeout 30s --module-memory-limit 512 --enable-sandbox-egress \
-   --sandbox-egress-policy p.yaml --enable-sandbox-private-tmp --cosign-key k.pub \
+   --sandbox-policy-file p.cedar --enable-sandbox-private-tmp --cosign-key k.pub \
    --module-dir . …]                       # the serve ceilings, same flags, same env
   [--function-name function-wasm]          # steps to consider (any function by default)
   [--xr xr.yaml]                           # materialise module.from against this composite
@@ -79,7 +79,7 @@ rule the runtime enforces (`module.from` with `OCI`/`HTTP` requires
 ```
 composition.yaml: Composition/hello pipeline[0] greeter: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, egress api.example.com)
   warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given
-composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0].host "evil.example.com" is outside the runtime's egress policy (allowed: api.example.com)
+composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0] GET to host "evil.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it
 ```
 
 `--resolve` goes one step further: `Resolve` + `Verify` (with `--cosign-key`)
@@ -168,12 +168,13 @@ push` and `oras push` produce, stay the recommended shape.
   `validate`; the ceiling flags are one embedded `CeilingFlags` struct
   (`--module-dir`, `--max-module-size`, `--module-timeout`,
   `--module-memory-limit`, `--cosign-key`, `--enable-sandbox-*`,
-  `--sandbox-egress-policy`) with `ceilings()` and `resolver()`, so the
+  `--sandbox-policy-file`, `--egress-rate-limit-*`) with `ceilings()` and
+  `resolver()`, so the
   flags an operator passes to `serve` are the flags `validate` takes.
   `run` (`docs/one-pager-local-loop.md`) will be a third command.
 - `cmd/function/validate.go` + `validate_test.go`: fixtures under
   `testdata/validate/` that hit each refusal (`--enable-sandbox-*` off,
-  egress outside a policy file, `limits` above a ceiling, `from` without a
+  a grant the operator policy refuses, `limits` above a ceiling, `from` without a
   policy, a tag instead of a digest, an Input of the wrong shape), the
   warnings, `--xr`, `--function-name`, stdin, JSON, exit codes, and
   `--resolve` over fixture modules (an ABI v1 one, one without `wasmfn_run`,

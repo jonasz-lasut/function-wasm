@@ -24,13 +24,16 @@ func TestAdmit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fenced, err := egress.New(egress.Policy{Hosts: []string{"api.example.com"}})
+	// An enabled egress ceiling: the operator host allowlist is Cedar's
+	// (grantEgress), so New with no operator policy admits any host - the host
+	// gate is exercised in the operator-policy cases below.
+	enabledEgress, err := egress.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	engineCfg := engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20}
 	closed := Ceilings{Engine: engineCfg}
-	all := Ceilings{Engine: engineCfg, Sandbox: open, Egress: fenced}
+	all := Ceilings{Engine: engineCfg, Sandbox: open, Egress: enabledEgress}
 	static := v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}
 
 	// An operator grant policy that permits every capability for team-a and,
@@ -105,11 +108,6 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}}, c: closed},
 			want:   want{err: "sandbox.egress is refused: the runtime was started without --enable-sandbox-egress"},
 		},
-		"EgressOutsidePolicy": {
-			reason: "A rule outside the egress policy is refused with what the policy admits.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "evil.example.com", Methods: []string{"GET"}}}}}}, c: all},
-			want:   want{err: `sandbox.egress.http[0].host "evil.example.com" is outside the runtime's egress policy (allowed: api.example.com)`},
-		},
 		"TimeoutOverCeiling": {
 			reason: "A limit above its ceiling names both.",
 			args:   args{in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Timeout: &metav1.Duration{Duration: time.Minute}}}, c: all},
@@ -151,7 +149,7 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			reason: "Concurrency above --max-concurrent-runs is silently capped.",
 			args: args{
 				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(10))}},
-				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, MaxConcurrentRuns: 5}, Sandbox: open, Egress: fenced},
+				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, MaxConcurrentRuns: 5}, Sandbox: open, Egress: enabledEgress},
 			},
 			want: want{concurrency: 5},
 		},

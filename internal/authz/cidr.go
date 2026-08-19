@@ -28,12 +28,10 @@ const dialActionID = "dialAddress"
 // dial.
 type IPRules struct {
 	// Blocked are the prefixes an operator forbid rule refuses. They win over
-	// Allowed, mirroring Cedar's forbid-wins precedence, exactly as the egress
-	// policy file's blockedCIDRs win over its allowedCIDRs.
+	// Allowed, mirroring Cedar's forbid-wins precedence.
 	Blocked []netip.Prefix
 	// Allowed are the prefixes an operator permit rule admits: a hole punched
-	// in the runtime's default block list, exactly as the egress policy file's
-	// allowedCIDRs.
+	// in the runtime's default block list.
 	Allowed []netip.Prefix
 }
 
