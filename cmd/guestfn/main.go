@@ -67,9 +67,9 @@ type CLI struct {
 type InitCmd struct {
 	Dir string `arg:"" help:"Directory to create the project in."`
 
-	Lang       string `help:"Language of the project: go (function-sdk-go), tinygo (raw protobuf messages, ~1 MB modules), rust (prost) or zig (zig-protobuf, ~95 KB)." enum:"go,tinygo,rust,zig" default:"go"`
+	Lang       string `help:"Language of the project: go (function-sdk-go), tinygo (raw protobuf messages, ~1 MB modules), rust (prost), zig (zig-protobuf, ~95 KB) or c (nanopb, built by zig cc, ~70 KB)." enum:"go,tinygo,rust,zig,c" default:"go"`
 	Module     string `help:"Go module path of the project (go, tinygo). Defaults to the directory's base name."`
-	Name       string `help:"Short name used in docs and the example Composition, and the crate name for rust. Defaults to the module's last element or the directory's base name."`
+	Name       string `help:"Short name used in docs and the example Composition, and the crate name for rust (the project name for zig and c). Defaults to the module's last element or the directory's base name."`
 	SDKVersion string `help:"function-sdk-go version to require (go)." default:"${sdk_version}"`
 	Offline    bool   `help:"Do not run go get / go mod tidy; go writes go.mod from the given versions."`
 }
@@ -81,13 +81,17 @@ func (c *InitCmd) Run(ctx context.Context, stdout io.Writer) error {
 	}
 	base := filepath.Base(filepath.Clean(c.Dir))
 	module, name := c.Module, c.Name
-	if c.Lang == scaffold.LangRust {
+	switch c.Lang {
+	case scaffold.LangRust, scaffold.LangZig, scaffold.LangC:
+		// No Go module path: the crate or project is named after the directory.
 		module = ""
 		if name == "" {
 			name = base
 		}
-	} else if module == "" {
-		module = base
+	default:
+		if module == "" {
+			module = base
+		}
 	}
 	files, err := scaffold.Render(scaffold.Options{
 		Lang:       c.Lang,
@@ -103,9 +107,12 @@ func (c *InitCmd) Run(ctx context.Context, stdout io.Writer) error {
 	if err := scaffold.Write(c.Dir, files); err != nil {
 		return err
 	}
-	if c.Lang == scaffold.LangRust {
+	switch c.Lang {
+	case scaffold.LangRust:
 		_, _ = fmt.Fprintf(stdout, "Created %s (crate %s)\n", c.Dir, name)
-	} else {
+	case scaffold.LangZig, scaffold.LangC:
+		_, _ = fmt.Fprintf(stdout, "Created %s (project %s)\n", c.Dir, name)
+	default:
 		_, _ = fmt.Fprintf(stdout, "Created %s (module %s)\n", c.Dir, module)
 	}
 
@@ -125,8 +132,10 @@ func (c *InitCmd) Run(ctx context.Context, stdout io.Writer) error {
 	switch c.Lang {
 	case scaffold.LangRust:
 		test = "cargo test           # edit src/lib.rs, keep the tests passing"
-	case scaffold.LangZig, scaffold.LangC:
+	case scaffold.LangZig:
 		test = "zig build test       # edit src/main.zig, keep the tests passing"
+	case scaffold.LangC:
+		test = "zig build test       # edit src/fn.c, keep the tests passing"
 	}
 	_, _ = fmt.Fprintf(stdout, "\nNext:\n  cd %s\n  %s\n  guestfn build        # fn.wasm\n  guestfn push <ref>   # publish, then reference the digest from a Composition\n", c.Dir, test)
 	return nil
