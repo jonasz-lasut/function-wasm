@@ -60,6 +60,7 @@ var examples = map[string]Options{
 	LangGo:     {Lang: LangGo, Module: "github.com/jonasz-lasut/function-wasm/examples/hello-go", GoVersion: "1.26.6"},
 	LangTinyGo: {Lang: LangTinyGo, Module: "github.com/jonasz-lasut/function-wasm/examples/hello-tinygo", GoVersion: "1.26.6"},
 	LangRust:   {Lang: LangRust, Name: "hello-rust"},
+	LangZig:    {Lang: LangZig, Name: "hello-zig"},
 }
 
 // TestRenderMatchesExample keeps each scaffold and its example the same
@@ -119,8 +120,8 @@ func TestRenderOptions(t *testing.T) {
 		},
 		"UnknownLang": {
 			reason: "Unknown languages are refused.",
-			opts:   Options{Lang: "zig", Name: "x"},
-			err:    `unsupported language "zig"; one of go, tinygo, rust`,
+			opts:   Options{Lang: "cobol", Name: "x"},
+			err:    `unsupported language "cobol"; one of go, tinygo, rust, zig`,
 		},
 		"NameFromModule": {
 			reason: "The name defaults to the module's last element.",

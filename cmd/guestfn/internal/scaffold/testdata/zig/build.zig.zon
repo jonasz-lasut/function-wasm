@@ -1,0 +1,18 @@
+.{
+    .name = .my_fn,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x4ffa42048f36eb28,
+    .dependencies = .{
+        .protobuf = .{
+            .url = "git+https://github.com/Arwalk/zig-protobuf#b794f99323cead7f1794ae68554d0311cc309857",
+            .hash = "protobuf-5.0.0-0e82ahZiKwC5Yrh4psANoUzrV_H4CQU1EsOIY9Zdyap_",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "proto",
+    },
+}

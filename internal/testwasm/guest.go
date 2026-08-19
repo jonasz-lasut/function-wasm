@@ -61,6 +61,23 @@ func BuildRustGuest(t *testing.T, dir string) []byte {
 	})
 }
 
+// BuildZigGuest compiles the Zig project in dir to a wasip1 reactor with the
+// zig toolchain (which also builds its vendored fnv1 codec), skipping the test
+// when zig is not on PATH.
+func BuildZigGuest(t *testing.T, dir string) []byte {
+	t.Helper()
+	if _, err := exec.LookPath("zig"); err != nil {
+		t.Skip("zig not on PATH")
+	}
+	return build(t, "zig", dir, func(out string) *exec.Cmd {
+		// zig build installs to a prefix; build into a per-test one and copy.
+		prefix := filepath.Join(filepath.Dir(out), "zig-prefix")
+		script := "zig build -Doptimize=ReleaseSmall --prefix " + shellQuote(prefix) +
+			" && cp " + shellQuote(filepath.Join(prefix, "bin", "fn.wasm")) + " " + shellQuote(out)
+		return exec.CommandContext(context.Background(), "sh", "-c", script) //nolint:gosec // Test helper building a checked-in guest.
+	})
+}
+
 func build(t *testing.T, tool, dir string, command func(out string) *exec.Cmd) []byte {
 	t.Helper()
 	if testing.Short() {
