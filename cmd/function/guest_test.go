@@ -59,9 +59,10 @@ func (r *recorder) add(msg string, kv []any) {
 }
 
 // TestRunFunctionGuests runs the example guests — the same greeting function
-// written with function-sdk-go (Go), with TinyGo and vtprotobuf, and in Rust
-// with prost — through the whole host: path source, compile, per-request
-// instance, guest logging. Every guest must produce the same response.
+// written with function-sdk-go (Go), with TinyGo and vtprotobuf, in Rust with
+// prost, in Zig with zig-protobuf and in C with nanopb — through the whole
+// host: path source, compile, per-request instance, guest logging. Every guest
+// must produce the same response.
 func TestRunFunctionGuests(t *testing.T) {
 	guests := map[string]func(t *testing.T) []byte{
 		"go": func(t *testing.T) []byte {
@@ -75,6 +76,9 @@ func TestRunFunctionGuests(t *testing.T) {
 		},
 		"zig": func(t *testing.T) []byte {
 			return testwasm.BuildZigGuest(t, filepath.Join("..", "..", "examples", "hello-zig"))
+		},
+		"c": func(t *testing.T) []byte {
+			return testwasm.BuildCGuest(t, filepath.Join("..", "..", "examples", "hello-c"))
 		},
 	}
 	for guest, build := range guests {
@@ -137,7 +141,7 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 	// reaches the runtime two ways - as an OCI artifact's manifest layer, and
 	// as a manifest a path module names by reference (module.manifestPath), the
 	// local-dev loop for a module that needs a capability.
-	egressRef := pushWithManifest(t, publicRegistry(t)+"/"+guest+":v1", wasm, egressManifest)
+	egressRef := pushWithManifest(t, publicRegistry(t)+"/hello-"+guest+":v1", wasm, egressManifest)
 	pathManifest := guest + "-manifest.yaml"
 	if err := os.WriteFile(filepath.Join(dir, pathManifest), []byte(egressManifest), 0o600); err != nil {
 		t.Fatal(err)
