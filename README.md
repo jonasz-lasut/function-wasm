@@ -225,7 +225,7 @@ module once per digest and caches it.
 ### Other languages
 
 The [ABI](docs/abi.md) is two exports and protobuf bytes, so any wasip1
-toolchain works, and `guestfn` scaffolds and builds three flavours — the
+toolchain works, and `guestfn` scaffolds and builds five flavours — the
 same greeting function each time:
 
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
@@ -234,12 +234,14 @@ same greeting function each time:
 | `tinygo` | [`examples/hello-tinygo`](examples/hello-tinygo) | [TinyGo](https://tinygo.org) | protobuf-go message types + [vtprotobuf](https://github.com/planetscale/vtprotobuf)'s reflection-free codecs, generated from the vendored proto (shipped pre-generated; `go generate` + protoc to redo) | ~1.8 MB |
 | `rust` | [`examples/hello-rust`](examples/hello-rust) | Rust, `wasm32-wasip1` (`cargo`, `protoc`) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~250 KB |
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
+| `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
 
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo;
-a `build.zig` → zig; a `go.mod` requiring vtprotobuf → tinygo; otherwise go)
-or takes `--lang`. Every flavour carries its ABI glue in the open — the Go
-scaffold vendors it under `internal/wasmfn`, TinyGo, Rust and Zig carry theirs
-beside the module — with a small HTTP helper over `wasmfn.http`; each example
+a `build.zig` → zig, for the zig and c guests alike; a `go.mod` requiring
+vtprotobuf → tinygo; otherwise go) or takes `--lang`. Every flavour carries
+its ABI glue in the open — the Go scaffold vendors it under `internal/wasmfn`,
+TinyGo, Rust, Zig and C carry theirs beside the module — with a small HTTP
+helper over `wasmfn.http`; each example
 has a `make render-check` that runs it through the runtime, and the root tests
 run them all through the host as well — with and without an egress grant.
 

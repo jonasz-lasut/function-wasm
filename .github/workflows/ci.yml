@@ -315,3 +315,70 @@ jobs:
 
       - name: Render the Zig Guest
         run: make -C examples/hello-zig render-check
+
+  # The same guest in C (nanopb over the vendored proto), compiled by zig cc
+  # behind its build.zig, rendered through the runtime. The same zig binary
+  # builds it; nanopb_generator (and protoc) are only needed to regenerate the
+  # checked-in codec.
+  render-c:
+    name: render (c)
+    runs-on: ubuntu-24.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.4.1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The runtime the render runs against is built from this tree.
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The nanopb version must match the one the checked-in codec was
+      # generated with (its header names it) and the one build.zig fetches.
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Setup nanopb_generator
+        run: pip install nanopb==0.4.9.1
+
+      - name: Check Generated Codec
+        working-directory: examples/hello-c
+        run: |
+          zig build gen-proto
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/hello-c/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Lint and Test the C Guest
+        working-directory: examples/hello-c
+        run: |
+          zig fmt --check build.zig
+          zig build test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the C Guest
+        run: make -C examples/hello-c render-check
