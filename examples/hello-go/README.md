@@ -6,8 +6,9 @@ run as a WebAssembly module by
 
 `fn.go` is an ordinary [function-sdk-go](https://github.com/crossplane/function-sdk-go)
 function: edit `RunFunction`, keep the tests in `fn_test.go` passing, and never
-touch a wasm toolchain — `main.go` registers the function with the `wasmfn`
-guest SDK, which is what the function-wasm runtime calls. `wasmfn.HTTPClient()`
+touch a wasm toolchain — `main.go` registers the function with the vendored
+`internal/wasmfn` glue (yours to edit), which is what the function-wasm runtime
+calls. `wasmfn.HTTPClient()`
 is an `*http.Client` that performs requests through the host (`config.greetingUrl`
 uses it); the manifest's `requires.egress` decides which are allowed, as the Cedar policy layers permit it.
 

@@ -13,7 +13,7 @@ The repository ships three things:
 | deliverable | where | what |
 |---|---|---|
 | the runtime (host) | `cmd/function` + `internal/` (root module) | the gRPC function: resolves the module named by the Input, compiles and caches it, runs it per request |
-| the guest SDK | `pkg/wasmfn/` (nested module `github.com/jonasz-lasut/function-wasm/pkg/wasmfn`) | linked into a user's `.wasm`: the ABI exports, request/response codec, a `logging.Logger` over the host, `GetConfig` |
+| the guest glue | vendored per guest (the Go scaffold writes `internal/wasmfn`; the example is `examples/hello-go/internal/wasmfn`) | linked into a user's `.wasm`: the ABI exports, request/response codec, a `logging.Logger` over the host, `GetConfig`, `HTTPClient`. Not a published module - each guest owns its copy, like TinyGo/Rust own theirs |
 | the CLI | `cmd/guestfn` (root module) | `guestfn init` scaffolds a guest project (with its `wasmfn.yaml` manifest), `guestfn build` compiles it (and checks its ABI with the runtime's engine, and its manifest), `guestfn inspect` shows what the runtime sees in a module or an artifact, `guestfn push` publishes module and manifest (refusing a module the runtime would refuse), `guestfn manifest validate|show`, `guestfn scaffold composition` writes a Composition step from a manifest (module, config skeleton, and a commented compositionPolicy skeleton derived from the manifest's requires) — CGo, like the runtime |
 
 ## Architecture Overview
@@ -116,10 +116,10 @@ internal/sandbox            EnvBinding{Name, FromCredential{Name, Key}} (binding
 internal/egress             HTTP egress through the host (the sandbox.egress error namespace): New(...Option) → Egress (fixed default budgets + DefaultBlockedCIDRs; options: WithBlockedCIDRs/WithAllowedCIDRs carry the operator's Cedar Action::"dialAddress" rules compiled by authz, WithRateLimit the --egress-rate-limit-* flags, WithBudgets a test/future knob since operators cannot tune the budgets) → Grant(rules) (compiles the module's admitted requires.egress.http rules; there is no host ceiling here - the operator host allowlist is Cedar's grantEgress at admission) → Client(log, digest) per run: rate limit check (process-wide per module digest), admit (scheme, host/pattern, method, normalized path prefix), dialer that resolves and judges every address then dials the checked one, redirects re-checked, budgets, metric + audit line; HTTPRule + ValidateRules (host XOR hostPattern via ValidHost/ValidHostPattern, methods from the enum, normalized pathPrefix - what a manifest's rules are validated with); Request/Response (internal/egress/wire) are the ABI's JSON payloads. No cedar-go here, and blockedBy stays allocation-free (explicit block > allow > DefaultBlockedCIDRs). There is no --sandbox-egress-policy file: hosts and CIDRs are Cedar, budgets are fixed, the rate limit is a flag
 internal/testwasm           WAT fixtures implementing ABI v1 (testwasm.Fixed; the allocator is $wasmfn_alloc so a Body can call it) and BuildGuest (go build of a Go guest); wasi.go: ReadFile/WriteRead/Environ fixtures that use raw WASI (path_open, fd_read/write, environ_get) on pre-open fd 3 — the private /tmp — and hand the bytes back as a normal Result message, exiting with the errno on failure
 input/v1beta1               Input{Module ModuleSource{Type, OCI, HTTP, Path, From}; CompositionPolicy string; Limits; Config} → package/input CRD (CEL rules on module and the from-requires-compositionPolicy invariant — tooling only: Crossplane never installs it, the runtime enforces every rule itself)
-pkg/wasmfn/                 guest SDK: register.go (Register, handle), abi_wasip1.go (exports), logger*.go, config.go, http*.go (HTTPClient: *http.Client over the wasmfn.http import; ErrNoHostHTTP natively; HTTPError for a host refusal)
+examples/hello-go/internal/wasmfn  the Go guest glue (package wasmfn), vendored into every Go guest rather than imported: register.go (Register, handle), abi_wasip1.go (exports), logger*.go, config.go, http*.go (HTTPClient: *http.Client over the wasmfn.http import; ErrNoHostHTTP natively; HTTPError for a host refusal). Its unit tests live here; the go scaffold template carries the same files as *.go.tmpl under templates/go/internal/wasmfn (no tests)
 cmd/guestfn                 CLI (CGo — it links internal/engine for the runtime's own verdicts): main.go (init --lang go|tinygo|rust; build with toolchain detection + engine.Inspect verdict + wasmfn.yaml validation and the example config against its schema; push refusing a non-ABI module, adding the manifest layer from wasmfn.yaml/--manifest with --module-version/--revision, the wasm config with layerDigests through a partial.CompressedImageCore, OCI standard annotations, printing the module: and sandbox: blocks), inspect.go (file → engine.Inspect; reference → manifest, layers, annotations, module.WasmLayer, the manifest layer's summary, --pull), manifest.go (manifest validate <file>, manifest show <ref>; shared OCI helpers), scaffold.go (scaffold composition --from fn.wasm|<ref> [--manifest] [--full]: module + config skeleton + a commented compositionPolicySkeleton from the manifest's requires - grantEgress/usePrivateTmp/setEnv permits and a pullModule permit for an OCI repository, uncommenting yields valid narrowing Cedar), internal/scaffold
                               (templates/<lang> incl. wasmfn.yaml.tmpl, goldens under testdata/<lang>, vendorproto.go run by go generate)
-examples/hello-go           nested module; the go scaffold rendered for its own module path — kept identical by a test
+examples/hello-go           nested module; the go scaffold rendered for its own module path (it vendors internal/wasmfn like a scaffolded project) — kept identical by a test
 examples/hello-tinygo       the tinygo scaffold rendered for itself: vendored proto → protoc-gen-go + protoc-gen-go-vtproto (internal/fnv1), own ABI glue + wasmfn.http helper (http.go), ~1.8 MB
 examples/hello-rust         the rust scaffold rendered for itself: prost over the vendored proto, cdylib for wasm32-wasip1, own ABI glue + wasmfn.http helper (src/http.rs), ~250 KB
 examples/render.sh          shared: start the runtime serving an example dir, crossplane render its example/, optionally --check
@@ -135,8 +135,7 @@ docs/abi.md                 the language-agnostic host/guest contract
 ├── internal/{admission,authz,egress,engine,manifest,module,sandbox,testwasm}
 ├── input/v1beta1/          Input types (+ generate.go under input/ for controller-gen)
 ├── package/                crossplane.yaml + generated input CRD
-├── pkg/wasmfn/             guest SDK — separate go.mod, no dependency on the root module
-├── examples/hello-go/         example guest — separate go.mod, `replace ../../pkg/wasmfn`; built only by tests, CI's render job and local rendering (Makefile), never published
+├── examples/hello-go/         example guest — separate go.mod; vendors its ABI glue under internal/wasmfn (no external SDK); built only by tests, CI's render job and local rendering (Makefile), never published
 ├── examples/hello-tinygo/  same guest, TinyGo + vtprotobuf — separate go.mod, `make generate` (protoc) regenerates internal/fnv1
 ├── examples/hello-rust/    same guest, Rust + prost — Cargo crate, `make build` targets wasm32-wasip1
 ├── examples/render.sh      shared render/render-check driver
@@ -145,7 +144,7 @@ docs/abi.md                 the language-agnostic host/guest contract
 └── .github/workflows/      ci.yml (Go modules + the TinyGo/Rust render jobs), publish-pkg.yml, supplychain.yml, grype-scan.yml, tag.yml
 ```
 
-Four Go modules plus a Cargo crate, no `go.work`: the root module never imports `pkg/wasmfn` or the examples (the root tests build them with their own toolchains in their directories), `wasmfn` never imports the root module (it would drag wasmtime-go/CGo into every guest and create a cycle), `examples/hello-go` uses a `replace` for the SDK, and `examples/hello-tinygo`/`hello-rust` depend on nothing in this repository — they carry the vendored `run_function.proto` and their own ABI glue.
+Three Go modules plus a Cargo crate (and the `httpguest` test fixture's own module), no `go.work`: the root module never imports the examples (the root tests build them with their own toolchains in their directories), and every guest depends on nothing in this repository — `examples/hello-go` vendors its ABI glue under `internal/wasmfn` (which imports only `function-sdk-go/proto`, crossplane-runtime's `logging` and stdlib), and `examples/hello-tinygo`/`hello-rust` carry the vendored `run_function.proto` and their own glue. There is deliberately no shared guest SDK module: a guest would otherwise drag a versioned dependency (and, for TinyGo, an unusable protobuf-go codec) into every project.
 
 ## Key Concepts
 
@@ -210,7 +209,7 @@ then the body. Bump the revision when the design changes; flip Draft → Impleme
 
 ### Guest size
 
-`pkg/wasmfn` imports only `function-sdk-go/proto/v1` (which brings grpc), protobuf, crossplane-runtime's `logging` interface (logr + klog) and stdlib `net/http` (already linked through grpc; a guest that calls `wasmfn.HTTPClient()` pays about 3 MB for the client paths, one that does not pays nothing) — a raw-proto guest is ~20 MB. `function-sdk-go/{request,response,resource}` add crossplane-runtime + Kubernetes apimachinery → ~75 MB, same as a native function. Do not add imports to `pkg/wasmfn` that pull those in.
+The vendored `internal/wasmfn` glue imports only `function-sdk-go/proto/v1` (which brings grpc), protobuf, crossplane-runtime's `logging` interface (logr + klog) and stdlib `net/http` (already linked through grpc; a guest that calls `wasmfn.HTTPClient()` pays about 3 MB for the client paths, one that does not pays nothing) — a raw-proto guest is ~20 MB. `function-sdk-go/{request,response,resource}` add crossplane-runtime + Kubernetes apimachinery → ~75 MB, same as a native function. Do not add imports to the glue (`examples/hello-go/internal/wasmfn` and the matching template) that pull those in.
 
 ## Development Guide
 
@@ -223,8 +222,7 @@ go generate ./...
 # Build and vet (needs a C compiler: wasmtime-go is CGo)
 go build ./... && go vet ./...
 
-# The guest SDK and the example must also build for wasm
-(cd pkg/wasmfn && GOOS=wasip1 GOARCH=wasm go vet ./...)
+# The example guest (with its vendored internal/wasmfn glue) must also build for wasm
 (cd examples/hello-go && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o /dev/null .)
 
 # Build the runtime image (Go version taken from go.mod in CI)
@@ -239,8 +237,7 @@ crossplane xpkg build -f package --embed-runtime-image=runtime
 ```bash
 go test -race ./...                       # root: engine (WAT fixtures), module (in-memory registry), host, CLI, scaffold
 go test -short ./...                      # skips the tests that build the example guests to wasm
-(cd pkg/wasmfn && go test -race ./...)
-(cd examples/hello-go && go test -race ./...)
+(cd examples/hello-go && go test -race ./...)    # the example and its vendored internal/wasmfn glue
 (cd examples/hello-tinygo && go test -race ./...)
 (cd examples/hello-rust && cargo test)
 ```
@@ -282,7 +279,6 @@ Guest modules for tests come from `internal/testwasm`: `testwasm.Fixed(t, rsp, O
 
 ```bash
 golangci-lint run ./...
-(cd pkg/wasmfn && golangci-lint run ./...)
 (cd examples/hello-go && golangci-lint run ./...)
 (cd examples/hello-tinygo && golangci-lint run ./...)
 (cd examples/hello-rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo clippy --target wasm32-wasip1 -- -D warnings)
@@ -297,7 +293,7 @@ Configuration is `.golangci.yml` (golangci-lint v2, the version CI pins is in `.
 - English only; inclusive terminology (allowlist/blocklist, primary/replica, main branch).
 - Conventional commits: `<type>(<scope>): <subject>`, imperative, ≤ 50 chars, one logical change per commit.
 - Only `internal/engine` (and `internal/testwasm`, for `Wat2Wasm`) imports `github.com/bytecodealliance/wasmtime-go/vNN` — its majors change the import path.
-- `wasmfn` must stay importable natively (unconstrained `doc.go`, portable `Register`/`NewLogger`/`GetConfig`/`HTTPClient`); only the exports and the two host imports are `//go:build wasip1`.
+- The `internal/wasmfn` glue must stay buildable natively (unconstrained `doc.go`, portable `Register`/`NewLogger`/`GetConfig`/`HTTPClient`) so a guest's own tests run natively; only the exports and the two host imports are `//go:build wasip1`. Edit it in `examples/hello-go/internal/wasmfn` (buildable, tested), then mirror to `cmd/guestfn/internal/scaffold/templates/go/internal/wasmfn/*.go.tmpl` and the httpguest fixture; `TestRenderMatchesExample` and `go generate` keep them in step.
 
 ## Common Development Tasks
 
@@ -310,7 +306,7 @@ Configuration is `.golangci.yml` (golangci-lint v2, the version CI pins is in `.
 
 ### Adding a host import (ABI)
 
-`wasmfn.http` (`internal/engine/hosthttp.go`, `pkg/wasmfn/http*.go`, `internal/engine/hosthttp_test.go`) is the worked example:
+`wasmfn.http` (`internal/engine/hosthttp.go`, the guest side in `examples/hello-go/internal/wasmfn/http*.go` and the matching template, `internal/engine/hosthttp_test.go`) is the worked example:
 
 1. Define it in `internal/engine` (`linker.FuncWrap(HostModule, name, fn)`; `fn` may return a trailing `*wasmtime.Trap`), allow it in `checkABI` (`checkImport` with its exact type); reach per-run state through `caller.Data().(*call)` and pass what it needs in `RunOptions` (grouped per capability). To hand bytes back, call the guest's `wasmfn_alloc` through `caller.GetExport(ExportAlloc)` — copy the request out first and re-read `UnsafeData` afterwards, the guest may grow its memory — and return `ptr<<32|len`; keep failures inside the payload (never a trap for a refusal)
 2. Add the guest side to `wasmfn` (`//go:wasmimport wasmfn <name>` in a `_wasip1.go` file, a portable fallback in a `_other.go` file behind a swappable package var so the codec is testable natively); a buffer the host allocated through `wasmfn_alloc` is found in `buffers` and released after use
@@ -318,7 +314,7 @@ Configuration is `.golangci.yml` (golangci-lint v2, the version CI pins is in `.
 
 ### Changing the scaffold
 
-Edit the example **and** its template set under `cmd/guestfn/internal/scaffold/templates/<lang>` (templates use `[[ ]]` delimiters so Go braces survive; the examples are the templates rendered for themselves — `examples/hello-go` for `go`, `hello-tinygo`, `hello-rust`; `wasmfn.yaml.tmpl` is the manifest every flavour ships), then `go generate ./...` to refresh the goldens; `TestRenderMatchesExample` keeps each pair in sync (everything but `go.mod`; the examples' `Makefile` and `Cargo.lock` are extra). Rendering an example from its template with `guestfn init --offline` and copying the files over is the quickest way to update it.
+Edit the example **and** its template set under `cmd/guestfn/internal/scaffold/templates/<lang>` (templates use `[[ ]]` delimiters so Go braces survive; the examples are the templates rendered for themselves — `examples/hello-go` for `go`, `hello-tinygo`, `hello-rust`; `wasmfn.yaml.tmpl` is the manifest every flavour ships), then `go generate ./...` to refresh the goldens; `TestRenderMatchesExample` keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, `Cargo.lock` and the go example's `internal/wasmfn/*_test.go` - the glue's own tests, which the scaffold does not ship - are extra). Rendering an example from its template with `guestfn init --offline` and copying the files over is the quickest way to update it.
 
 `go generate ./...` in the root also runs `cmd/guestfn/internal/scaffold/vendorproto.go`: it copies `run_function.proto` out of the function-sdk-go module the root `go.mod` requires into the tinygo/rust templates **and** examples (header names the version) and copies `examples/hello-tinygo/internal/fnv1/*.pb.go` into the tinygo template. After a function-sdk-go bump the order is: root `go generate ./...` → `go generate ./...` in `examples/hello-tinygo` (needs protoc; regenerates the codecs) → root `go generate ./...` again; CI's `check-diff` and `render (tinygo)` fail on drift.
 
@@ -363,9 +359,9 @@ By hand: `go run ./cmd/function --insecure --debug --module-dir=examples/hello-g
 - **Disk caches are bounded by LRU sweep, not per-entry policy**: `--max-cache-size` (off by default) removes least recently used entries across both stores (`cache.Sweep`; a read touches the entry) at startup and every ten minutes; entries are immutable and reproducible, so removal is always safe.
 - **Digests are stated, not discovered** (Jonasz, 2026-08-16): OCI refs must be `@sha256:` pinned (`repo:tag@sha256:…` is fine, the tag is context) and `http.digest` is required — no tags alone, no request-time resolution, no tag TTL; the caches key on the stated digest and every fetch is verified against it. An OCI source carries no separate module digest: the manifest digest already pins the layer, and duplicating it would only be one more thing to get wrong. Fetched modules always go to disk and never stay in memory; compiled modules stay in memory ten minutes idle. No cache flags.
 - **Guest scaffold is wasm-only**: only the runtime is a gRPC server; the guest's tests run natively because `Register`/`NewLogger` are portable.
-- **`pkg/wasmfn` is a nested module** (importable, hence under `pkg/`), never depends on the root module, and re-implements the two `response` helpers it needs (`to`, `fatal`) rather than importing `function-sdk-go/response`, so raw-proto guests stay ~20 MB; `guestfn` and `wasmfn` are tagged in lockstep so a released CLI pins the matching SDK.
+- **No shared guest SDK module; every guest owns its glue** (Jonasz, 2026-08-19): the published `pkg/wasmfn` module was removed. It was the only language given a real SDK, and only Go *could* have one (TinyGo can't use protobuf-go's codec, Rust obviously can't), so it made Go a lone exception to the "thin templates, own your glue" model the other languages already followed. The Go scaffold now vendors the same code (package `wasmfn`) into each project under `internal/wasmfn`, imported by the project's own module path - no published module, no version pin, no `replace`, no lockstep `pkg/wasmfn/vX.Y.Z` tag. The glue still re-implements the two `response` helpers it needs (`to`, `fatal`) rather than importing `function-sdk-go/response`, so raw-proto guests stay ~20 MB. If any language is ever elevated to first-class it should be Rust (smallest, fastest modules), not Go. Trade-off accepted: the glue is duplicated across the example, the template, the golden and the httpguest fixture (`TestRenderMatchesExample` + the build guard it), and a glue fix reaches existing guests only by re-scaffolding or copying - fine for stable ABI-v1 plumbing.
 - **WASI argv is always `["function"]`**: an empty argv traps at `_initialize` because klog's `init` indexes `os.Args[0]` — every function-sdk-go guest imports klog transitively.
-- **TinyGo guests use vtprotobuf, not protobuf-go's codec**: protobuf-go compiles under TinyGo but `proto.Unmarshal` panics with `unimplemented: reflect.New()`; vtprotobuf's generated `MarshalVT`/`UnmarshalVT` (with its pre-generated well-known types) are reflection-free. `pkg/wasmfn` itself is not usable from TinyGo for that reason, so the TinyGo and Rust examples carry their own ABI glue and their own `wasmfn.http` helpers (`encoding/json` works under TinyGo; Rust uses serde_json + base64).
+- **TinyGo guests use vtprotobuf, not protobuf-go's codec**: protobuf-go compiles under TinyGo but `proto.Unmarshal` panics with `unimplemented: reflect.New()`; vtprotobuf's generated `MarshalVT`/`UnmarshalVT` (with its pre-generated well-known types) are reflection-free. The Go glue is not usable from TinyGo for that reason (it was the original reason the languages could not share one SDK), so the TinyGo and Rust examples carry their own ABI glue and their own `wasmfn.http` helpers (`encoding/json` works under TinyGo; Rust uses serde_json + base64).
 - **Warm-up runs while the server listens, health NOT_SERVING until it is done**: a closed port for minutes of compiling would fail a liveness probe on the function port and tell a probe nothing; Not Serving on an open port is what gRPC health is for, and an early request is simply cold. Failures never hold readiness back — an entry is a hint, the request path is the truth — and entries are stated like a Composition states a module (digest-pinned, `path:` under `--module-dir`), never resolved.
 - **The run bound is the engine's, taken after the load and outside the run metric**: `engine.Config.MaxConcurrentRuns` keeps the engine reusable and the bound next to the other ceilings; waiting after `Get` means a queued request holds a module lease but never a compile slot; taking the slot before `start` keeps `run_duration_seconds` about runs, and a request cut short while waiting is a fatal result that is not counted — it never ran. Off by default: the caller's concurrency is a cost the operator can compute, and a semaphore adds head-of-line blocking.
 
@@ -395,7 +391,7 @@ By hand: `go run ./cmd/function --insecure --debug --module-dir=examples/hello-g
 
 Releases are driven by two skills; use them rather than improvising the branch/tag/publish sequence:
 
-- **`/cut-release`** — a new minor or major version from `main` HEAD: new `release-X.Y` branch, tag (`.github/workflows/tag.yml`), GitHub release, package publish (`publish-pkg.yml` → `ghcr.io/jonasz-lasut/function-wasm`, mirrored to `xpkg.upbound.io/jonasz-lasut/function-wasm`), signing/attestation (`supplychain.yml`). The bump size is the user's choice, never inferred. The `pkg/wasmfn` module is tagged with the same version (`pkg/wasmfn/vX.Y.Z`) so `guestfn` scaffolds pin it.
+- **`/cut-release`** — a new minor or major version from `main` HEAD: new `release-X.Y` branch, tag (`.github/workflows/tag.yml`), GitHub release, package publish (`publish-pkg.yml` → `ghcr.io/jonasz-lasut/function-wasm`, mirrored to `xpkg.upbound.io/jonasz-lasut/function-wasm`), signing/attestation (`supplychain.yml`). The bump size is the user's choice, never inferred. There is no separate guest-SDK tag: guests vendor their glue under `internal/wasmfn`.
 - **`/remediate-cves`** — a patch release on the current `release-X.Y` branch for CVEs found by `grype-scan.yml` (weekly against the latest release). A wasmtime-go bump is in scope there (it is the sandbox's own security fix) but changes the import path on majors — `internal/engine` only.
 
 ## Troubleshooting
