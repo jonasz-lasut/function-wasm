@@ -192,8 +192,12 @@ operator's `--sandbox-policy-file` does not permit, before the module runs
 checks the file, `guestfn manifest show ghcr.io/example/greeter:v0.1.0`
 prints what a published module declares, and `guestfn scaffold composition
 --from ghcr.io/example/greeter:v0.1.0` (or `--from fn.wasm`) writes a
-Composition step — `module` pinned, a `config` skeleton from the schema;
-`--full` for a whole Composition.
+Composition step — `module` pinned, a `config` skeleton from the schema, and
+a commented `compositionPolicy` skeleton derived from the manifest's
+`requires` (the `grantEgress`/`usePrivateTmp`/`setEnv` permits it would need,
+and a `pullModule` permit for its repository for a `module.from` source);
+`--full` for a whole Composition. The `compositionPolicy` block is commented:
+it is a starting point for narrowing, never an active grant.
 
 `guestfn push` produces a CNCF wasm OCI artifact: one `application/wasm`
 layer, the manifest as an `application/vnd.wasmfn.manifest.v1+json` layer

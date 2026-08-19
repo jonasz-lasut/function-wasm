@@ -23,6 +23,9 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/admission"
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
+	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
 )
@@ -814,8 +817,22 @@ func TestPushManifest(t *testing.T) {
 	if err := (&ScaffoldCompositionCmd{From: host + "/greeter:v1", FunctionName: "function-wasm"}).Run(context.Background(), &out); err != nil {
 		t.Fatalf("scaffold composition: %v", err)
 	}
+	// An OCI source draws the same sandbox skeleton plus a pullModule permit
+	// for its repository - the one a module.from source needs.
+	ociSkeleton := "    # compositionPolicy is the composition author's Cedar layer - optional and\n" +
+		"    # narrowing-only. A static source needs none (sandbox actions are scoped\n" +
+		"    # default-permit; writing a permit for one opts into narrowing it). These\n" +
+		"    # permits, from this module's manifest, are a starting point, never a grant:\n" +
+		"    # compositionPolicy: |\n" +
+		"    #   // egress api.example.com (grantEgress is also the host allowlist):\n" +
+		"    #   permit (principal, action == Action::\"grantEgress\", resource in HostPattern::\"api.example.com\");\n" +
+		"    #   // the private /tmp the module requires:\n" +
+		"    #   permit (principal, action == Action::\"usePrivateTmp\", resource);\n" +
+		"    #   // for a module.from source, permit pulling this repository (a static\n" +
+		"    #   // source needs no pullModule):\n" +
+		"    #   permit (principal, action == Action::\"pullModule\", resource in Repository::\"" + host + "/greeter\");\n"
 	wantStep := "- step: greeter\n  functionRef:\n    name: function-wasm\n  input:\n    apiVersion: wasm.fn.crossplane.io/v1beta1\n    kind: Input\n    module:\n      oci:\n        ref: " + refLine + "\n      type: OCI\n" +
-		"    # limits: {timeout: 5s, memory: 128Mi}\n    config:\n      greeting: hi\n      retries: 0\n"
+		"    # limits: {timeout: 5s, memory: 128Mi}\n    config:\n      greeting: hi\n      retries: 0\n" + ociSkeleton
 	if diff := cmp.Diff(wantStep, out.String()); diff != "" {
 		t.Errorf("scaffold composition: -want, +got:\n%s", diff)
 	}
@@ -876,6 +893,18 @@ func TestScaffoldComposition(t *testing.T) {
 	if err := os.WriteFile(withManifest, abiModule, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The compositionPolicy skeleton a Path module with the manifestYAML
+	// requires (egress api.example.com, private /tmp; no env, no repository)
+	// draws: commented, narrowing-only, a starting point.
+	sandboxSkeleton := "    # compositionPolicy is the composition author's Cedar layer - optional and\n" +
+		"    # narrowing-only. A static source needs none (sandbox actions are scoped\n" +
+		"    # default-permit; writing a permit for one opts into narrowing it). These\n" +
+		"    # permits, from this module's manifest, are a starting point, never a grant:\n" +
+		"    # compositionPolicy: |\n" +
+		"    #   // egress api.example.com (grantEgress is also the host allowlist):\n" +
+		"    #   permit (principal, action == Action::\"grantEgress\", resource in HostPattern::\"api.example.com\");\n" +
+		"    #   // the private /tmp the module requires:\n" +
+		"    #   permit (principal, action == Action::\"usePrivateTmp\", resource);\n"
 	cases := map[string]struct {
 		reason string
 		args   []string
@@ -887,16 +916,16 @@ func TestScaffoldComposition(t *testing.T) {
 			want:   "- step: plain\n  functionRef:\n    name: function-wasm\n  input:\n    apiVersion: wasm.fn.crossplane.io/v1beta1\n    kind: Input\n    module:\n      path: plain.wasm\n      type: Path\n    # limits: {timeout: 5s, memory: 128Mi}\n",
 		},
 		"Manifest": {
-			reason: "The wasmfn.yaml beside the module gives the step a config from the schema and its name; the sandbox is the manifest's ask, never a step field.",
+			reason: "The wasmfn.yaml beside the module gives the step a config from the schema and its name, and a commented compositionPolicy skeleton from its requires; the sandbox is the manifest's ask, never a step field.",
 			args:   []string{"scaffold", "composition", "--from", withManifest, "--function-name", "my-fn"},
 			want: "- step: greeter\n  functionRef:\n    name: my-fn\n  input:\n    apiVersion: wasm.fn.crossplane.io/v1beta1\n    kind: Input\n    module:\n      path: fn.wasm\n      type: Path\n" +
-				"    # limits: {timeout: 5s, memory: 128Mi}\n    config:\n      greeting: hi\n      retries: 0\n",
+				"    # limits: {timeout: 5s, memory: 128Mi}\n    config:\n      greeting: hi\n      retries: 0\n" + sandboxSkeleton,
 		},
 		"ManifestFlag": {
 			reason: "--manifest names the manifest for a module without one beside it.",
 			args:   []string{"scaffold", "composition", "--from", plain, "--manifest", spec, "--function-name", "my-fn"},
 			want: "- step: greeter\n  functionRef:\n    name: my-fn\n  input:\n    apiVersion: wasm.fn.crossplane.io/v1beta1\n    kind: Input\n    module:\n      path: plain.wasm\n      type: Path\n" +
-				"    # limits: {timeout: 5s, memory: 128Mi}\n    config:\n      greeting: hi\n      retries: 0\n",
+				"    # limits: {timeout: 5s, memory: 128Mi}\n    config:\n      greeting: hi\n      retries: 0\n" + sandboxSkeleton,
 		},
 		"Full": {
 			reason: "--full wraps the step in a Composition like the scaffold's example.",
@@ -928,5 +957,65 @@ func TestScaffoldComposition(t *testing.T) {
 	var doc map[string]any
 	if err := yaml.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Errorf("--full output is not YAML: %v\n%s", err, out.String())
+	}
+}
+
+// TestCompositionPolicySkeleton proves the scaffolded skeleton is not just
+// prose: uncommented it is valid Cedar, and its permits admit exactly the
+// module's requires under the two Cedar layers - so an author who uncomments it
+// gets a working, narrowing compositionPolicy.
+func TestCompositionPolicySkeleton(t *testing.T) {
+	m, err := manifest.Parse([]byte(`{"abi":1,"name":"greeter","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]},"filesystem":{"privateTmp":true},"env":[{"name":"TOKEN","fromCredential":{"name":"api","key":"token"}}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: "ghcr.io/example/greeter@sha256:" + strings.Repeat("a", 64)}}
+
+	// Uncomment the block: every line prefixed "#   " is the compositionPolicy
+	// body (permits and Cedar // comments), the rest is YAML-level guidance.
+	skeleton := compositionPolicySkeleton(src, m)
+	var body []string
+	for _, line := range strings.Split(skeleton, "\n") {
+		if s, ok := strings.CutPrefix(line, "#   "); ok {
+			body = append(body, s)
+		}
+	}
+	cedar := strings.Join(body, "\n")
+	if !strings.Contains(cedar, `Repository::"ghcr.io/example/greeter"`) {
+		t.Fatalf("skeleton lacks the pullModule permit for the repository:\n%s", cedar)
+	}
+
+	comp, err := authz.NewCompositionPolicy([]byte(cedar))
+	if err != nil {
+		t.Fatalf("uncommented skeleton is not valid Cedar: %v\n%s", err, cedar)
+	}
+
+	// A fully open operator layer, so the skeleton (the composition layer) is
+	// what decides: it must admit every requirement the module declares.
+	op, err := authz.NewOperatorPolicy("test", []byte("permit (principal, action, resource);"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eg, err := egress.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ceilings := admission.Ceilings{Egress: eg, Policy: op}
+	caps, err := admission.AdmitRequires(m.Requires, ceilings, comp, authz.Principal{})
+	if err != nil {
+		t.Fatalf("the skeleton does not admit the module's own requires: %v", err)
+	}
+	if !caps.PrivateTmp || len(caps.Rules) != 1 || len(caps.Env) != 1 {
+		t.Errorf("admitted capabilities do not match the requires: %+v", caps)
+	}
+
+	// The skeleton narrows: it scopes grantEgress, so a module that also needs
+	// a host the skeleton did not list is refused by the composition layer.
+	extra, err := manifest.Parse([]byte(`{"abi":1,"requires":{"egress":{"http":[{"host":"other.example.net","methods":["GET"]}]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admission.AdmitRequires(extra.Requires, ceilings, comp, authz.Principal{}); err == nil {
+		t.Error("the skeleton admitted a host it did not list: it does not narrow")
 	}
 }
