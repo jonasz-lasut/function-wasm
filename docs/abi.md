@@ -2,8 +2,9 @@
 
 This is the contract between the function-wasm runtime (the *host*) and a
 WebAssembly module it runs (the *guest*). It is deliberately small so a guest
-can be written in any language with a wasip1 toolchain; the Go `wasmfn`
-package implements it for Go guests.
+can be written in any language with a wasip1 toolchain; the Go glue the
+`guestfn` scaffold vendors into a project (`internal/wasmfn`) implements it for
+Go guests, as the TinyGo and Rust scaffolds do for theirs.
 
 ## Module shape
 
@@ -197,9 +198,9 @@ and are the reference for other languages.
 
 ## Go guests
 
-`wasmfn` (module `github.com/jonasz-lasut/function-wasm/pkg/wasmfn`) implements
-the exports and the logger. A guest registers its function from `init`
-(Go never runs `main` in a wasip1 reactor) and builds with
+The `internal/wasmfn` glue the `guestfn` scaffold vendors into a Go project
+implements the exports and the logger. A guest registers its function from
+`init` (Go never runs `main` in a wasip1 reactor) and builds with
 
 ```shell
 GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -trimpath -ldflags "-s -w" -o fn.wasm .

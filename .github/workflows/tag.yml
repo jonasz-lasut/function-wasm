@@ -38,14 +38,3 @@ jobs:
           version: ${{ github.event.inputs.version }}
           message: ${{ github.event.inputs.message }}
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      # The wasmfn guest SDK is a nested Go module released in lockstep: its
-      # tag is prefixed with the module directory so `go get
-      # github.com/jonasz-lasut/function-wasm/pkg/wasmfn@vX.Y.Z` resolves, and a
-      # released guestfn pins the same version in the projects it scaffolds.
-      - name: Create Guest SDK Tag
-        uses: negz/create-tag@8dce6c9d9b12d161abe01c02d2b03f19e2e9e9bb # v2
-        with:
-          version: pkg/wasmfn/${{ github.event.inputs.version }}
-          message: ${{ github.event.inputs.message }}
-          token: ${{ secrets.GITHUB_TOKEN }}

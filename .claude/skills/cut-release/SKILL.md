@@ -75,9 +75,9 @@ and any example whose Composition installs the function, should name the version
 being released, not the previous one - a copy-pasted install of a tag that does
 not exist yet fails. Find them with `git grep -n 'function-wasm:v[0-9]'` and
 commit the bump to `main` before step 3, so CI stays green and the new branch
-carries it. Not this: illustrative `ghcr.io/example/...` module tags (arbitrary)
-and the scaffold's pinned `wasmfn` version, which the `Tag` workflow tags in
-lockstep.
+carries it. Not this: illustrative `ghcr.io/example/...` module tags
+(arbitrary). Guests vendor their ABI glue under `internal/wasmfn`, so there is
+no separate SDK version to bump.
 
 ### 3. Cut the new release branch from `main` HEAD
 
@@ -121,12 +121,11 @@ gh workflow run Tag --ref "$NEW_BRANCH" -f version="$NEW_VERSION" \
   -f message="Release $NEW_VERSION"
 ```
 
-The workflow creates two tags: `$NEW_VERSION` for the function and the CLI,
-and `pkg/wasmfn/$NEW_VERSION` for the nested guest SDK module, so
-`go get github.com/jonasz-lasut/function-wasm/pkg/wasmfn@$NEW_VERSION` resolves
-and a `guestfn` built from the release pins that SDK version in scaffolds.
-Verify both exist before publishing:
-`git ls-remote --tags origin "$NEW_VERSION" "pkg/wasmfn/$NEW_VERSION"`.
+The workflow creates the `$NEW_VERSION` tag for the function and the CLI.
+Verify it exists before publishing:
+`git ls-remote --tags origin "$NEW_VERSION"`. There is no separate guest-SDK
+tag: each guest vendors its ABI glue under `internal/wasmfn` (the scaffold
+writes it), so nothing needs `go get`-ing at a pinned version.
 
 ### 7. Create the GitHub release
 

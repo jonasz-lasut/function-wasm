@@ -103,8 +103,9 @@ validates it (strictly: unknown fields refused, egress rules through
 `internal/sandbox.ValidateBindings`, the schema compiled) — a
 project with a bad manifest does not build — and checks the scaffold's
 example `config` against the schema; `guestfn push` reads it again and adds
-the layer. Not `pkg/wasmfn`: TinyGo and Rust guests do not use `wasmfn`,
-and anything declared in code would need instantiation to read.
+the layer. It is a data file, not something declared in the guest's code:
+anything in code would need instantiating the module to read, and the manifest
+must be readable without running it (and by every language equally).
 
 **Decided by the policy layers.** In `RunFunction`, after admission and
 the load, before `Run`: `admission.AdmitRequires` decides every
@@ -246,7 +247,8 @@ anything from the composite resource.
 - **Home of the manifest**: the artifact, source of truth; the standard OCI
   annotations are derived from it for registry UIs, never read by the
   runtime.
-- **Writer**: `guestfn` only, from `wasmfn.yaml`; `pkg/wasmfn` stays out.
+- **Writer**: `guestfn` only, from `wasmfn.yaml`; a guest's own glue never
+  writes it.
 - **`requires` is hard**: an unmet requirement refuses the run; an
   `optional: true` per rule can be added later without breaking anything.
 - **`config.schema` enforced by the runtime**, not only by `guestfn`: a Go
