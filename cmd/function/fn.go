@@ -39,15 +39,16 @@ type Function struct {
 	engine   *engine.Engine
 	modules  *engine.Cache
 	resolver *module.Resolver
-	// sandbox is the operator's ceiling for the Input's sandbox grants
-	// (--enable-sandbox-*); nil allows nothing but the default sandbox.
+	// sandbox marks the sandbox startup checks as passed (the $TMPDIR probe); it
+	// carries no capability state, since enablement is the policy's decision.
 	sandbox *sandbox.Ceiling
-	// egress is the operator's HTTP egress ceiling (--enable-sandbox-egress; the
-	// host allowlist and CIDR rules are Cedar's, in --sandbox-policy-file); nil
-	// refuses every sandbox.egress grant.
+	// egress is the HTTP egress mechanism (the SSRF block list, fixed budgets,
+	// the operator's Cedar CIDR rules and rate limit); always built, its use
+	// gated by the policy's grantEgress. Nil refuses every required egress rule.
 	egress *egress.Egress
-	// policy is the operator's grant policy (--sandbox-policy-file); nil adds no
-	// constraint, so admission is identical to a runtime without one.
+	// policy is the operator's grant policy (--sandbox-policy-file), the sole
+	// authority that enables a sandbox capability; nil refuses every sandbox
+	// grant, so a runtime offers only the default sandbox.
 	policy *authz.OperatorPolicy
 
 	// manifests is the on-disk store of module manifests by digest, kept
@@ -89,17 +90,17 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		return f.fatal(rsp, log, metrics.OutcomeRefused, errors.Wrapf(err, "cannot get function input from %T", req)), nil
 	}
 
-	// The observed composite resource identifies the caller for the operator's
-	// grant policy: its kind and namespace, read cheaply before admission. It
-	// is also the source of a module.from value, read as a map further down.
+	// The observed composite resource identifies the caller for the policy
+	// layers: its kind and namespace, read cheaply before admission. It is
+	// also the source of a module.from value, read as a map further down.
 	xr := req.GetObserved().GetComposite().GetResource()
 	principal := principalFrom(xr)
 
-	// What the Composition asks of the runtime — sandbox grants, egress and
-	// limits — is settled before any module is resolved, fetched or compiled:
-	// nothing will run if it is refused. The same admission runs offline as
-	// function validate.
-	admitted, err := admission.Admit(in, f.ceilings(), principal)
+	// What the Composition asks of the runtime — its compositionPolicy
+	// compiled, limits, the module source's shape — is settled before any
+	// module is resolved, fetched or compiled: nothing will run if it is
+	// refused. The same admission runs offline as function validate.
+	admitted, err := admission.Admit(in, f.ceilings())
 	if err != nil {
 		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
 	}
@@ -107,13 +108,13 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 
 	// A module.from source names a field of the composite resource; it is
 	// read from the observed XR on every request (converting the XR is not
-	// free, so only then). The policy is the Input's: nothing but the source
-	// is read from the XR.
+	// free, so only then). The composition policy is the Input's: nothing
+	// but the source is read from the XR.
 	var composite map[string]any
 	if in.Module.From != "" && xr != nil {
 		composite = xr.AsMap()
 	}
-	src, err := module.FromComposite(in.Module, in.Policy, composite)
+	src, err := module.FromComposite(in.Module, admitted.Composition, composite)
 	if err != nil {
 		return f.fatal(rsp, log, metrics.OutcomeRefused, errors.Wrap(err, "cannot resolve module")), nil
 	}
@@ -122,28 +123,17 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
 	}
 
-	// Resolve env[] and envFrom[] against the request's credentials, after
-	// registryAuth: the pull credential is known and withheld as a source.
+	// The credential that pulls the module is the host's business: the guest
+	// sees every other step credential, as a native function would, but not
+	// the one that fetched it. The full set is kept aside for the manifest's
+	// env bindings, which still may not name the withheld one.
 	var pullCred string
 	if src.OCI != nil && src.OCI.Credentials != "" {
 		pullCred = src.OCI.Credentials
 	}
-	if sandbox.RequestsEnv(in.Sandbox) {
-		env, err := sandbox.Materialize(in.Sandbox, sandbox.Sources{
-			Credentials: req.GetCredentials(),
-			Withheld:    pullCred,
-		})
-		if err != nil {
-			return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
-		}
-		limits.Env = env
-	}
-
-	// The credential that pulls the module is the host's business: the guest
-	// sees every other step credential, as a native function would, but not
-	// the one that fetched it.
+	creds := req.GetCredentials()
 	if pullCred != "" {
-		req.Credentials = withoutCredential(req.GetCredentials(), pullCred)
+		req.Credentials = withoutCredential(creds, pullCred)
 	}
 	ref, err := f.resolver.Resolve(ctx, src, auth)
 	if err != nil {
@@ -163,17 +153,37 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	}
 	defer mod.Release()
 
-	// The module's own requirements — its manifest — are checked against
-	// what the Composition granted and the operator admitted: a manifest can
-	// refuse a run earlier, never make one possible.
-	if err := f.checkManifest(ctx, ref, in, admitted); err != nil {
+	// The module's ask — its manifest's requires — is decided by the three
+	// layers: the manifest requests, the compositionPolicy and the operator
+	// policy permit. A manifest can refuse a run earlier, never make one
+	// possible; a module without one gets the default sandbox.
+	m, err := f.manifestFor(ctx, ref)
+	if err != nil {
 		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
+	}
+	caps, err := admission.AdmitRequires(requiresOf(m), f.ceilings(), admitted.Composition, principal)
+	if err != nil {
+		return f.fatal(rsp, log, metrics.OutcomeRefused, errors.Errorf("module %s %v", ref.Description, err)), nil
+	}
+	if err := checkManifestGrants(m, ref.Description, in, caps.Grants()); err != nil {
+		return f.fatal(rsp, log, metrics.OutcomeRefused, err), nil
+	}
+	limits.PrivateTmp = caps.PrivateTmp
+
+	// The manifest's env bindings resolve against the request's own
+	// credentials, the withheld pull credential excluded.
+	if len(caps.Env) > 0 {
+		env, err := sandbox.Materialize(caps.Env, sandbox.Sources{Credentials: creds, Withheld: pullCred})
+		if err != nil {
+			return f.fatal(rsp, log, metrics.OutcomeRefused, errors.Wrapf(err, "module %s", ref.Description)), nil
+		}
+		limits.Env = env
 	}
 
 	// The per-run client logs every request with the
 	// module's reference and digest.
-	if admitted.HTTP != nil {
-		limits.HTTP = admitted.HTTP.Client(log, ref.Digest)
+	if caps.HTTP != nil {
+		limits.HTTP = caps.HTTP.Client(log, ref.Digest)
 	}
 	limits.Key = ref.Digest
 	// A per-step slot, when limits.concurrency is set, is taken before the
@@ -216,16 +226,13 @@ func (f *Function) fatal(rsp *fnv1.RunFunctionResponse, log logging.Logger, outc
 	return rsp
 }
 
-// checkManifest applies the module's manifest, if it has one, to what the
-// Composition was granted: an unmet requirement or a config outside the
-// module's schema is a refusal naming the module. The parsed manifest and
-// its compiled schema are cached per digest.
-func (f *Function) checkManifest(ctx context.Context, ref *module.Ref, in *v1beta1.Input, admitted admission.Admitted) error {
-	m, err := f.manifestFor(ctx, ref)
-	if err != nil {
-		return err
+// requiresOf is the module's ask: its manifest's requires, nil when it
+// carries no manifest (or one without requirements) - the default sandbox.
+func requiresOf(m *manifest.Manifest) *manifest.Requires {
+	if m == nil {
+		return nil
 	}
-	return checkManifestGrants(m, ref.Description, in, admitted)
+	return m.Requires
 }
 
 // manifestFor returns a module's parsed manifest, nil when it carries none:

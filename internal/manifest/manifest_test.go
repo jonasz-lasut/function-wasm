@@ -11,13 +11,14 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/egress"
+	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
 )
 
 const greeterSchema = `{"type":"object","properties":{"greeting":{"type":"string"},"greetingUrl":{"type":"string","format":"uri"}},"additionalProperties":false}`
 
-func rule(host, pattern string, methods []string, prefix string) v1beta1.SandboxHTTPRule {
-	return v1beta1.SandboxHTTPRule{Host: host, HostPattern: pattern, Methods: methods, PathPrefix: prefix}
+func rule(host, pattern string, methods []string, prefix string) egress.HTTPRule {
+	return egress.HTTPRule{Host: host, HostPattern: pattern, Methods: methods, PathPrefix: prefix}
 }
 
 func rawConfig(s string) *runtime.RawExtension {
@@ -29,8 +30,8 @@ func full() *Manifest {
 	return &Manifest{
 		ABI: 1, Name: "greeter", Version: "0.1.0",
 		Requires: &Requires{
-			Egress:     &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", []string{"GET"}, "/v1/")}},
-			Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true},
+			Egress:     &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", []string{"GET"}, "/v1/")}},
+			Filesystem: &Filesystem{PrivateTmp: true},
 		},
 		Config:     &Config{Schema: json.RawMessage(greeterSchema)},
 		MinRuntime: "v0.2.0",
@@ -55,8 +56,8 @@ func TestParse(t *testing.T) {
 			want: &Manifest{
 				ABI: 1, Name: "greeter", Version: "0.1.0", Source: "https://example.com/g", Description: "greets",
 				Requires: &Requires{
-					Egress:     &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", []string{"GET"}, "/v1/")}},
-					Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true},
+					Egress:     &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", []string{"GET"}, "/v1/")}},
+					Filesystem: &Filesystem{PrivateTmp: true},
 				},
 				Config:     &Config{Schema: json.RawMessage(greeterSchema)},
 				MinRuntime: "0.2.0",
@@ -157,8 +158,8 @@ requires:
 minRuntime: v0.2.0
 `,
 			want: &Manifest{ABI: 1, Requires: &Requires{
-				Egress:     &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", []string{"GET"}, "/v1/")}},
-				Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true},
+				Egress:     &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", []string{"GET"}, "/v1/")}},
+				Filesystem: &Filesystem{PrivateTmp: true},
 			}, MinRuntime: "v0.2.0"},
 		},
 		"Strict": {
@@ -171,10 +172,22 @@ minRuntime: v0.2.0
 			yaml:   "abi: 1\nrequires:\n  egress:\n    http:\n    - host: api.example.com\n",
 			err:    `requires.egress.http[0].methods must list at least one method`,
 		},
-		"EnvIsNotARequirement": {
-			reason: "Environment variables are values the Composition sets, not a capability a module requires; the field does not exist.",
-			yaml:   "abi: 1\nrequires:\n  env: [GREETING_STYLE]\n",
-			err:    `unknown field "env"`,
+		"EnvBindings": {
+			reason: "requires.env binds variables to step credential keys - the module's own env contract.",
+			yaml: `abi: 1
+requires:
+  env:
+  - name: DATABASE_URL
+    fromCredential: {name: db, key: url}
+`,
+			want: &Manifest{ABI: 1, Requires: &Requires{
+				Env: []sandbox.EnvBinding{{Name: "DATABASE_URL", FromCredential: sandbox.CredentialKey{Name: "db", Key: "url"}}},
+			}},
+		},
+		"EnvLiteralRefused": {
+			reason: "A literal env value is not expressible: non-secret configuration is the Input's config.",
+			yaml:   "abi: 1\nrequires:\n  env:\n  - name: LOG_LEVEL\n    value: debug\n",
+			err:    `unknown field "value"`,
 		},
 	}
 	for name, tc := range cases {
@@ -222,13 +235,31 @@ func TestValidate(t *testing.T) {
 		},
 		"BadRule": {
 			reason: "A required egress rule passes the Composition's own rule checks, named as requires.egress.http[i].",
-			m:      &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", nil, "")}}}},
+			m:      &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", nil, "")}}}},
 			err:    "requires.egress.http[0].methods must list at least one method",
 		},
 		"BadRuleHost": {
 			reason: "A rule with both host and hostPattern is refused.",
-			m:      &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("a.example.com", "*.example.com", []string{"GET"}, "")}}}},
+			m:      &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("a.example.com", "*.example.com", []string{"GET"}, "")}}}},
 			err:    "requires.egress.http[0] must set exactly one of host and hostPattern",
+		},
+		"BadBindingName": {
+			reason: "An env binding's name must be an identifier, named as requires.env[i].",
+			m:      &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "1x", FromCredential: sandbox.CredentialKey{Name: "db", Key: "url"}}}}},
+			err:    `requires.env[0].name "1x" is not an identifier`,
+		},
+		"BindingWithoutKey": {
+			reason: "A binding names exactly one credential key; a missing key is refused.",
+			m:      &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "db"}}}}},
+			err:    "requires.env[0].fromCredential.key must not be empty",
+		},
+		"DuplicateBinding": {
+			reason: "A variable bound twice is refused.",
+			m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{
+				{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "db", Key: "a"}},
+				{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "db", Key: "b"}},
+			}}},
+			err: "requires.env[1]: TOKEN is already bound by requires.env[0]",
 		},
 		"BadSemver": {
 			reason: "minRuntime is a semantic version.",
@@ -302,7 +333,7 @@ func TestCheck(t *testing.T) {
 			reason: "Every requirement covered, the runtime new enough, the config valid: no error.",
 			args: args{m: full(), grants: Grants{
 				PrivateTmp: true,
-				HTTP:       []v1beta1.SandboxHTTPRule{rule("api.example.com", "", []string{"GET", "POST"}, "/v1/")},
+				HTTP:       []egress.HTTPRule{rule("api.example.com", "", []string{"GET", "POST"}, "/v1/")},
 			}, config: rawConfig(`{"greeting":"hi"}`), runtime: "v0.2.1"},
 		},
 		"NoRequirements": {
@@ -312,87 +343,103 @@ func TestCheck(t *testing.T) {
 		"EgressMissing": {
 			reason: "A required rule no granted rule covers is named as the module wrote it.",
 			args:   args{m: full(), grants: Grants{PrivateTmp: true}},
-			want:   "requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/, which the Composition does not grant",
+			want:   "requires egress host api.example.com methods [GET] pathPrefix /v1/, which was not granted",
 		},
 		"EgressWrongHost": {
 			reason: "Another host does not cover it.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("other.example.com", "", get, "")}}},
-			want: "requires sandbox.egress.http host api.example.com methods [GET], which the Composition does not grant",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("other.example.com", "", get, "")}}},
+			want: "requires egress host api.example.com methods [GET], which was not granted",
 		},
 		"PatternCoversHost": {
 			reason: "A granted pattern covers a required host under it.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("", "*.example.com", get, "")}}},
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("", "*.example.com", get, "")}}},
 		},
 		"PatternDoesNotCoverApex": {
 			reason: "*.example.com does not cover example.com itself.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("example.com", "", get, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("", "*.example.com", get, "")}}},
-			want: "requires sandbox.egress.http host example.com methods [GET], which the Composition does not grant",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("example.com", "", get, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("", "*.example.com", get, "")}}},
+			want: "requires egress host example.com methods [GET], which was not granted",
 		},
 		"PatternUnderPattern": {
 			reason: "A required pattern under a granted pattern is covered.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("", "*.a.example.com", get, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("", "*.example.com", get, "")}}},
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("", "*.a.example.com", get, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("", "*.example.com", get, "")}}},
 		},
 		"PatternEqual": {
 			reason: "The same pattern is covered.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("", "*.example.com", get, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("", "*.example.com", get, "")}}},
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("", "*.example.com", get, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("", "*.example.com", get, "")}}},
 		},
 		"HostDoesNotCoverPattern": {
 			reason: "A granted exact host never covers a required pattern.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("", "*.example.com", get, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "")}}},
-			want: "requires sandbox.egress.http hostPattern *.example.com methods [GET], which the Composition does not grant",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("", "*.example.com", get, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "")}}},
+			want: "requires egress hostPattern *.example.com methods [GET], which was not granted",
 		},
 		"MethodSubset": {
 			reason: "The granted methods must include every required one, whatever the case.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", []string{"GET", "POST"}, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", []string{"get"}, "")}}},
-			want: "requires sandbox.egress.http host api.example.com methods [GET POST], which the Composition does not grant",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", []string{"GET", "POST"}, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("api.example.com", "", []string{"get"}, "")}}},
+			want: "requires egress host api.example.com methods [GET POST], which was not granted",
 		},
 		"MethodsCaseInsensitive": {
 			reason: "get covers GET.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", []string{"GET"}, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", []string{"get"}, "")}}},
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", []string{"GET"}, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("api.example.com", "", []string{"get"}, "")}}},
 		},
 		"PrefixGrantedEmptyAdmitsAll": {
 			reason: "A granted rule without a path prefix admits every required prefix.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "/v1/")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "")}}},
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "/v1/")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "")}}},
 		},
 		"PrefixNarrower": {
 			reason: "A required prefix under the granted prefix is covered.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "/v1/items/")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "/v1/")}}},
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "/v1/items/")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "/v1/")}}},
 		},
 		"PrefixWider": {
 			reason: "A required prefix wider than the granted one is not covered.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "/")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "/v1/")}}},
-			want: "requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /, which the Composition does not grant",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "/")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "/v1/")}}},
+			want: "requires egress host api.example.com methods [GET] pathPrefix /, which was not granted",
 		},
 		"PrefixRequiredEmptyGrantedSet": {
 			reason: "A required rule without a prefix needs a granted rule without one.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "/v1/")}}},
-			want: "requires sandbox.egress.http host api.example.com methods [GET], which the Composition does not grant",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "/v1/")}}},
+			want: "requires egress host api.example.com methods [GET], which was not granted",
 		},
 		"SecondGrantedRuleCovers": {
 			reason: "Any granted rule may cover the requirement.",
-			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "")}}}},
-				grants: Grants{HTTP: []v1beta1.SandboxHTTPRule{rule("other.example.com", "", get, ""), rule("api.example.com", "", get, "")}}},
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "")}}}},
+				grants: Grants{HTTP: []egress.HTTPRule{rule("other.example.com", "", get, ""), rule("api.example.com", "", get, "")}}},
 		},
 		"PrivateTmpMissing": {
 			reason: "The private /tmp must be granted.",
-			args:   args{m: &Manifest{ABI: 1, Requires: &Requires{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}}},
-			want:   "requires sandbox.filesystem.privateTmp, which the Composition does not grant",
+			args:   args{m: &Manifest{ABI: 1, Requires: &Requires{Filesystem: &Filesystem{PrivateTmp: true}}}},
+			want:   "requires a private /tmp (requires.filesystem.privateTmp), which was not granted",
 		},
 		"PrivateTmpFalse": {
 			reason: "privateTmp: false requires nothing.",
-			args:   args{m: &Manifest{ABI: 1, Requires: &Requires{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: false}}}},
+			args:   args{m: &Manifest{ABI: 1, Requires: &Requires{Filesystem: &Filesystem{PrivateTmp: false}}}},
+		},
+		"EnvBindingGranted": {
+			reason: "A required binding among the granted ones passes.",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}}}}},
+				grants: Grants{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}}}}},
+		},
+		"EnvBindingMissing": {
+			reason: "A required binding not granted is named exactly.",
+			args:   args{m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}}}}}},
+			want:   `requires env TOKEN from credential "api" key "token", which was not granted`,
+		},
+		"EnvBindingDifferentKey": {
+			reason: "A grant for the same variable from another key does not cover it: bindings match exactly.",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}}}}},
+				grants: Grants{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "other"}}}}},
+			want: `requires env TOKEN from credential "api" key "token", which was not granted`,
 		},
 		"RuntimeTooOld": {
 			reason: "minRuntime above the runtime's version is refused, both versions named.",
@@ -417,7 +464,7 @@ func TestCheck(t *testing.T) {
 		},
 		"SchemaOK": {
 			reason: "A config the schema accepts passes.",
-			args:   args{m: full(), grants: Grants{PrivateTmp: true, HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", get, "/v1/")}}, config: rawConfig(`{"greeting":"hi","greetingUrl":"https://example.com/en"}`)},
+			args:   args{m: full(), grants: Grants{PrivateTmp: true, HTTP: []egress.HTTPRule{rule("api.example.com", "", get, "/v1/")}}, config: rawConfig(`{"greeting":"hi","greetingUrl":"https://example.com/en"}`)},
 		},
 		"SchemaWrongType": {
 			reason: "A wrong type is named by JSON pointer and the library's message.",
@@ -461,7 +508,7 @@ func TestCheck(t *testing.T) {
 		"OrderEgressBeforeTmp": {
 			reason: "The first miss wins: egress before the filesystem, runtime and schema.",
 			args:   args{m: full()},
-			want:   "requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/, which the Composition does not grant",
+			want:   "requires egress host api.example.com methods [GET] pathPrefix /v1/, which was not granted",
 		},
 	}
 	for name, tc := range cases {
@@ -499,38 +546,6 @@ func TestValidateConfigWithoutValidate(t *testing.T) {
 	}
 }
 
-func TestSandbox(t *testing.T) {
-	cases := map[string]struct {
-		reason string
-		m      *Manifest
-		want   *v1beta1.Sandbox
-	}{
-		"Nothing":  {reason: "No requires, no block.", m: &Manifest{ABI: 1}},
-		"EmptyReq": {reason: "Empty requires, no block.", m: &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{}}}},
-		"Full": {
-			reason: "Rules and filesystem copied.",
-			m:      full(),
-			want: &v1beta1.Sandbox{
-				Egress:     &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{rule("api.example.com", "", []string{"GET"}, "/v1/")}},
-				Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true},
-			},
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			if diff := cmp.Diff(tc.want, tc.m.Sandbox()); diff != "" {
-				t.Errorf("\n%s\nSandbox(): -want, +got:\n%s", tc.reason, diff)
-			}
-		})
-	}
-	// The block satisfies the manifest it came from.
-	m := full()
-	s := m.Sandbox()
-	if err := m.Check(Grants{PrivateTmp: s.Filesystem.PrivateTmp, HTTP: s.Egress.HTTP}, nil, ""); err != nil {
-		t.Errorf("Check(Sandbox()): %v", err)
-	}
-}
-
 func TestSummary(t *testing.T) {
 	cases := map[string]struct {
 		m    *Manifest
@@ -539,8 +554,12 @@ func TestSummary(t *testing.T) {
 		"Empty":   {m: &Manifest{ABI: 1}, want: ""},
 		"Name":    {m: &Manifest{ABI: 1, Name: "greeter"}, want: "greeter"},
 		"Full":    {m: full(), want: "greeter 0.1.0, requires egress api.example.com, private /tmp; config schema; runtime v0.2.0 or newer"},
-		"Pattern": {m: &Manifest{ABI: 1, Version: "1.0.0", Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("", "*.example.com", []string{"GET"}, "")}}}}, want: "1.0.0, requires egress *.example.com"},
+		"Pattern": {m: &Manifest{ABI: 1, Version: "1.0.0", Requires: &Requires{Egress: &Egress{HTTP: []egress.HTTPRule{rule("", "*.example.com", []string{"GET"}, "")}}}}, want: "1.0.0, requires egress *.example.com"},
 		"Schema":  {m: &Manifest{ABI: 1, Config: &Config{Schema: json.RawMessage(`{}`)}}, want: "config schema"},
+		"Env": {m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{
+			{Name: "DATABASE_URL", FromCredential: sandbox.CredentialKey{Name: "db", Key: "url"}},
+			{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}},
+		}}}, want: "env DATABASE_URL TOKEN"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -567,7 +586,7 @@ func TestJSONRoundTrip(t *testing.T) {
 	if diff := cmp.Diff(m, got, cmpopts.IgnoreUnexported(Manifest{})); diff != "" {
 		t.Errorf("round trip: -want, +got:\n%s", diff)
 	}
-	if got.Sandbox() == nil {
+	if got.Requires.Empty() {
 		t.Error("round trip lost the requirements")
 	}
 }

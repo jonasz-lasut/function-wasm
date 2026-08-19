@@ -1,14 +1,15 @@
 // Package manifest is the module manifest of docs/one-pager-module-manifest.md:
-// what a module declares about itself - the sandbox grants it cannot run
-// without, the JSON Schema of the config it reads, its ABI and the oldest
+// what a module declares about itself - the sandbox capabilities it cannot
+// run without, the JSON Schema of the config it reads, its ABI and the oldest
 // runtime it works on - carried as a layer of the module's OCI artifact
 // (JSON, at most MaxSize; media type LayerMediaType) beside the module
 // layer, so it is covered by the manifest digest a Composition pins and by
 // a cosign signature. guestfn writes it from wasmfn.yaml (Load) and pushes
-// it; the runtime and guestfn read it back (Parse) and hold it against the
-// grant a Composition made (Check). A manifest is a requirement, never a
-// grant: it can make a run fail earlier and say why, it cannot make a run
-// possible. Path and HTTP sources carry no manifest.
+// it; the runtime and guestfn read it back (Parse) and hold it against what
+// the policy layers granted (Check). A manifest is a request, never a grant:
+// it can make a run fail earlier and say why, it cannot make a run possible
+// (docs/one-pager-three-layer-authz.md). Path and HTTP sources carry no
+// manifest.
 package manifest
 
 import (
@@ -27,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 
-	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
 )
@@ -63,7 +63,7 @@ type Manifest struct {
 	Source string `json:"source,omitempty"`
 	// Description of the module (org.opencontainers.image.description).
 	Description string `json:"description,omitempty"`
-	// Requires are the grants the module cannot run without.
+	// Requires are the capabilities the module cannot run without.
 	Requires *Requires `json:"requires,omitempty"`
 	// Config describes the Input's config block.
 	Config *Config `json:"config,omitempty"`
@@ -75,23 +75,40 @@ type Manifest struct {
 	schema *jsonschema.Schema
 }
 
-// Requires are the sandbox grants a module needs: each is optional, each
-// must be covered by the Composition's grant for the module to run.
+// Requires are the sandbox capabilities a module needs - its request, the
+// least-trusted layer of the three-layer decision
+// (docs/one-pager-three-layer-authz.md): each is optional, each must be
+// permitted by the composition and operator policy layers for the module to
+// run.
 type Requires struct {
-	// Egress the module needs, in the Input's own shape.
+	// Egress the module needs.
 	Egress *Egress `json:"egress,omitempty"`
 	// Filesystem: {privateTmp: true} when the module writes to /tmp.
-	Filesystem *v1beta1.SandboxFilesystem `json:"filesystem,omitempty"`
-	// Environment variables are deliberately not a requirement: they are
-	// values the Composition sets (and, one day, the request delivers), not
-	// a capability the module needs granted.
+	Filesystem *Filesystem `json:"filesystem,omitempty"`
+	// Env binds environment variables the module reads to keys of the
+	// pipeline step's credentials. A binding is a requirement like egress -
+	// checked, never a grant: the credential still arrives at the step, and
+	// the policy layers must permit setEnv and spendCredential before it is
+	// resolved. Non-secret configuration is the Input's config, not env.
+	Env []sandbox.EnvBinding `json:"env,omitempty"`
 }
 
-// Egress is the HTTP egress a module needs: the same rule type the Input's
-// sandbox.egress.http carries, so a requirement compares like with like and
-// copies verbatim into a Composition.
+// Empty reports whether r requires nothing; a nil Requires is empty.
+func (r *Requires) Empty() bool {
+	return r == nil || ((r.Egress == nil || len(r.Egress.HTTP) == 0) &&
+		(r.Filesystem == nil || !r.Filesystem.PrivateTmp) && len(r.Env) == 0)
+}
+
+// Egress is the HTTP egress a module needs, in the egress package's own rule
+// shape, so a requirement and a compiled grant compare like with like.
 type Egress struct {
-	HTTP []v1beta1.SandboxHTTPRule `json:"http,omitempty"`
+	HTTP []egress.HTTPRule `json:"http,omitempty"`
+}
+
+// Filesystem is what a module needs of a filesystem beyond nothing: a
+// private, empty, writable /tmp for the duration of the request.
+type Filesystem struct {
+	PrivateTmp bool `json:"privateTmp,omitempty"`
 }
 
 // Config describes the module's config block.
@@ -101,11 +118,14 @@ type Config struct {
 	Schema json.RawMessage `json:"schema,omitempty"`
 }
 
-// Grants are what one run was granted - the Composition's sandbox already
-// admitted by the operator's ceiling - held against Requires by Check.
+// Grants are what one run was granted - the requirements the policy layers
+// admitted - held against Requires by Check.
 type Grants struct {
 	PrivateTmp bool
-	HTTP       []v1beta1.SandboxHTTPRule
+	HTTP       []egress.HTTPRule
+	// Env are the env bindings granted to the run; a required binding must be
+	// among them, exactly (same variable, credential and key).
+	Env []sandbox.EnvBinding
 }
 
 // Load reads a wasmfn.yaml: YAML, decoded strictly (a field the runtime does
@@ -174,9 +194,12 @@ func (m *Manifest) Validate() error {
 	}
 	if m.Requires != nil {
 		if m.Requires.Egress != nil {
-			if err := sandbox.ValidateRules("requires.egress.http", m.Requires.Egress.HTTP); err != nil {
+			if err := egress.ValidateRules("requires.egress.http", m.Requires.Egress.HTTP); err != nil {
 				return err
 			}
+		}
+		if err := sandbox.ValidateBindings("requires.env", m.Requires.Env); err != nil {
+			return err
 		}
 	}
 	if m.MinRuntime != "" && !semver.IsValid(canonical(m.MinRuntime)) {
@@ -245,6 +268,13 @@ func (m *Manifest) Summary() string {
 		if r.Filesystem != nil && r.Filesystem.PrivateTmp {
 			parts = append(parts, "private /tmp")
 		}
+		if len(r.Env) > 0 {
+			names := make([]string, 0, len(r.Env))
+			for _, b := range r.Env {
+				names = append(names, b.Name)
+			}
+			parts = append(parts, "env "+strings.Join(names, " "))
+		}
 	}
 	out := strings.Join(parts, ", ")
 	if m.hasConfigSchema() {
@@ -262,26 +292,6 @@ func (m *Manifest) Summary() string {
 	return out
 }
 
-// Sandbox is the Composition sandbox block that satisfies Requires: the
-// egress rules and filesystem copied. Nil when the module requires nothing.
-func (m *Manifest) Sandbox() *v1beta1.Sandbox {
-	r := m.Requires
-	if r == nil {
-		return nil
-	}
-	s := &v1beta1.Sandbox{}
-	if r.Egress != nil && len(r.Egress.HTTP) > 0 {
-		s.Egress = &v1beta1.SandboxEgress{HTTP: append([]v1beta1.SandboxHTTPRule(nil), r.Egress.HTTP...)}
-	}
-	if r.Filesystem != nil && r.Filesystem.PrivateTmp {
-		s.Filesystem = &v1beta1.SandboxFilesystem{PrivateTmp: true}
-	}
-	if s.Egress == nil && s.Filesystem == nil {
-		return nil
-	}
-	return s
-}
-
 // Check holds the manifest against what one run was granted - narrowing
 // only: every requirement must be covered by g, the runtime must be at least
 // minRuntime, and config must satisfy the schema. The first miss is the
@@ -296,12 +306,17 @@ func (m *Manifest) Check(g Grants, config *runtime.RawExtension, runtimeVersion 
 		if r.Egress != nil {
 			for _, required := range r.Egress.HTTP {
 				if !covered(required, g.HTTP) {
-					return fmt.Errorf("requires sandbox.egress.http %s, which the Composition does not grant", describeRule(required))
+					return fmt.Errorf("requires egress %s, which was not granted", describeRule(required))
 				}
 			}
 		}
 		if r.Filesystem != nil && r.Filesystem.PrivateTmp && !g.PrivateTmp {
-			return errors.New("requires sandbox.filesystem.privateTmp, which the Composition does not grant")
+			return errors.New("requires a private /tmp (requires.filesystem.privateTmp), which was not granted")
+		}
+		for _, b := range r.Env {
+			if !bindingGranted(b, g.Env) {
+				return fmt.Errorf("requires env %s from credential %q key %q, which was not granted", b.Name, b.FromCredential.Name, b.FromCredential.Key)
+			}
 		}
 	}
 	if m.MinRuntime != "" && runtimeVersion != "" && runtimeVersion != "(devel)" {
@@ -353,12 +368,24 @@ func RuntimeVersion() string {
 	return bi.Main.Version
 }
 
+// bindingGranted reports whether one required env binding is among the granted
+// ones - exactly: the binding names one variable and one credential key, so
+// there is no wider grant to cover it.
+func bindingGranted(required sandbox.EnvBinding, granted []sandbox.EnvBinding) bool {
+	for _, g := range granted {
+		if g == required {
+			return true
+		}
+	}
+	return false
+}
+
 // covered reports whether one required rule is admitted by a granted rule:
 // the same host, or a granted pattern covering the required host or
 // pattern; the required methods among the granted; the granted path prefix
 // a prefix of the required one (an empty granted prefix admits every path,
 // an empty required prefix needs an empty granted one).
-func covered(required v1beta1.SandboxHTTPRule, granted []v1beta1.SandboxHTTPRule) bool {
+func covered(required egress.HTTPRule, granted []egress.HTTPRule) bool {
 	for _, g := range granted {
 		if !hostCovered(required, g) {
 			continue
@@ -374,7 +401,7 @@ func covered(required v1beta1.SandboxHTTPRule, granted []v1beta1.SandboxHTTPRule
 	return false
 }
 
-func hostCovered(required, granted v1beta1.SandboxHTTPRule) bool {
+func hostCovered(required, granted egress.HTTPRule) bool {
 	switch {
 	case required.Host != "":
 		if granted.Host != "" {
@@ -402,7 +429,7 @@ func methodsCovered(required, granted []string) bool {
 
 // describeRule renders a rule for a refusal: "host api.example.com methods
 // [GET] pathPrefix /v1/".
-func describeRule(r v1beta1.SandboxHTTPRule) string {
+func describeRule(r egress.HTTPRule) string {
 	var b strings.Builder
 	if r.Host != "" {
 		b.WriteString("host " + r.Host)

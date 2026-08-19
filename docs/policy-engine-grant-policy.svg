@@ -22,12 +22,12 @@
 
   <!-- floor + decision -->
   <rect x="24" y="202" width="205" height="46" rx="4" fill="#ffffff" stroke="#c5c1b7" stroke-width="1"/>
-  <text x="38" y="221" font-size="10" font-weight="600" fill="#2c2a25">--enable-sandbox-* = hard floor</text>
-  <text x="38" y="237" font-size="9" fill="#7a7668">a disabled capability is never grantable</text>
+  <text x="38" y="221" font-size="10" font-weight="600" fill="#2c2a25">default-deny</text>
+  <text x="38" y="237" font-size="9" fill="#7a7668">a capability with no permit is refused</text>
 
   <rect x="241" y="202" width="205" height="46" rx="4" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1"/>
-  <text x="255" y="221" font-size="10" font-weight="600" fill="#2c2a25">Cedar narrows within the floor</text>
-  <text x="255" y="237" font-size="9" fill="#7a7668">per-tenant / conditional deny</text>
+  <text x="255" y="221" font-size="10" font-weight="600" fill="#2c2a25">Cedar is the sole enabler</text>
+  <text x="255" y="237" font-size="9" fill="#7a7668">per-tenant / conditional permit</text>
 
   <text x="24" y="277" font-size="10.5" font-weight="700" fill="#3d6b5e">Why</text>
   <text x="24" y="294" font-size="9.5" fill="#7a7668">The one place Cedar is strictly better for operators: per-tenant and conditional</text>

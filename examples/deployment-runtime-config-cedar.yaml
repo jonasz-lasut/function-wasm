@@ -3,8 +3,10 @@
 #
 # Trust model: this Cedar document is OPERATOR-authored and lives only here,
 # beside the runtime. It never comes from a module manifest or a Composition
-# Input (either would let a module self-authorize). It can only TIGHTEN: it is
-# AND-combined with the --enable-sandbox-* floor and evaluated default-deny.
+# Input (either would let a module self-authorize). It is the SOLE authority
+# that enables a sandbox capability: evaluated default-deny, a capability is
+# granted only where a permit matches, and with no policy at all a runtime
+# offers only the default sandbox (nothing but the request).
 ---
 # ── Cedar operator grant policy (--sandbox-policy-file) ───────────────────────────────
 apiVersion: v1
@@ -14,27 +16,26 @@ metadata:
   namespace: crossplane-system
 data:
   policy.cedar: |
-    // Default-deny: with a policy file present, a sandbox capability is granted
-    // ONLY where a permit below matches - and only if its --enable-sandbox-*
-    // flag is on (the flag is the hard floor; this policy narrows within it).
-    // `forbid` always wins. Omitting a capability's permit means it is refused,
-    // even though the flag enables it - so permit every capability you intend
-    // to allow.
+    // Default-deny: this policy is the sole enabler, so a sandbox capability is
+    // granted ONLY where a permit below matches. `forbid` always wins. Omitting
+    // a capability's permit means it is refused - so permit every capability you
+    // intend to allow. With no policy file at all, nothing in the sandbox works.
 
     // Private /tmp (Action::"usePrivateTmp"): allowed for every caller.
     permit (principal, action == Action::"usePrivateTmp", resource);
 
-    // Environment variables (Action::"setEnv"; context.keys holds the explicit
-    // sandbox.env names). Only namespace "team-a" may set env vars...
+    // Environment variables (Action::"setEnv"; context.keys holds the manifest's
+    // requires.env names). Only namespace "team-a" may set env vars...
     permit (principal, action == Action::"setEnv", resource)
     when { principal.namespace == "team-a" };
     // ...and never a variable named like a cloud secret (forbid wins).
     forbid (principal, action == Action::"setEnv", resource)
     when { context.keys.contains("AWS_SECRET_ACCESS_KEY") };
 
-    // HTTP egress (Action::"grantEgress"). This is now the HOST ALLOWLIST: with
-    // the egress file carrying no hosts (below), the ceiling is open and this
-    // default-deny policy is the sole authority over which hosts are grantable.
+    // HTTP egress (Action::"grantEgress"). This is the HOST ALLOWLIST and the
+    // egress enabler: this default-deny policy is the sole authority over which
+    // hosts are grantable, and a module's required egress is refused unless
+    // a permit here matches. The per-run budgets are fixed defaults.
     // The resource is the host or pattern in the HostPattern hierarchy (so
     // `resource in HostPattern::"example.com"` matches an exact host under
     // example.com and the pattern "*.example.com"); resource.host is available
@@ -109,13 +110,10 @@ spec:
                 - --max-concurrent-runs=8
                 # Signatures: keys here, per-repository requirement in the policy.
                 - --cosign-key=/etc/function-wasm/cosign/cosign.pub
-                # Operator grant policy (Cedar): capabilities, per-tenant rules,
-                # requireSignature, and the SSRF CIDR rules.
+                # Operator grant policy (Cedar): the sole enabler of every
+                # sandbox capability, plus per-tenant rules, requireSignature, and
+                # the SSRF CIDR rules. With no policy the sandbox grants nothing.
                 - --sandbox-policy-file=/etc/function-wasm/policy/policy.cedar
-                # Sandbox capability floor (hard on/off; Cedar narrows within it).
-                - --enable-sandbox-private-tmp
-                - --enable-sandbox-env
-                - --enable-sandbox-egress
                 # Egress budgets are fixed defaults (timeout 10s, maxRequests 16,
                 # maxResponseBytes 4Mi, maxRedirects 5); only the rate limit is
                 # tunable. Optional - omit to leave egress unrated.

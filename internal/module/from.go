@@ -9,6 +9,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/fieldpath"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 )
 
 // FromComposite materialises src.From: the named field of the composite
@@ -18,21 +19,19 @@ import (
 // resolved; a src without From is returned unchanged. composite may be nil
 // when nothing is to be read from it.
 //
-// policy fences what the composite resource may choose and is read from the
-// Input only, never from the composite: an XR-chosen ref (or url) must start
-// with one of policy.repositoryAllowList's prefixes when the list is set, and
-// an XR-chosen OCI object may name a pipeline-step credential only when
-// policy.credentialsAllowList lists it — the credential belongs to the
-// Composition, the registry host would be the XR author's, and a registry
-// that answers with a Basic challenge receives the secret. Without such a
-// policy, modules the XR chooses are pulled with the runtime's own Docker
-// config or anonymously. A static source is not subject to policy; its shape
-// is still validated.
-func FromComposite(src v1beta1.ModuleSource, policy *v1beta1.Policy, composite map[string]any) (v1beta1.ModuleSource, error) {
+// comp is the Input's compositionPolicy, compiled - read from the Input only,
+// never from the composite: an XR-chosen ref (or url) must be permitted by a
+// pullModule rule, and an XR-chosen OCI object may name a pipeline-step
+// credential only where a spendCredential rule permits it for that repository
+// — the credential belongs to the Composition, the registry host would be the
+// XR author's, and a registry that answers with a Basic challenge receives
+// the secret. Without such permits, modules the XR chooses are refused (no
+// policy at all) or pulled with the runtime's own Docker config or
+// anonymously (no credentials named). A static source is not subject to the
+// fence; its shape is still validated. The policy's principal (namespace,
+// xrKind) is read from the composite resource itself.
+func FromComposite(src v1beta1.ModuleSource, comp *authz.CompositionPolicy, composite map[string]any) (v1beta1.ModuleSource, error) {
 	if err := Validate(src); err != nil {
-		return src, err
-	}
-	if err := ValidatePolicy(policy); err != nil {
 		return src, err
 	}
 	if src.From == "" {
@@ -62,7 +61,23 @@ func FromComposite(src v1beta1.ModuleSource, policy *v1beta1.Policy, composite m
 	if err := Validate(src); err != nil {
 		return src, fmt.Errorf("module.from: %s of the composite resource: %w", from, err)
 	}
-	return src, admit(from, src, policy)
+	return src, admit(from, src, comp, principalFromComposite(composite))
+}
+
+// principalFromComposite reads the caller identity a composition policy may
+// key on from the observed composite resource: its kind and namespace. A nil
+// composite yields the zero principal, which matches no principal condition -
+// safe, since an unmatched permit denies.
+func principalFromComposite(composite map[string]any) authz.Principal {
+	p := authz.Principal{}
+	if composite == nil {
+		return p
+	}
+	p.XRKind, _ = composite["kind"].(string)
+	if md, ok := composite["metadata"].(map[string]any); ok {
+		p.Namespace, _ = md["namespace"].(string)
+	}
+	return p
 }
 
 // decodeStrict casts an unstructured value into a source through JSON,

@@ -667,9 +667,10 @@ func TestManifestValidate(t *testing.T) {
 
 // TestPushManifest pins what push does with a manifest: publishes it as the
 // artifact's second layer (both digests in the wasm config), maps its fields
-// onto the standard OCI annotations, prints the sandbox block the module
-// requires, and show/inspect/scaffold read the layer back without pulling
-// the module; the runtime's resolver still picks the module layer.
+// onto the standard OCI annotations, prints the requires block the module
+// declares (informational: the policy layers grant it), and
+// show/inspect/scaffold read the layer back without pulling the module; the
+// runtime's resolver still picks the module layer.
 func TestPushManifest(t *testing.T) {
 	srv := httptest.NewServer(registry.New())
 	defer srv.Close()
@@ -687,9 +688,9 @@ func TestPushManifest(t *testing.T) {
 	if err := (&PushCmd{Ref: host + "/greeter:v1", File: file, Revision: "abc123", ModuleVersion: "0.2.0"}).Run(context.Background(), &out); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	wantSuffix := "sandbox:\n  egress:\n    http:\n    - host: api.example.com\n      methods:\n      - GET\n      pathPrefix: /v1/\n  filesystem:\n    privateTmp: true\n"
+	wantSuffix := "requires:\n  egress:\n    http:\n    - host: api.example.com\n      methods:\n      - GET\n      pathPrefix: /v1/\n  filesystem:\n    privateTmp: true\n"
 	if !strings.HasSuffix(out.String(), wantSuffix) {
-		t.Errorf("push output should end with the sandbox block:\nwant suffix:\n%s\ngot:\n%s", wantSuffix, out.String())
+		t.Errorf("push output should end with the requires block:\nwant suffix:\n%s\ngot:\n%s", wantSuffix, out.String())
 	}
 	var refLine string
 	for _, line := range strings.Split(out.String(), "\n") {
@@ -806,14 +807,14 @@ func TestPushManifest(t *testing.T) {
 		t.Errorf("inspect --output json lacks the manifest:\n%s", out.String())
 	}
 
-	// scaffold composition from the reference: the pinned OCI source, the
-	// required sandbox and a config skeleton from the schema.
+	// scaffold composition from the reference: the pinned OCI source and a
+	// config skeleton from the schema; the sandbox is the manifest's ask,
+	// never a step field.
 	out.Reset()
 	if err := (&ScaffoldCompositionCmd{From: host + "/greeter:v1", FunctionName: "function-wasm"}).Run(context.Background(), &out); err != nil {
 		t.Fatalf("scaffold composition: %v", err)
 	}
 	wantStep := "- step: greeter\n  functionRef:\n    name: function-wasm\n  input:\n    apiVersion: wasm.fn.crossplane.io/v1beta1\n    kind: Input\n    module:\n      oci:\n        ref: " + refLine + "\n      type: OCI\n" +
-		"    sandbox:\n      egress:\n        http:\n        - host: api.example.com\n          methods:\n          - GET\n          pathPrefix: /v1/\n      filesystem:\n        privateTmp: true\n" +
 		"    # limits: {timeout: 5s, memory: 128Mi}\n    config:\n      greeting: hi\n      retries: 0\n"
 	if diff := cmp.Diff(wantStep, out.String()); diff != "" {
 		t.Errorf("scaffold composition: -want, +got:\n%s", diff)
@@ -829,8 +830,8 @@ func TestPushManifest(t *testing.T) {
 	if err := (&PushCmd{Ref: host + "/plain:v1", File: plain}).Run(context.Background(), &out); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	if strings.Contains(out.String(), "sandbox:") {
-		t.Errorf("push without a manifest printed a sandbox block:\n%s", out.String())
+	if strings.Contains(out.String(), "requires:") {
+		t.Errorf("push without a manifest printed a requires block:\n%s", out.String())
 	}
 	if err := (&ManifestShowCmd{Ref: host + "/plain:v1", Output: "yaml"}).Run(context.Background(), &out); err == nil || !strings.Contains(err.Error(), "carries no application/vnd.wasmfn.manifest.v1+json layer") {
 		t.Errorf("show on an artifact without a manifest: want an error naming the layer, got %v", err)
@@ -847,7 +848,7 @@ func TestPushManifest(t *testing.T) {
 		t.Fatalf("push --manifest: %v", err)
 	}
 	if !strings.HasSuffix(out.String(), wantSuffix) {
-		t.Errorf("push --manifest output should end with the sandbox block:\n%s", out.String())
+		t.Errorf("push --manifest output should end with the requires block:\n%s", out.String())
 	}
 	if err := (&PushCmd{Ref: host + "/plain:v3", File: plain, ModuleVersion: "1.0.0"}).Run(context.Background(), &out); err == nil || !strings.Contains(err.Error(), "--module-version needs a manifest") {
 		t.Errorf("--module-version without a manifest: want an error, got %v", err)
@@ -886,17 +887,15 @@ func TestScaffoldComposition(t *testing.T) {
 			want:   "- step: plain\n  functionRef:\n    name: function-wasm\n  input:\n    apiVersion: wasm.fn.crossplane.io/v1beta1\n    kind: Input\n    module:\n      path: plain.wasm\n      type: Path\n    # limits: {timeout: 5s, memory: 128Mi}\n",
 		},
 		"Manifest": {
-			reason: "The wasmfn.yaml beside the module gives the step the required sandbox and a config from the schema, and its name.",
+			reason: "The wasmfn.yaml beside the module gives the step a config from the schema and its name; the sandbox is the manifest's ask, never a step field.",
 			args:   []string{"scaffold", "composition", "--from", withManifest, "--function-name", "my-fn"},
 			want: "- step: greeter\n  functionRef:\n    name: my-fn\n  input:\n    apiVersion: wasm.fn.crossplane.io/v1beta1\n    kind: Input\n    module:\n      path: fn.wasm\n      type: Path\n" +
-				"    sandbox:\n      egress:\n        http:\n        - host: api.example.com\n          methods:\n          - GET\n          pathPrefix: /v1/\n      filesystem:\n        privateTmp: true\n" +
 				"    # limits: {timeout: 5s, memory: 128Mi}\n    config:\n      greeting: hi\n      retries: 0\n",
 		},
 		"ManifestFlag": {
 			reason: "--manifest names the manifest for a module without one beside it.",
 			args:   []string{"scaffold", "composition", "--from", plain, "--manifest", spec, "--function-name", "my-fn"},
 			want: "- step: greeter\n  functionRef:\n    name: my-fn\n  input:\n    apiVersion: wasm.fn.crossplane.io/v1beta1\n    kind: Input\n    module:\n      path: plain.wasm\n      type: Path\n" +
-				"    sandbox:\n      egress:\n        http:\n        - host: api.example.com\n          methods:\n          - GET\n          pathPrefix: /v1/\n      filesystem:\n        privateTmp: true\n" +
 				"    # limits: {timeout: 5s, memory: 128Mi}\n    config:\n      greeting: hi\n      retries: 0\n",
 		},
 		"Full": {

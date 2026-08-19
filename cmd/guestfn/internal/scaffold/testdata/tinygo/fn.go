@@ -36,7 +36,7 @@ func RunFunction(req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error
 			greeting = s.StringValue
 		}
 		// greetingUrl fetches the greeting through the host instead — the
-		// sandbox.egress grant of the Composition decides whether it may.
+		// requires.egress grant of the module's manifest decides whether it may.
 		if u, ok := cfg.GetFields()["greetingUrl"]; ok {
 			s, isString := u.GetKind().(*structpb.Value_StringValue)
 			if !isString {

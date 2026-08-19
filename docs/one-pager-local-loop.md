@@ -64,7 +64,7 @@ default; capturing stdout (`wasmfn.log` is the logging path).
 function run [fn.wasm] --request req.yaml|-            # a RunFunctionRequest (protojson, YAML or JSON): captured or hand-written
              [--xr xr.yaml]                            # instead of --request: a first-pass request built from an XR alone
              [--input input.yaml | --composition c.yaml [--step name]]   # the Input; default: the request's own
-             [--enable-sandbox-* --sandbox-egress-policy p.yaml --module-timeout … --cosign-key … --module-dir …]  # the serve ceilings
+             [--sandbox-policy-file p.cedar --module-timeout … --cosign-key … --module-dir …]  # the serve ceilings
              [--output yaml|json] [--summary text|json] [--watch] [--times N] [--debug-info]
 ```
 
@@ -124,7 +124,7 @@ value under `credentials[*].credential_data.data` replaced by the string
 `observed.composite.connection_details` and
 `observed.resources[*].connection_details` values likewise; `data` and
 `stringData` of any resource of `kind: Secret` under `observed`, `desired`
-and `extra_resources`. `input` (with `config` and `sandbox.env`, non-secret
+and `extra_resources`. `input` (with `config`, non-secret
 by the Input's own convention), `context` and the rest of the observed and
 desired state are written as they are — they are the thing to replay, and
 they are cluster state the operator who set the flag can read anyway. The

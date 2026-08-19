@@ -10,9 +10,8 @@ import (
 	"github.com/cedar-policy/cedar-go/types"
 )
 
-// The grant-policy actions the operator's document authorizes. pullModule and
-// spendCredential are the always-on fences' actions; the rest are the sandbox
-// capabilities the operator's grant policy narrows.
+// The grant-policy actions a policy document authorizes: the sandbox
+// capabilities and the credential spend both layers gate.
 var (
 	grantEgressAction     = types.NewEntityUID("Action", "grantEgress")
 	usePrivateTmpAction   = types.NewEntityUID("Action", "usePrivateTmp")
@@ -58,9 +57,9 @@ func (p Principal) entity() types.Entity {
 }
 
 // EgressGrant is one egress request the operator policy judges: a single host
-// or host pattern, one method, and the rule's path prefix. A Composition's
-// sandbox.egress.http rule with several methods is judged once per method, so a
-// policy can key on context.method.
+// or host pattern, one method, and the rule's path prefix. A module
+// manifest's requires.egress.http rule with several methods is judged once
+// per method, so a policy can key on context.method.
 type EgressGrant struct {
 	Host        string
 	HostPattern string
@@ -69,11 +68,13 @@ type EgressGrant struct {
 }
 
 // OperatorPolicy is the operator's grant policy, compiled from --sandbox-policy-file
-// and immutable for the process, so it is safe for concurrent use. A nil
-// *OperatorPolicy is the no-policy-file case: every Permits method returns true,
-// so admission is identical to a runtime started without --sandbox-policy-file. The
-// policy can only tighten - it is AND-combined with the --enable-sandbox-*
-// floor and the built-in fences, and evaluates default-deny (forbid wins).
+// and immutable for the process, so it is safe for concurrent use. It is the sole
+// authority that enables a sandbox capability: a nil *OperatorPolicy is the
+// no-policy-file case and every sandbox-capability Permits method returns false,
+// so a runtime with no --sandbox-policy-file grants nothing but the default
+// sandbox. A capability is granted only where a permit matches; the policy
+// evaluates default-deny (forbid wins) and is AND-combined with the
+// composition layer, which can only narrow it further.
 type OperatorPolicy struct {
 	policy *cedar.PolicySet
 }
@@ -99,50 +100,73 @@ func NewOperatorPolicy(name string, doc []byte) (*OperatorPolicy, error) {
 }
 
 // PermitsPrivateTmp reports whether the operator policy lets principal be
-// granted a private /tmp (action usePrivateTmp). A nil policy permits it.
+// granted a private /tmp (action usePrivateTmp). A nil policy denies it.
 func (p *OperatorPolicy) PermitsPrivateTmp(principal Principal) bool {
 	return p.authorize(principal, usePrivateTmpAction, privateTmpCapability, nil, types.NewRecord(nil))
 }
 
-// PermitsEnv reports whether the operator policy lets principal set environment
-// variables (action setEnv). keys are the explicit sandbox.env names, offered
-// as context.keys for a policy that discriminates by variable name; a bulk
-// envFrom import contributes no keys (they are not known until the run), so a
-// key-level condition applies to sandbox.env only. A nil policy permits it.
-func (p *OperatorPolicy) PermitsEnv(principal Principal, keys []string) bool {
-	vals := make([]types.Value, 0, len(keys))
-	for _, k := range keys {
-		vals = append(vals, types.String(k))
+// HasPrivateTmpRules reports whether the operator policy contains any
+// usePrivateTmp rule, so the runtime probes $TMPDIR at startup only when a
+// private /tmp can ever be granted: a misconfigured $TMPDIR then stops the
+// runtime rather than failing the first request that asks for one. A nil policy
+// has none.
+func (p *OperatorPolicy) HasPrivateTmpRules() bool {
+	if p == nil {
+		return false
 	}
-	ctx := types.NewRecord(types.RecordMap{"keys": types.NewSet(vals...)})
-	return p.authorize(principal, setEnvAction, envCapability, nil, ctx)
+	for _, pol := range p.policy.All() {
+		if policyScopesAction(pol, string(usePrivateTmpAction.ID)) {
+			return true
+		}
+	}
+	return false
+}
+
+// PermitsEnv reports whether the operator policy lets principal set environment
+// variables (action setEnv). keys are the environment variable names asked for,
+// offered as context.keys for a policy that discriminates by variable name. A
+// nil policy denies it.
+func (p *OperatorPolicy) PermitsEnv(principal Principal, keys []string) bool {
+	return p.authorize(principal, setEnvAction, envCapability, nil, envKeysContext(keys))
+}
+
+// PermitsSpendCredential reports whether the operator policy lets principal
+// spend a step credential (action spendCredential) - the operator half of a
+// manifest env binding's gate. The resource is the Credential entity. A nil
+// policy denies it.
+func (p *OperatorPolicy) PermitsSpendCredential(principal Principal, credential string) bool {
+	return p.authorize(principal, spendCredentialAction, cred(credential), nil, types.NewRecord(nil))
 }
 
 // PermitsEgress reports whether the operator policy lets principal be granted
 // one egress request (action grantEgress). The resource is the host or pattern
 // within the HostPattern hierarchy (so a policy can write `resource in
 // HostPattern::"example.com"` or `resource.host like "*.example.com"`), and
-// context carries the method and path. A nil policy permits it.
+// context carries the method and path. A nil policy denies it.
 func (p *OperatorPolicy) PermitsEgress(principal Principal, g EgressGrant) bool {
 	if p == nil {
-		return true
+		return false
 	}
 	resource, entities := hostEntities(g)
-	ctx := types.NewRecord(types.RecordMap{
-		"method": types.String(strings.ToUpper(g.Method)),
-		"path":   types.String(g.Path),
-	})
-	return p.authorize(principal, grantEgressAction, resource, entities, ctx)
+	return p.authorize(principal, grantEgressAction, resource, entities, egressContext(g))
 }
 
 // authorize evaluates one grant-policy request against the operator's document.
-// A nil policy is the no-policy-file case and permits. The resource entity is
-// added to the store when the caller did not supply it (a flat Capability), so
-// both `resource == ...` and `resource in ...` conditions evaluate.
+// A nil policy is the no-policy-file case and denies, so a runtime with no
+// --sandbox-policy-file grants no sandbox capability.
 func (p *OperatorPolicy) authorize(principal Principal, action, resource types.EntityUID, entities types.EntityMap, ctx types.Record) bool {
 	if p == nil {
-		return true
+		return false
 	}
+	return decide(p.policy, principal, action, resource, entities, ctx)
+}
+
+// decide evaluates one request against a compiled policy set - the evaluation
+// the operator and composition layers share, so a policy means the same in
+// both. The resource entity is added to the store when the caller did not
+// supply it (a flat Capability or Credential), so both `resource == ...` and
+// `resource in ...` conditions evaluate.
+func decide(ps *cedar.PolicySet, principal Principal, action, resource types.EntityUID, entities types.EntityMap, ctx types.Record) bool {
 	if entities == nil {
 		entities = types.EntityMap{}
 	}
@@ -150,7 +174,7 @@ func (p *OperatorPolicy) authorize(principal Principal, action, resource types.E
 		entities[resource] = types.Entity{UID: resource}
 	}
 	entities[principalUID] = principal.entity()
-	decision, _ := cedar.Authorize(p.policy, entities, cedar.Request{
+	decision, _ := cedar.Authorize(ps, entities, cedar.Request{
 		Principal: principalUID,
 		Action:    action,
 		Resource:  resource,
@@ -159,50 +183,19 @@ func (p *OperatorPolicy) authorize(principal Principal, action, resource types.E
 	return decision == cedar.Allow
 }
 
-//go:embed credential_fence.cedar
-var credentialFenceText []byte
-
-// CredentialFence is the always-on built-in fence over a Composition's own
-// policy allow lists: a step credential a composite-chosen module names may be
-// spent only when the Composition's credentialsAllowList lists it and the
-// module's repository is within its repositoryAllowList (co-located, as the
-// design's `spendCredential when { credential in allowedCreds && resource in
-// allowedRepos }`). Set membership carries no boundary subtlety, so the
-// credential half is exact; the repository half reuses the boundary-correct
-// Repository hierarchy. The allow lists travel in context, never in the policy
-// text. The compiled policy is immutable, so a fence is safe for concurrent use.
-type CredentialFence struct {
-	policy *cedar.PolicySet
-}
-
-// NewCredentialFence compiles the embedded credential fence policy.
-func NewCredentialFence() (*CredentialFence, error) {
-	ps, err := cedar.NewPolicySetFromBytes("credential_fence.cedar", credentialFenceText)
-	if err != nil {
-		return nil, fmt.Errorf("cannot compile the credential fence policy: %w", err)
+// envKeysContext is the setEnv context: the variable names as context.keys.
+func envKeysContext(keys []string) types.Record {
+	vals := make([]types.Value, 0, len(keys))
+	for _, k := range keys {
+		vals = append(vals, types.String(k))
 	}
-	return &CredentialFence{policy: ps}, nil
+	return types.NewRecord(types.RecordMap{"keys": types.NewSet(vals...)})
 }
 
-// Permits reports whether credential may be spent pulling a module at location:
-// credential must be in allowedCredentials and location within one of
-// allowedRepositories. Empty lists permit nothing.
-func (f *CredentialFence) Permits(credential, location string, allowedCredentials, allowedRepositories []string) bool {
-	resource := cred(credential)
-	// The location's repository entity and its path-boundary ancestors give
-	// `context.repository in context.allowedRepositories` its meaning.
-	_, entities := repositoryEntities(location)
-	entities[resource] = types.Entity{UID: resource}
-	ctx := types.NewRecord(types.RecordMap{
-		"allowedCredentials":  credSet(allowedCredentials),
-		"repository":          repo(location),
-		"allowedRepositories": repoSet(allowedRepositories),
+// egressContext is the grantEgress context: the method and the rule's path.
+func egressContext(g EgressGrant) types.Record {
+	return types.NewRecord(types.RecordMap{
+		"method": types.String(strings.ToUpper(g.Method)),
+		"path":   types.String(g.Path),
 	})
-	decision, _ := cedar.Authorize(f.policy, entities, cedar.Request{
-		Principal: modulePrincipal,
-		Action:    spendCredentialAction,
-		Resource:  resource,
-		Context:   ctx,
-	})
-	return decision == cedar.Allow
 }

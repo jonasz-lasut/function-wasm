@@ -2,30 +2,45 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.0 (env retyped and envFrom; files not implemented)
+* Status: Superseded by docs/one-pager-three-layer-authz.md (was:
+  Implemented, revision 1.0 - env retyped and envFrom; files never
+  implemented)
+
+> **Superseded.** The `sandbox.env`/`sandbox.envFrom`/`valueFrom` delivery
+> this document designed left the Input with the three-layer authorization
+> model (docs/one-pager-three-layer-authz.md): non-secret configuration is
+> the Input's `config` (read via `wasmfn.GetConfig`), and secret env is a
+> module manifest `requires.env` credential binding
+> (`{name, fromCredential: {name, key}}`), resolved from the request's step
+> credentials by `sandbox.Materialize` and gated by both Cedar layers
+> (`setEnv` ∧ `spendCredential`). The bulk-import `envFrom` shape was
+> dropped. Request-delivered *files* remain unbuilt. The rest of this
+> document is kept as the historical record of the env shape decision - its
+> invariants (values only from the request, the pull credential withheld,
+> nothing logged) survive in the binding model.
 
 A module that talks to a cloud API through `wasmfn.HTTPClient()` usually
 does so through an SDK, and SDKs find their credentials where they always
 have: in the environment (`AWS_ACCESS_KEY_ID`, `VAULT_TOKEN`) or in a file
 the environment points at (`GOOGLE_APPLICATION_CREDENTIALS`, `KUBECONFIG`,
-`AWS_SHARED_CREDENTIALS_FILE`). Today the guest receives step credentials
-inside its `RunFunctionRequest` and would have to copy them into its own
-environment or `/tmp` before the SDK's auth chain runs — possible in Go,
-awkward in TinyGo and Rust, repeated by every module author. This document
-designs `sandbox` grants that let the *runtime* do that copy, from the
-request and only from the request: environment variables whose value is a
-key of a step credential, and files written into the private `/tmp` before
-the run. Nothing comes from the host's filesystem or environment,
-consistent with the decision that host directories are not mountable. It
-also settles the shape of `sandbox.env` for good — the one decision with a
-long-term cost — and presents the two ways to get there. Nothing here gates
-`v0.1.0`.
+`AWS_SHARED_CREDENTIALS_FILE`). At the time the guest received step
+credentials inside its `RunFunctionRequest` and would have had to copy them
+into its own environment or `/tmp` before the SDK's auth chain ran —
+possible in Go, awkward in TinyGo and Rust, repeated by every module
+author. This document designed `sandbox` grants that let the *runtime* do
+that copy, from the request and only from the request: environment
+variables whose value is a key of a step credential, and files written into
+the private `/tmp` before the run. Nothing comes from the host's filesystem
+or environment, consistent with the decision that host directories are not
+mountable. It also settled the shape of the env grant — the one decision
+with a long-term cost — and presented the two ways to get there. Nothing
+here gated `v0.1.0`.
 
 ## Today
 
 `sandbox.env` is `map[string]string` (`input/v1beta1/input.go`), literal
 and documented as non-secret; `internal/sandbox.Validate` checks keys and
-NUL-free values, `Ceiling.Grant` refuses it without `--enable-sandbox-env`,
+NUL-free values, admission refuses it without a policy `setEnv` permit,
 `engine.RunOptions.Env` becomes `WasiConfig.SetEnv` in
 `internal/engine/sandbox.go` (`configureSandbox`, sorted keys); no example
 or scaffold template uses `sandbox` yet. `sandbox.filesystem.privateTmp` is
@@ -182,10 +197,10 @@ one refusal is invariant 3 (`sandbox.env[1].valueFrom.credential names
 "registry", the credential that pulls the module: it is never handed to the
 guest`), checked after `FromComposite` settled which credential pulls.
 
-**Ceilings and flags.** None new. `valueFrom` and `envFrom` sit under
-`--enable-sandbox-env` (the existing `sandbox.env is refused: the runtime
-was started without --enable-sandbox-env`, and `sandbox.envFrom is refused:
-…`); `files` under `--enable-sandbox-private-tmp` and needs the grant
+**Ceilings and enablement.** None new. `valueFrom` and `envFrom` are enabled by
+the policy's `setEnv` (the existing `sandbox.env is refused: the operator policy
+(--sandbox-policy-file) does not permit it for this request`, and `sandbox.envFrom
+is refused: …`); `files` under the private `/tmp` (policy `usePrivateTmp`) and needs the grant
 (`sandbox.filesystem.files requires sandbox.filesystem.privateTmp: the
 private /tmp is the only directory a module is given`). Rationale: a module
 with a private `/tmp` and the request in hand can already write any
@@ -209,7 +224,7 @@ before the module is resolved (shape, flags) or before it runs (lookups):
 | pull credential named | invariant 3, above |
 | NUL byte in a value | `sandbox.env[2]: the value of AWS_SECRET_ACCESS_KEY contains a NUL byte, which WASI cannot pass` |
 | `files` without `privateTmp`; a path not under `/tmp/`, not normalized or set twice; over the caps | `sandbox.filesystem.files[1].path "/etc/ssl/ca.pem" must be under /tmp: the private /tmp is the only directory a module is given`; `… "/tmp/../x" must be normalized`; `sandbox.filesystem.files: 1200000 bytes exceed the 1048576-byte cap` |
-| grant without its flag | the existing `--enable-sandbox-*` messages |
+| grant no policy enables | the existing `--sandbox-policy-file` refusal messages |
 
 ## Mechanics
 
@@ -300,11 +315,11 @@ Nothing here gates `v0.1.0`.
   not a valid variable name (`.dockerconfigjson`) — refuse the run naming
   the key, or skip it as a Pod does (silently, with an event nobody reads
   in a function)? Recommendation: refuse; `env[].valueFrom` selects.
-- **Own flag for `files`?** `--enable-sandbox-files` would let an operator
+- **Own action for `files`?** A separate policy action would let an operator
   allow a private `/tmp` yet forbid the runtime writing request bytes into
   it. Recommendation: no — the guest can write the same bytes itself, so
-  the flag would only forbid the convenient path; keep `files` under
-  `--enable-sandbox-private-tmp`, revisit if an operator asks.
+  the action would only forbid the convenient path; keep `files` under the
+  private `/tmp`'s `usePrivateTmp` grant, revisit if an operator asks.
 - **Composite and context sources now or later?** Recommendation: later
   (Phasing 3) — a module can read both from its request, the SDK-in-env
   argument is weak for non-secret values, and the XR-fed-variable trust note

@@ -15,19 +15,19 @@ import (
 	"github.com/crossplane/function-sdk-go/logging"
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/module"
-	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
 	"github.com/jonasz-lasut/function-wasm/internal/testwasm"
 )
 
-// TestRunFunctionManifest pins the manifest check between load and run: an
-// artifact's manifest layer is held against what the Composition was granted
-// (and the operator admitted), narrowing only, and its config schema against
-// the Input's config; the refusal names the module and the miss. Manifests
-// are read once per digest into the on-disk store.
+// TestRunFunctionManifest pins the three-layer decision between load and run:
+// an artifact's manifest layer is the module's request, decided by the
+// compositionPolicy and the operator's policy, and its config schema is held
+// against the Input's config; the refusal names the module and the miss.
+// Manifests are read once per digest into the on-disk store.
 func TestRunFunctionManifest(t *testing.T) {
 	wasm := testwasm.Fixed(t, guestResponse(), testwasm.Options{})
 	srv := httptest.NewServer(registry.New())
@@ -62,15 +62,19 @@ func TestRunFunctionManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ceiling, err := sandbox.NewCeiling(sandbox.Options{EnablePrivateTmp: true, EnableEnv: true})
+	otherHostPolicy, err := authz.NewOperatorPolicy("test.cedar", []byte(`permit (principal, action == Action::"grantEgress", resource in HostPattern::"other.net");`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := cache.New(afero.NewMemMapFs(), false)
-	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: enabledEgress, sandbox: ceiling, manifests: store}
-	closed := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver}
+	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: enabledEgress, policy: permissiveSandboxPolicy(t), manifests: store}
+	// A runtime with no --sandbox-policy-file: the operator layer enables
+	// nothing, so any manifest request is refused.
+	closed := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: enabledEgress, manifests: store}
+	// A policy that permits egress only to another host: the operator layer
+	// is default-deny within too.
+	narrow := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: enabledEgress, policy: otherHostPolicy, manifests: store}
 
-	egressGrant := map[string]any{"egress": map[string]any{"http": []any{map[string]any{"host": "api.example.com", "methods": []any{"GET"}, "pathPrefix": "/v1/"}}}}
 	cases := map[string]struct {
 		reason string
 		fn     *Function
@@ -78,52 +82,52 @@ func TestRunFunctionManifest(t *testing.T) {
 		want   *fnv1.RunFunctionResponse
 	}{
 		"NoManifest": {
-			reason: "A module without a manifest runs as it always did.",
+			reason: "A module without a manifest runs with the default sandbox, whatever the policies would permit.",
 			fn:     f,
 			fields: map[string]any{"module": oci("plain")},
 			want:   guestResponse(),
 		},
 		"EgressGranted": {
-			reason: "A required egress rule the Composition grants (and the operator admits) satisfies the manifest.",
-			fn:     f,
-			fields: map[string]any{"module": oci("egress"), "sandbox": egressGrant},
-			want:   guestResponse(),
-		},
-		"EgressWiderGrant": {
-			reason: "A wider grant covers a narrower requirement: more methods, a shorter prefix.",
-			fn:     f,
-			fields: map[string]any{"module": oci("egress"), "sandbox": map[string]any{"egress": map[string]any{"http": []any{map[string]any{"host": "api.example.com", "methods": []any{"GET", "POST"}}}}}},
-			want:   guestResponse(),
-		},
-		"EgressNotGranted": {
-			reason: "Without the grant the run is refused before it starts, naming the module and the rule.",
+			reason: "A required egress rule both layers permit is granted: nothing to write in the Input.",
 			fn:     f,
 			fields: map[string]any{"module": oci("egress")},
-			want:   fatal("module oci " + refs["egress"] + " requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/, which the Composition does not grant"),
-		},
-		"EgressNarrowerGrant": {
-			reason: "A grant that does not cover the requirement (a longer prefix) is a miss.",
-			fn:     f,
-			fields: map[string]any{"module": oci("egress"), "sandbox": map[string]any{"egress": map[string]any{"http": []any{map[string]any{"host": "api.example.com", "methods": []any{"GET"}, "pathPrefix": "/v1/items/"}}}}},
-			want:   fatal("module oci " + refs["egress"] + " requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/, which the Composition does not grant"),
-		},
-		"CeilingFirst": {
-			reason: "The ceiling refuses before the manifest is consulted: a grant the operator did not enable is the grant-and-flag message, so the manifest never sees what the ceiling would refuse.",
-			fn:     closed,
-			fields: map[string]any{"module": oci("egress"), "sandbox": egressGrant},
-			want:   fatal("sandbox.egress is refused: the runtime was started without --enable-sandbox-egress"),
-		},
-		"TmpGranted": {
-			reason: "A private /tmp, granted, satisfies the manifest.",
-			fn:     f,
-			fields: map[string]any{"module": oci("tmp"), "sandbox": map[string]any{"filesystem": map[string]any{"privateTmp": true}}},
 			want:   guestResponse(),
 		},
-		"TmpNotGranted": {
-			reason: "The unmet requirement is named.",
+		"EgressNoPolicy": {
+			reason: "Without an operator policy the request is refused before the module runs, naming the module and the missing layer.",
+			fn:     closed,
+			fields: map[string]any{"module": oci("egress")},
+			want:   fatal("module oci " + refs["egress"] + " requires egress (requires.egress.http), but the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)"),
+		},
+		"EgressOperatorDenied": {
+			reason: "An operator policy that does not permit the required host refuses it (default-deny within the layer).",
+			fn:     narrow,
+			fields: map[string]any{"module": oci("egress")},
+			want:   fatal("module oci " + refs["egress"] + ` requires egress GET to host "api.example.com" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit`),
+		},
+		"EgressCompositionNarrowed": {
+			reason: "A compositionPolicy that scopes grantEgress opts into narrowing: the module's ask outside it is refused naming the composition layer.",
+			fn:     f,
+			fields: map[string]any{"module": oci("egress"), "compositionPolicy": `permit (principal, action == Action::"grantEgress", resource in HostPattern::"other.net");`},
+			want:   fatal("module oci " + refs["egress"] + ` requires egress GET to host "api.example.com" (requires.egress.http[0]), which the compositionPolicy does not permit`),
+		},
+		"EgressCompositionNotScoping": {
+			reason: "A compositionPolicy that scopes another action does not narrow egress: scoped default-permit.",
+			fn:     f,
+			fields: map[string]any{"module": oci("egress"), "compositionPolicy": `permit (principal, action == Action::"usePrivateTmp", resource);`},
+			want:   guestResponse(),
+		},
+		"TmpGranted": {
+			reason: "A required private /tmp the operator layer permits is granted.",
 			fn:     f,
 			fields: map[string]any{"module": oci("tmp")},
-			want:   fatal("module oci " + refs["tmp"] + " requires sandbox.filesystem.privateTmp, which the Composition does not grant"),
+			want:   guestResponse(),
+		},
+		"TmpNoPolicy": {
+			reason: "The unmet request is named with the missing layer.",
+			fn:     closed,
+			fields: map[string]any{"module": oci("tmp")},
+			want:   fatal("module oci " + refs["tmp"] + " requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"),
 		},
 		"ConfigMatches": {
 			reason: "A config within the module's schema runs.",
@@ -192,14 +196,15 @@ func TestRunFunctionManifest(t *testing.T) {
 		}
 	}
 	// A new process on the same volume — the compiled modules and the store
-	// at hand, the registry gone — reads the manifest from the store.
+	// at hand, the registry gone — reads the manifest from the store: the
+	// request layer still refuses without an operator policy.
 	srv.Close()
-	warm := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: f.modules, resolver: resolver, egress: enabledEgress, sandbox: ceiling, manifests: store}
+	warm := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: f.modules, resolver: resolver, egress: enabledEgress, manifests: store}
 	rsp, err := warm.RunFunction(context.Background(), &fnv1.RunFunctionRequest{Meta: &fnv1.RequestMeta{Tag: "hello"}, Input: inputWith(t, map[string]any{"module": oci("egress")})})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff := cmp.Diff(fatal("module oci "+refs["egress"]+" requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/, which the Composition does not grant"), rsp, protocmp.Transform()); diff != "" {
+	if diff := cmp.Diff(fatal("module oci "+refs["egress"]+" requires egress (requires.egress.http), but the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)"), rsp, protocmp.Transform()); diff != "" {
 		t.Errorf("a stored manifest must be read without the registry: -want, +got:\n%s", diff)
 	}
 }
