@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"hash/crc32"
 	"io/fs"
 	"os"
 	"path"
@@ -27,10 +28,13 @@ const (
 	LangGo     = "go"
 	LangTinyGo = "tinygo"
 	LangRust   = "rust"
+	LangZig    = "zig"
+	LangC      = "c"
 )
 
-// Langs lists the supported languages, default first.
-var Langs = []string{LangGo, LangTinyGo, LangRust}
+// Langs lists the scaffoldable languages, default first. A language joins this
+// list once its template set and golden exist under templates/ and testdata/.
+var Langs = []string{LangGo, LangTinyGo, LangRust, LangZig}
 
 // Options parameterise a scaffold.
 type Options struct {
@@ -62,7 +66,7 @@ func Render(o Options) (map[string][]byte, error) {
 	if !slices.Contains(Langs, o.Lang) {
 		return nil, fmt.Errorf("unsupported language %q; one of %s", o.Lang, strings.Join(Langs, ", "))
 	}
-	if o.Module == "" && o.Lang != LangRust {
+	if o.Module == "" && (o.Lang == LangGo || o.Lang == LangTinyGo) {
 		return nil, fmt.Errorf("a module path is required")
 	}
 	if o.Name == "" {
@@ -102,7 +106,18 @@ func Render(o Options) (map[string][]byte, error) {
 // render executes a template with [[ ]] delimiters, so Go source in the
 // templates keeps its braces.
 func render(name string, content []byte, o Options) ([]byte, error) {
-	t, err := template.New(name).Delims("[[", "]]").Option("missingkey=error").Parse(string(content))
+	// zigid turns a name into a valid Zig identifier for build.zig.zon's
+	// .name field (kebab-case projects need the dashes replaced); zigfp is the
+	// build.zig.zon fingerprint, whose high 32 bits Zig requires to be the
+	// CRC-32 of that identifier (the low 32 are a package id, fixed here since a
+	// wasm guest is never published as a Zig package).
+	funcs := template.FuncMap{
+		"zigid": zigIdent,
+		"zigfp": func(s string) string {
+			return fmt.Sprintf("0x%016x", uint64(crc32.ChecksumIEEE([]byte(zigIdent(s))))<<32|0x8f36eb28)
+		},
+	}
+	t, err := template.New(name).Delims("[[", "]]").Funcs(funcs).Option("missingkey=error").Parse(string(content))
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse template %s: %w", name, err)
 	}
@@ -111,6 +126,18 @@ func render(name string, content []byte, o Options) ([]byte, error) {
 		return nil, fmt.Errorf("cannot render template %s: %w", name, err)
 	}
 	return buf.Bytes(), nil
+}
+
+// zigIdent turns a project name into a valid Zig identifier (Zig's
+// build.zig.zon .name is an enum literal, so kebab-case dashes and other
+// non-identifier bytes become underscores).
+func zigIdent(s string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			return r
+		}
+		return '_'
+	}, s)
 }
 
 // Write writes rendered files under dir, creating it. It refuses to overwrite
