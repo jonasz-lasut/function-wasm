@@ -3,15 +3,14 @@ module github.com/jonasz-lasut/function-wasm/examples/hello-go
 go 1.26.6
 
 require (
+	github.com/crossplane/crossplane-runtime/v2 v2.3.1
 	github.com/crossplane/function-sdk-go v0.7.1
 	github.com/google/go-cmp v0.7.0
-	github.com/jonasz-lasut/function-wasm/pkg/wasmfn v0.0.0
 	google.golang.org/protobuf v1.36.12
 )
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
-	github.com/crossplane/crossplane-runtime/v2 v2.3.1 // indirect
 	github.com/crossplane/crossplane/apis/v2 v2.3.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
@@ -84,7 +83,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2-0.20260122202528-d9cc6641c482 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-// The example builds against the SDK in this repository. A scaffolded guest
-// requires a released version instead.
-replace github.com/jonasz-lasut/function-wasm/pkg/wasmfn => ../../pkg/wasmfn

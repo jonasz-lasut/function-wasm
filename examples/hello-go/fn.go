@@ -14,7 +14,7 @@ import (
 	"github.com/crossplane/function-sdk-go/resource/composed"
 	"github.com/crossplane/function-sdk-go/response"
 
-	"github.com/jonasz-lasut/function-wasm/pkg/wasmfn"
+	"github.com/jonasz-lasut/function-wasm/examples/hello-go/internal/wasmfn"
 )
 
 // Config is what the Composition passes under input.config.

@@ -33,11 +33,11 @@ import (
 func TestInitOffline(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "greeter")
 	var out bytes.Buffer
-	cmd := &InitCmd{Dir: dir, Module: "github.com/me/greeter", SDKVersion: "v0.7.1", WasmfnVersion: "v0.3.0", Offline: true}
+	cmd := &InitCmd{Dir: dir, Module: "github.com/me/greeter", SDKVersion: "v0.7.1", Offline: true}
 	if err := cmd.Run(context.Background(), &out); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	for _, f := range []string{"go.mod", "main.go", "fn.go", "fn_test.go", "README.md", ".gitignore", "example/composition.yaml", "example/xr.yaml", "example/functions.yaml"} {
+	for _, f := range []string{"go.mod", "main.go", "fn.go", "fn_test.go", "README.md", ".gitignore", "example/composition.yaml", "example/xr.yaml", "example/functions.yaml", "internal/wasmfn/register.go"} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Errorf("missing %s: %v", f, err)
 		}
@@ -46,10 +46,13 @@ func TestInitOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"module github.com/me/greeter", "go " + goVersion(), "github.com/crossplane/function-sdk-go v0.7.1", "github.com/jonasz-lasut/function-wasm/pkg/wasmfn v0.3.0"} {
+	for _, want := range []string{"module github.com/me/greeter", "go " + goVersion(), "github.com/crossplane/function-sdk-go v0.7.1"} {
 		if !strings.Contains(string(gomod), want) {
 			t.Errorf("go.mod lacks %q:\n%s", want, gomod)
 		}
+	}
+	if main, err := os.ReadFile(filepath.Join(dir, "main.go")); err != nil || !strings.Contains(string(main), `"github.com/me/greeter/internal/wasmfn"`) {
+		t.Errorf("main.go should import the vendored glue by the project's module path:\n%s", main)
 	}
 	if !strings.Contains(out.String(), "Created "+dir) {
 		t.Errorf("unexpected output:\n%s", out.String())
@@ -66,7 +69,7 @@ func TestInitOffline(t *testing.T) {
 func TestParseAndRun(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "parsed")
 	var out bytes.Buffer
-	ctx, err := parser(&out).Parse([]string{"init", dir, "--offline", "--wasmfn-version", "v0.3.0"})
+	ctx, err := parser(&out).Parse([]string{"init", dir, "--offline"})
 	if err != nil {
 		t.Fatalf("Parse(): %v", err)
 	}
@@ -77,7 +80,7 @@ func TestParseAndRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"module parsed", "github.com/crossplane/function-sdk-go " + fallbackSDKVersion, "github.com/jonasz-lasut/function-wasm/pkg/wasmfn v0.3.0"} {
+	for _, want := range []string{"module parsed", "github.com/crossplane/function-sdk-go " + fallbackSDKVersion} {
 		if !strings.Contains(string(gomod), want) {
 			t.Errorf("go.mod lacks %q:\n%s", want, gomod)
 		}
@@ -87,27 +90,18 @@ func TestParseAndRun(t *testing.T) {
 	}
 }
 
-func TestInitOfflineNeedsVersion(t *testing.T) {
-	cmd := &InitCmd{Dir: t.TempDir(), WasmfnVersion: "latest", SDKVersion: "v0.7.1", Offline: true}
-	if err := cmd.Run(context.Background(), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "--offline needs --wasmfn-version") {
-		t.Errorf("want an error about --wasmfn-version, got %v", err)
-	}
-}
-
-// TestInitBuild scaffolds a project against the SDK checkout in this
-// repository and compiles it to wasm with the Go toolchain: the scaffold must
+// TestInitBuild scaffolds a project (with its vendored internal/wasmfn glue)
+// and compiles it to wasm with the Go toolchain: the scaffold must
 // build, not just render.
 func TestInitBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping scaffold build in -short mode")
 	}
 	dir := filepath.Join(t.TempDir(), "greeter")
-	sdk, err := filepath.Abs(filepath.Join("..", "..", "pkg", "wasmfn"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var out bytes.Buffer
-	if err := (&InitCmd{Dir: dir, SDKVersion: "v0.7.1", WasmfnVersion: "latest", WasmfnDir: sdk}).Run(context.Background(), &out); err != nil {
+	// Non-offline: the scaffold vendors its glue under internal/wasmfn, so
+	// init only go-gets function-sdk-go and go-mod-tidy pulls the rest.
+	if err := (&InitCmd{Dir: dir, SDKVersion: "v0.7.1"}).Run(context.Background(), &out); err != nil {
 		t.Fatalf("init: %v\n%s", err, out.String())
 	}
 	if err := (&BuildCmd{Dir: dir, Output: "fn.wasm"}).Run(context.Background(), &out); err != nil {
@@ -166,9 +160,8 @@ func TestDetectLang(t *testing.T) {
 		err    string
 	}{
 		"Cargo":  {reason: "A Cargo.toml is a Rust guest.", files: map[string]string{"Cargo.toml": "[package]"}, want: "rust"},
-		"Go":     {reason: "A go.mod requiring wasmfn is a Go guest.", files: map[string]string{"go.mod": "module x\nrequire github.com/jonasz-lasut/function-wasm/pkg/wasmfn v0.1.0\n"}, want: "go"},
-		"TinyGo": {reason: "A go.mod requiring vtprotobuf but not wasmfn is the TinyGo flavour.", files: map[string]string{"go.mod": "module x\nrequire github.com/planetscale/vtprotobuf v0.6.0\n"}, want: "tinygo"},
-		"Both":   {reason: "wasmfn wins over vtprotobuf: the SDK guest is built with Go.", files: map[string]string{"go.mod": "module x\nrequire (\n\tgithub.com/planetscale/vtprotobuf v0.6.0\n\tgithub.com/jonasz-lasut/function-wasm/pkg/wasmfn v0.1.0\n)\n"}, want: "go"},
+		"Go":     {reason: "A go.mod that does not require vtprotobuf is a Go guest.", files: map[string]string{"go.mod": "module x\nrequire github.com/crossplane/function-sdk-go v0.7.1\n"}, want: "go"},
+		"TinyGo": {reason: "A go.mod requiring vtprotobuf is the TinyGo flavour.", files: map[string]string{"go.mod": "module x\nrequire github.com/planetscale/vtprotobuf v0.6.0\n"}, want: "tinygo"},
 		"None":   {reason: "Neither file is an error pointing at --lang.", files: nil, err: "cannot tell the project's language"},
 	}
 	for name, tc := range cases {

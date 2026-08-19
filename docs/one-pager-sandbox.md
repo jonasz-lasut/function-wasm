@@ -176,10 +176,11 @@ request is also cut at the run's remaining deadline), and records
 `function_wasm_module_http_requests_total{outcome}` (`ok`, `refused`,
 `budget`, `error`) plus one log line per request (method, host, path
 without query, status or reason, bytes, duration; never headers or body).
-Every failure is a response with status 0 and an error — never a trap. The
-guest SDK exposes `wasmfn.HTTPClient()` — an `*http.Client` whose transport
-is the import — so Go code that takes an `http.Client` (cloud SDKs, OpenAPI
-clients) works unmodified (about 3 MB on a raw-proto guest); the TinyGo and
+Every failure is a response with status 0 and an error — never a trap. The Go
+glue the scaffold vendors (`internal/wasmfn`) exposes `wasmfn.HTTPClient()` —
+an `*http.Client` whose transport is the import — so Go code that takes an
+`http.Client` (cloud SDKs, OpenAPI clients) works unmodified (about 3 MB on a
+raw-proto guest); the TinyGo and
 Rust scaffolds carry a helper over the import (`HTTPGet`/`HTTPDo`,
 `http::get`/`http::send`). When wasmtime-go gains component-model support and
 guest toolchains emit WASI 0.2/0.3 components (Rust today, standard Go not

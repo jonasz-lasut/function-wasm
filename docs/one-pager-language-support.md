@@ -76,7 +76,7 @@ Effort below is graded against the Rust flavour (S/S/S — already built) as
 
 | flavour | how it talks protobuf | module | glue |
 |---|---|---|---|
-| Go (`wasmfn` + function-sdk-go) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) | `pkg/wasmfn` |
+| Go (function-sdk-go + vendored glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) | vendored `internal/wasmfn` |
 | TinyGo | protobuf-go types + vtprotobuf codecs, generated from the vendored proto | ~1.8 MB | `abi_wasip1.go` + `http.go`/`http_wasip1.go` |
 | Rust | prost over the vendored proto | ~250 KB | `src/lib.rs` `abi` module + `src/http.rs` |
 

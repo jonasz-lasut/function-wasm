@@ -53,15 +53,13 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Tidies every Go module (root, the wasmfn guest SDK, the Go example
-      # guests, the httpguest test fixture), regenerates the Input CRD
-      # (package/input) and the guestfn scaffold goldens; all of it must be
-      # committed. The TinyGo example's generated protobuf code is checked by
-      # the render-tinygo job.
+      # Tidies every Go module (root, the Go example guests, the httpguest test
+      # fixture), regenerates the Input CRD (package/input) and the guestfn
+      # scaffold goldens; all of it must be committed. The TinyGo example's
+      # generated protobuf code is checked by the render-tinygo job.
       - name: Check Diff
         run: |
           go mod tidy
-          (cd pkg/wasmfn && go mod tidy)
           (cd examples/hello-go && go mod tidy)
           (cd examples/hello-tinygo && go mod tidy)
           (cd internal/testwasm/testdata/httpguest && go mod tidy)
@@ -83,7 +81,6 @@ jobs:
       matrix:
         module:
           - .
-          - pkg/wasmfn
           - examples/hello-go
           - examples/hello-tinygo
     steps:
@@ -122,12 +119,6 @@ jobs:
       # the host, so the Go toolchain doubles as the guest compiler here.
       - name: Run Unit Tests
         run: go test -race ./... -covermode=atomic -coverprofile=./coverage.txt
-
-      - name: Test the Guest SDK
-        working-directory: pkg/wasmfn
-        run: |
-          go test -race ./...
-          GOOS=wasip1 GOARCH=wasm go vet ./...
 
       - name: Publish Unit Test Coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
