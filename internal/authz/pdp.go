@@ -124,17 +124,19 @@ func (p *OperatorPolicy) HasPrivateTmpRules() bool {
 }
 
 // PermitsEnv reports whether the operator policy lets principal set environment
-// variables (action setEnv). keys are the explicit sandbox.env names, offered
-// as context.keys for a policy that discriminates by variable name; a bulk
-// envFrom import contributes no keys (they are not known until the run), so a
-// key-level condition applies to sandbox.env only. A nil policy denies it.
+// variables (action setEnv). keys are the environment variable names asked for,
+// offered as context.keys for a policy that discriminates by variable name. A
+// nil policy denies it.
 func (p *OperatorPolicy) PermitsEnv(principal Principal, keys []string) bool {
-	vals := make([]types.Value, 0, len(keys))
-	for _, k := range keys {
-		vals = append(vals, types.String(k))
-	}
-	ctx := types.NewRecord(types.RecordMap{"keys": types.NewSet(vals...)})
-	return p.authorize(principal, setEnvAction, envCapability, nil, ctx)
+	return p.authorize(principal, setEnvAction, envCapability, nil, envKeysContext(keys))
+}
+
+// PermitsSpendCredential reports whether the operator policy lets principal
+// spend a step credential (action spendCredential) - the operator half of a
+// manifest env binding's gate. The resource is the Credential entity. A nil
+// policy denies it.
+func (p *OperatorPolicy) PermitsSpendCredential(principal Principal, credential string) bool {
+	return p.authorize(principal, spendCredentialAction, cred(credential), nil, types.NewRecord(nil))
 }
 
 // PermitsEgress reports whether the operator policy lets principal be granted
@@ -147,22 +149,25 @@ func (p *OperatorPolicy) PermitsEgress(principal Principal, g EgressGrant) bool 
 		return false
 	}
 	resource, entities := hostEntities(g)
-	ctx := types.NewRecord(types.RecordMap{
-		"method": types.String(strings.ToUpper(g.Method)),
-		"path":   types.String(g.Path),
-	})
-	return p.authorize(principal, grantEgressAction, resource, entities, ctx)
+	return p.authorize(principal, grantEgressAction, resource, entities, egressContext(g))
 }
 
 // authorize evaluates one grant-policy request against the operator's document.
 // A nil policy is the no-policy-file case and denies, so a runtime with no
-// --sandbox-policy-file grants no sandbox capability. The resource entity is
-// added to the store when the caller did not supply it (a flat Capability), so
-// both `resource == ...` and `resource in ...` conditions evaluate.
+// --sandbox-policy-file grants no sandbox capability.
 func (p *OperatorPolicy) authorize(principal Principal, action, resource types.EntityUID, entities types.EntityMap, ctx types.Record) bool {
 	if p == nil {
 		return false
 	}
+	return decide(p.policy, principal, action, resource, entities, ctx)
+}
+
+// decide evaluates one request against a compiled policy set - the evaluation
+// the operator and composition layers share, so a policy means the same in
+// both. The resource entity is added to the store when the caller did not
+// supply it (a flat Capability or Credential), so both `resource == ...` and
+// `resource in ...` conditions evaluate.
+func decide(ps *cedar.PolicySet, principal Principal, action, resource types.EntityUID, entities types.EntityMap, ctx types.Record) bool {
 	if entities == nil {
 		entities = types.EntityMap{}
 	}
@@ -170,13 +175,30 @@ func (p *OperatorPolicy) authorize(principal Principal, action, resource types.E
 		entities[resource] = types.Entity{UID: resource}
 	}
 	entities[principalUID] = principal.entity()
-	decision, _ := cedar.Authorize(p.policy, entities, cedar.Request{
+	decision, _ := cedar.Authorize(ps, entities, cedar.Request{
 		Principal: principalUID,
 		Action:    action,
 		Resource:  resource,
 		Context:   ctx,
 	})
 	return decision == cedar.Allow
+}
+
+// envKeysContext is the setEnv context: the variable names as context.keys.
+func envKeysContext(keys []string) types.Record {
+	vals := make([]types.Value, 0, len(keys))
+	for _, k := range keys {
+		vals = append(vals, types.String(k))
+	}
+	return types.NewRecord(types.RecordMap{"keys": types.NewSet(vals...)})
+}
+
+// egressContext is the grantEgress context: the method and the rule's path.
+func egressContext(g EgressGrant) types.Record {
+	return types.NewRecord(types.RecordMap{
+		"method": types.String(strings.ToUpper(g.Method)),
+		"path":   types.String(g.Path),
+	})
 }
 
 //go:embed credential_fence.cedar
