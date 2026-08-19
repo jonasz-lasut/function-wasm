@@ -9,7 +9,7 @@ import (
 
 // HTTP egress through the host (docs/abi.md, "HTTP egress"): the guest never
 // opens a socket; it hands the host a request and the host performs it within
-// the Composition's sandbox.egress grant and the operator's egress policy, or
+// the egress grant of the module's manifest and the operator's egress policy, or
 // answers with a refusal. The wire format is JSON both ways; the host writes
 // its response into a buffer allocated through this guest's own wasmfn_alloc.
 

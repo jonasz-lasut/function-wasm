@@ -47,7 +47,7 @@ pub fn run_function(req: &RunFunctionRequest) -> Result<RunFunctionResponse, Str
         Err(e) => return Err(format!("cannot read config: {e}")),
     };
     // greetingUrl fetches the greeting through the host instead — the
-    // sandbox.egress grant of the Composition decides whether it may.
+    // requires.egress grant of the module's manifest decides whether it may.
     match config_string(req, "greetingUrl") {
         Ok(Some(url)) => {
             greeting = http::get_text(&url).map_err(|e| format!("cannot fetch greeting: {e}"))?;

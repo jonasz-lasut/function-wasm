@@ -24,8 +24,8 @@ data:
     // Private /tmp (Action::"usePrivateTmp"): allowed for every caller.
     permit (principal, action == Action::"usePrivateTmp", resource);
 
-    // Environment variables (Action::"setEnv"; context.keys holds the explicit
-    // sandbox.env names). Only namespace "team-a" may set env vars...
+    // Environment variables (Action::"setEnv"; context.keys holds the manifest's
+    // requires.env names). Only namespace "team-a" may set env vars...
     permit (principal, action == Action::"setEnv", resource)
     when { principal.namespace == "team-a" };
     // ...and never a variable named like a cloud secret (forbid wins).
@@ -34,7 +34,7 @@ data:
 
     // HTTP egress (Action::"grantEgress"). This is the HOST ALLOWLIST and the
     // egress enabler: this default-deny policy is the sole authority over which
-    // hosts are grantable, and a Composition's sandbox.egress is refused unless
+    // hosts are grantable, and a module's required egress is refused unless
     // a permit here matches. The per-run budgets are fixed defaults.
     // The resource is the host or pattern in the HostPattern hierarchy (so
     // `resource in HostPattern::"example.com"` matches an exact host under

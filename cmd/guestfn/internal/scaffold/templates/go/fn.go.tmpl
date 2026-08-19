@@ -22,7 +22,7 @@ type Config struct {
 	// Greeting is written into the ConfigMap; defaults to "hello".
 	Greeting string `json:"greeting,omitempty"`
 	// GreetingURL, when set, is fetched through the host and its body used
-	// as the greeting — the Composition's sandbox.egress grant decides
+	// as the greeting — the manifest's requires.egress grant decides
 	// whether the request is allowed.
 	GreetingURL string `json:"greetingUrl,omitempty"`
 }

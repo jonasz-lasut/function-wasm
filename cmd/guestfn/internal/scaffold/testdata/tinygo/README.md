@@ -15,8 +15,8 @@ without function-sdk-go.
 - `abi_wasip1.go` — the function-wasm [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md)
   in forty lines: `wasmfn_alloc`, `wasmfn_run`, and the `wasmfn.log` import.
 - `http.go` / `http_wasip1.go` — `HTTPGet`/`HTTPDo` over the `wasmfn.http`
-  import: HTTP through the host, within the Composition's `sandbox.egress`
-  grant (`config.greetingUrl` uses it). Natively the host is a swappable
+  import: HTTP through the host, within the egress grant of the
+  module's manifest (`config.greetingUrl` uses it). Natively the host is a swappable
   function (`httpSink`), so `fn_test.go` fakes it.
 
 ```shell
