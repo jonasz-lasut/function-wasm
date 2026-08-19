@@ -27,8 +27,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
-	"golang.org/x/mod/module"
-	"golang.org/x/mod/semver"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 
@@ -38,8 +36,7 @@ import (
 )
 
 const (
-	sdkModule    = "github.com/crossplane/function-sdk-go"
-	wasmfnModule = "github.com/jonasz-lasut/function-wasm/pkg/wasmfn"
+	sdkModule = "github.com/crossplane/function-sdk-go"
 
 	// The Input's identity in a Composition step.
 	inputAPIVersion = "wasm.fn.crossplane.io/v1beta1"
@@ -70,13 +67,11 @@ type CLI struct {
 type InitCmd struct {
 	Dir string `arg:"" help:"Directory to create the project in."`
 
-	Lang          string `help:"Language of the project: go (function-sdk-go + wasmfn), tinygo (raw protobuf messages, ~1 MB modules) or rust (prost)." enum:"go,tinygo,rust" default:"go"`
-	Module        string `help:"Go module path of the project (go, tinygo). Defaults to the directory's base name."`
-	Name          string `help:"Short name used in docs and the example Composition, and the crate name for rust. Defaults to the module's last element or the directory's base name."`
-	SDKVersion    string `help:"function-sdk-go version to require (go)." default:"${sdk_version}"`
-	WasmfnVersion string `help:"wasmfn guest SDK version to require (go)." default:"${wasmfn_version}"`
-	WasmfnDir     string `help:"Use a local checkout of the wasmfn SDK through a replace directive (go; for developing the SDK)." type:"existingdir"`
-	Offline       bool   `help:"Do not run go get / go mod tidy; go writes go.mod from the given versions."`
+	Lang       string `help:"Language of the project: go (function-sdk-go), tinygo (raw protobuf messages, ~1 MB modules) or rust (prost)." enum:"go,tinygo,rust" default:"go"`
+	Module     string `help:"Go module path of the project (go, tinygo). Defaults to the directory's base name."`
+	Name       string `help:"Short name used in docs and the example Composition, and the crate name for rust. Defaults to the module's last element or the directory's base name."`
+	SDKVersion string `help:"function-sdk-go version to require (go)." default:"${sdk_version}"`
+	Offline    bool   `help:"Do not run go get / go mod tidy; go writes go.mod from the given versions."`
 }
 
 // Run scaffolds the project and resolves its dependencies.
@@ -94,26 +89,13 @@ func (c *InitCmd) Run(ctx context.Context, stdout io.Writer) error {
 	} else if module == "" {
 		module = base
 	}
-	if c.Lang == scaffold.LangGo && c.Offline && c.WasmfnVersion == "latest" && c.WasmfnDir == "" {
-		return fmt.Errorf("--offline needs --wasmfn-version (or --wasmfn-dir): the SDK version cannot be resolved without go get")
-	}
-	wasmfnDir := c.WasmfnDir
-	if wasmfnDir != "" {
-		abs, err := filepath.Abs(wasmfnDir)
-		if err != nil {
-			return err
-		}
-		wasmfnDir = abs
-	}
 	files, err := scaffold.Render(scaffold.Options{
-		Lang:          c.Lang,
-		Module:        module,
-		Name:          name,
-		GoVersion:     goVersion(),
-		SDKVersion:    c.SDKVersion,
-		WasmfnVersion: c.WasmfnVersion,
-		Requires:      c.Offline,
-		WasmfnDir:     wasmfnDir,
+		Lang:       c.Lang,
+		Module:     module,
+		Name:       name,
+		GoVersion:  goVersion(),
+		SDKVersion: c.SDKVersion,
+		Requires:   c.Offline,
 	})
 	if err != nil {
 		return err
@@ -129,11 +111,7 @@ func (c *InitCmd) Run(ctx context.Context, stdout io.Writer) error {
 
 	if !c.Offline && c.Lang != scaffold.LangRust {
 		if c.Lang == scaffold.LangGo {
-			gets := []string{sdkModule + "@" + c.SDKVersion}
-			if wasmfnDir == "" {
-				gets = append(gets, wasmfnModule+"@"+c.WasmfnVersion)
-			}
-			if err := run(ctx, c.Dir, stdout, "go", append([]string{"get"}, gets...)...); err != nil {
+			if err := run(ctx, c.Dir, stdout, "go", "get", sdkModule+"@"+c.SDKVersion); err != nil {
 				return err
 			}
 		}
@@ -153,7 +131,7 @@ func (c *InitCmd) Run(ctx context.Context, stdout io.Writer) error {
 type BuildCmd struct {
 	Dir     string `help:"Project directory." default:"." type:"existingdir"`
 	Output  string `short:"o" help:"Output file, relative to the project directory unless absolute." default:"fn.wasm"`
-	Lang    string `help:"Toolchain to use. auto picks rust for a Cargo.toml, tinygo for a go.mod that requires vtprotobuf but not wasmfn, go otherwise." enum:"auto,go,tinygo,rust" default:"auto"`
+	Lang    string `help:"Toolchain to use. auto picks rust for a Cargo.toml, tinygo for a go.mod that requires vtprotobuf, go otherwise." enum:"auto,go,tinygo,rust" default:"auto"`
 	WasmOpt bool   `help:"Run wasm-opt -Oz on the result (binaryen must be on PATH)."`
 }
 
@@ -309,8 +287,8 @@ func importsSuffix(shape *engine.Shape) string {
 }
 
 // detectLang tells the language of a project from its files: a Cargo.toml is
-// Rust; a go.mod that requires vtprotobuf but not the wasmfn SDK is the TinyGo
-// flavour (that is what its generated codecs are for); any other go.mod is Go.
+// Rust; a go.mod that requires vtprotobuf is the TinyGo flavour (that is what
+// its generated codecs are for); any other go.mod is Go.
 func detectLang(dir string) (string, error) {
 	if _, err := os.Stat(filepath.Join(dir, "Cargo.toml")); err == nil {
 		return scaffold.LangRust, nil
@@ -319,7 +297,7 @@ func detectLang(dir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cannot tell the project's language: neither Cargo.toml nor go.mod in %s (use --lang)", dir)
 	}
-	if strings.Contains(string(gomod), "github.com/planetscale/vtprotobuf") && !strings.Contains(string(gomod), wasmfnModule) {
+	if strings.Contains(string(gomod), "github.com/planetscale/vtprotobuf") {
 		return scaffold.LangTinyGo, nil
 	}
 	return scaffold.LangGo, nil
@@ -633,37 +611,33 @@ func goVersion() string {
 }
 
 // versions reads the CLI's own version and the function-sdk-go version it was
-// built with, which become the defaults a scaffold requires. wasmfn is tagged
-// in lockstep with guestfn, so a released guestfn pins the matching SDK; a
-// development build asks go get for the latest.
-func versions() (cli, sdk, wasmfn string) {
-	cli, sdk, wasmfn = "(devel)", fallbackSDKVersion, "latest"
+// built with, which becomes the default a Go scaffold requires; a development
+// build asks go get for the latest.
+func versions() (cli, sdk string) {
+	cli, sdk = "(devel)", fallbackSDKVersion
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
-		return cli, sdk, wasmfn
+		return cli, sdk
 	}
 	if bi.Main.Version != "" {
 		cli = bi.Main.Version
-	}
-	if semver.IsValid(cli) && !module.IsPseudoVersion(cli) {
-		wasmfn = cli
 	}
 	for _, d := range bi.Deps {
 		if d.Path == sdkModule && d.Version != "" {
 			sdk = d.Version
 		}
 	}
-	return cli, sdk, wasmfn
+	return cli, sdk
 }
 
 // parser builds the kong parser with the bindings the commands need; main
 // and the tests share it so a binding mistake surfaces in tests.
 func parser(stdout io.Writer) *kong.Kong {
-	cli, sdk, wasmfn := versions()
+	cli, sdk := versions()
 	return kong.Must(&CLI{},
 		kong.Name("guestfn"),
 		kong.Description("Scaffold, build and publish WebAssembly guest functions for function-wasm."),
-		kong.Vars{"version": cli, "sdk_version": sdk, "wasmfn_version": wasmfn},
+		kong.Vars{"version": cli, "sdk_version": sdk},
 		kong.BindTo(stdout, (*io.Writer)(nil)),
 		kong.BindTo(context.Background(), (*context.Context)(nil)),
 	)

@@ -16,13 +16,12 @@ var update = flag.Bool("update", false, "regenerate the golden scaffolds under t
 // golden are the options the golden scaffolds are rendered with, per language.
 func golden(lang string) Options {
 	return Options{
-		Lang:          lang,
-		Module:        "github.com/example/my-fn",
-		Name:          "my-fn",
-		GoVersion:     "1.26.6",
-		SDKVersion:    "v0.7.1",
-		WasmfnVersion: "v0.1.0",
-		Requires:      true,
+		Lang:       lang,
+		Module:     "github.com/example/my-fn",
+		Name:       "my-fn",
+		GoVersion:  "1.26.6",
+		SDKVersion: "v0.7.1",
+		Requires:   true,
 	}
 }
 
@@ -136,16 +135,16 @@ func TestRenderOptions(t *testing.T) {
 			want:   []string{"name: hi", "step: hi"},
 		},
 		"OfflineRequires": {
-			reason: "Without go get the require block carries the versions.",
-			opts:   Options{Module: "github.com/me/greeter", GoVersion: "1.26.6", SDKVersion: "v0.7.1", WasmfnVersion: "v0.2.0", Requires: true},
+			reason: "Without go get the require block carries the SDK version; go mod tidy pulls the rest, including the deps of the vendored internal/wasmfn glue.",
+			opts:   Options{Module: "github.com/me/greeter", GoVersion: "1.26.6", SDKVersion: "v0.7.1", Requires: true},
 			file:   "go.mod",
-			want:   []string{"go 1.26.6", "github.com/crossplane/function-sdk-go v0.7.1", "github.com/jonasz-lasut/function-wasm/pkg/wasmfn v0.2.0"},
+			want:   []string{"go 1.26.6", "require github.com/crossplane/function-sdk-go v0.7.1"},
 		},
-		"LocalSDK": {
-			reason: "A local SDK checkout becomes a replace directive.",
-			opts:   Options{Module: "github.com/me/greeter", GoVersion: "1.26.6", WasmfnDir: "/src/function-wasm/pkg/wasmfn"},
-			file:   "go.mod",
-			want:   []string{"replace github.com/jonasz-lasut/function-wasm/pkg/wasmfn => /src/function-wasm/pkg/wasmfn"},
+		"VendoredGlue": {
+			reason: "The Go scaffold owns its ABI glue under internal/wasmfn and imports it by the project's module path.",
+			opts:   Options{Module: "github.com/me/greeter", GoVersion: "1.26.6"},
+			file:   "main.go",
+			want:   []string{`import "github.com/me/greeter/internal/wasmfn"`},
 		},
 		"TinyGoModule": {
 			reason: "The TinyGo scaffold pins the codec versions its generated code was made with and points generate at the module.",

@@ -1,8 +1,9 @@
 // Package scaffold renders a new guest project in one of three flavours: Go
-// with the wasmfn guest SDK and function-sdk-go, TinyGo over generated
-// protobuf messages, or Rust with prost. Each template set is the matching
-// example guest of this repository (examples/hello-go, hello-tinygo, hello-rust)
-// with the module path and name parameterised; tests keep them identical.
+// with function-sdk-go (its ABI glue vendored in internal/wasmfn), TinyGo over
+// generated protobuf messages, or Rust with prost. Each template set is the
+// matching example guest of this repository (examples/hello-go, hello-tinygo,
+// hello-rust) with the module path and name parameterised; tests keep them
+// identical.
 package scaffold
 
 import (
@@ -46,15 +47,10 @@ type Options struct {
 	GoVersion string
 	// SDKVersion is the function-sdk-go version to require.
 	SDKVersion string
-	// WasmfnVersion is the wasmfn guest SDK version to require.
-	WasmfnVersion string
 	// Requires controls whether go.mod carries the require block at all; when
 	// false the caller is expected to run go get, which is what guestfn init
 	// does unless asked to stay offline.
 	Requires bool
-	// WasmfnDir, when set, adds a replace directive pointing the wasmfn
-	// requirement at a local checkout — for developing the SDK itself.
-	WasmfnDir string
 }
 
 // Render returns the files of the scaffold keyed by their path relative to

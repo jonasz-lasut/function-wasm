@@ -97,9 +97,10 @@ git status --porcelain                  # only go.mod/go.sum/Dockerfile should h
 `go generate ./...` regenerates the Input CRD and the `guestfn` scaffold golden
 under `cmd/guestfn/internal/scaffold/testdata/golden/`. A dependency bump must
 not change either; if the golden moves, the scaffold users get changed — stop
-and review that diff before deciding to keep it. Also run the two nested
-modules (`cd pkg/wasmfn && go test ./...`, `cd examples/hello-go && go test ./...`)
-and the root tests without `-short` (they build the example guest to wasm).
+and review that diff before deciding to keep it. Also run the example module
+(`cd examples/hello-go && go test ./...`, which covers its vendored
+internal/wasmfn glue) and the root tests without `-short` (they build the
+example guest to wasm).
 Commit locally as `fix(security): ...`, naming the CVE/GHSA IDs
 remediated and, if any were skipped under the exception above, listing them
 in the commit body. Do not push yet — that's gated by step 4.
