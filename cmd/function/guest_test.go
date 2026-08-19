@@ -128,11 +128,17 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 	}
 	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: ceiling, policy: permissiveSandboxPolicy(t)}
 	greetingsHost, _, _ := net.SplitHostPort(strings.TrimPrefix(greetings.URL, "http://"))
+	egressManifest := `{"abi":1,"requires":{"egress":{"http":[{"host":"` + greetingsHost + `","methods":["GET"]}]}}}`
 	// The guest with an egress request: its manifest asks for the greeting
-	// server's host, the operator policy layer grants it. A path module has no
-	// manifest, so the egress case serves the same guest as an OCI artifact.
-	egressRef := pushWithManifest(t, publicRegistry(t)+"/"+guest+":v1", wasm,
-		`{"abi":1,"requires":{"egress":{"http":[{"host":"`+greetingsHost+`","methods":["GET"]}]}}}`)
+	// server's host, the operator policy layer grants it. The same request
+	// reaches the runtime two ways - as an OCI artifact's manifest layer, and
+	// as a manifest a path module names by reference (module.manifestPath), the
+	// local-dev loop for a module that needs a capability.
+	egressRef := pushWithManifest(t, publicRegistry(t)+"/"+guest+":v1", wasm, egressManifest)
+	pathManifest := guest + "-manifest.yaml"
+	if err := os.WriteFile(filepath.Join(dir, pathManifest), []byte(egressManifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	xr := resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)
 	response := func(greeting string) *fnv1.RunFunctionResponse {
@@ -169,6 +175,11 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 		"GreetingFromURL": {
 			reason: "The guest fetches its greeting through the host's wasmfn.http import within its manifest's egress request — the same helper shape in Go (wasmfn.HTTPClient), TinyGo and Rust.",
 			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"OCI","oci":{"ref":"` + egressRef + `"}},"config":{"greetingUrl":"` + greetings.URL + `/en"}}`,
+			want:   want{rsp: response("howdy my-xr"), logs: []string{"Running function tag=hello", "method=GET outcome=ok"}},
+		},
+		"GreetingFromURLPath": {
+			reason: "A path module names its manifest by reference (module.manifestPath): the same egress request as the OCI artifact, granted, so the guest fetches its greeting through the host - the local-dev loop for a capability-needing module.",
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"` + file + `","manifestPath":"` + pathManifest + `"},"config":{"greetingUrl":"` + greetings.URL + `/en"}}`,
 			want:   want{rsp: response("howdy my-xr"), logs: []string{"Running function tag=hello", "method=GET outcome=ok"}},
 		},
 		"GreetingURLWithoutGrant": {

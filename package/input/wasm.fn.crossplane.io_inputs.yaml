@@ -133,6 +133,23 @@ spec:
                       verified against it and it addresses the module in the caches.
                     pattern: ^sha256:[a-f0-9]{64}$
                     type: string
+                  manifestDigest:
+                    description: |-
+                      ManifestDigest is the sha256 of the manifest, sha256:<hex>; the download
+                      is verified against it. Required with ManifestURL, refused without it.
+                    pattern: ^sha256:[a-f0-9]{64}$
+                    type: string
+                  manifestURL:
+                    description: |-
+                      ManifestURL optionally locates the module's wasmfn.yaml manifest, served
+                      over HTTP(S) beside the module - the module's request layer, authored by
+                      the module author (docs/one-pager-three-layer-authz.md). Without it an
+                      HTTP source carries no manifest and gets only the default sandbox.
+                      ManifestDigest pins it, so it must be set with it. When the source is
+                      chosen by the composite resource (module.from), the manifest URL is
+                      fenced by the compositionPolicy's pullModule rules like the module URL.
+                    pattern: ^https?://
+                    type: string
                   url:
                     description: URL of the module.
                     pattern: ^https?://
@@ -141,6 +158,19 @@ spec:
                 - digest
                 - url
                 type: object
+                x-kubernetes-validations:
+                - message: manifestURL and manifestDigest must be set together
+                  rule: has(self.manifestURL) == has(self.manifestDigest)
+              manifestPath:
+                description: |-
+                  ManifestPath optionally names the module's wasmfn.yaml manifest file,
+                  relative to --module-dir - the request layer for a Path source
+                  (docs/one-pager-three-layer-authz.md), letting a Path module declare the
+                  capabilities it needs like an OCI artifact does. Valid only with type
+                  Path; without it a Path source carries no manifest and gets only the
+                  default sandbox. Read from the Input only, never through module.from: an
+                  XR author chooses the module file, not what its manifest requests.
+                type: string
               oci:
                 description: |-
                   OCI pulls the module from an OCI registry. Set with type OCI, unless
@@ -206,6 +236,8 @@ spec:
                 allowed with type Path
               rule: 'self.type == ''Path'' ? (has(self.path) != has(self.from)) :
                 !has(self.path)'
+            - message: manifestPath is only allowed with type Path
+              rule: '!has(self.manifestPath) || self.type == ''Path'''
         required:
         - module
         type: object

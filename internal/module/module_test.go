@@ -67,6 +67,34 @@ func TestValidate(t *testing.T) {
 		"HTTPNoURL":       {reason: "An HTTP source needs a URL.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{Digest: moduleDigest}}, want: "module.http.url is required"},
 		"FromMetadata":    {reason: "Only spec and status of the composite may name a module.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "metadata.annotations.module"}, want: `module.from "metadata.annotations.module" must be a field under spec or status`},
 		"FromBare":        {reason: "spec alone is not a field.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec"}, want: "must be a field under spec or status"},
+		"HTTPManifest": {
+			reason: "An http source may name a manifest URL pinned by its digest.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://x/fn.wasm", Digest: moduleDigest, ManifestURL: "https://x/fn-manifest.yaml", ManifestDigest: otherDigest}},
+		},
+		"HTTPManifestNoDigest": {
+			reason: "A manifest URL must be pinned like the module.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://x/fn.wasm", Digest: moduleDigest, ManifestURL: "https://x/fn-manifest.yaml"}},
+			want:   "module.http.manifestURL is set without module.http.manifestDigest",
+		},
+		"HTTPManifestDigestNoURL": {
+			reason: "A manifest digest without a URL is meaningless.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://x/fn.wasm", Digest: moduleDigest, ManifestDigest: otherDigest}},
+			want:   "module.http.manifestDigest is set without module.http.manifestURL",
+		},
+		"HTTPManifestBadURL": {
+			reason: "The manifest URL has the shape the module URL has, and its errors name it.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://x/fn.wasm", Digest: moduleDigest, ManifestURL: "ftp://x/m.yaml", ManifestDigest: otherDigest}},
+			want:   `module.http.manifestURL "ftp://x/m.yaml" must be an http or https URL`,
+		},
+		"PathManifest": {
+			reason: "A path source may name a manifest file under the module directory.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm", ManifestPath: "fn-manifest.yaml"},
+		},
+		"ManifestPathWrongType": {
+			reason: "manifestPath names a file under --module-dir and belongs only to type Path.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}, ManifestPath: "fn-manifest.yaml"},
+			want:   "module.manifestPath is set but module.type is OCI",
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -98,21 +126,24 @@ func TestFromComposite(t *testing.T) {
 		"apiVersion": "example.org/v1",
 		"kind":       "XR",
 		"spec": map[string]any{
-			"module":    map[string]any{"ref": manifestRef},
-			"private":   map[string]any{"ref": manifestRef, "credentials": "registry"},
-			"other":     map[string]any{"ref": "other.example.com/repo@" + otherDigest, "credentials": "registry"},
-			"url":       map[string]any{"url": "https://example.com/fn.wasm", "digest": moduleDigest},
-			"nopin":     map[string]any{"url": "https://example.com/fn.wasm"},
-			"dotted":    map[string]any{"ref": "example.com/repo/../evil@" + otherDigest},
-			"dottedurl": map[string]any{"url": "https://example.com/pub/../secret.wasm", "digest": moduleDigest},
-			"upperurl":  map[string]any{"url": "https://EXAMPLE.com/fn.wasm?x=1", "digest": moduleDigest},
-			"sibling":   map[string]any{"ref": "example.com/repo-evil@" + otherDigest},
-			"subrepo":   map[string]any{"ref": "example.com/repo/sub@" + otherDigest},
-			"sibhost":   map[string]any{"url": "https://example.com.attacker.net/fn.wasm", "digest": moduleDigest},
-			"path":      "fn.wasm",
-			"typo":      map[string]any{"reference": manifestRef},
-			"number":    7,
-			"modules":   []any{map[string]any{"ref": manifestRef}},
+			"module":            map[string]any{"ref": manifestRef},
+			"private":           map[string]any{"ref": manifestRef, "credentials": "registry"},
+			"other":             map[string]any{"ref": "other.example.com/repo@" + otherDigest, "credentials": "registry"},
+			"url":               map[string]any{"url": "https://example.com/fn.wasm", "digest": moduleDigest},
+			"nopin":             map[string]any{"url": "https://example.com/fn.wasm"},
+			"dotted":            map[string]any{"ref": "example.com/repo/../evil@" + otherDigest},
+			"dottedurl":         map[string]any{"url": "https://example.com/pub/../secret.wasm", "digest": moduleDigest},
+			"upperurl":          map[string]any{"url": "https://EXAMPLE.com/fn.wasm?x=1", "digest": moduleDigest},
+			"sibling":           map[string]any{"ref": "example.com/repo-evil@" + otherDigest},
+			"subrepo":           map[string]any{"ref": "example.com/repo/sub@" + otherDigest},
+			"sibhost":           map[string]any{"url": "https://example.com.attacker.net/fn.wasm", "digest": moduleDigest},
+			"manifest":          map[string]any{"url": "https://example.com/fn.wasm", "digest": moduleDigest, "manifestURL": "https://example.com/fn-manifest.yaml", "manifestDigest": otherDigest},
+			"manifestelsewhere": map[string]any{"url": "https://example.com/fn.wasm", "digest": moduleDigest, "manifestURL": "https://other.example.com/m.yaml", "manifestDigest": otherDigest},
+			"manifestnopin":     map[string]any{"url": "https://example.com/fn.wasm", "digest": moduleDigest, "manifestURL": "https://example.com/m.yaml"},
+			"path":              "fn.wasm",
+			"typo":              map[string]any{"reference": manifestRef},
+			"number":            7,
+			"modules":           []any{map[string]any{"ref": manifestRef}},
 		},
 		"status": map[string]any{
 			"module": map[string]any{"ref": manifestRef},
@@ -255,6 +286,21 @@ permit (principal, action == Action::"spendCredential", resource == Credential::
 			reason: "A dynamic http source without a digest is refused like a static one.",
 			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.nopin"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://example.com");`), composite: composite},
 			want:   want{err: "module.from: spec.nopin of the composite resource: module.http.digest is required"},
+		},
+		"HTTPFromManifest": {
+			reason: "A manifest URL the composite resource chose is admitted when a pullModule permit covers its own location.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.manifest"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://example.com");`), composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://example.com/fn.wasm", Digest: moduleDigest, ManifestURL: "https://example.com/fn-manifest.yaml", ManifestDigest: otherDigest}}},
+		},
+		"HTTPFromManifestFenced": {
+			reason: "The manifest URL is fenced like the module: a manifest on a host no permit admits is refused even when the module URL is.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.manifestelsewhere"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://example.com");`), composite: composite},
+			want:   want{err: `module.from: spec.manifestelsewhere of the composite resource names manifestURL "https://other.example.com/m.yaml", which the compositionPolicy does not permit (pullModule)`},
+		},
+		"HTTPFromManifestNoDigest": {
+			reason: "A manifest URL the composite resource chose must be pinned like a static one.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.manifestnopin"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://example.com");`), composite: composite},
+			want:   want{err: "module.from: spec.manifestnopin of the composite resource: module.http.manifestURL is set without module.http.manifestDigest"},
 		},
 		"PrincipalKindMatches": {
 			reason: "The policy's principal comes from the composite resource itself: a permit conditioned on its kind matches.",
@@ -911,6 +957,127 @@ func TestRefManifest(t *testing.T) {
 				if b, err := ref.Fetch(context.Background()); err != nil || !bytes.Equal(b, module) {
 					t.Fatalf("\n%s\nFetch(): %q %v", tc.reason, b, err)
 				}
+			}
+			got, found, err := ref.Manifest(context.Background())
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("\n%s\nManifest(): want error containing %q, got %v", tc.reason, tc.err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("\n%s\nManifest(): %v", tc.reason, err)
+			}
+			if found != tc.found || string(got) != tc.want {
+				t.Errorf("\n%s\nManifest() = %q, %v; want %q, %v", tc.reason, got, found, tc.want, tc.found)
+			}
+		})
+	}
+}
+
+// TestRefManifestByReference pins the manifest a manifest-less source carries
+// by reference: a wasmfn.yaml fetched beside an http module (verified against
+// its own digest) or read beside a path module, normalized to the JSON an OCI
+// manifest layer already carries.
+func TestRefManifestByReference(t *testing.T) {
+	manifestYAML := []byte("abi: 1\nname: greeter\n")
+	manifestJSONBytes := `{"abi":1,"name":"greeter"}`
+	manifestYAMLDigest := digestOf(manifestYAML)
+	badYAML := []byte("[") // an unclosed flow sequence: valid to fetch, not valid YAML
+	badYAMLDigest := digestOf(badYAML)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/fn.wasm":
+			_, _ = w.Write(module)
+		case "/fn-manifest.yaml":
+			_, _ = w.Write(manifestYAML)
+		case "/bad.yaml":
+			_, _ = w.Write(badYAML)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "fn.wasm"), module, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fn-manifest.yaml"), manifestYAML, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad.yaml"), badYAML, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	httpSrc := func(manifestURL, manifestDigest string) v1beta1.ModuleSource {
+		return v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest, ManifestURL: manifestURL, ManifestDigest: manifestDigest}}
+	}
+	cases := map[string]struct {
+		reason string
+		src    v1beta1.ModuleSource
+		want   string
+		found  bool
+		err    string
+	}{
+		"HTTP": {
+			reason: "The manifest is fetched beside the module, verified and converted to JSON.",
+			src:    httpSrc(srv.URL+"/fn-manifest.yaml", manifestYAMLDigest),
+			want:   manifestJSONBytes, found: true,
+		},
+		"HTTPDigestMismatch": {
+			reason: "A manifest whose bytes do not match the digest is refused.",
+			src:    httpSrc(srv.URL+"/fn-manifest.yaml", otherDigest),
+			err:    "manifest content is sha256:",
+		},
+		"HTTPNotFound": {
+			reason: "A non-200 status fetching the manifest is an error.",
+			src:    httpSrc(srv.URL+"/missing.yaml", manifestYAMLDigest),
+			err:    "cannot download manifest: 404",
+		},
+		"HTTPBadYAML": {
+			reason: "A manifest that verifies but is not YAML is refused before the runtime parses it.",
+			src:    httpSrc(srv.URL+"/bad.yaml", badYAMLDigest),
+			err:    "manifest is not valid YAML",
+		},
+		"HTTPNone": {
+			reason: "Without a manifestURL an http source still carries no manifest.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: srv.URL + "/fn.wasm", Digest: moduleDigest}},
+		},
+		"Path": {
+			reason: "A path source reads its manifest file under the module directory and converts it to JSON.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm", ManifestPath: "fn-manifest.yaml"},
+			want:   manifestJSONBytes, found: true,
+		},
+		"PathBadYAML": {
+			reason: "A path manifest that is not YAML is refused too.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm", ManifestPath: "bad.yaml"},
+			err:    "manifest is not valid YAML",
+		},
+		"PathMissing": {
+			reason: "A named manifest file that is not there is an error when it is read.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm", ManifestPath: "nope.yaml"},
+			err:    "cannot read manifest file",
+		},
+		"PathEscape": {
+			reason: "A manifest path escaping the module directory is refused at resolve time.",
+			src:    v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm", ManifestPath: "../secret.yaml"},
+			err:    `module.manifestPath "../secret.yaml" escapes the module directory`,
+		},
+	}
+	r, err := NewResolver(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ref, err := r.Resolve(context.Background(), tc.src, nil)
+			if err != nil {
+				if tc.err != "" && strings.Contains(err.Error(), tc.err) {
+					return
+				}
+				t.Fatalf("\n%s\nResolve(): unexpected error %v", tc.reason, err)
 			}
 			got, found, err := ref.Manifest(context.Background())
 			if tc.err != "" {

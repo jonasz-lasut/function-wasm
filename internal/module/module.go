@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+	"sigs.k8s.io/yaml"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
@@ -81,9 +82,22 @@ type Ref struct {
 	// Description names the source for logs and error messages.
 	Description string
 
-	fetch    func(ctx context.Context) ([]byte, error)
-	verify   func(ctx context.Context) error
-	manifest func(ctx context.Context) ([]byte, bool, error)
+	fetch       func(ctx context.Context) ([]byte, error)
+	verify      func(ctx context.Context) error
+	manifest    func(ctx context.Context) ([]byte, bool, error)
+	manifestKey string
+}
+
+// ManifestKey identifies the module's manifest for caching, or is empty when
+// the manifest must not be cached: a path source, whose file may be edited
+// between requests, and any source that carries no manifest at all. It is not
+// the module digest — a manifest-less source names its manifest separately, so
+// the same module file may run with one manifest, another, or none. For an OCI
+// artifact it is the manifest digest that pins the whole artifact (the manifest
+// layer included); for an http source that names one it is the manifest's own
+// digest.
+func (r *Ref) ManifestKey() string {
+	return r.manifestKey
 }
 
 // Fetch returns the module bytes, verified along the chain Digest pins.
@@ -170,6 +184,9 @@ func Validate(src v1beta1.ModuleSource) error {
 	if src.From != "" && !fromPattern.MatchString(src.From) {
 		return fmt.Errorf("module.from %q must be a field under spec or status of the composite resource, e.g. status.module", src.From)
 	}
+	if src.ManifestPath != "" && src.Type != v1beta1.ModuleTypePath {
+		return fmt.Errorf("module.manifestPath is set but module.type is %s: it names a manifest file under --module-dir and is only allowed with type Path", src.Type)
+	}
 	if src.OCI != nil {
 		if src.OCI.Ref == "" {
 			return errors.New("module.oci.ref is required")
@@ -182,14 +199,37 @@ func Validate(src v1beta1.ModuleSource) error {
 		if src.HTTP.URL == "" {
 			return errors.New("module.http.url is required")
 		}
-		if _, err := httpLocation(src.HTTP.URL); err != nil {
+		if _, err := httpLocation("module.http.url", src.HTTP.URL); err != nil {
 			return err
 		}
 		if err := checkDigest("module.http.digest", src.HTTP.Digest); err != nil {
 			return err
 		}
+		if err := validateHTTPManifest(src.HTTP); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// validateHTTPManifest checks the optional manifest-by-reference of an HTTP
+// source: manifestURL and manifestDigest are set together (a manifest is
+// pinned like the module), and the URL and digest have the shapes the module
+// URL and digest do.
+func validateHTTPManifest(h *v1beta1.HTTPSource) error {
+	if h.ManifestURL == "" && h.ManifestDigest == "" {
+		return nil
+	}
+	if h.ManifestURL == "" {
+		return errors.New("module.http.manifestDigest is set without module.http.manifestURL")
+	}
+	if h.ManifestDigest == "" {
+		return errors.New("module.http.manifestURL is set without module.http.manifestDigest: the manifest must be pinned by its sha256")
+	}
+	if _, err := httpLocation("module.http.manifestURL", h.ManifestURL); err != nil {
+		return err
+	}
+	return checkDigest("module.http.manifestDigest", h.ManifestDigest)
 }
 
 // repositorySegment is one path component of an OCI repository name (the
@@ -215,24 +255,24 @@ func ociLocation(ref string) (string, error) {
 	return d.Context().RegistryStr() + "/" + repo, nil
 }
 
-// httpLocation checks a module URL and returns "scheme://host/path" —
-// what the compositionPolicy's pullModule permits are matched against —
-// with the host lowercased and the path required to be normalized, so a prefix
-// cannot be escaped with dot segments the server would collapse; the query
-// is not part of the location.
-func httpLocation(raw string) (string, error) {
+// httpLocation checks a URL naming field (module.http.url or its
+// manifestURL) and returns "scheme://host/path" — what the compositionPolicy's
+// pullModule permits are matched against — with the host lowercased and the
+// path required to be normalized, so a prefix cannot be escaped with dot
+// segments the server would collapse; the query is not part of the location.
+func httpLocation(field, raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("module.http.url %q is not a URL: %w", raw, err)
+		return "", fmt.Errorf("%s %q is not a URL: %w", field, raw, err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("module.http.url %q must be an http or https URL", raw)
+		return "", fmt.Errorf("%s %q must be an http or https URL", field, raw)
 	}
 	if u.Hostname() == "" || u.User != nil {
-		return "", fmt.Errorf("module.http.url %q must name a host and carry no user information", raw)
+		return "", fmt.Errorf("%s %q must name a host and carry no user information", field, raw)
 	}
 	if !egress.NormalizedPath(u.Path) {
-		return "", fmt.Errorf("module.http.url %q must have a normalized path (no . or .. segments, no empty segments)", raw)
+		return "", fmt.Errorf("%s %q must have a normalized path (no . or .. segments, no empty segments)", field, raw)
 	}
 	return u.Scheme + "://" + strings.ToLower(u.Host) + u.Path, nil
 }
@@ -306,7 +346,7 @@ func locationOf(src v1beta1.ModuleSource) (string, error) {
 	case v1beta1.ModuleTypeOCI:
 		return ociLocation(src.OCI.Ref)
 	case v1beta1.ModuleTypeHTTP:
-		return httpLocation(src.HTTP.URL)
+		return httpLocation("module.http.url", src.HTTP.URL)
 	case v1beta1.ModuleTypePath:
 		return "", nil
 	}
@@ -354,6 +394,18 @@ func readCapped(rd io.Reader, limit int64) ([]byte, error) {
 func digestOf(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// manifestJSON normalizes a wasmfn.yaml manifest (YAML) to the JSON bytes
+// Ref.Manifest returns and internal/manifest.Parse decodes - the format an OCI
+// manifest layer already carries. JSON is valid YAML, so an already-JSON
+// manifest passes through unchanged.
+func manifestJSON(raw []byte) ([]byte, error) {
+	j, err := yaml.YAMLToJSON(raw)
+	if err != nil {
+		return nil, fmt.Errorf("manifest is not valid YAML: %w", err)
+	}
+	return j, nil
 }
 
 // timed wraps a fetch so its duration is observed for source, the source
