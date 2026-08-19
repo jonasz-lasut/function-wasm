@@ -75,16 +75,19 @@ type Manifest struct {
 	schema *jsonschema.Schema
 }
 
-// Requires are the sandbox grants a module needs: each is optional, each
-// must be covered by the Composition's grant for the module to run.
+// Requires are the sandbox capabilities a module needs: each is optional,
+// each must be granted for the module to run.
 type Requires struct {
 	// Egress the module needs, in the Input's own shape.
 	Egress *Egress `json:"egress,omitempty"`
 	// Filesystem: {privateTmp: true} when the module writes to /tmp.
 	Filesystem *v1beta1.SandboxFilesystem `json:"filesystem,omitempty"`
-	// Environment variables are deliberately not a requirement: they are
-	// values the Composition sets (and, one day, the request delivers), not
-	// a capability the module needs granted.
+	// Env binds environment variables the module reads to keys of the
+	// pipeline step's credentials. A binding is a requirement like egress -
+	// checked, never a grant: the credential still arrives at the step, and
+	// the policy layers must permit setEnv and spendCredential before it is
+	// resolved. Non-secret configuration is the Input's config, not env.
+	Env []sandbox.EnvBinding `json:"env,omitempty"`
 }
 
 // Egress is the HTTP egress a module needs: the same rule type the Input's
@@ -101,11 +104,13 @@ type Config struct {
 	Schema json.RawMessage `json:"schema,omitempty"`
 }
 
-// Grants are what one run was granted - the Composition's sandbox already
-// admitted by the operator's ceiling - held against Requires by Check.
+// Grants are what one run was granted, held against Requires by Check.
 type Grants struct {
 	PrivateTmp bool
 	HTTP       []v1beta1.SandboxHTTPRule
+	// Env are the env bindings granted to the run; a required binding must be
+	// among them, exactly (same variable, credential and key).
+	Env []sandbox.EnvBinding
 }
 
 // Load reads a wasmfn.yaml: YAML, decoded strictly (a field the runtime does
@@ -178,6 +183,9 @@ func (m *Manifest) Validate() error {
 				return err
 			}
 		}
+		if err := sandbox.ValidateBindings("requires.env", m.Requires.Env); err != nil {
+			return err
+		}
 	}
 	if m.MinRuntime != "" && !semver.IsValid(canonical(m.MinRuntime)) {
 		return fmt.Errorf("minRuntime %q is not a semantic version (e.g. v0.2.0)", m.MinRuntime)
@@ -245,6 +253,13 @@ func (m *Manifest) Summary() string {
 		if r.Filesystem != nil && r.Filesystem.PrivateTmp {
 			parts = append(parts, "private /tmp")
 		}
+		if len(r.Env) > 0 {
+			names := make([]string, 0, len(r.Env))
+			for _, b := range r.Env {
+				names = append(names, b.Name)
+			}
+			parts = append(parts, "env "+strings.Join(names, " "))
+		}
 	}
 	out := strings.Join(parts, ", ")
 	if m.hasConfigSchema() {
@@ -303,6 +318,11 @@ func (m *Manifest) Check(g Grants, config *runtime.RawExtension, runtimeVersion 
 		if r.Filesystem != nil && r.Filesystem.PrivateTmp && !g.PrivateTmp {
 			return errors.New("requires sandbox.filesystem.privateTmp, which the Composition does not grant")
 		}
+		for _, b := range r.Env {
+			if !bindingGranted(b, g.Env) {
+				return fmt.Errorf("requires env %s from credential %q key %q, which was not granted", b.Name, b.FromCredential.Name, b.FromCredential.Key)
+			}
+		}
 	}
 	if m.MinRuntime != "" && runtimeVersion != "" && runtimeVersion != "(devel)" {
 		if have := canonical(runtimeVersion); semver.IsValid(have) && semver.Compare(have, canonical(m.MinRuntime)) < 0 {
@@ -351,6 +371,18 @@ func RuntimeVersion() string {
 		return ""
 	}
 	return bi.Main.Version
+}
+
+// bindingGranted reports whether one required env binding is among the granted
+// ones - exactly: the binding names one variable and one credential key, so
+// there is no wider grant to cover it.
+func bindingGranted(required sandbox.EnvBinding, granted []sandbox.EnvBinding) bool {
+	for _, g := range granted {
+		if g == required {
+			return true
+		}
+	}
+	return false
 }
 
 // covered reports whether one required rule is admitted by a granted rule:

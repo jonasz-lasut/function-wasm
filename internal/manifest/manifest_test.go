@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
 )
 
 const greeterSchema = `{"type":"object","properties":{"greeting":{"type":"string"},"greetingUrl":{"type":"string","format":"uri"}},"additionalProperties":false}`
@@ -171,10 +172,22 @@ minRuntime: v0.2.0
 			yaml:   "abi: 1\nrequires:\n  egress:\n    http:\n    - host: api.example.com\n",
 			err:    `requires.egress.http[0].methods must list at least one method`,
 		},
-		"EnvIsNotARequirement": {
-			reason: "Environment variables are values the Composition sets, not a capability a module requires; the field does not exist.",
-			yaml:   "abi: 1\nrequires:\n  env: [GREETING_STYLE]\n",
-			err:    `unknown field "env"`,
+		"EnvBindings": {
+			reason: "requires.env binds variables to step credential keys - the module's own env contract.",
+			yaml: `abi: 1
+requires:
+  env:
+  - name: DATABASE_URL
+    fromCredential: {name: db, key: url}
+`,
+			want: &Manifest{ABI: 1, Requires: &Requires{
+				Env: []sandbox.EnvBinding{{Name: "DATABASE_URL", FromCredential: sandbox.CredentialKey{Name: "db", Key: "url"}}},
+			}},
+		},
+		"EnvLiteralRefused": {
+			reason: "A literal env value is not expressible: non-secret configuration is the Input's config.",
+			yaml:   "abi: 1\nrequires:\n  env:\n  - name: LOG_LEVEL\n    value: debug\n",
+			err:    `unknown field "value"`,
 		},
 	}
 	for name, tc := range cases {
@@ -229,6 +242,24 @@ func TestValidate(t *testing.T) {
 			reason: "A rule with both host and hostPattern is refused.",
 			m:      &Manifest{ABI: 1, Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("a.example.com", "*.example.com", []string{"GET"}, "")}}}},
 			err:    "requires.egress.http[0] must set exactly one of host and hostPattern",
+		},
+		"BadBindingName": {
+			reason: "An env binding's name must be an identifier, named as requires.env[i].",
+			m:      &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "1x", FromCredential: sandbox.CredentialKey{Name: "db", Key: "url"}}}}},
+			err:    `requires.env[0].name "1x" is not an identifier`,
+		},
+		"BindingWithoutKey": {
+			reason: "A binding names exactly one credential key; a missing key is refused.",
+			m:      &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "db"}}}}},
+			err:    "requires.env[0].fromCredential.key must not be empty",
+		},
+		"DuplicateBinding": {
+			reason: "A variable bound twice is refused.",
+			m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{
+				{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "db", Key: "a"}},
+				{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "db", Key: "b"}},
+			}}},
+			err: "requires.env[1]: TOKEN is already bound by requires.env[0]",
 		},
 		"BadSemver": {
 			reason: "minRuntime is a semantic version.",
@@ -394,6 +425,22 @@ func TestCheck(t *testing.T) {
 			reason: "privateTmp: false requires nothing.",
 			args:   args{m: &Manifest{ABI: 1, Requires: &Requires{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: false}}}},
 		},
+		"EnvBindingGranted": {
+			reason: "A required binding among the granted ones passes.",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}}}}},
+				grants: Grants{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}}}}},
+		},
+		"EnvBindingMissing": {
+			reason: "A required binding not granted is named exactly.",
+			args:   args{m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}}}}}},
+			want:   `requires env TOKEN from credential "api" key "token", which was not granted`,
+		},
+		"EnvBindingDifferentKey": {
+			reason: "A grant for the same variable from another key does not cover it: bindings match exactly.",
+			args: args{m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}}}}},
+				grants: Grants{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "other"}}}}},
+			want: `requires env TOKEN from credential "api" key "token", which was not granted`,
+		},
 		"RuntimeTooOld": {
 			reason: "minRuntime above the runtime's version is refused, both versions named.",
 			args:   args{m: &Manifest{ABI: 1, MinRuntime: "v0.3.0"}, runtime: "v0.2.1"},
@@ -541,6 +588,10 @@ func TestSummary(t *testing.T) {
 		"Full":    {m: full(), want: "greeter 0.1.0, requires egress api.example.com, private /tmp; config schema; runtime v0.2.0 or newer"},
 		"Pattern": {m: &Manifest{ABI: 1, Version: "1.0.0", Requires: &Requires{Egress: &Egress{HTTP: []v1beta1.SandboxHTTPRule{rule("", "*.example.com", []string{"GET"}, "")}}}}, want: "1.0.0, requires egress *.example.com"},
 		"Schema":  {m: &Manifest{ABI: 1, Config: &Config{Schema: json.RawMessage(`{}`)}}, want: "config schema"},
+		"Env": {m: &Manifest{ABI: 1, Requires: &Requires{Env: []sandbox.EnvBinding{
+			{Name: "DATABASE_URL", FromCredential: sandbox.CredentialKey{Name: "db", Key: "url"}},
+			{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}},
+		}}}, want: "env DATABASE_URL TOKEN"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
