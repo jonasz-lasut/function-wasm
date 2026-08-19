@@ -17,8 +17,8 @@ spec:
       module:
         type: OCI
         from: status.module
-      policy:
-        repositoryAllowList: [ghcr.io/example/]
+      compositionPolicy: |
+        permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/example");
   - step: other-registry
     functionRef:
       name: function-wasm
@@ -28,5 +28,5 @@ spec:
       module:
         type: OCI
         from: status.other
-      policy:
-        repositoryAllowList: [ghcr.io/example/]
+      compositionPolicy: |
+        permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/example");

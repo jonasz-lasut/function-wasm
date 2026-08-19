@@ -5,15 +5,12 @@ import (
 	"net/url"
 	"path"
 	"strings"
-
-	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 )
 
-// Grant is a Composition's sandbox.egress.http rules compiled into what one
-// run's requests are checked against. It is built per request from the Input,
-// before the module is resolved. The operator's host allowlist is Cedar's
-// (grantEgress, decided at admission); this holds only the Composition's own
-// rules.
+// Grant is a module's requires.egress.http rules compiled into what one run's
+// requests are checked against. It is built per request after the manifest is
+// read and its rules admitted by the policy layers (grantEgress); this holds
+// only the module's own rules.
 type Grant struct {
 	egress *Egress
 	rules  []rule
@@ -26,11 +23,11 @@ type rule struct {
 	pathPrefix string
 }
 
-// Grant compiles a Composition's egress rules into what one run's requests are
-// checked against. The rules are assumed shape-valid (internal/sandbox.Validate
-// ran); the operator's host allowlist is Cedar's (grantEgress, at admission),
-// so this no longer intersects a host ceiling - it only compiles the rules.
-func (e *Egress) Grant(rules []v1beta1.SandboxHTTPRule) (*Grant, error) {
+// Grant compiles a module's egress rules into what one run's requests are
+// checked against. The rules are assumed shape-valid (the manifest ran
+// ValidateRules); the host gate is the policy layers' grantEgress, decided at
+// admission, so this only compiles the rules.
+func (e *Egress) Grant(rules []HTTPRule) (*Grant, error) {
 	g := &Grant{egress: e, rules: make([]rule, 0, len(rules))}
 	for i, r := range rules {
 		compiled := rule{methods: map[string]bool{}, pathPrefix: r.PathPrefix}
@@ -38,7 +35,7 @@ func (e *Egress) Grant(rules []v1beta1.SandboxHTTPRule) (*Grant, error) {
 			compiled.methods[strings.ToUpper(m)] = true
 		}
 		if compiled.pathPrefix != "" && !NormalizedPath(compiled.pathPrefix) {
-			return nil, fmt.Errorf("sandbox.egress.http[%d].pathPrefix %q must be normalized (no . or .. segments, no empty segments)", i, r.PathPrefix)
+			return nil, fmt.Errorf("requires.egress.http[%d].pathPrefix %q must be normalized (no . or .. segments, no empty segments)", i, r.PathPrefix)
 		}
 		switch {
 		case r.Host != "":
@@ -46,13 +43,13 @@ func (e *Egress) Grant(rules []v1beta1.SandboxHTTPRule) (*Grant, error) {
 			// a zone, or a "." that normalizes to nothing - would be a rule
 			// that never matches, or one that matches everything.
 			if !ValidHost(r.Host) {
-				return nil, fmt.Errorf("sandbox.egress.http[%d].host %q must be a bare host name (no scheme, port, path or zone)", i, r.Host)
+				return nil, fmt.Errorf("requires.egress.http[%d].host %q must be a bare host name (no scheme, port, path or zone)", i, r.Host)
 			}
 			compiled.host = normalizeHost(r.Host)
 		default:
 			suffix, ok := patternSuffix(r.HostPattern)
 			if !ok {
-				return nil, fmt.Errorf("sandbox.egress.http[%d].hostPattern %q must be a host name with one leading wildcard label", i, r.HostPattern)
+				return nil, fmt.Errorf("requires.egress.http[%d].hostPattern %q must be a host name with one leading wildcard label", i, r.HostPattern)
 			}
 			compiled.suffix = suffix
 		}

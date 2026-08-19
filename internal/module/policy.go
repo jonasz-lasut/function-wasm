@@ -1,106 +1,55 @@
 package module
 
 import (
-	"errors"
 	"fmt"
-	"slices"
-	"strings"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/authz"
 )
 
-// repositoryFence decides whether an XR-chosen location lies within a
-// Composition's repositoryAllowList, using Cedar over a boundary-correct
-// repository hierarchy (internal/authz). The policy is static and embedded, so
-// a compile failure is a programming error: fail at init like a bad regexp.
-var repositoryFence = func() *authz.RepositoryFence {
-	f, err := authz.NewRepositoryFence()
-	if err != nil {
-		panic(fmt.Sprintf("compiling the repository fence policy: %v", err))
-	}
-	return f
-}()
-
-// credentialFence decides whether an XR-chosen module may spend a step
-// credential: the credential must be in credentialsAllowList and its repository
-// within repositoryAllowList (co-located), using Cedar over the same
-// boundary-correct repository hierarchy (internal/authz). Static and embedded,
-// so a compile failure fails at init.
-var credentialFence = func() *authz.CredentialFence {
-	f, err := authz.NewCredentialFence()
-	if err != nil {
-		panic(fmt.Sprintf("compiling the credential fence policy: %v", err))
-	}
-	return f
-}()
-
-// ValidatePolicy checks the shape of an Input's policy: entries are non-empty
-// prefixes and names, and a credentials allow list comes with a repository
-// allow list — a credential must never be spendable on an arbitrary host. A
-// nil policy is valid: any repository, no credentials.
-func ValidatePolicy(p *v1beta1.Policy) error {
-	if p == nil {
-		return nil
-	}
-	if slices.Contains(p.RepositoryAllowList, "") {
-		return errors.New("policy.repositoryAllowList entries must not be empty: an empty prefix admits every repository")
-	}
-	if slices.Contains(p.CredentialsAllowList, "") {
-		return errors.New("policy.credentialsAllowList entries must not be empty")
-	}
-	if len(p.CredentialsAllowList) > 0 && len(p.RepositoryAllowList) == 0 {
-		return errors.New("policy.credentialsAllowList requires policy.repositoryAllowList: a step credential must only be spent on repositories the Composition names")
-	}
-	return nil
-}
-
 // ValidateFrom checks what can be known of a source without the composite
-// resource: its shape (Validate), the policy's shape (ValidatePolicy) and,
-// for a module.from source of type OCI or HTTP, that policy.repositoryAllowList
-// fences it — the rule FromComposite applies once the value is read, applied
-// here to the Input alone, so a Composition can be checked without an XR. A
-// source without From needs no more than its shape.
-func ValidateFrom(src v1beta1.ModuleSource, policy *v1beta1.Policy) error {
+// resource: its shape (Validate) and, for a module.from source of type OCI or
+// HTTP, that the Input carries a compositionPolicy at all - the fence
+// FromComposite evaluates once the value is read (pullModule, default-deny),
+// applied here to the Input alone, so a Composition can be checked without an
+// XR. A source without From needs no more than its shape.
+func ValidateFrom(src v1beta1.ModuleSource, comp *authz.CompositionPolicy) error {
 	if err := Validate(src); err != nil {
-		return err
-	}
-	if err := ValidatePolicy(policy); err != nil {
 		return err
 	}
 	if src.From == "" {
 		return nil
 	}
-	return requireRepositoryAllowList(src.From, src.Type, policy)
+	return requireCompositionPolicy(src.From, src.Type, comp)
 }
 
-// requireRepositoryAllowList is the rule that a source the composite resource
-// chooses must be fenced: without a repository allow list its author would
-// point the runtime at any host and read what its answer says. Path sources
-// have no host.
-func requireRepositoryAllowList(from string, t v1beta1.ModuleType, policy *v1beta1.Policy) error {
+// requireCompositionPolicy is the rule that a source the composite resource
+// chooses must be fenced: without a composition policy to permit its
+// repository (pullModule), its author would point the runtime at any host and
+// read what its answer says. Path sources have no host.
+func requireCompositionPolicy(from string, t v1beta1.ModuleType, comp *authz.CompositionPolicy) error {
 	if t == v1beta1.ModuleTypePath {
 		return nil
 	}
-	if policy == nil || len(policy.RepositoryAllowList) == 0 {
-		return fmt.Errorf("module.from: %s of the composite resource names a %s source, but policy.repositoryAllowList is not set: a module the composite resource chooses must be fenced to repositories the Composition names, or its author could point the runtime at any host", from, t)
+	if comp == nil {
+		return fmt.Errorf("module.from: %s of the composite resource names a %s source, but the Input has no compositionPolicy: a module the composite resource chooses must be permitted by the compositionPolicy's pullModule rules, or its author could point the runtime at any host", from, t)
 	}
 	return nil
 }
 
-// admit applies policy to a concrete source the composite resource chose
-// through the Input field from: the ref (or url) must lie within the
-// repository allow list — which such a source requires: without one the
-// composite resource's author would point the runtime at any host and read
-// what its answer says — and credentials may be named only when the
-// credentials allow list has them; the repository check has passed by then,
-// so the credential only ever reaches a host the Composition admitted. Path
-// sources have neither a repository nor credentials. The repository check is a
-// Cedar authorization over a boundary-correct repository hierarchy
-// (internal/authz) against the normalized location (registry/repository for
-// OCI, scheme://host/path for HTTP), so a prefix never admits a sibling
-// namespace or an adjacent host; the credential check is exact set membership.
-func admit(from string, src v1beta1.ModuleSource, policy *v1beta1.Policy) error {
+// admit applies the composition policy layer to a concrete source the
+// composite resource chose through the Input field from - the source fence of
+// the three-layer model (docs/one-pager-three-layer-authz.md), default-deny:
+// the ref's (or url's) normalized location (registry/repository for OCI,
+// scheme://host/path for HTTP; dot segments refused by Validate) must be
+// permitted by a pullModule rule, over the boundary-correct repository
+// hierarchy (internal/authz) so a permitted prefix never admits a sibling
+// namespace or an adjacent host; and credentials may be named only where a
+// spendCredential rule permits them for that location - the pull check has
+// passed by then, so the credential only ever reaches a repository the policy
+// admitted. Path sources have neither a repository nor credentials. A static
+// source is the Composition's own choice and never reaches this fence.
+func admit(from string, src v1beta1.ModuleSource, comp *authz.CompositionPolicy, principal authz.Principal) error {
 	var field, location string
 	var err error
 	switch src.Type {
@@ -116,24 +65,17 @@ func admit(from string, src v1beta1.ModuleSource, policy *v1beta1.Policy) error 
 	if err != nil {
 		return fmt.Errorf("module.from: %s of the composite resource: %w", from, err)
 	}
-	if err := requireRepositoryAllowList(from, src.Type, policy); err != nil {
+	if err := requireCompositionPolicy(from, src.Type, comp); err != nil {
 		return err
 	}
-	if !repositoryFence.Permits(location, policy.RepositoryAllowList) {
-		return fmt.Errorf("module.from: %s of the composite resource names %s %q, which policy.repositoryAllowList does not admit (allowed prefixes: %s)", from, field, location, strings.Join(policy.RepositoryAllowList, ", "))
+	if !comp.PermitsPullModule(principal, location) {
+		return fmt.Errorf("module.from: %s of the composite resource names %s %q, which the compositionPolicy does not permit (pullModule)", from, field, location)
 	}
 	if src.Type != v1beta1.ModuleTypeOCI || src.OCI.Credentials == "" {
 		return nil
 	}
-	if policy == nil || len(policy.CredentialsAllowList) == 0 {
-		return fmt.Errorf("module.from: %s of the composite resource names credentials %q, but a module chosen by the composite resource cannot use the step's credentials (the registry host would be its author's) unless policy.credentialsAllowList allows them for a repository in policy.repositoryAllowList; otherwise pull it with the runtime's Docker config or anonymously", from, src.OCI.Credentials)
-	}
-	// The credential fence is a Cedar authorization co-locating both halves:
-	// the credential must be in credentialsAllowList and its repository within
-	// repositoryAllowList. The repository check has passed already, so this
-	// reduces to exact credential membership, in the repository's context.
-	if !credentialFence.Permits(src.OCI.Credentials, location, policy.CredentialsAllowList, policy.RepositoryAllowList) {
-		return fmt.Errorf("module.from: %s of the composite resource names credentials %q, which policy.credentialsAllowList does not allow (allowed: %s)", from, src.OCI.Credentials, strings.Join(policy.CredentialsAllowList, ", "))
+	if !comp.PermitsSpendCredential(principal, src.OCI.Credentials, location) {
+		return fmt.Errorf("module.from: %s of the composite resource names credentials %q, which the compositionPolicy does not permit (spendCredential) for %q: a module chosen by the composite resource cannot spend a step credential (the registry host would be its author's) unless the compositionPolicy permits it for that repository; otherwise pull it with the runtime's Docker config or anonymously", from, src.OCI.Credentials, location)
 	}
 	return nil
 }

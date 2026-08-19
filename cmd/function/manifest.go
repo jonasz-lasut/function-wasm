@@ -4,7 +4,6 @@ import (
 	"github.com/crossplane/function-sdk-go/errors"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
-	"github.com/jonasz-lasut/function-wasm/internal/admission"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 )
 
@@ -34,14 +33,16 @@ func parseModuleManifest(raw []byte, desc string) (*manifest.Manifest, error) {
 }
 
 // checkManifestGrants holds a parsed manifest (nil when the module has none)
-// against the grants the step was admitted with - the narrowing-only check the
-// runtime makes between load and run. An unmet requirement or a config outside
-// the module's schema refuses the module.
-func checkManifestGrants(m *manifest.Manifest, desc string, in *v1beta1.Input, admitted admission.Admitted) error {
+// against what the policy layers granted (AdmitRequires' verdict) - the
+// narrowing-only check the runtime makes between load and run: the ABI, the
+// minimum runtime, the config against the module's schema, and every
+// requirement covered. An unmet requirement or a config outside the module's
+// schema refuses the module.
+func checkManifestGrants(m *manifest.Manifest, desc string, in *v1beta1.Input, grants manifest.Grants) error {
 	if m == nil {
 		return nil
 	}
-	if err := m.Check(admitted.ManifestGrants(in), in.Config, manifest.RuntimeVersion()); err != nil {
+	if err := m.Check(grants, in.Config, manifest.RuntimeVersion()); err != nil {
 		return errors.Errorf("module %s %v", desc, err)
 	}
 	return nil

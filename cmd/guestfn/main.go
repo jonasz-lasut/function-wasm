@@ -33,7 +33,6 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/jonasz-lasut/function-wasm/cmd/guestfn/internal/scaffold"
-	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 )
@@ -438,7 +437,7 @@ func (c *PushCmd) Run(ctx context.Context, stdout io.Writer) error {
 	pinned := pinnedRef(ref, digest)
 	_, _ = fmt.Fprintf(stdout, "Pushed %s\n\nmodule:\n  type: OCI\n  oci:\n    ref: %s\n", pinned, pinned)
 	if m != nil {
-		block, err := sandboxBlock(m)
+		block, err := requiresBlock(m)
 		if err != nil {
 			return err
 		}
@@ -495,17 +494,17 @@ func manifestAnnotations(m *manifest.Manifest, revision string) map[string]strin
 	return annotations
 }
 
-// sandboxBlock renders the sandbox a Composition must grant for the
-// manifest's requirements, as the YAML fragment that follows the module
-// block; empty when the module requires nothing.
-func sandboxBlock(m *manifest.Manifest) (string, error) {
-	sb := m.Sandbox()
-	if sb == nil {
+// requiresBlock renders the module's requirements as YAML - informational:
+// the runtime grants them where the operator's --sandbox-policy-file (and any
+// compositionPolicy) permits, nothing is copied into a Composition. Empty
+// when the module requires nothing.
+func requiresBlock(m *manifest.Manifest) (string, error) {
+	if m.Requires.Empty() {
 		return "", nil
 	}
 	out, err := yaml.Marshal(struct {
-		Sandbox *v1beta1.Sandbox `json:"sandbox"`
-	}{sb})
+		Requires *manifest.Requires `json:"requires"`
+	}{m.Requires})
 	if err != nil {
 		return "", err
 	}

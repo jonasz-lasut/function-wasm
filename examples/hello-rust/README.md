@@ -12,8 +12,8 @@ a wasip1 reactor of about 250 KB and run by
   [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md)
   behind `#[cfg(target_os = "wasi")]`, so `cargo test` runs natively.
 - `src/http.rs` — `http::get`/`http::send` over the `wasmfn.http` import:
-  HTTP through the host, within the Composition's `sandbox.egress` grant
-  (`config.greetingUrl` uses it). Natively the host is a closure installed
+  HTTP through the host, within the egress grant of the module's
+  manifest (`config.greetingUrl` uses it). Natively the host is a closure installed
   with `http::set_host`, so the tests fake it.
 
 ```shell

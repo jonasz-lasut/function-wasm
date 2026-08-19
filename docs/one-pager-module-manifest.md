@@ -2,19 +2,22 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.0
+* Status: Implemented, revision 1.1
 
-A module declares what it needs — the sandbox grants it cannot run without,
-the shape of the `config` it reads, the oldest runtime it works on — in a
-manifest that travels beside the module as a second layer of its OCI
+A module declares what it needs — the sandbox capabilities it cannot run
+without, the shape of the `config` it reads, the oldest runtime it works on
+— in a manifest that travels beside the module as a second layer of its OCI
 artifact. The runtime reads the layer before the run and fails fast, with a
-message naming the module and the missing grant, when the Composition
-granted less than the module requires or the `config` does not match the
-module's schema; registries and `guestfn inspect` show what a module wants
-before anyone runs it; `guestfn scaffold composition` writes the Input from
-it. A manifest never widens anything: grants stay the Composition's within
-the operator's ceiling. Modules served as `path` or `http` sources carry no
-manifest.
+message naming the module and the refusing policy layer, when a requirement
+is not permitted or the `config` does not match the module's schema;
+registries and `guestfn inspect` show what a module wants before anyone
+runs it; `guestfn scaffold composition` writes the Input from it. A
+manifest never widens anything: it is the *request* of the three-layer
+decision (docs/one-pager-three-layer-authz.md), granted only where the
+Input's `compositionPolicy` and the operator's `--sandbox-policy-file` both
+permit. Revision 1.1 records that change: `requires` gained `env`
+credential bindings and its check became the three-layer decision. Modules
+served as `path` or `http` sources carry no manifest.
 
 
 ## Before this
@@ -34,9 +37,10 @@ its version does not have.
 
 ## Principles
 
-1. **A manifest is a requirement, not a grant.** Its only effects are an
+1. **A manifest is a request, not a grant.** Its only effects are an
    earlier, clearer refusal, documentation and scaffolding. The
-   Composition still asks, the operator still caps.
+   composition and operator policy layers still grant, and either can
+   refuse.
 2. **Beside the module, inside the artifact.** The manifest is a layer of
    the same OCI artifact as the module, so it is named by the manifest
    digest a Composition pins and covered by a cosign signature of that
@@ -60,11 +64,14 @@ version: 0.1.0                           # → …image.version; guestfn push --
 source: https://github.com/example/greeter   # → …image.source (optional)
 requires:                                # what the run must be granted; each optional
   egress:
-    http:                                # the Input's SandboxHTTPRule shape, verbatim
+    http:                                # the egress package's HTTPRule shape, verbatim
     - host: api.example.com
       methods: [GET]
       pathPrefix: /v1/
-  filesystem: {privateTmp: true}         # env is not a requirement: values are the Composition's
+  filesystem: {privateTmp: true}
+  env:                                   # secret env: bindings to step-credential keys
+  - name: DATABASE_URL
+    fromCredential: {name: db, key: url}
 config:
   schema:                                # JSON Schema 2020-12, inline; validates the Input's config
     type: object
@@ -80,69 +87,71 @@ of media type `application/vnd.wasmfn.manifest.v1+json` after the
 version, source, description, revision}` annotations from the manifest and
 `--revision` for registry UIs. At most 64 KiB; the resolver picks the
 module layer as before (a wasm-typed layer, else the only layer that is not
-the manifest layer). `requires.egress.http` reuses `v1beta1.SandboxHTTPRule`,
-so the check compares like with like and `scaffold composition` copies it
-verbatim; `requires.env` lists keys only — values are the Composition's.
+the manifest layer). `requires.egress.http` reuses `egress.HTTPRule`,
+so a requirement and a compiled grant compare like with like;
+`requires.env` binds variable names to step-credential keys - the value
+still arrives at the pipeline step, never in the manifest.
 `oras push fn.wasm:application/wasm wasmfn.json:application/vnd.wasmfn.manifest.v1+json`
 produces the same artifact.
 
 **Who writes it.** `guestfn build` reads `wasmfn.yaml` when present and
-validates it (strictly: unknown fields refused, egress rules through the
-same checks as `internal/sandbox.Validate`, the schema compiled) — a
+validates it (strictly: unknown fields refused, egress rules through
+`internal/egress.ValidateRules`, env bindings through
+`internal/sandbox.ValidateBindings`, the schema compiled) — a
 project with a bad manifest does not build — and checks the scaffold's
 example `config` against the schema; `guestfn push` reads it again and adds
 the layer. Not `pkg/wasmfn`: TinyGo and Rust guests do not use `wasmfn`,
 and anything declared in code would need instantiation to read.
 
-**Checked against the grant.** In `RunFunction`, after the grants are
-settled (step 1) and the module loaded (step 5), before `Run`: with `G` the
-run's grant — the Composition's `sandbox` already admitted by the
-ceiling — every requirement must be covered by `G`:
+**Decided by the policy layers.** In `RunFunction`, after admission and
+the load, before `Run`: `admission.AdmitRequires` decides every
+requirement by the three-layer rule - each egress rule (once per rule and
+method, so a policy can key on `context.method`), `filesystem.privateTmp`
+and each env binding (`setEnv` over the bound names, `spendCredential` per
+binding) must be permitted by the Input's `compositionPolicy` (scoped
+default-permit: it narrows only the actions it writes rules for) and by
+the operator's `--sandbox-policy-file` (default-deny) - then
+`checkManifestGrants` holds the rest of the manifest against the run:
 
-- an egress rule: a granted rule with the same `host`, or a granted
-  `hostPattern` covering it (a required pattern must sit under a granted
-  pattern, the rule `internal/egress` already applies between a
-  Composition's pattern and the policy's), whose `methods` include the
-  required ones and whose `pathPrefix` is a prefix of the required one
-  (empty admits all);
-- `filesystem.privateTmp` → `G.PrivateTmp`;
 - `abi` == 1; `minRuntime` ≤ the runtime's version from its build info (a
   `(devel)` runtime passes);
 - `config.schema` → the Input's `config` (absent = `{}`) validates.
 
 A miss is a fatal result, outcome `refused`, before the module runs:
-`module oci ghcr.io/example/greeter@sha256:3f2a… requires
-sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/,
-which the Composition does not grant`; `… requires
-sandbox.filesystem.privateTmp, which the Composition does not grant`; `…
+`module oci ghcr.io/example/greeter@sha256:3f2a… requires egress GET to
+host "api.example.com" (requires.egress.http[0]), which the operator
+policy (--sandbox-policy-file) does not permit` (or `… which the
+compositionPolicy does not permit`); `… requires a private /tmp
+(requires.filesystem.privateTmp), which the operator policy
+(--sandbox-policy-file) does not permit for this request`; `…
 requires runtime v0.3.0 or newer, this is v0.2.1`; `config does not match
-the module's schema: /greeting: got number, want string`. Ordering
-matters and is already right: a Composition that grants what the module
-requires on a runtime whose ceiling refuses it fails at step 1 with the
-grant-and-flag message; the manifest check sees only grants the operator
-admitted, so it can neither widen nor leak what the ceiling would refuse.
-Only narrowing: a manifest can make a run fail earlier; it cannot make a
-run possible.
+the module's schema: /greeting: got number, want string`. The composition
+layer is checked first, whole: the author closest to the fix reads their
+own layer's refusal even where the operator would also deny. Only
+narrowing: a manifest can make a run fail earlier; it cannot make a run
+possible.
 
 **`guestfn scaffold composition [--from fn.wasm | <ref>] [--name greeter]
 [--function-name function-wasm]`** prints a Composition step (or, with
 `--full`, a Composition like the scaffold's `example/composition.yaml`)
 whose `module` is `Path` for a file or the pinned `OCI` reference, whose
-`sandbox` is `requires` copied, whose `config` is a skeleton from the schema
-(required keys with placeholders, defaults where the schema has them) and
-whose `limits` are commented. `guestfn push` also prints the `sandbox:`
-block under the `module:` block it prints today whenever the manifest
-requires anything.
+`config` is a skeleton from the schema (required keys with placeholders,
+defaults where the schema has them) and whose `limits` are commented — the
+module's sandbox needs are its manifest's `requires`, granted by the
+policy layers, never copied into the Input. `guestfn push` prints the
+`requires:` block under the `module:` block it prints today whenever the
+manifest requires anything, so a Composition author knows what the policy
+layers must permit.
 
 ## Mechanics
 
 - `internal/manifest`: `Manifest` types with JSON tags, `Load` (the YAML
   file, strict), `Parse` (the layer: unknown top-level fields ignored, an
   unknown `requires` field refused, size capped), `Validate` (egress rules
-  through `sandbox.ValidateRules`,
+  through `egress.ValidateRules`, env bindings through
+  `sandbox.ValidateBindings`,
   semver, the schema compiled once with `$ref`s to URLs refused), `Check(g
-  Grants, config, runtimeVersion)`, `ValidateConfig`, `Sandbox()` (the
-  Composition block that satisfies `requires`), `Summary()`, `JSON()`,
+  Grants, config, runtimeVersion)`, `ValidateConfig`, `Summary()`, `JSON()`,
   `RuntimeVersion()`, `LayerMediaType`, `MaxSize`, `FileName`. JSON Schema:
   `github.com/santhosh-tekuri/jsonschema/v6` (pure Go, draft 2020-12), a
   loader that refuses every URL, `json.Number` for instances, the first
@@ -153,23 +162,25 @@ requires anything.
   digest and bounded to `manifest.MaxSize`; path and http sources report
   none; `WasmLayer` skips the manifest layer when looking for the only
   layer.
-- `cmd/function/fn.go`: `checkManifest` between `load` and `Run`;
+- `cmd/function/fn.go`: `AdmitRequires` + `checkManifestGrants` between
+  `load` and `Run`;
   `manifestFor` reads memory → the on-disk store `manifests/<digest>`
   (`cache.ManifestsDir`, opened with the other two, swept with them; an
   empty entry means "no manifest") → `Ref.Manifest`, so a warm volume asks
   the registry nothing; the parsed manifest and compiled schema live in a
   `sync.Map` per process. `warm.go` logs a warmed module's requirements at
   debug; `validate --resolve` reads the same manifest, prints its
-  `Summary()` on the resolved line and applies `Check` with the same
-  refusal.
+  `Summary()` on the resolved line and applies the same decision with the
+  same refusal.
 - `cmd/guestfn`: `build` validates `wasmfn.yaml` and the example config;
   `push [--manifest f] [--module-version v] [--revision r]` adds the layer
-  and the annotations and prints the `sandbox:` block a Composition needs;
+  and the annotations and prints the `requires:` block so a Composition
+  author knows what the policy layers must permit;
   `inspect <ref>` and `manifest show <ref>` read the layer, `manifest
   validate [wasmfn.yaml]` checks the file; `scaffold composition [--from
   fn.wasm|<ref>] [--manifest f] [--name] [--function-name] [--full]` prints
-  a step or a Composition from a manifest (`module` pinned, `sandbox` from
-  `requires`, a `config` skeleton from the schema's top-level properties);
+  a step or a Composition from a manifest (`module` pinned, a `config`
+  skeleton from the schema's top-level properties);
   the three template sets and examples carry a `wasmfn.yaml` with a
   `config.schema` for `greeting`/`greetingUrl` and no `requires`
   (`--version` cannot be a subcommand flag: kong's root `--version` takes it,
@@ -185,7 +196,7 @@ requires anything.
 
 ## Trust and threat notes
 
-The manifest is compared against a grant the ceiling already admitted, so
+The manifest is a request both policy layers must permit, so
 it can refuse a run or document a need — never grant, never widen, never
 touch another module's run (there is no "denies" list). It travels in the
 artifact whose manifest digest the Composition pins: whoever can change it
@@ -219,13 +230,15 @@ anything from the composite resource.
   carry no manifest (a Composition that names one gets no manifest check),
   and `guestfn manifest set` — embedding into an existing module — has no
   meaning and does not exist.
-- **Environment variables are not a requirement** (Jonasz, 2026-08-17): the
-  draft let a module list the `env` keys it reads; dropped before it
-  shipped, because environment values are the Composition's (and, with
-  the request-secrets design, may come from the request), not a capability
-  the runtime grants — a module that needs a variable reads it and fails
-  in its own words when it is absent. `requires` is egress and the private
-  `/tmp`; an `env` key under it is refused as an unknown field.
+- **Environment variables are not a requirement** (Jonasz, 2026-08-17;
+  **superseded** by the three-layer model, 2026-08-19): the draft let a
+  module list the `env` keys it reads; dropped before it shipped, because
+  environment values were then the Composition's. The three-layer change
+  reversed this deliberately: with the Input's env fields gone, the
+  manifest is where a module declares its env contract - `requires.env`
+  binds a variable to a step-credential key, gated by `setEnv` and
+  `spendCredential` in both Cedar layers, and the value still arrives at
+  the pipeline step, never in the manifest.
 - **Home of the manifest**: the artifact, source of truth; the standard OCI
   annotations are derived from it for registry UIs, never read by the
   runtime.

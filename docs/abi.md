@@ -28,9 +28,9 @@ The host provides these imports:
 
 | module | name | type | purpose |
 |---|---|---|---|
-| `wasi_snapshot_preview1` | * | | WASI preview 1 as implemented by wasmtime, with `argv = ["function"]`, no sockets; no environment variables and no pre-opened directories unless the Composition's `sandbox` grants them (see [Sandbox](#sandbox)); the clock and randomness work; stdout and stderr are the host process's, so a guest's prints and panics land in the pod log |
+| `wasi_snapshot_preview1` | * | | WASI preview 1 as implemented by wasmtime, with `argv = ["function"]`, no sockets; no environment variables and no pre-opened directories unless the module's manifest requires them and the policy layers permit (see [Sandbox](#sandbox)); the clock and randomness work; stdout and stderr are the host process's, so a guest's prints and panics land in the pod log |
 | `wasmfn` | `log` | `(level: i32, ptr: i32, len: i32)` | structured logging through the host logger; optional |
-| `wasmfn` | `http` | `(req_ptr: i32, req_len: i32) -> i64` | one HTTP(S) request performed by the host within the Composition's `sandbox.egress` grant; optional — see [HTTP egress](#http-egress) |
+| `wasmfn` | `http` | `(req_ptr: i32, req_len: i32) -> i64` | one HTTP(S) request performed by the host within the egress grant of the module's manifest; optional — see [HTTP egress](#http-egress) |
 
 A module importing anything else is refused at load. Both `wasmfn` imports
 are always provided and type-checked at load; a module imports the ones it
@@ -88,15 +88,16 @@ A malformed record is logged verbatim rather than dropped.
 
 ## Sandbox
 
-By default a guest sees no filesystem and no environment. A Composition may
-grant some through the Input's `sandbox` (within what the operator enabled;
+By default a guest sees no filesystem and no environment. A module may be
+granted some by declaring them in its manifest (`requires`; the policy
+layers must permit - `docs/one-pager-three-layer-authz.md`,
 `docs/one-pager-sandbox.md`), and the grant reaches the guest through WASI
 alone — no new import, nothing language-specific:
 
-| grant | what the guest sees |
+| granted requirement | what the guest sees |
 |---|---|
-| `sandbox.filesystem.privateTmp: true` | an empty, writable directory pre-opened at `/tmp` — where Go's `os.TempDir()` and Rust's `env::temp_dir()` point on WASI — created for this request and removed after it, whatever the outcome. Nothing written there survives to the next request or is visible to another. It is the only directory a guest is ever given: host directories are not mountable, a path that would leave `/tmp` (`/tmp/../etc/passwd`) never reaches the host filesystem — wasmtime resolves paths inside the pre-open and answers `EPERM` — and language runtimes that clean absolute paths against the pre-opens fail even earlier (Go: `EBADF`, no pre-open matches `/etc/passwd`) |
-| `sandbox.env {KEY: value}` | exactly those variables through `environ_sizes_get`/`environ_get` (`os.Getenv`, `std::env::var`); the host's environment is never inherited |
+| `requires.filesystem.privateTmp: true` | an empty, writable directory pre-opened at `/tmp` — where Go's `os.TempDir()` and Rust's `env::temp_dir()` point on WASI — created for this request and removed after it, whatever the outcome. Nothing written there survives to the next request or is visible to another. It is the only directory a guest is ever given: host directories are not mountable, a path that would leave `/tmp` (`/tmp/../etc/passwd`) never reaches the host filesystem — wasmtime resolves paths inside the pre-open and answers `EPERM` — and language runtimes that clean absolute paths against the pre-opens fail even earlier (Go: `EBADF`, no pre-open matches `/etc/passwd`) |
+| `requires.env` credential bindings | exactly the bound variables, resolved from the pipeline step's credentials, through `environ_sizes_get`/`environ_get` (`os.Getenv`, `std::env::var`); the host's environment is never inherited |
 
 The private `/tmp` is pre-opened as descriptor 3, but that number is not
 part of the contract: a guest that talks to WASI directly should discover
@@ -109,11 +110,11 @@ same deadline and memory limit.
 `wasmfn.http(req_ptr, req_len) -> i64` asks the host to perform one HTTP(S)
 request. The guest never opens a socket: the host resolves the name, refuses
 addresses its policy blocks, terminates TLS with its own roots, checks the
-host, method and path against the `sandbox.egress.http` rules of the
-Composition running the module, follows redirects within them, enforces the
-operator's budgets and returns the response. The import exists on every
-runtime; without a grant (or with egress disabled by the operator) every call
-is answered with a refusal — never a trap.
+host, method and path against the `requires.egress.http` rules of the
+module's manifest that the policy layers granted, follows redirects within
+them, enforces the operator's budgets and returns the response. The import
+exists on every runtime; without a grant every call is answered with a
+refusal — never a trap.
 
 Memory protocol, in the order it happens:
 

@@ -38,6 +38,7 @@ import (
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
 
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
@@ -47,6 +48,24 @@ import (
 )
 
 const ttl = 60 * time.Second
+
+// permissiveSandboxPolicy is an operator grant policy that enables every
+// sandbox capability for any caller - a fully open operator layer, for tests
+// that exercise a granted sandbox. The layer is the enabler, so a Function
+// without one grants nothing.
+func permissiveSandboxPolicy(t *testing.T) *authz.OperatorPolicy {
+	t.Helper()
+	p, err := authz.NewOperatorPolicy("test.cedar", []byte(`
+permit (principal, action == Action::"usePrivateTmp", resource);
+permit (principal, action == Action::"setEnv", resource);
+permit (principal, action == Action::"grantEgress", resource);
+permit (principal, action == Action::"spendCredential", resource);
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
 
 func digestOf(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -72,8 +91,8 @@ func input(t *testing.T, module map[string]any) *structpb.Struct {
 	return inputWith(t, map[string]any{"module": module})
 }
 
-// inputWith builds an Input from its top-level fields (module, policy,
-// limits, sandbox, config).
+// inputWith builds an Input from its top-level fields (module,
+// compositionPolicy, limits, config).
 func inputWith(t *testing.T, fields map[string]any) *structpb.Struct {
 	t.Helper()
 	body := map[string]any{
@@ -186,7 +205,7 @@ func TestRunFunction(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ceiling, err := sandbox.NewCeiling(sandbox.Options{EnablePrivateTmp: true, EnableEnv: true})
+	ceiling, err := sandbox.NewCeiling(sandbox.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,11 +221,29 @@ func TestRunFunction(t *testing.T) {
 	ociRef := push(t, registryHost+"/fn:v1", okModule)
 	publicHost := publicRegistry(t)
 	publicRef := push(t, publicHost+"/fn:v1", okModule)
+	privateRepo := ociRef[:strings.Index(ociRef, "/")+1]
+
+	// The sandbox guests carry their requests as manifests: the module asks,
+	// the policy layers grant (path modules have no manifest, so they can
+	// request nothing).
+	tmpRef := pushWithManifest(t, publicHost+"/tmp:v1", privateTmpModule, `{"abi":1,"requires":{"filesystem":{"privateTmp":true}}}`)
+	envRef := pushWithManifest(t, publicHost+"/env:v1", environModule, `{"abi":1,"requires":{"env":[{"name":"PASSWORD","fromCredential":{"name":"registry","key":"password"}}]}}`)
+	envPullRef := pushWithManifest(t, registryHost+"/envpull:v1", environModule, `{"abi":1,"requires":{"env":[{"name":"PASSWORD","fromCredential":{"name":"registry","key":"password"}}]}}`)
+
+	// The composition policies the from cases carry: a pullModule fence over
+	// the public registry, and one that also permits spending the step's
+	// registry credential on the private one.
+	fencedPolicy := `permit (principal, action == Action::"pullModule", resource in Repository::"` + publicHost + `");`
+	privateFence := `permit (principal, action == Action::"pullModule", resource in Repository::"` + privateRepo + `");`
+	trustedPolicy := privateFence + `
+permit (principal, action == Action::"spendCredential", resource == Credential::"registry")
+when { context.repository in Repository::"` + privateRepo + `" };`
+	otherCredPolicy := privateFence + `
+permit (principal, action == Action::"spendCredential", resource == Credential::"other");`
 
 	// An XR whose status names modules, for module.from: a public one, and
 	// a private one that spends the step's credentials.
 	xr := resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"},"spec":{"module":"fn.wasm"},"status":{"module":{"ref":"` + publicRef + `"},"private":{"ref":"` + ociRef + `","credentials":"registry"}}}`)
-	privateRepo := ociRef[:strings.Index(ociRef, "/")+1]
 	credentials := map[string]*fnv1.Credentials{
 		"registry": {Source: &fnv1.Credentials_CredentialData{CredentialData: &fnv1.CredentialData{
 			Data: map[string][]byte{"username": []byte("robot"), "password": []byte("s3cret")},
@@ -298,79 +335,79 @@ func TestRunFunction(t *testing.T) {
 			}},
 			want: want{rsp: fatal(`cannot get credentials "registry" for module.oci: registry: credential not found`)},
 		},
-		"StaticIgnoresPolicy": {
-			reason: "The policy fences XR-chosen modules only; a module the Composition names is pulled with its credentials whatever the policy says.",
+		"StaticIgnoresFence": {
+			reason: "The compositionPolicy's pullModule fence covers XR-chosen modules only; a module the Composition names is pulled with its credentials whatever the policy permits.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:        &fnv1.RequestMeta{Tag: "hello"},
-				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "oci": map[string]any{"ref": ociRef, "credentials": "registry"}}, "policy": map[string]any{"repositoryAllowList": []any{"ghcr.io/example-org/"}}}),
+				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "oci": map[string]any{"ref": ociRef, "credentials": "registry"}}, "compositionPolicy": `permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/example-org");`}),
 				Credentials: credentials,
 			}},
 			want: want{rsp: guestResponse()},
 		},
 		"OCIFromStatus": {
-			reason: "module.from reads the OCI source from the observed XR and pulls it anonymously, within the repositories the Composition fenced it to.",
+			reason: "module.from reads the OCI source from the observed XR and pulls it anonymously, within the repositories the compositionPolicy permits (pullModule).",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:     &fnv1.RequestMeta{Tag: "hello"},
-				Input:    inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.module"}, "policy": map[string]any{"repositoryAllowList": []any{publicHost + "/"}}}),
+				Input:    inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.module"}, "compositionPolicy": fencedPolicy}),
 				Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: xr}},
 			}},
 			want: want{rsp: guestResponse()},
 		},
 		"OCIFromUnfenced": {
-			reason: "A module the XR chooses requires policy.repositoryAllowList: without it the XR author could point the runtime at any host and read what its answer says.",
+			reason: "A module the XR chooses requires a compositionPolicy: without one the XR author could point the runtime at any host and read what its answer says.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:     &fnv1.RequestMeta{Tag: "hello"},
 				Input:    input(t, map[string]any{"type": "OCI", "from": "status.module"}),
 				Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: xr}},
 			}},
-			want: want{rsp: fatal("cannot resolve module: module.from: status.module of the composite resource names a OCI source, but policy.repositoryAllowList is not set: a module the composite resource chooses must be fenced to repositories the Composition names, or its author could point the runtime at any host")},
+			want: want{rsp: fatal("cannot resolve module: module.from: status.module of the composite resource names a OCI source, but the Input has no compositionPolicy: a module the composite resource chooses must be permitted by the compositionPolicy's pullModule rules, or its author could point the runtime at any host")},
 		},
 		"OCIFromCredentialsRefused": {
-			reason: "Fenced but without a credentials list, a module the XR chooses cannot spend the step's credentials: the XR author would pick the registry host they are sent to.",
+			reason: "Fenced for pulling but without a spendCredential permit, a module the XR chooses cannot spend the step's credentials: the XR author would pick the registry host they are sent to.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:        &fnv1.RequestMeta{Tag: "hello"},
-				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.private"}, "policy": map[string]any{"repositoryAllowList": []any{registryHost + "/"}}}),
+				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.private"}, "compositionPolicy": privateFence}),
 				Observed:    &fnv1.State{Composite: &fnv1.Resource{Resource: xr}},
 				Credentials: credentials,
 			}},
-			want: want{rsp: fatal(`cannot resolve module: module.from: status.private of the composite resource names credentials "registry", but a module chosen by the composite resource cannot use the step's credentials (the registry host would be its author's) unless policy.credentialsAllowList allows them for a repository in policy.repositoryAllowList; otherwise pull it with the runtime's Docker config or anonymously`)},
+			want: want{rsp: fatal(`cannot resolve module: module.from: status.private of the composite resource names credentials "registry", which the compositionPolicy does not permit (spendCredential) for "` + registryHost + `/fn": a module chosen by the composite resource cannot spend a step credential (the registry host would be its author's) unless the compositionPolicy permits it for that repository; otherwise pull it with the runtime's Docker config or anonymously`)},
 		},
 		"OCIFromCredentialsAllowed": {
-			reason: "A policy naming the credential and the private registry lets the XR-chosen module spend it, and the guest does not see the credential.",
+			reason: "A compositionPolicy permitting the credential for the private repository lets the XR-chosen module spend it, and the guest does not see the credential.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:        &fnv1.RequestMeta{Tag: "hello"},
-				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.private"}, "policy": map[string]any{"repositoryAllowList": []any{privateRepo}, "credentialsAllowList": []any{"registry"}}}),
+				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.private"}, "compositionPolicy": trustedPolicy}),
 				Observed:    &fnv1.State{Composite: &fnv1.Resource{Resource: xr}},
 				Credentials: credentials,
 			}},
 			want: want{rsp: guestResponse()},
 		},
 		"OCIFromCredentialsOutsideList": {
-			reason: "A credential the policy does not list is refused.",
+			reason: "A credential no spendCredential permit names is refused.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:        &fnv1.RequestMeta{Tag: "hello"},
-				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.private"}, "policy": map[string]any{"repositoryAllowList": []any{privateRepo}, "credentialsAllowList": []any{"other"}}}),
+				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.private"}, "compositionPolicy": otherCredPolicy}),
 				Observed:    &fnv1.State{Composite: &fnv1.Resource{Resource: xr}},
 				Credentials: credentials,
 			}},
-			want: want{rsp: fatal(`cannot resolve module: module.from: status.private of the composite resource names credentials "registry", which policy.credentialsAllowList does not allow (allowed: other)`)},
+			want: want{rsp: fatal(`cannot resolve module: module.from: status.private of the composite resource names credentials "registry", which the compositionPolicy does not permit (spendCredential) for "` + registryHost + `/fn": a module chosen by the composite resource cannot spend a step credential (the registry host would be its author's) unless the compositionPolicy permits it for that repository; otherwise pull it with the runtime's Docker config or anonymously`)},
 		},
 		"OCIFromRepositoryRefused": {
-			reason: "An XR-chosen ref outside the repository allow list is a fatal result naming the policy and the ref.",
+			reason: "An XR-chosen ref no pullModule permit admits is a fatal result naming the policy and the ref.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:     &fnv1.RequestMeta{Tag: "hello"},
-				Input:    inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.module"}, "policy": map[string]any{"repositoryAllowList": []any{"ghcr.io/example-org/"}}}),
+				Input:    inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "from": "status.module"}, "compositionPolicy": `permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/example-org");`}),
 				Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: xr}},
 			}},
-			want: want{rsp: fatal(`cannot resolve module: module.from: status.module of the composite resource names ref "` + publicHost + `/fn", which policy.repositoryAllowList does not admit (allowed prefixes: ghcr.io/example-org/)`)},
+			want: want{rsp: fatal(`cannot resolve module: module.from: status.module of the composite resource names ref "` + publicHost + `/fn", which the compositionPolicy does not permit (pullModule)`)},
 		},
-		"CredentialsListWithoutRepositories": {
-			reason: "A credentials allow list without a repository allow list is refused: a credential must never be spendable on an arbitrary host.",
+		"MalformedCompositionPolicy": {
+			reason: "Malformed Cedar in compositionPolicy is a fatal result at admission, before anything is resolved.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: inputWith(t, map[string]any{"module": pathModule("fn.wasm"), "policy": map[string]any{"credentialsAllowList": []any{"registry"}}}),
+				Input: inputWith(t, map[string]any{"module": pathModule("fn.wasm"), "compositionPolicy": "permit (principal"}),
 			}},
-			want: want{rsp: fatal("cannot resolve module: policy.credentialsAllowList requires policy.repositoryAllowList: a step credential must only be spent on repositories the Composition names")},
+			want: want{rsp: fatal(`compositionPolicy is invalid: cannot compile the compositionPolicy as Cedar: parser error: parse error at <input>:1:18 "": exact got  want ,`)},
 		},
 		"PathFromSpec": {
 			reason: "module.from with type Path reads the module path from the observed XR.",
@@ -471,57 +508,47 @@ func TestRunFunction(t *testing.T) {
 			}},
 			want: want{rsp: fatal("limits.memory 0 must be positive")},
 		},
-		"SandboxEmpty": {
-			reason: "A sandbox that asks for nothing is the default sandbox.",
+		"RemovedFieldsRefused": {
+			reason: "The removed policy and sandbox Input fields fail the runtime's strict decode: an unported Composition is refused, never silently stripped of its old grants.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: inputWith(t, map[string]any{"module": pathModule("fn.wasm"), "sandbox": map[string]any{"filesystem": map[string]any{}}}),
+				Input: inputWith(t, map[string]any{"module": pathModule("fn.wasm"), "sandbox": map[string]any{"filesystem": map[string]any{"privateTmp": true}}, "policy": map[string]any{"repositoryAllowList": []any{"x/"}}}),
 			}},
-			want: want{rsp: guestResponse()},
+			want: want{rsp: fatal(`cannot get function input from *v1.RunFunctionRequest: cannot get function input *v1beta1.Input from *v1.RunFunctionRequest: cannot unmarshal JSON from *structpb.Struct into *v1beta1.Input: json: cannot unmarshal JSON string into Go v1beta1.Input: unknown object member name "policy"`)},
 		},
-		"SandboxPrivateTmp": {
-			reason: "The private /tmp is writable for the run: the guest writes a file and reads it back.",
+		"ManifestPrivateTmp": {
+			reason: "A module whose manifest requires a private /tmp gets one where the operator layer permits: the guest writes a file and reads it back.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: inputWith(t, map[string]any{"module": pathModule("privatetmp.wasm"), "sandbox": map[string]any{"filesystem": map[string]any{"privateTmp": true}}}),
+				Input: input(t, map[string]any{"type": "OCI", "oci": map[string]any{"ref": tmpRef}}),
 			}},
 			want: want{rsp: sandboxed("written by the guest")},
 		},
-		"SandboxEnv": {
-			reason: "The environment the Composition grants is what the guest sees.",
-			args: args{req: &fnv1.RunFunctionRequest{
-				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: inputWith(t, map[string]any{"module": pathModule("environ.wasm"), "sandbox": map[string]any{"env": []any{map[string]any{"name": "GREETING", "value": "hello"}}}}),
-			}},
-			want: want{rsp: sandboxed("GREETING=hello\x00")},
-		},
-		"SandboxEnvValueFrom": {
-			reason: "A valueFrom reads the value from a step credential.",
+		"ManifestEnvBinding": {
+			reason: "A manifest env binding resolves from the step credential: the module owns its env contract, the layers grant it.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:        &fnv1.RequestMeta{Tag: "hello"},
-				Input:       inputWith(t, map[string]any{"module": pathModule("environ.wasm"), "sandbox": map[string]any{"env": []any{map[string]any{"name": "PASSWORD", "valueFrom": map[string]any{"credential": map[string]any{"name": "registry", "key": "password"}}}}}}),
+				Input:       input(t, map[string]any{"type": "OCI", "oci": map[string]any{"ref": envRef}}),
 				Credentials: credentials,
 			}},
 			want: want{rsp: sandboxed("PASSWORD=s3cret\x00")},
 		},
-		"SandboxEnvFrom": {
-			reason: "EnvFrom imports every key of a credential as environment variables.",
+		"ManifestEnvBindingMissingCredential": {
+			reason: "A binding whose credential the request does not carry is a fatal result telling the author where to declare it.",
 			args: args{req: &fnv1.RunFunctionRequest{
-				Meta:        &fnv1.RequestMeta{Tag: "hello"},
-				Input:       inputWith(t, map[string]any{"module": pathModule("environ.wasm"), "sandbox": map[string]any{"envFrom": []any{map[string]any{"credential": map[string]any{"name": "registry"}, "prefix": "REG_"}}}}),
-				Credentials: credentials,
+				Meta:  &fnv1.RequestMeta{Tag: "hello"},
+				Input: input(t, map[string]any{"type": "OCI", "oci": map[string]any{"ref": envRef}}),
 			}},
-			// The environ guest returns sorted key=value pairs.
-			want: want{rsp: sandboxed("REG_password=s3cret\x00REG_username=robot\x00")},
+			want: want{rsp: fatal(`module oci ` + envRef + `: requires.env[0] (PASSWORD): the request carries no credential "registry"; declare it on the pipeline step`)},
 		},
-		"SandboxEnvPullCredentialRefused": {
-			reason: "The pull credential is withheld from env sources: a Composition cannot leak the module's registry secret into its environment.",
+		"ManifestEnvPullCredentialRefused": {
+			reason: "The pull credential is withheld from env bindings: a module cannot read its own registry secret into its environment.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:        &fnv1.RequestMeta{Tag: "hello"},
-				Input:       inputWith(t, map[string]any{"module": map[string]any{"type": "OCI", "oci": map[string]any{"ref": ociRef, "credentials": "registry"}}, "sandbox": map[string]any{"env": []any{map[string]any{"name": "X", "valueFrom": map[string]any{"credential": map[string]any{"name": "registry", "key": "password"}}}}}}),
+				Input:       input(t, map[string]any{"type": "OCI", "oci": map[string]any{"ref": envPullRef, "credentials": "registry"}}),
 				Credentials: credentials,
 			}},
-			want: want{rsp: fatal(`sandbox.env[0].valueFrom.credential: credential "registry" is the pull credential and cannot be used as a source`)},
+			want: want{rsp: fatal(`module oci ` + envPullRef + `: requires.env[0] (PASSWORD): credential "registry" is the pull credential and cannot be used as a source`)},
 		},
 		"SandboxDefaultIsClosed": {
 			reason: "Without a grant a guest has no pre-opened directory: the same guest exits with EBADF (8) at path_open.",
@@ -530,14 +557,6 @@ func TestRunFunction(t *testing.T) {
 				Input: input(t, pathModule("readfile.wasm")),
 			}},
 			want: want{rsp: fatal("module module file readfile.wasm failed: wasmfn_run failed: module exited with status 8")},
-		},
-		"SandboxInvalid": {
-			reason: "A malformed sandbox is a fatal result naming the field.",
-			args: args{req: &fnv1.RunFunctionRequest{
-				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: inputWith(t, map[string]any{"module": pathModule("fn.wasm"), "sandbox": map[string]any{"egress": map[string]any{"http": []any{map[string]any{"host": "api.example.com", "hostPattern": "*.example.com", "methods": []any{"GET"}}}}}}),
-			}},
-			want: want{rsp: fatal("sandbox.egress.http[0] must set exactly one of host and hostPattern")},
 		},
 		"MetaFilledForEmptyResponse": {
 			reason: "A guest that returns nothing still yields a well-formed response.",
@@ -574,7 +593,7 @@ func TestRunFunction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, sandbox: ceiling}
+	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, sandbox: ceiling, policy: permissiveSandboxPolicy(t)}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -597,69 +616,36 @@ func TestRunFunction(t *testing.T) {
 	}
 }
 
-// TestRunFunctionSandboxCeiling pins that a runtime started without the
-// --enable-sandbox-* flags refuses every filesystem and environment grant
-// with a fatal result naming the grant and the flag, before any module is
-// resolved — the default sandbox is the ceiling.
-func TestRunFunctionSandboxCeiling(t *testing.T) {
-	cases := map[string]struct {
-		reason  string
-		sandbox map[string]any
-		want    string
-	}{
-		"PrivateTmp": {reason: "The private /tmp needs --enable-sandbox-private-tmp.", sandbox: map[string]any{"filesystem": map[string]any{"privateTmp": true}}, want: "sandbox.filesystem.privateTmp is refused: the runtime was started without --enable-sandbox-private-tmp"},
-		"Env":        {reason: "Environment variables need --enable-sandbox-env.", sandbox: map[string]any{"env": []any{map[string]any{"name": "GREETING", "value": "hello"}}}, want: "sandbox.env is refused: the runtime was started without --enable-sandbox-env"},
-	}
-
-	eng, err := engine.New(engine.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer eng.Close()
-	resolver, err := module.NewResolver(module.Options{Dir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// No ceiling at all — what a Function gets when nothing is enabled.
-	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			rsp, err := f.RunFunction(context.Background(), &fnv1.RunFunctionRequest{
-				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: inputWith(t, map[string]any{"module": pathModule("missing.wasm"), "sandbox": tc.sandbox}),
-			})
-			if err != nil {
-				t.Fatalf("\n%s\nRunFunction(): unexpected error %v", tc.reason, err)
-			}
-			if diff := cmp.Diff(fatal(tc.want), rsp, protocmp.Transform()); diff != "" {
-				t.Errorf("\n%s\nRunFunction(): -want, +got:\n%s", tc.reason, diff)
-			}
-		})
-	}
-}
-
-// TestSandboxFlags pins the shape of the sandbox flags: each capability has
-// its --enable-sandbox-<feature> switch, off by default, readable from the
-// environment; there is no flag that mounts a host directory. serve is the
-// default command, so the flags need no subcommand and a
-// DeploymentRuntimeConfig's args keep working; validate takes the same
-// ceiling flags.
+// TestSandboxFlags pins the sandbox flag surface after enablement moved to
+// Cedar: the per-capability --enable-sandbox-* switches are gone (the operator
+// enables a capability through --sandbox-policy-file), and there is still no
+// flag that mounts a host directory. serve is the default command, so the flags
+// need no subcommand and a DeploymentRuntimeConfig's args keep working; validate
+// takes the same ceiling flags.
 func TestSandboxFlags(t *testing.T) {
-	t.Setenv("ENABLE_SANDBOX_ENV", "true")
+	// The per-capability enable flags and the host-mount flag do not exist.
+	for _, flag := range []string{"--enable-sandbox-private-tmp", "--enable-sandbox-env", "--enable-sandbox-egress", "--enable-sandbox-mounts"} {
+		var c CLI
+		if _, err := parser(&c, io.Discard).Parse([]string{flag, "--insecure"}); err == nil {
+			t.Fatalf("%s must not exist: sandbox capabilities are enabled by the Cedar --sandbox-policy-file, and host directories are never mountable", flag)
+		}
+	}
+
+	// --sandbox-policy-file is an existing file; a mounted ConfigMap satisfies it.
+	policyFile := filepath.Join(t.TempDir(), "policy.cedar")
+	if err := os.WriteFile(policyFile, []byte(`permit (principal, action == Action::"usePrivateTmp", resource);`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	var c CLI
-	p := parser(&c, io.Discard)
-	ctx, err := p.Parse([]string{"--enable-sandbox-private-tmp", "--insecure"})
+	ctx, err := parser(&c, io.Discard).Parse([]string{"--sandbox-policy-file", policyFile, "--insecure"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ctx.Command() != "serve" {
 		t.Errorf("flags without a subcommand select %q, want serve", ctx.Command())
 	}
-	if _, err := p.Parse([]string{"--enable-sandbox-mounts"}); err == nil {
-		t.Fatal("--enable-sandbox-mounts must not exist: host directories are not mountable into modules")
-	}
-	ceilings := CeilingFlags{MaxModuleSize: 128, ModuleTimeout: 30 * time.Second, ModuleMemoryLimit: 512, EnableSandboxPrivateTmp: true, EnableSandboxEnv: true}
+	ceilings := CeilingFlags{MaxModuleSize: 128, ModuleTimeout: 30 * time.Second, ModuleMemoryLimit: 512, SandboxPolicyFile: policyFile}
 	want := ServeCmd{
 		CeilingFlags: ceilings,
 		Network:      "tcp", Address: ":9443", Insecure: true, MaxRecvMessageSize: 4, EnableMemoryCache: true, MaxConcurrentCompiles: 1, HealthAddress: ":8081",
@@ -669,7 +655,7 @@ func TestSandboxFlags(t *testing.T) {
 	}
 
 	c = CLI{}
-	ctx, err = parser(&c, io.Discard).Parse([]string{"validate", "composition.yaml", "--enable-sandbox-private-tmp", "--output", "json"})
+	ctx, err = parser(&c, io.Discard).Parse([]string{"validate", "composition.yaml", "--sandbox-policy-file", policyFile, "--output", "json"})
 	if err != nil {
 		t.Fatal(err)
 	}

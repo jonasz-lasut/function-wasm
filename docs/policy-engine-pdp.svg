@@ -2,7 +2,7 @@
   <rect width="860" height="468" fill="#f8f7f4" rx="4"/>
 
   <text x="24" y="34" font-size="14" font-weight="700" fill="#2c2a25">Foundation - the policy decision point (PDP)</text>
-  <text x="24" y="52" font-size="11" fill="#7a7668">One operator-authored Cedar document, many request types. The spine every feature below shares. PROPOSED.</text>
+  <text x="24" y="52" font-size="11" fill="#7a7668">One operator-authored Cedar document, many request types. The spine every feature below shares.</text>
 
   <!-- 1 Operator document -->
   <rect x="24" y="72" width="250" height="44" rx="5" fill="#e8f0ec" stroke="#3d6b5e" stroke-width="1.3"/>
@@ -26,7 +26,7 @@
   <text x="304" y="141" font-size="9.5" fill="#2c2a25"><tspan font-weight="600">entities</tspan>  Repository&#9656; HostPattern&#9656; Capability Credential</text>
   <text x="304" y="157" font-size="9" fill="#a09b8e">&#9656; = boundary-correct hierarchy (in respects it)</text>
   <text x="304" y="174" font-size="9.5" fill="#2c2a25"><tspan font-weight="600">principal</tspan>  Request { namespace, xrKind, composition }</text>
-  <text x="304" y="191" font-size="9.5" fill="#2c2a25"><tspan font-weight="600">actions</tspan>  pullModule <tspan fill="#3d6b5e" font-weight="600">&#10003;</tspan> grantEgress usePrivateTmp</text>
+  <text x="304" y="191" font-size="9.5" fill="#2c2a25"><tspan font-weight="600">actions</tspan>  pullModule grantEgress usePrivateTmp</text>
   <text x="304" y="205" font-size="9.5" fill="#2c2a25">          setEnv spendCredential requireSignature</text>
   <text x="304" y="218" font-size="9" fill="#a09b8e">context carries the request specifics (grant, path, ...)</text>
 
@@ -82,7 +82,7 @@
 
   <!-- trust boundary -->
   <rect x="24" y="362" width="812" height="46" rx="6" fill="#ffffff" stroke="#3d6b5e" stroke-width="1.2"/>
-  <text x="40" y="383" font-size="10.5" fill="#2c2a25">The document sits on the <tspan font-weight="600" fill="#3d6b5e">operator boundary only</tspan> - the same party that sets --enable-sandbox-* and the egress policy today.</text>
+  <text x="40" y="383" font-size="10.5" fill="#2c2a25">The document sits on the <tspan font-weight="600" fill="#3d6b5e">operator boundary only</tspan> - the same party that runs the Deployment and mounts the policy today.</text>
   <text x="40" y="399" font-size="10.5" fill="#7a7668">Never in the module manifest (a requirement, not a grant) or the Composition Input - either would let a module self-authorize.</text>
 
   <!-- legend -->
@@ -90,5 +90,4 @@
   <text x="44" y="433" font-size="10" fill="#a09b8e">Cedar (policy)</text>
   <rect x="150" y="424" width="14" height="10" rx="2" fill="#ecebe4" stroke="#c5c1b7" stroke-width="0.9"/>
   <text x="170" y="433" font-size="10" fill="#a09b8e">Go (mechanism)</text>
-  <text x="300" y="433" font-size="10" fill="#a09b8e"><tspan fill="#3d6b5e" font-weight="700">&#10003;</tspan> = live today (Phase 1 repository fence)</text>
 </svg>
