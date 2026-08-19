@@ -7,3 +7,6 @@
 /examples/hello-go/hello
 /examples/hello-tinygo/hello-tinygo
 /examples/hello-rust/hello-rust
+.zig-cache
+zig-out
+zig-pkg

@@ -73,6 +73,9 @@ func TestRunFunctionGuests(t *testing.T) {
 		"rust": func(t *testing.T) []byte {
 			return testwasm.BuildRustGuest(t, filepath.Join("..", "..", "examples", "hello-rust"))
 		},
+		"zig": func(t *testing.T) []byte {
+			return testwasm.BuildZigGuest(t, filepath.Join("..", "..", "examples", "hello-zig"))
+		},
 	}
 	for guest, build := range guests {
 		t.Run(guest, func(t *testing.T) {
