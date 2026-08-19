@@ -34,13 +34,14 @@ const (
 
 // ValidateCmd runs the runtime's admission over Compositions, offline: for
 // every pipeline step whose input is a function-wasm Input it runs exactly
-// what RunFunction runs before it resolves anything — sandbox shape, grants
-// within the ceiling flags, egress within the policy, limits, module and
-// policy shape — and, with --xr, materialises module.from against a
-// composite resource; with --resolve it goes on to resolve, verify and fetch
-// each module and read its ABI. It prints one line per step in the runtime's
-// own words and exits 0 when every step is admitted, 1 when at least one is
-// refused, 2 when the tool itself failed.
+// what RunFunction runs before it resolves anything — the compositionPolicy
+// compiled, limits within the ceiling flags, the module source's shape — and,
+// with --xr, materialises module.from against a composite resource; with
+// --resolve it goes on to resolve, verify and fetch each module, read its ABI
+// and decide its manifest's requests by the three policy layers, as the
+// runtime does between load and run. It prints one line per step in the
+// runtime's own words and exits 0 when every step is admitted, 1 when at
+// least one is refused, 2 when the tool itself failed.
 type ValidateCmd struct {
 	CeilingFlags `embed:""`
 
@@ -322,11 +323,9 @@ func (v *validator) validate(ctx context.Context, s step) stepResult {
 	}
 	r.Warnings = warnings
 
-	// The runtime's admission, verbatim. The principal comes from --xr when
-	// given, else it is the zero principal - an operator grant policy that
-	// keys on the caller then matches nothing, which is safe because it only
-	// narrows.
-	admitted, err := admission.Admit(in, v.ceilings, principalFromMap(v.xr))
+	// The runtime's admission, verbatim: the compositionPolicy compiled,
+	// limits within the ceilings, the module source's shape.
+	admitted, err := admission.Admit(in, v.ceilings)
 	if err != nil {
 		return refuse(err)
 	}
@@ -338,19 +337,16 @@ func (v *validator) validate(ctx context.Context, s step) stepResult {
 	src := in.Module
 	switch {
 	case src.From != "" && v.xr != nil:
-		src, err = module.FromComposite(in.Module, in.Policy, v.xr)
+		src, err = module.FromComposite(in.Module, admitted.Composition, v.xr)
 		if err != nil {
 			return refuse(errors.Wrap(err, "cannot resolve module"))
 		}
 		r.Module = describeSource(src) + " (from " + in.Module.From + ")"
 	case src.From != "":
-		if err := module.ValidateFrom(src, in.Policy); err != nil {
+		if err := module.ValidateFrom(src, admitted.Composition); err != nil {
 			return refuse(errors.Wrap(err, "cannot resolve module"))
 		}
 		r.Module = describeSource(src)
-		if in.Policy != nil && len(in.Policy.RepositoryAllowList) > 0 {
-			r.Module += " (policy admits " + strings.Join(in.Policy.RepositoryAllowList, ", ") + ")"
-		}
 	default:
 		r.Module = describeSource(src)
 	}
@@ -381,8 +377,9 @@ func (v *validator) validate(ctx context.Context, s step) stepResult {
 		return refuse(errors.Wrapf(shape.ABIError, "cannot load module %s", ref.Description))
 	}
 	r.Resolved = &resolvedModule{Digest: ref.Digest, Size: len(wasm), ABI: "v1", Imports: shape.HostImports()}
-	// The module's manifest, held against the grants the step was admitted
-	// with — the check the runtime makes between load and run.
+	// The module's manifest: its requests decided by the three layers - with
+	// the principal from --xr when one is given - then held against what the
+	// layers granted, the checks the runtime makes between load and run.
 	raw, _, err := ref.Manifest(ctx)
 	if err != nil {
 		return refuse(manifestReadError(err, ref.Description))
@@ -392,7 +389,14 @@ func (v *validator) validate(ctx context.Context, s step) stepResult {
 		return refuse(err)
 	}
 	r.Resolved.Manifest = m
-	if err := checkManifestGrants(m, ref.Description, in, admitted); err != nil {
+	if m != nil && m.Requires != nil && m.Requires.Egress != nil && len(m.Requires.Egress.HTTP) > 0 && !v.cosignKey {
+		r.Warnings = append(r.Warnings, "the module requires egress but is not signature-verified: no --cosign-key was given")
+	}
+	caps, err := admission.AdmitRequires(requiresOf(m), v.ceilings, admitted.Composition, principalFromMap(v.xr))
+	if err != nil {
+		return refuse(errors.Errorf("module %s %v", ref.Description, err))
+	}
+	if err := checkManifestGrants(m, ref.Description, in, caps.Grants()); err != nil {
 		return refuse(err)
 	}
 	return r
@@ -402,6 +406,15 @@ func (v *validator) validate(ctx context.Context, s step) stepResult {
 // decodes — strictly first, so a field the runtime would silently ignore
 // becomes a warning naming it, then as the runtime does.
 func decodeInput(raw map[string]any) (*v1beta1.Input, []string, error) {
+	// The removed v1beta1 fields are refused naming their replacement: the
+	// runtime's strict decode refuses them too, so an unported Composition
+	// must not read as admitted here.
+	if _, ok := raw["policy"]; ok {
+		return nil, nil, errors.New("the Input's policy field was removed: fence a module.from source with compositionPolicy instead (Cedar pullModule and spendCredential rules)")
+	}
+	if _, ok := raw["sandbox"]; ok {
+		return nil, nil, errors.New("the Input's sandbox field was removed: a module requests capabilities through its manifest's requires, granted by the operator's --sandbox-policy-file and narrowed by the Input's compositionPolicy")
+	}
 	b, err := json.Marshal(raw)
 	if err != nil {
 		return nil, nil, err
@@ -516,8 +529,9 @@ func describeSource(src v1beta1.ModuleSource) string {
 	}
 }
 
-// describeAdmitted lists what the step was granted: limits, egress hosts,
-// the private /tmp, environment keys.
+// describeAdmitted lists what the step was admitted: limits, and whether a
+// compositionPolicy layer is present. What a module gets of the sandbox is
+// its manifest's ask, decided under --resolve.
 func describeAdmitted(in *v1beta1.Input, a admission.Admitted) []string {
 	var out []string
 	if in.Limits != nil {
@@ -535,40 +549,8 @@ func describeAdmitted(in *v1beta1.Input, a admission.Admitted) []string {
 			out = append(out, "limits "+strings.Join(limits, " "))
 		}
 	}
-	if a.HTTP != nil {
-		var hosts []string
-		for _, r := range in.Sandbox.Egress.HTTP {
-			if r.Host != "" {
-				hosts = append(hosts, r.Host)
-			} else {
-				hosts = append(hosts, r.HostPattern)
-			}
-		}
-		out = append(out, "egress "+strings.Join(hosts, " "))
-	}
-	if a.Grant.PrivateTmp {
-		out = append(out, "private /tmp")
-	}
-	if in.Sandbox != nil && len(in.Sandbox.Env) > 0 {
-		keys := make([]string, 0, len(in.Sandbox.Env))
-		for _, e := range in.Sandbox.Env {
-			keys = append(keys, e.Name)
-		}
-		sort.Strings(keys)
-		out = append(out, "env "+strings.Join(keys, " "))
-	}
-	if in.Sandbox != nil && len(in.Sandbox.EnvFrom) > 0 {
-		var sources []string
-		for _, ef := range in.Sandbox.EnvFrom {
-			if ef.Credential != nil {
-				s := ef.Credential.Name
-				if ef.Prefix != "" {
-					s += " (prefix " + ef.Prefix + ")"
-				}
-				sources = append(sources, s)
-			}
-		}
-		out = append(out, "envFrom "+strings.Join(sources, " "))
+	if a.Composition != nil {
+		out = append(out, "compositionPolicy")
 	}
 	return out
 }
@@ -578,9 +560,6 @@ func (v *validator) warnings(in *v1beta1.Input) []string {
 	var out []string
 	if in.Module.Type == v1beta1.ModuleTypePath {
 		out = append(out, "module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest")
-	}
-	if in.Sandbox != nil && in.Sandbox.Egress != nil && len(in.Sandbox.Egress.HTTP) > 0 && !v.cosignKey {
-		out = append(out, "sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given")
 	}
 	if in.Limits != nil {
 		if in.Limits.Timeout != nil && in.Limits.Timeout.Duration == v.ceilings.Engine.Timeout {

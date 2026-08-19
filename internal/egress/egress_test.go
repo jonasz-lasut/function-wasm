@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-
-	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 )
 
 // mustPrefixes parses CIDRs for the option-based tests, mirroring the prefixes
@@ -111,17 +109,17 @@ func TestGrant(t *testing.T) {
 	// that could never match or that matches everything.
 	cases := map[string]struct {
 		reason string
-		rules  []v1beta1.SandboxHTTPRule
+		rules  []HTTPRule
 		want   string
 	}{
-		"OpenCeiling":    {reason: "Any shape-valid host and pattern compiles; the operator allowlist is Cedar's.", rules: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: get}, {HostPattern: "*.example.org", Methods: get}}},
-		"HostDot":        {reason: "A host that normalizes to nothing would compile into a rule matching every host; it is not a host name.", rules: []v1beta1.SandboxHTTPRule{{Host: ".", Methods: get}}, want: `sandbox.egress.http[0].host "." must be a bare host name`},
-		"HostSpace":      {reason: "Whitespace normalizes away too.", rules: []v1beta1.SandboxHTTPRule{{Host: " ", Methods: get}}, want: `must be a bare host name`},
-		"HostPort":       {reason: "A port would make a rule that never matches; a host is a bare name.", rules: []v1beta1.SandboxHTTPRule{{Host: "api.example.com:8443", Methods: get}}, want: `sandbox.egress.http[0].host "api.example.com:8443" must be a bare host name`},
-		"HostScheme":     {reason: "So would a scheme.", rules: []v1beta1.SandboxHTTPRule{{Host: "https://api.example.com", Methods: get}}, want: `must be a bare host name`},
-		"HostZone":       {reason: "A zoned literal names one of the host's interfaces; refused as a rule and by the dialer.", rules: []v1beta1.SandboxHTTPRule{{Host: "::1%lo0", Methods: get}}, want: `must be a bare host name`},
-		"BadPattern":     {reason: "A pattern has one leading wildcard label.", rules: []v1beta1.SandboxHTTPRule{{HostPattern: "api.*.example.com", Methods: get}}, want: `must be a host name with one leading wildcard label`},
-		"PathPrefixDots": {reason: "A prefix with dot segments could never match a normalized request path.", rules: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: get, PathPrefix: "/v1/../x"}}, want: `sandbox.egress.http[0].pathPrefix "/v1/../x" must be normalized`},
+		"OpenCeiling":    {reason: "Any shape-valid host and pattern compiles; the operator allowlist is Cedar's.", rules: []HTTPRule{{Host: "api.example.com", Methods: get}, {HostPattern: "*.example.org", Methods: get}}},
+		"HostDot":        {reason: "A host that normalizes to nothing would compile into a rule matching every host; it is not a host name.", rules: []HTTPRule{{Host: ".", Methods: get}}, want: `requires.egress.http[0].host "." must be a bare host name`},
+		"HostSpace":      {reason: "Whitespace normalizes away too.", rules: []HTTPRule{{Host: " ", Methods: get}}, want: `must be a bare host name`},
+		"HostPort":       {reason: "A port would make a rule that never matches; a host is a bare name.", rules: []HTTPRule{{Host: "api.example.com:8443", Methods: get}}, want: `requires.egress.http[0].host "api.example.com:8443" must be a bare host name`},
+		"HostScheme":     {reason: "So would a scheme.", rules: []HTTPRule{{Host: "https://api.example.com", Methods: get}}, want: `must be a bare host name`},
+		"HostZone":       {reason: "A zoned literal names one of the host's interfaces; refused as a rule and by the dialer.", rules: []HTTPRule{{Host: "::1%lo0", Methods: get}}, want: `must be a bare host name`},
+		"BadPattern":     {reason: "A pattern has one leading wildcard label.", rules: []HTTPRule{{HostPattern: "api.*.example.com", Methods: get}}, want: `must be a host name with one leading wildcard label`},
+		"PathPrefixDots": {reason: "A prefix with dot segments could never match a normalized request path.", rules: []HTTPRule{{Host: "api.example.com", Methods: get, PathPrefix: "/v1/../x"}}, want: `requires.egress.http[0].pathPrefix "/v1/../x" must be normalized`},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -148,7 +146,7 @@ func TestAdmit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := e.Grant([]v1beta1.SandboxHTTPRule{
+	g, err := e.Grant([]HTTPRule{
 		{Host: "api.example.com", Methods: []string{"GET", "POST"}, PathPrefix: "/v1/"},
 		{Host: "api.example.com", Methods: []string{"DELETE"}, PathPrefix: "/v1/tmp/"},
 		{HostPattern: "*.internal.example.com", Methods: []string{"GET"}},

@@ -10,9 +10,8 @@ import (
 	"github.com/cedar-policy/cedar-go/types"
 )
 
-// The grant-policy actions the operator's document authorizes. pullModule and
-// spendCredential are the always-on fences' actions; the rest are the sandbox
-// capabilities the operator's grant policy narrows.
+// The grant-policy actions a policy document authorizes: the sandbox
+// capabilities and the credential spend both layers gate.
 var (
 	grantEgressAction     = types.NewEntityUID("Action", "grantEgress")
 	usePrivateTmpAction   = types.NewEntityUID("Action", "usePrivateTmp")
@@ -74,8 +73,8 @@ type EgressGrant struct {
 // no-policy-file case and every sandbox-capability Permits method returns false,
 // so a runtime with no --sandbox-policy-file grants nothing but the default
 // sandbox. A capability is granted only where a permit matches; the policy
-// evaluates default-deny (forbid wins) and is AND-combined with the built-in
-// fences.
+// evaluates default-deny (forbid wins) and is AND-combined with the
+// composition layer, which can only narrow it further.
 type OperatorPolicy struct {
 	policy *cedar.PolicySet
 }
@@ -199,52 +198,4 @@ func egressContext(g EgressGrant) types.Record {
 		"method": types.String(strings.ToUpper(g.Method)),
 		"path":   types.String(g.Path),
 	})
-}
-
-//go:embed credential_fence.cedar
-var credentialFenceText []byte
-
-// CredentialFence is the always-on built-in fence over a Composition's own
-// policy allow lists: a step credential a composite-chosen module names may be
-// spent only when the Composition's credentialsAllowList lists it and the
-// module's repository is within its repositoryAllowList (co-located, as the
-// design's `spendCredential when { credential in allowedCreds && resource in
-// allowedRepos }`). Set membership carries no boundary subtlety, so the
-// credential half is exact; the repository half reuses the boundary-correct
-// Repository hierarchy. The allow lists travel in context, never in the policy
-// text. The compiled policy is immutable, so a fence is safe for concurrent use.
-type CredentialFence struct {
-	policy *cedar.PolicySet
-}
-
-// NewCredentialFence compiles the embedded credential fence policy.
-func NewCredentialFence() (*CredentialFence, error) {
-	ps, err := cedar.NewPolicySetFromBytes("credential_fence.cedar", credentialFenceText)
-	if err != nil {
-		return nil, fmt.Errorf("cannot compile the credential fence policy: %w", err)
-	}
-	return &CredentialFence{policy: ps}, nil
-}
-
-// Permits reports whether credential may be spent pulling a module at location:
-// credential must be in allowedCredentials and location within one of
-// allowedRepositories. Empty lists permit nothing.
-func (f *CredentialFence) Permits(credential, location string, allowedCredentials, allowedRepositories []string) bool {
-	resource := cred(credential)
-	// The location's repository entity and its path-boundary ancestors give
-	// `context.repository in context.allowedRepositories` its meaning.
-	_, entities := repositoryEntities(location)
-	entities[resource] = types.Entity{UID: resource}
-	ctx := types.NewRecord(types.RecordMap{
-		"allowedCredentials":  credSet(allowedCredentials),
-		"repository":          repo(location),
-		"allowedRepositories": repoSet(allowedRepositories),
-	})
-	decision, _ := cedar.Authorize(f.policy, entities, cedar.Request{
-		Principal: modulePrincipal,
-		Action:    spendCredentialAction,
-		Resource:  resource,
-		Context:   ctx,
-	})
-	return decision == cedar.Allow
 }

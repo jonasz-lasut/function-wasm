@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/afero"
 
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/metrics"
@@ -83,34 +84,13 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestValidatePolicy(t *testing.T) {
-	cases := map[string]struct {
-		reason string
-		policy *v1beta1.Policy
-		want   string
-	}{
-		"Nil":              {reason: "No policy: any repository, no credentials."},
-		"Empty":            {reason: "An empty policy is the same as none.", policy: &v1beta1.Policy{}},
-		"Repositories":     {reason: "A repository list alone is fine.", policy: &v1beta1.Policy{RepositoryAllowList: []string{"ghcr.io/example-org/"}}},
-		"Both":             {reason: "Credentials with repositories is the intended shape.", policy: &v1beta1.Policy{RepositoryAllowList: []string{"ghcr.io/example-org/"}, CredentialsAllowList: []string{"registry"}}},
-		"CredentialsAlone": {reason: "A credential must never be spendable on an arbitrary host.", policy: &v1beta1.Policy{CredentialsAllowList: []string{"registry"}}, want: "policy.credentialsAllowList requires policy.repositoryAllowList"},
-		"EmptyPrefix":      {reason: "An empty prefix would admit everything.", policy: &v1beta1.Policy{RepositoryAllowList: []string{""}}, want: "policy.repositoryAllowList entries must not be empty"},
-		"EmptyCredential":  {reason: "An empty credential name is a mistake.", policy: &v1beta1.Policy{RepositoryAllowList: []string{"x/"}, CredentialsAllowList: []string{""}}, want: "policy.credentialsAllowList entries must not be empty"},
+func mustCompositionPolicy(t *testing.T, doc string) *authz.CompositionPolicy {
+	t.Helper()
+	p, err := authz.NewCompositionPolicy([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			err := ValidatePolicy(tc.policy)
-			if tc.want == "" {
-				if err != nil {
-					t.Fatalf("\n%s\nValidatePolicy(): unexpected error %v", tc.reason, err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("\n%s\nValidatePolicy(): want error containing %q, got %v", tc.reason, tc.want, err)
-			}
-		})
-	}
+	return p
 }
 
 func TestFromComposite(t *testing.T) {
@@ -138,11 +118,15 @@ func TestFromComposite(t *testing.T) {
 			"module": map[string]any{"ref": manifestRef},
 		},
 	}
-	fenced := &v1beta1.Policy{RepositoryAllowList: []string{"example.com/"}}
-	trusted := &v1beta1.Policy{RepositoryAllowList: []string{"example.com/"}, CredentialsAllowList: []string{"registry"}}
+	fenced := mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"example.com");`)
+	trusted := mustCompositionPolicy(t, `
+permit (principal, action == Action::"pullModule", resource in Repository::"example.com");
+permit (principal, action == Action::"spendCredential", resource == Credential::"registry")
+when { context.repository in Repository::"example.com" };
+`)
 	type args struct {
 		src       v1beta1.ModuleSource
-		policy    *v1beta1.Policy
+		policy    *authz.CompositionPolicy
 		composite map[string]any
 	}
 	type want struct {
@@ -160,14 +144,9 @@ func TestFromComposite(t *testing.T) {
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "x.wasm"}},
 		},
 		"StaticIgnoresPolicy": {
-			reason: "The policy fences what the composite resource chooses; a source the Composition names is not subject to it.",
+			reason: "The composition policy fences what the composite resource chooses; a source the Composition names is not subject to it.",
 			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: "other.example.com/repo@" + otherDigest, Credentials: "registry"}}, policy: fenced, composite: composite},
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: "other.example.com/repo@" + otherDigest, Credentials: "registry"}}},
-		},
-		"StaticInvalidPolicy": {
-			reason: "The policy's shape is checked whatever the source.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "x.wasm"}, policy: &v1beta1.Policy{CredentialsAllowList: []string{"registry"}}, composite: composite},
-			want:   want{err: "policy.credentialsAllowList requires policy.repositoryAllowList"},
 		},
 		"OCIFromSpec": {
 			reason: "An OCI source object under spec becomes the oci source, within the repositories the Composition fenced it to.",
@@ -175,19 +154,19 @@ func TestFromComposite(t *testing.T) {
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
 		},
 		"OCIFromUnfenced": {
-			reason: "A source the composite resource chooses requires policy.repositoryAllowList: without one its author could point the runtime at any host and read what the answer says.",
+			reason: "A source the composite resource chooses requires a compositionPolicy: without one its author could point the runtime at any host and read what the answer says.",
 			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, composite: composite},
-			want:   want{err: "module.from: spec.module of the composite resource names a OCI source, but policy.repositoryAllowList is not set"},
+			want:   want{err: "module.from: spec.module of the composite resource names a OCI source, but the Input has no compositionPolicy"},
 		},
 		"HTTPFromUnfenced": {
 			reason: "The same for a URL — the runtime would GET whatever the composite resource named.",
 			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, composite: composite},
-			want:   want{err: "module.from: spec.url of the composite resource names a HTTP source, but policy.repositoryAllowList is not set"},
+			want:   want{err: "module.from: spec.url of the composite resource names a HTTP source, but the Input has no compositionPolicy"},
 		},
 		"OCIFromCredentials": {
-			reason: "Fenced but without a credentials list, a source the composite resource chooses may not spend the step's credentials.",
+			reason: "Fenced for pulling but without a spendCredential permit, a source the composite resource chooses may not spend the step's credentials.",
 			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.private"}, policy: fenced, composite: composite},
-			want:   want{err: `module.from: spec.private of the composite resource names credentials "registry", but a module chosen by the composite resource cannot use the step's credentials (the registry host would be its author's) unless policy.credentialsAllowList allows them`},
+			want:   want{err: `module.from: spec.private of the composite resource names credentials "registry", which the compositionPolicy does not permit (spendCredential)`},
 		},
 		"OCIFromDotSegments": {
 			reason: "A ref whose repository path has dot segments could escape a prefix once a registry or proxy collapses it; it is not a repository name.",
@@ -196,28 +175,31 @@ func TestFromComposite(t *testing.T) {
 		},
 		"HTTPFromDotSegments": {
 			reason: "A URL path with dot segments is refused for the same reason.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.dottedurl"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/pub/"}}, composite: composite},
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.dottedurl"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://example.com/pub");`), composite: composite},
 			want:   want{err: `must have a normalized path`},
 		},
 		"HTTPFromHostCase": {
-			reason: "Prefixes match the normalized location: the host lowercased, the query left out.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.upperurl"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/"}}, composite: composite},
+			reason: "The policy judges the normalized location: the host lowercased, the query left out.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.upperurl"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://example.com");`), composite: composite},
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://EXAMPLE.com/fn.wasm?x=1", Digest: moduleDigest}}},
 		},
 		"OCIFromCredentialsAllowed": {
-			reason: "A policy that lists the credential and the repository lets the composite resource spend it.",
+			reason: "A spendCredential permit co-located with the repository lets the composite resource spend it.",
 			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.private"}, policy: trusted, composite: composite},
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef, Credentials: "registry"}}},
 		},
 		"OCIFromCredentialsNotListed": {
-			reason: "A credential outside the list is refused.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.private"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"example.com/"}, CredentialsAllowList: []string{"other"}}, composite: composite},
-			want:   want{err: `module.from: spec.private of the composite resource names credentials "registry", which policy.credentialsAllowList does not allow (allowed: other)`},
+			reason: "A credential no permit names is refused.",
+			args: args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.private"}, policy: mustCompositionPolicy(t, `
+permit (principal, action == Action::"pullModule", resource in Repository::"example.com");
+permit (principal, action == Action::"spendCredential", resource == Credential::"other");
+`), composite: composite},
+			want: want{err: `module.from: spec.private of the composite resource names credentials "registry", which the compositionPolicy does not permit (spendCredential)`},
 		},
 		"OCIFromCredentialsOutsideRepositories": {
-			reason: "A listed credential is still refused for a repository outside the allow list: the repository check comes first, so the secret never reaches a host the Composition did not admit.",
+			reason: "A permitted credential is still refused for a repository outside the pull permits: the repository check comes first, so the secret never reaches a host the policy did not admit.",
 			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.other"}, policy: trusted, composite: composite},
-			want:   want{err: `module.from: spec.other of the composite resource names ref "other.example.com/repo", which policy.repositoryAllowList does not admit (allowed prefixes: example.com/)`},
+			want:   want{err: `module.from: spec.other of the composite resource names ref "other.example.com/repo", which the compositionPolicy does not permit (pullModule)`},
 		},
 		"OCIFromRepositoryAllowed": {
 			reason: "A ref within the allow list is admitted.",
@@ -225,29 +207,29 @@ func TestFromComposite(t *testing.T) {
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
 		},
 		"OCIFromRepositoryRefused": {
-			reason: "A ref outside every prefix is refused naming the policy and the ref.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"ghcr.io/example-org/", "registry.example.com/"}}, composite: composite},
-			want:   want{err: `module.from: spec.module of the composite resource names ref "example.com/repo", which policy.repositoryAllowList does not admit (allowed prefixes: ghcr.io/example-org/, registry.example.com/)`},
+			reason: "A ref no pullModule permit admits is refused naming the policy and the ref.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/example-org");`), composite: composite},
+			want:   want{err: `module.from: spec.module of the composite resource names ref "example.com/repo", which the compositionPolicy does not permit (pullModule)`},
 		},
 		"OCIFromSiblingNamespace": {
-			reason: "A prefix without a trailing slash still fences at the path boundary: example.com/repo must not admit the sibling namespace example.com/repo-evil.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.sibling"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"example.com/repo"}}, composite: composite},
-			want:   want{err: `names ref "example.com/repo-evil", which policy.repositoryAllowList does not admit (allowed prefixes: example.com/repo)`},
+			reason: "A permitted repository fences at the path boundary: example.com/repo must not admit the sibling namespace example.com/repo-evil.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.sibling"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"example.com/repo");`), composite: composite},
+			want:   want{err: `names ref "example.com/repo-evil", which the compositionPolicy does not permit (pullModule)`},
 		},
 		"OCIFromExactRepo": {
-			reason: "A prefix without a trailing slash admits the repository equal to it.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"example.com/repo"}}, composite: composite},
+			reason: "The permitted repository itself is admitted.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"example.com/repo");`), composite: composite},
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
 		},
 		"OCIFromChildRepo": {
-			reason: "A prefix without a trailing slash admits a repository it fences with a following slash.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.subrepo"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"example.com/repo"}}, composite: composite},
+			reason: "A permitted repository admits one it fences with a following slash.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.subrepo"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"example.com/repo");`), composite: composite},
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: "example.com/repo/sub@" + otherDigest}}},
 		},
 		"HTTPFromAdjacentHost": {
 			reason: "The boundary fence protects the host too: https://example.com must not admit the adjacent host https://example.com.attacker.net.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.sibhost"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com"}}, composite: composite},
-			want:   want{err: `names url "https://example.com.attacker.net/fn.wasm", which policy.repositoryAllowList does not admit`},
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.sibhost"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://example.com");`), composite: composite},
+			want:   want{err: `names url "https://example.com.attacker.net/fn.wasm", which the compositionPolicy does not permit (pullModule)`},
 		},
 		"OCIFromStatus": {
 			reason: "status works the same way.",
@@ -260,24 +242,29 @@ func TestFromComposite(t *testing.T) {
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
 		},
 		"HTTPFrom": {
-			reason: "An HTTP source object carries its own digest.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/"}}, composite: composite},
-			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://example.com/fn.wasm", Digest: moduleDigest}}},
-		},
-		"HTTPFromRepositoryAllowed": {
-			reason: "The repository allow list applies to a URL as a prefix.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/"}}, composite: composite},
+			reason: "An HTTP source object carries its own digest; a pullModule permit over its URL admits it.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://example.com");`), composite: composite},
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, HTTP: &v1beta1.HTTPSource{URL: "https://example.com/fn.wasm", Digest: moduleDigest}}},
 		},
 		"HTTPFromRepositoryRefused": {
-			reason: "A URL outside the allow list is refused.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://modules.example.com/"}}, composite: composite},
-			want:   want{err: `module.from: spec.url of the composite resource names url "https://example.com/fn.wasm", which policy.repositoryAllowList does not admit`},
+			reason: "A URL no permit admits is refused.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://modules.example.com");`), composite: composite},
+			want:   want{err: `module.from: spec.url of the composite resource names url "https://example.com/fn.wasm", which the compositionPolicy does not permit (pullModule)`},
 		},
 		"HTTPFromNoDigest": {
 			reason: "A dynamic http source without a digest is refused like a static one.",
-			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.nopin"}, policy: &v1beta1.Policy{RepositoryAllowList: []string{"https://example.com/"}}, composite: composite},
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.nopin"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"https://example.com");`), composite: composite},
 			want:   want{err: "module.from: spec.nopin of the composite resource: module.http.digest is required"},
+		},
+		"PrincipalKindMatches": {
+			reason: "The policy's principal comes from the composite resource itself: a permit conditioned on its kind matches.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"example.com") when { principal.xrKind == "XR" };`), composite: composite},
+			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}},
+		},
+		"PrincipalKindMismatch": {
+			reason: "A permit conditioned on another kind does not match: default-deny.",
+			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "spec.module"}, policy: mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"example.com") when { principal.xrKind == "Other" };`), composite: composite},
+			want:   want{err: `which the compositionPolicy does not permit (pullModule)`},
 		},
 		"PathFrom": {
 			reason: "A string under spec becomes the path.",
@@ -285,7 +272,7 @@ func TestFromComposite(t *testing.T) {
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
 		},
 		"PathFromIgnoresRepositories": {
-			reason: "A served file has no repository; the allow list does not apply.",
+			reason: "A served file has no repository; the fence does not apply.",
 			args:   args{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec.path"}, policy: fenced, composite: composite},
 			want:   want{src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
 		},
@@ -845,19 +832,18 @@ func TestFetchMetrics(t *testing.T) {
 // resource: shape, policy shape, and the fence a from source of type OCI or
 // HTTP requires.
 func TestValidateFrom(t *testing.T) {
-	fenced := &v1beta1.Policy{RepositoryAllowList: []string{"example.com/"}}
+	fenced := mustCompositionPolicy(t, `permit (principal, action == Action::"pullModule", resource in Repository::"example.com");`)
 	cases := map[string]struct {
 		reason string
 		src    v1beta1.ModuleSource
-		policy *v1beta1.Policy
+		policy *authz.CompositionPolicy
 		want   string
 	}{
 		"Static":           {reason: "A static source needs only its shape.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}},
 		"StaticBadShape":   {reason: "Shape errors come first.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI}, want: "module.type OCI needs exactly one of module.oci and module.from"},
-		"StaticBadPolicy":  {reason: "The policy's shape is checked whatever the source.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, Path: "fn.wasm"}, policy: &v1beta1.Policy{CredentialsAllowList: []string{"x"}}, want: "policy.credentialsAllowList requires policy.repositoryAllowList"},
-		"OCIFromFenced":    {reason: "A fenced OCI from source is admitted without reading the XR.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}, policy: fenced},
-		"OCIFromUnfenced":  {reason: "Without a repository allow list an OCI from source is refused, the XR unread.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}, want: "module.from: status.module of the composite resource names a OCI source, but policy.repositoryAllowList is not set"},
-		"HTTPFromUnfenced": {reason: "The same for HTTP.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, want: "module.from: spec.url of the composite resource names a HTTP source, but policy.repositoryAllowList is not set"},
+		"OCIFromFenced":    {reason: "An OCI from source with a compositionPolicy is admitted without reading the XR; the pullModule verdict waits for the value.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}, policy: fenced},
+		"OCIFromUnfenced":  {reason: "Without a compositionPolicy an OCI from source is refused, the XR unread.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}, want: "module.from: status.module of the composite resource names a OCI source, but the Input has no compositionPolicy"},
+		"HTTPFromUnfenced": {reason: "The same for HTTP.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeHTTP, From: "spec.url"}, want: "module.from: spec.url of the composite resource names a HTTP source, but the Input has no compositionPolicy"},
 		"PathFrom":         {reason: "A Path from source has no host to fence.", src: v1beta1.ModuleSource{Type: v1beta1.ModuleTypePath, From: "spec.path"}},
 	}
 	for name, tc := range cases {

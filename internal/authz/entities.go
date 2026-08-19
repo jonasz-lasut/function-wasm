@@ -22,17 +22,6 @@ func repo(s string) types.EntityUID {
 	return types.NewEntityUID(repositoryType, types.String(s))
 }
 
-// repoSet turns repository prefixes into a Cedar set of Repository entities,
-// the shape the policies read from context. An entry carrying Cedar syntax is
-// a literal entity id, not policy, so it cannot widen a decision.
-func repoSet(prefixes []string) types.Set {
-	vals := make([]types.Value, 0, len(prefixes))
-	for _, p := range prefixes {
-		vals = append(vals, repo(p))
-	}
-	return types.NewSet(vals...)
-}
-
 // repositoryEntities returns the Repository entity for location and the entity
 // map that gives it its path-boundary ancestors, so `resource in
 // Repository::"p"` is true when p equals location or fences it at a "/". The
@@ -146,13 +135,4 @@ func normalizeHost(h string) string {
 // cred is the Credential entity for a step credential name.
 func cred(s string) types.EntityUID {
 	return types.NewEntityUID(credentialType, types.String(s))
-}
-
-// credSet turns credential names into a Cedar set of Credential entities.
-func credSet(names []string) types.Set {
-	vals := make([]types.Value, 0, len(names))
-	for _, n := range names {
-		vals = append(vals, cred(n))
-	}
-	return types.NewSet(vals...)
 }

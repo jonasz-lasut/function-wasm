@@ -13,13 +13,17 @@ import (
 // This isn't a custom resource, in the sense that we never install its CRD.
 // It is a KRM-like object, so we generate a CRD to describe its schema.
 
-// Input configures which WebAssembly module function-wasm runs, what an
-// XR-chosen module may be and spend, what a run may consume, and what the
-// module receives.
+// Input configures which WebAssembly module function-wasm runs, what the
+// composition author's own policy layer permits, what a run may consume, and
+// what the module receives. What a module may do beyond the default sandbox
+// is decided per capability by three AND-combined layers
+// (docs/one-pager-three-layer-authz.md): the module's manifest requests it,
+// the Input's compositionPolicy permits it, and the operator's
+// --sandbox-policy-file permits it.
 // +kubebuilder:object:root=true
 // +kubebuilder:storageversion
 // +kubebuilder:resource:categories=crossplane
-// +kubebuilder:validation:XValidation:rule="!has(self.module.from) || self.module.type == 'Path' || (has(self.policy) && has(self.policy.repositoryAllowList) && size(self.policy.repositoryAllowList) > 0)",message="module.from with type OCI or HTTP requires policy.repositoryAllowList"
+// +kubebuilder:validation:XValidation:rule="!has(self.module.from) || self.module.type == 'Path' || (has(self.compositionPolicy) && size(self.compositionPolicy) > 0)",message="module.from with type OCI or HTTP requires a compositionPolicy permitting pullModule"
 type Input struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -28,13 +32,22 @@ type Input struct {
 	// Module locates the WebAssembly module to run.
 	Module ModuleSource `json:"module"`
 
-	// Policy fences a module the composite resource chooses (module.from):
-	// which repositories it may come from and which step credentials it may
-	// spend. It is read from the Input only — never through module.from — so
-	// an XR author may pick the module, not widen the policy. It is ignored
-	// for a module the Composition names statically.
+	// CompositionPolicy is the composition author's own Cedar policy layer,
+	// as policy text over the same schema as the operator's
+	// --sandbox-policy-file (actions pullModule, spendCredential,
+	// grantEgress, usePrivateTmp, setEnv; a Request principal carrying
+	// namespace and xrKind; Repository, HostPattern, Capability and
+	// Credential entities). It is AND-combined with the module's manifest
+	// and the operator's policy, so it can only narrow. Two regimes: a
+	// sandbox action it scopes no rule for is not narrowed (the operator and
+	// the manifest decide alone), while a module the composite resource
+	// chooses (module.from) is refused unless a pullModule permit matches
+	// its repository - and may spend a step credential only where a
+	// spendCredential permit matches. Read from the Input only - never
+	// through module.from - so an XR author may pick the module, not widen
+	// the policy. Malformed Cedar is a fatal result at admission.
 	// +optional
-	Policy *Policy `json:"policy,omitempty"`
+	CompositionPolicy string `json:"compositionPolicy,omitempty"`
 
 	// Limits narrow what this step's run may consume below the runtime's
 	// ceilings (--module-timeout, --module-memory-limit). Asking for more
@@ -42,16 +55,11 @@ type Input struct {
 	// +optional
 	Limits *Limits `json:"limits,omitempty"`
 
-	// Sandbox grants the module filesystem, egress or environment access
-	// beyond the default sandbox (nothing). Each capability is enabled by the
-	// operator's Cedar --sandbox-policy-file; a grant no policy permits is a
-	// fatal result. Read from the Input only.
-	// +optional
-	Sandbox *Sandbox `json:"sandbox,omitempty"`
-
 	// Config is passed to the module verbatim as part of its request input.
 	// The runtime does not interpret it; a Go guest reads it with
-	// wasmfn.GetConfig.
+	// wasmfn.GetConfig. Non-secret module configuration belongs here - the
+	// module's environment is its manifest's requires.env credential
+	// bindings, never Input-authored values.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *runtime.RawExtension `json:"config,omitempty"`
@@ -110,9 +118,10 @@ type ModuleSource struct {
 	// status, that holds the source Type names — an {ref, credentials}
 	// object for OCI, an {url, digest} object for HTTP, a string for Path —
 	// e.g. "status.module". The value is read on every request, so each
-	// composite resource can pick its own module; the Input's policy fences
-	// what it may pick and spend. Nothing but the source is read from the
-	// composite resource: policy, limits and sandbox are the Composition's.
+	// composite resource can pick its own module; the Input's
+	// compositionPolicy fences what it may pick (pullModule) and spend
+	// (spendCredential). Nothing but the source is read from the composite
+	// resource: compositionPolicy and limits are the Composition's.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^(spec|status)\..+`
 	From string `json:"from,omitempty"`
@@ -138,10 +147,10 @@ type OCISource struct {
 	// pull the artifact. The Secret carries either a .dockerconfigjson key
 	// or username and password keys. Without it the function's own Docker
 	// config (DOCKER_CONFIG) and anonymous access are tried. An object read
-	// through module.from may name credentials only when the Input's
-	// policy.credentialsAllowList lists them (and its ref passes
-	// policy.repositoryAllowList): the composite resource's author would
-	// otherwise choose the registry host a step credential is sent to.
+	// through module.from may name credentials only where the Input's
+	// compositionPolicy permits spendCredential for them on the ref's
+	// repository: the composite resource's author would otherwise choose the
+	// registry host a step credential is sent to.
 	// +optional
 	Credentials string `json:"credentials,omitempty"`
 }
@@ -156,41 +165,6 @@ type HTTPSource struct {
 	// verified against it and it addresses the module in the caches.
 	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	Digest string `json:"digest"`
-}
-
-// Policy fences what a module chosen by the composite resource (module.from)
-// may be and spend. It only applies to such modules; a source the Composition
-// names statically is trusted as the Composition is, and the policy is
-// ignored for it. Never read from the composite resource.
-// +kubebuilder:validation:XValidation:rule="!has(self.credentialsAllowList) || size(self.credentialsAllowList) == 0 || (has(self.repositoryAllowList) && size(self.repositoryAllowList) > 0)",message="policy.credentialsAllowList requires policy.repositoryAllowList"
-type Policy struct {
-	// RepositoryAllowList are path prefixes an XR-chosen oci.ref (or
-	// http.url) must lie within, e.g. "ghcr.io/example-org". Each prefix is
-	// matched at a path or host boundary: it admits the location equal to it
-	// or one it fences with a following "/", so "ghcr.io/example-org" admits
-	// "ghcr.io/example-org/mod" but never the sibling namespace
-	// "ghcr.io/example-org-other/..." (a trailing slash is optional and does
-	// not change the boundary). Prefixes are matched against the normalized
-	// location — registry/repository for OCI (no tag or digest),
-	// scheme://host/path for HTTP (host lowercased, no query) — and a ref or
-	// URL whose path is not already normalized (dot segments, empty
-	// segments) is refused outright. A ref outside every prefix is a fatal
-	// result naming the policy and the ref. Required whenever module.from
-	// names an OCI or HTTP source: without it the composite resource's
-	// author could point the runtime at any host and read what its answer
-	// says.
-	// +optional
-	// +kubebuilder:validation:items:MinLength=1
-	RepositoryAllowList []string `json:"repositoryAllowList,omitempty"`
-
-	// CredentialsAllowList are the pipeline-step credentials an XR-chosen
-	// oci object may name, spent only on a ref RepositoryAllowList admits —
-	// so it requires RepositoryAllowList: a credential must never be
-	// spendable on an arbitrary host. Absent or empty, an XR-chosen object
-	// naming credentials is refused.
-	// +optional
-	// +kubebuilder:validation:items:MinLength=1
-	CredentialsAllowList []string `json:"credentialsAllowList,omitempty"`
 }
 
 // Limits narrow one run's budget below the runtime's ceilings. Each is
@@ -222,147 +196,4 @@ type Limits struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	Concurrency *int32 `json:"concurrency,omitempty"`
-}
-
-// Sandbox grants a module access beyond the default sandbox - nothing but
-// the request. The operator sets the ceiling with runtime flags, the
-// Composition asks for what its module needs, the module gets the
-// intersection; a grant outside the ceiling is a fatal result before the
-// module runs (docs/one-pager-sandbox.md is the design). Never read from
-// the composite resource.
-type Sandbox struct {
-	// Filesystem grants a private /tmp. Host directories are deliberately
-	// not mountable into a module: the request is a module's only view of
-	// the world beyond what it may write for itself.
-	// +optional
-	Filesystem *SandboxFilesystem `json:"filesystem,omitempty"`
-
-	// Egress grants HTTP(S) requests through the host to listed hosts.
-	// +optional
-	Egress *SandboxEgress `json:"egress,omitempty"`
-
-	// Env sets the environment variables the module sees - exactly these,
-	// never the runtime's (enabled by the operator policy's setEnv). Each
-	// entry names one variable with a literal value or a reference to a step
-	// credential's key. A name set twice (across Env and every EnvFrom import)
-	// is refused.
-	// +optional
-	Env []EnvVar `json:"env,omitempty"`
-
-	// EnvFrom bulk-imports every key of a step credential as an environment
-	// variable, optionally with a prefix. A key that is not a valid
-	// variable name (after prefixing) refuses the run - use Env with
-	// valueFrom to select specific keys instead.
-	// +optional
-	EnvFrom []EnvFromSource `json:"envFrom,omitempty"`
-}
-
-// EnvVar sets one environment variable from a literal or a step credential.
-// +kubebuilder:validation:XValidation:rule="has(self.value) != has(self.valueFrom)",message="exactly one of value and valueFrom must be set"
-type EnvVar struct {
-	// Name of the variable: an identifier, [A-Za-z_][A-Za-z0-9_]*.
-	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]*$`
-	Name string `json:"name"`
-
-	// Value is a literal string. Non-secret configuration only.
-	// +optional
-	Value *string `json:"value,omitempty"`
-
-	// ValueFrom reads the value from a source in the request.
-	// +optional
-	ValueFrom *ValueSource `json:"valueFrom,omitempty"`
-}
-
-// ValueSource reads a value from the request. Exactly one member is set;
-// new kinds (composite, context) are added as members - never a break.
-// +kubebuilder:validation:XValidation:rule="has(self.credential)",message="exactly one source must be set (credential)"
-type ValueSource struct {
-	// Credential reads one key of a pipeline-step credential.
-	// +optional
-	Credential *CredentialKeyRef `json:"credential,omitempty"`
-}
-
-// CredentialKeyRef selects one key of a step credential.
-type CredentialKeyRef struct {
-	// Name of the step credential.
-	// +kubebuilder:validation:MinLength=1
-	Name string `json:"name"`
-	// Key within the credential's data.
-	// +kubebuilder:validation:MinLength=1
-	Key string `json:"key"`
-}
-
-// EnvFromSource bulk-imports a step credential's keys as environment
-// variables. Exactly one source member is set.
-// +kubebuilder:validation:XValidation:rule="has(self.credential)",message="exactly one source must be set (credential)"
-type EnvFromSource struct {
-	// Credential names the step credential whose keys become variables.
-	// +optional
-	Credential *CredentialRef `json:"credential,omitempty"`
-
-	// Prefix is prepended to each imported key, e.g. "VAULT_" turns
-	// "TOKEN" into "VAULT_TOKEN". Must be a valid identifier prefix
-	// ([A-Za-z_][A-Za-z0-9_]*) or empty.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^([A-Za-z_][A-Za-z0-9_]*)?$`
-	Prefix string `json:"prefix,omitempty"`
-}
-
-// CredentialRef names a step credential.
-type CredentialRef struct {
-	// Name of the step credential.
-	// +kubebuilder:validation:MinLength=1
-	Name string `json:"name"`
-}
-
-// SandboxFilesystem is what a module gets of a filesystem beyond nothing: a
-// private, empty, writable /tmp for the duration of the request. Host
-// directories are not mountable - that boundary stays closed.
-type SandboxFilesystem struct {
-	// PrivateTmp pre-opens a private, empty, writable /tmp for the duration
-	// of the request, created under the runtime's $TMPDIR before the module
-	// runs and removed when the run ends whatever its outcome - systemd's
-	// PrivateTmp (enabled by the operator policy's usePrivateTmp).
-	// +optional
-	PrivateTmp bool `json:"privateTmp,omitempty"`
-}
-
-// SandboxEgress is the egress a module gets: HTTP(S) requests performed by
-// the host on the guest's behalf (the wasmfn.http import), never raw sockets.
-type SandboxEgress struct {
-	// HTTP lists the requests the host will perform for the guest; anything
-	// not matched by an entry is refused. The operator's Cedar
-	// --sandbox-policy-file enables egress and sets the host allowlist
-	// (grantEgress) and the CIDR rules (dialAddress); the per-request budgets
-	// are fixed defaults.
-	// +optional
-	HTTP []SandboxHTTPRule `json:"http,omitempty"`
-}
-
-// SandboxHTTPRule admits requests to one host or host pattern.
-// +kubebuilder:validation:XValidation:rule="has(self.host) != has(self.hostPattern)",message="exactly one of host and hostPattern must be set"
-type SandboxHTTPRule struct {
-	// Host is an exact host name, e.g. api.example.com. Exactly one of Host
-	// and HostPattern is set.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	Host string `json:"host,omitempty"`
-
-	// HostPattern is a host name with a leading wildcard label, e.g.
-	// "*.internal.example.com".
-	// +optional
-	// +kubebuilder:validation:Pattern=`^\*\.[^*]+$`
-	HostPattern string `json:"hostPattern,omitempty"`
-
-	// Methods the rule admits, e.g. [GET, POST]; at least one — nothing is
-	// admitted implicitly.
-	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:items:Enum=GET;HEAD;POST;PUT;PATCH;DELETE;OPTIONS
-	Methods []string `json:"methods"`
-
-	// PathPrefix the request path must start with, e.g. /v1/; empty admits
-	// any path.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^/`
-	PathPrefix string `json:"pathPrefix,omitempty"`
 }
