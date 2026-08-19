@@ -9,7 +9,7 @@ function: edit `RunFunction`, keep the tests in `fn_test.go` passing, and never
 touch a wasm toolchain — `main.go` registers the function with the `wasmfn`
 guest SDK, which is what the function-wasm runtime calls. `wasmfn.HTTPClient()`
 is an `*http.Client` that performs requests through the host (`config.greetingUrl`
-uses it); the Composition's `sandbox.egress` grant decides which are allowed.
+uses it); the manifest's `requires.egress` decides which are allowed, as the Cedar policy layers permit it.
 
 ```shell
 # Unit tests run natively.
