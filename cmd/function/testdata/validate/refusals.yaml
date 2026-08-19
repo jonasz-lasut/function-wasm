@@ -8,21 +8,6 @@ spec:
     kind: XR
   mode: Pipeline
   pipeline:
-  - step: egress-without-policy
-    functionRef:
-      name: function-wasm
-    input:
-      apiVersion: wasm.fn.crossplane.io/v1beta1
-      kind: Input
-      module:
-        type: OCI
-        oci:
-          ref: ghcr.io/example/greeter:v1@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
-      sandbox:
-        egress:
-          http:
-          - host: api.example.com
-            methods: [GET]
   - step: limits-over-ceiling
     functionRef:
       name: function-wasm
@@ -54,7 +39,7 @@ spec:
         type: OCI
         oci:
           ref: ghcr.io/example/greeter:v1
-  - step: private-tmp-without-policy
+  - step: bad-composition-policy
     functionRef:
       name: function-wasm
     input:
@@ -65,9 +50,34 @@ spec:
         http:
           url: https://example.com/fn.wasm
           digest: sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+      compositionPolicy: permit (principal
+  - step: removed-policy
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter:v1@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+      policy:
+        repositoryAllowList: [ghcr.io/example/]
+  - step: removed-sandbox
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter:v1@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
       sandbox:
-        filesystem:
-          privateTmp: true
+        egress:
+          http:
+          - host: api.example.com
+            methods: [GET]
   - step: another-function
     functionRef:
       name: function-auto-ready

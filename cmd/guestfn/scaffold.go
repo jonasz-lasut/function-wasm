@@ -115,8 +115,10 @@ func (c *ScaffoldCompositionCmd) source(ctx context.Context) (v1beta1.ModuleSour
 	return v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: pinned}}, m, nil
 }
 
-// compositionStep renders one pipeline step: the module, the sandbox the
-// manifest requires, commented limits and a config skeleton from the schema.
+// compositionStep renders one pipeline step: the module, commented limits and
+// a config skeleton from the schema. The module's sandbox needs are its
+// manifest's requires - granted by the operator's policy (and narrowed by a
+// compositionPolicy), never copied into the Input.
 func compositionStep(name, functionName string, src v1beta1.ModuleSource, m *manifest.Manifest) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "- step: %s\n  functionRef:\n    name: %s\n  input:\n    apiVersion: %s\n    kind: %s\n", name, functionName, inputAPIVersion, inputKind)
@@ -127,13 +129,6 @@ func compositionStep(name, functionName string, src v1beta1.ModuleSource, m *man
 		return "", err
 	}
 	b.WriteString(indent(string(moduleYAML), "    "))
-	if m != nil {
-		block, err := sandboxBlock(m)
-		if err != nil {
-			return "", err
-		}
-		b.WriteString(indent(block, "    "))
-	}
 	b.WriteString("    # limits: {timeout: 5s, memory: 128Mi}\n")
 	if m != nil {
 		config, err := configSkeleton(m)

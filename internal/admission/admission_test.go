@@ -14,61 +14,43 @@ import (
 	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/egress"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
+	"github.com/jonasz-lasut/function-wasm/internal/manifest"
 	"github.com/jonasz-lasut/function-wasm/internal/sandbox"
 )
 
 const manifestRef = "ghcr.io/example/fn@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
+func mustOperator(t *testing.T, doc string) *authz.OperatorPolicy {
+	t.Helper()
+	p, err := authz.NewOperatorPolicy("test.cedar", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func mustComposition(t *testing.T, doc string) *authz.CompositionPolicy {
+	t.Helper()
+	p, err := authz.NewCompositionPolicy([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func TestAdmit(t *testing.T) {
-	open, err := sandbox.NewCeiling(sandbox.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The egress mechanism: the operator host allowlist is Cedar's (grantEgress),
-	// so New itself admits any host - the host gate is the policy, exercised in
-	// the operator-policy cases below.
-	egressMech, err := egress.New()
-	if err != nil {
-		t.Fatal(err)
-	}
 	engineCfg := engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20}
 	static := v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}
-
-	// The operator's grant policy is the sole enabler. base has none, so every
-	// sandbox grant is refused; allowAll permits every capability unconditionally;
-	// teamA permits them only for namespace team-a (default-deny for the rest).
-	base := Ceilings{Engine: engineCfg, Sandbox: open, Egress: egressMech}
-	allowAll, err := authz.NewOperatorPolicy("test.cedar", []byte(`
-permit (principal, action == Action::"usePrivateTmp", resource);
-permit (principal, action == Action::"setEnv", resource);
-permit (principal, action == Action::"grantEgress", resource);
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	teamA, err := authz.NewOperatorPolicy("test.cedar", []byte(`
-permit (principal, action == Action::"usePrivateTmp", resource) when { principal.namespace == "team-a" };
-permit (principal, action == Action::"setEnv", resource) when { principal.namespace == "team-a" };
-permit (principal, action == Action::"grantEgress", resource) when { principal.namespace == "team-a" };
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	allowAllC := base
-	allowAllC.Policy = allowAll
-	teamAC := base
-	teamAC.Policy = teamA
+	base := Ceilings{Engine: engineCfg}
 
 	type args struct {
-		in        *v1beta1.Input
-		c         Ceilings
-		principal authz.Principal
+		in *v1beta1.Input
+		c  Ceilings
 	}
 	type want struct {
 		options     engine.RunOptions
-		grant       sandbox.Grant
-		http        bool
 		concurrency int
+		composition bool
 		err         string
 	}
 	cases := map[string]struct {
@@ -77,54 +59,32 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 		want   want
 	}{
 		"Default": {
-			reason: "An Input asking for nothing gets the default sandbox and the ceilings.",
+			reason: "An Input asking for nothing is admitted with the ceilings.",
 			args:   args{in: &v1beta1.Input{Module: static}, c: base},
 		},
-		"Everything": {
-			reason: "Grants and limits within the ceilings are what the run gets.",
+		"Limits": {
+			reason: "Limits within the ceilings are what the run gets.",
 			args: args{in: &v1beta1.Input{
 				Module: static,
 				Limits: &v1beta1.Limits{Timeout: &metav1.Duration{Duration: 5 * time.Second}, Memory: resource.NewQuantity(64<<20, resource.BinarySI)},
-				Sandbox: &v1beta1.Sandbox{
-					Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true},
-					Env:        []v1beta1.EnvVar{{Name: "GREETING", Value: new("hi")}},
-					Egress:     &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}},
-				},
-			}, c: allowAllC},
-			want: want{
-				options: engine.RunOptions{Timeout: 5 * time.Second, MemoryLimit: 64 << 20, PrivateTmp: true},
-				grant:   sandbox.Grant{PrivateTmp: true},
-				http:    true,
-			},
+			}, c: base},
+			want: want{options: engine.RunOptions{Timeout: 5 * time.Second, MemoryLimit: 64 << 20}},
 		},
-		"BadSandboxShape": {
-			reason: "The sandbox's shape is judged first, before any ceiling.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "1x", Value: new("y")}}}}, c: base},
-			want:   want{err: `sandbox.env[0].name "1x" is not an identifier`},
+		"CompositionPolicyCompiled": {
+			reason: "The Input's compositionPolicy compiles into the composition layer.",
+			args: args{in: &v1beta1.Input{
+				Module:            static,
+				CompositionPolicy: `permit (principal, action == Action::"grantEgress", resource);`,
+			}, c: base},
+			want: want{composition: true},
 		},
-		"PrivateTmpRefusedNoPolicy": {
-			reason: "With no --sandbox-policy-file the policy enables nothing: the grant is refused.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}}, c: base},
-			want:   want{err: "sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"},
-		},
-		"EnvRefusedNoPolicy": {
-			reason: "The same for the environment.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "A", Value: new("b")}}}}, c: base},
-			want:   want{err: "sandbox.env is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"},
-		},
-		"EgressRefusedNoPolicy": {
-			reason: "With no --sandbox-policy-file egress is not grantable.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}}, c: base},
-			want:   want{err: "sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)"},
-		},
-		"EgressNoMechanism": {
-			reason: "The policy grants egress but no egress mechanism was built: refused before a run.",
-			args: args{
-				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}},
-				c:         Ceilings{Engine: engineCfg, Sandbox: open, Policy: allowAll},
-				principal: authz.Principal{Namespace: "team-a"},
-			},
-			want: want{err: "sandbox.egress is refused: the runtime has no egress mechanism"},
+		"CompositionPolicyMalformed": {
+			reason: "Malformed Cedar is a refusal naming the field, before anything is resolved.",
+			args: args{in: &v1beta1.Input{
+				Module:            static,
+				CompositionPolicy: `permit (principal`,
+			}, c: base},
+			want: want{err: "compositionPolicy is invalid: cannot compile the compositionPolicy as Cedar"},
 		},
 		"TimeoutOverCeiling": {
 			reason: "A limit above its ceiling names both.",
@@ -146,11 +106,6 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			args:   args{in: &v1beta1.Input{Module: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI}}, c: base},
 			want:   want{err: "cannot resolve module: module.type OCI needs exactly one of module.oci and module.from"},
 		},
-		"BadPolicy": {
-			reason: "So is the policy's.",
-			args:   args{in: &v1beta1.Input{Module: static, Policy: &v1beta1.Policy{CredentialsAllowList: []string{"x"}}}, c: base},
-			want:   want{err: "cannot resolve module: policy.credentialsAllowList requires policy.repositoryAllowList"},
-		},
 		"FromUnread": {
 			reason: "A module.from source passes shape checks here; the composite resource is FromComposite's business.",
 			args:   args{in: &v1beta1.Input{Module: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}}, c: base},
@@ -167,7 +122,7 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			reason: "Concurrency above --max-concurrent-runs is silently capped.",
 			args: args{
 				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(10))}},
-				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, MaxConcurrentRuns: 5}, Sandbox: open, Egress: egressMech},
+				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, MaxConcurrentRuns: 5}},
 			},
 			want: want{concurrency: 5},
 		},
@@ -179,55 +134,10 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			},
 			want: want{concurrency: 100},
 		},
-		"OperatorPolicyPrivateTmpAllowed": {
-			reason: "The operator policy enables a capability for a matching principal.",
-			args: args{
-				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}},
-				c:         teamAC,
-				principal: authz.Principal{Namespace: "team-a"},
-			},
-			want: want{options: engine.RunOptions{PrivateTmp: true}, grant: sandbox.Grant{PrivateTmp: true}},
-		},
-		"OperatorPolicyPrivateTmpDenied": {
-			reason: "Default-deny: another principal is refused.",
-			args: args{
-				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}},
-				c:         teamAC,
-				principal: authz.Principal{Namespace: "team-b"},
-			},
-			want: want{err: "sandbox.filesystem.privateTmp is refused: the operator policy (--sandbox-policy-file) does not permit it for this request"},
-		},
-		"OperatorPolicyEnvDenied": {
-			reason: "The environment grant is gated too.",
-			args: args{
-				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "A", Value: new("b")}}}},
-				c:         teamAC,
-				principal: authz.Principal{Namespace: "team-b"},
-			},
-			want: want{err: "sandbox.env is refused: the operator policy (--sandbox-policy-file) does not permit it for this request"},
-		},
-		"OperatorPolicyEgressDenied": {
-			reason: "An egress rule is refused by the operator policy, naming the method and host.",
-			args: args{
-				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}},
-				c:         teamAC,
-				principal: authz.Principal{Namespace: "team-b"},
-			},
-			want: want{err: `sandbox.egress.http[0] GET to host "api.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it`},
-		},
-		"OperatorPolicyEgressAllowed": {
-			reason: "A matching principal keeps the egress grant.",
-			args: args{
-				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}},
-				c:         teamAC,
-				principal: authz.Principal{Namespace: "team-a"},
-			},
-			want: want{http: true},
-		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := Admit(tc.args.in, tc.args.c, tc.args.principal)
+			got, err := Admit(tc.args.in, tc.args.c)
 			if tc.want.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.want.err) {
 					t.Fatalf("\n%s\nAdmit(): want error containing %q, got %v", tc.reason, tc.want.err, err)
@@ -240,14 +150,201 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			if diff := cmp.Diff(tc.want.options, got.Options, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("\n%s\nAdmit() options: -want, +got:\n%s", tc.reason, diff)
 			}
-			if diff := cmp.Diff(tc.want.grant, got.Grant, cmpopts.EquateEmpty()); diff != "" {
-				t.Errorf("\n%s\nAdmit() grant: -want, +got:\n%s", tc.reason, diff)
-			}
-			if (got.HTTP != nil) != tc.want.http {
-				t.Errorf("\n%s\nAdmit() HTTP grant present: %v, want %v", tc.reason, got.HTTP != nil, tc.want.http)
+			if (got.Composition != nil) != tc.want.composition {
+				t.Errorf("\n%s\nAdmit() composition policy present: %v, want %v", tc.reason, got.Composition != nil, tc.want.composition)
 			}
 			if got.Concurrency != tc.want.concurrency {
 				t.Errorf("\n%s\nAdmit() concurrency: got %d, want %d", tc.reason, got.Concurrency, tc.want.concurrency)
+			}
+		})
+	}
+}
+
+// TestAdmitRequires pins the three-layer decision and its per-layer defaults
+// (docs/one-pager-three-layer-authz.md): the manifest requests, the
+// composition layer narrows only what it scopes (scoped default-permit), the
+// operator layer enables (default-deny, nil refuses everything).
+func TestAdmitRequires(t *testing.T) {
+	egressMech, err := egress.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The operator layer used by most cases: every capability, any caller.
+	allowAll := mustOperator(t, `
+permit (principal, action == Action::"usePrivateTmp", resource);
+permit (principal, action == Action::"setEnv", resource);
+permit (principal, action == Action::"grantEgress", resource);
+permit (principal, action == Action::"spendCredential", resource);
+`)
+	// A tenant-scoped operator layer, to pin default-deny by principal.
+	teamA := mustOperator(t, `
+permit (principal, action == Action::"usePrivateTmp", resource) when { principal.namespace == "team-a" };
+permit (principal, action == Action::"grantEgress", resource) when { principal.namespace == "team-a" };
+`)
+	open := Ceilings{Egress: egressMech, Policy: allowAll}
+
+	tmp := &manifest.Requires{Filesystem: &manifest.Filesystem{PrivateTmp: true}}
+	egressReq := &manifest.Requires{Egress: &manifest.Egress{HTTP: []egress.HTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}
+	envReq := &manifest.Requires{Env: []sandbox.EnvBinding{{Name: "TOKEN", FromCredential: sandbox.CredentialKey{Name: "api", Key: "token"}}}}
+
+	type args struct {
+		r         *manifest.Requires
+		c         Ceilings
+		comp      *authz.CompositionPolicy
+		principal authz.Principal
+	}
+	type want struct {
+		privateTmp bool
+		http       bool
+		env        int
+		err        string
+	}
+	cases := map[string]struct {
+		reason string
+		args   args
+		want   want
+	}{
+		"NilRequires": {
+			reason: "No manifest, no request: the default sandbox, whatever the policies would permit.",
+			args:   args{r: nil, c: open},
+		},
+		"EmptyRequires": {
+			reason: "A manifest requiring nothing gets the default sandbox.",
+			args:   args{r: &manifest.Requires{}, c: open},
+		},
+		"NoOperatorPolicyTmp": {
+			reason: "The operator layer is the enabler: no --sandbox-policy-file, no private /tmp.",
+			args:   args{r: tmp, c: Ceilings{}},
+			want:   want{err: "requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"},
+		},
+		"NoOperatorPolicyEgress": {
+			reason: "Nor egress.",
+			args:   args{r: egressReq, c: Ceilings{Egress: egressMech}},
+			want:   want{err: "requires egress (requires.egress.http), but the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)"},
+		},
+		"NoOperatorPolicyEnv": {
+			reason: "Nor env bindings.",
+			args:   args{r: envReq, c: Ceilings{}},
+			want:   want{err: "requires env [TOKEN] (requires.env), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"},
+		},
+		"OperatorPermitsTmp": {
+			reason: "Manifest requests, no composition narrowing, operator permits: granted.",
+			args:   args{r: tmp, c: open},
+			want:   want{privateTmp: true},
+		},
+		"OperatorDeniesTmp": {
+			reason: "The operator layer is default-deny by principal.",
+			args:   args{r: tmp, c: Ceilings{Policy: teamA}, principal: authz.Principal{Namespace: "team-b"}},
+			want:   want{err: "requires a private /tmp (requires.filesystem.privateTmp), which the operator policy (--sandbox-policy-file) does not permit for this request"},
+		},
+		"OperatorPermitsTenantTmp": {
+			reason: "The matching tenant is granted.",
+			args:   args{r: tmp, c: Ceilings{Policy: teamA}, principal: authz.Principal{Namespace: "team-a"}},
+			want:   want{privateTmp: true},
+		},
+		"CompositionAbsentPermits": {
+			reason: "Scoped default-permit: an absent composition policy does not narrow a sandbox capability.",
+			args:   args{r: egressReq, c: open, comp: nil},
+			want:   want{http: true},
+		},
+		"CompositionNotScopingPermits": {
+			reason: "A composition policy scoping other actions does not narrow this one.",
+			args:   args{r: tmp, c: open, comp: mustComposition(t, `permit (principal, action == Action::"grantEgress", resource);`)},
+			want:   want{privateTmp: true},
+		},
+		"CompositionScopesAndPermits": {
+			reason: "A composition policy scoping the action must permit the request.",
+			args:   args{r: egressReq, c: open, comp: mustComposition(t, `permit (principal, action == Action::"grantEgress", resource in HostPattern::"example.com");`)},
+			want:   want{http: true},
+		},
+		"CompositionScopesAndDenies": {
+			reason: "Scoping the action opts into default-deny within the composition layer.",
+			args:   args{r: egressReq, c: open, comp: mustComposition(t, `permit (principal, action == Action::"grantEgress", resource in HostPattern::"other.net");`)},
+			want:   want{err: `requires egress GET to host "api.example.com" (requires.egress.http[0]), which the compositionPolicy does not permit`},
+		},
+		"CompositionForbidWins": {
+			reason: "A composition forbid wins over its own permit.",
+			args: args{r: tmp, c: open, comp: mustComposition(t, `
+permit (principal, action == Action::"usePrivateTmp", resource);
+forbid (principal, action == Action::"usePrivateTmp", resource);
+`)},
+			want: want{err: "requires a private /tmp (requires.filesystem.privateTmp), which the compositionPolicy does not permit for this request"},
+		},
+		"CompositionBeforeOperator": {
+			reason: "The composition layer is judged first: its refusal names it even where the operator would also deny.",
+			args: args{r: tmp, c: Ceilings{Policy: teamA}, principal: authz.Principal{Namespace: "team-b"},
+				comp: mustComposition(t, `permit (principal, action == Action::"usePrivateTmp", resource) when { principal.namespace == "team-c" };`)},
+			want: want{err: "which the compositionPolicy does not permit"},
+		},
+		"OperatorDeniesEgress": {
+			reason: "An egress rule the operator does not permit names the method and host.",
+			args:   args{r: egressReq, c: Ceilings{Egress: egressMech, Policy: teamA}, principal: authz.Principal{Namespace: "team-b"}},
+			want:   want{err: `requires egress GET to host "api.example.com" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit`},
+		},
+		"NoEgressMechanism": {
+			reason: "Egress permitted by both layers but no mechanism built (tests): refused before a run.",
+			args:   args{r: egressReq, c: Ceilings{Policy: allowAll}},
+			want:   want{err: "requires egress (requires.egress.http), but the runtime has no egress mechanism"},
+		},
+		"EnvGranted": {
+			reason: "An env binding needs setEnv and spendCredential at the operator layer; both permitted, it is granted.",
+			args:   args{r: envReq, c: open},
+			want:   want{env: 1},
+		},
+		"EnvOperatorDeniesSetEnv": {
+			reason: "An operator layer without setEnv refuses the binding (default-deny).",
+			args:   args{r: envReq, c: Ceilings{Policy: teamA}, principal: authz.Principal{Namespace: "team-a"}},
+			want:   want{err: "requires env [TOKEN] (requires.env), which the operator policy (--sandbox-policy-file) does not permit (setEnv)"},
+		},
+		"EnvOperatorDeniesSpend": {
+			reason: "setEnv alone is not enough: the operator layer must also permit spending the named credential.",
+			args: args{r: envReq, c: Ceilings{Policy: mustOperator(t, `
+permit (principal, action == Action::"setEnv", resource);
+permit (principal, action == Action::"spendCredential", resource == Credential::"other");
+`)}},
+			want: want{err: `requires env TOKEN from credential "api", which the operator policy (--sandbox-policy-file) does not permit (spendCredential)`},
+		},
+		"EnvCompositionNarrowsSpend": {
+			reason: "A composition policy scoping spendCredential narrows env bindings too.",
+			args: args{r: envReq, c: open,
+				comp: mustComposition(t, `permit (principal, action == Action::"spendCredential", resource == Credential::"db");`)},
+			want: want{err: `requires env TOKEN from credential "api", which the compositionPolicy does not permit (spendCredential)`},
+		},
+		"EnvCompositionPermitsSpend": {
+			reason: "A composition spendCredential permit for the binding's credential admits it.",
+			args: args{r: envReq, c: open,
+				comp: mustComposition(t, `permit (principal, action == Action::"spendCredential", resource == Credential::"api");`)},
+			want: want{env: 1},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := AdmitRequires(tc.args.r, tc.args.c, tc.args.comp, tc.args.principal)
+			if tc.want.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want.err) {
+					t.Fatalf("\n%s\nAdmitRequires(): want error containing %q, got %v", tc.reason, tc.want.err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("\n%s\nAdmitRequires(): unexpected error %v", tc.reason, err)
+			}
+			if got.PrivateTmp != tc.want.privateTmp {
+				t.Errorf("\n%s\nAdmitRequires() PrivateTmp = %v, want %v", tc.reason, got.PrivateTmp, tc.want.privateTmp)
+			}
+			if (got.HTTP != nil) != tc.want.http {
+				t.Errorf("\n%s\nAdmitRequires() HTTP grant present: %v, want %v", tc.reason, got.HTTP != nil, tc.want.http)
+			}
+			if len(got.Env) != tc.want.env {
+				t.Errorf("\n%s\nAdmitRequires() env bindings: %d, want %d", tc.reason, len(got.Env), tc.want.env)
+			}
+			// What the layers granted is exactly what the manifest required,
+			// so the manifest's own coverage check passes.
+			if tc.args.r != nil {
+				m := &manifest.Manifest{ABI: 1, Requires: tc.args.r}
+				if err := m.Check(got.Grants(), nil, ""); err != nil {
+					t.Errorf("\n%s\nCheck(Grants()): %v", tc.reason, err)
+				}
 			}
 		})
 	}

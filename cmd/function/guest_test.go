@@ -128,7 +128,11 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 	}
 	f := &Function{log: log, ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: ceiling, policy: permissiveSandboxPolicy(t)}
 	greetingsHost, _, _ := net.SplitHostPort(strings.TrimPrefix(greetings.URL, "http://"))
-	egressGrant := `"sandbox":{"egress":{"http":[{"host":"` + greetingsHost + `","methods":["GET"]}]}}`
+	// The guest with an egress request: its manifest asks for the greeting
+	// server's host, the operator policy layer grants it. A path module has no
+	// manifest, so the egress case serves the same guest as an OCI artifact.
+	egressRef := pushWithManifest(t, publicRegistry(t)+"/"+guest+":v1", wasm,
+		`{"abi":1,"requires":{"egress":{"http":[{"host":"`+greetingsHost+`","methods":["GET"]}]}}}`)
 
 	xr := resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)
 	response := func(greeting string) *fnv1.RunFunctionResponse {
@@ -163,12 +167,12 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 			want:   want{rsp: response("hi my-xr"), logs: []string{"Running function tag=hello", guestLog}},
 		},
 		"GreetingFromURL": {
-			reason: "The guest fetches its greeting through the host's wasmfn.http import within the Composition's egress grant — the same helper shape in Go (wasmfn.HTTPClient), TinyGo and Rust.",
-			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"` + file + `"},` + egressGrant + `,"config":{"greetingUrl":"` + greetings.URL + `/en"}}`,
-			want:   want{rsp: response("howdy my-xr"), logs: []string{"Running function tag=hello", guestLog, "method=GET outcome=ok"}},
+			reason: "The guest fetches its greeting through the host's wasmfn.http import within its manifest's egress request — the same helper shape in Go (wasmfn.HTTPClient), TinyGo and Rust.",
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"OCI","oci":{"ref":"` + egressRef + `"}},"config":{"greetingUrl":"` + greetings.URL + `/en"}}`,
+			want:   want{rsp: response("howdy my-xr"), logs: []string{"Running function tag=hello", "method=GET outcome=ok"}},
 		},
 		"GreetingURLWithoutGrant": {
-			reason: "Without an egress grant the host refuses the import's call and the guest reports it as a fatal result — no trap, no crash.",
+			reason: "A module whose manifest requires no egress gets none: the host refuses the import's call and the guest reports it as a fatal result — no trap, no crash.",
 			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"` + file + `"},"config":{"greetingUrl":"` + greetings.URL + `/en"}}`,
 			want: want{rsp: &fnv1.RunFunctionResponse{
 				Meta: &fnv1.ResponseMeta{Tag: "hello", Ttl: durationpb.New(60 * time.Second)},

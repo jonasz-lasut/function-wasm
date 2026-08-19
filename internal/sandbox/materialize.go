@@ -2,15 +2,12 @@ package sandbox
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
-
-	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 )
 
-// Sources are where valueFrom resolves values from.
+// Sources are where env bindings resolve values from.
 type Sources struct {
 	// Credentials are the request's step credentials.
 	Credentials map[string]*fnv1.Credentials
@@ -20,80 +17,32 @@ type Sources struct {
 	Withheld string
 }
 
-// Materialize resolves the Input's sandbox.env and sandbox.envFrom against
-// the request's credentials and returns the resolved environment map. It is
-// called after registryAuth, the first point where the pull credential's
-// name is known. Shape validation (Validate) and the ceiling check (Grant)
-// have already run.
+// Materialize resolves a module's env bindings - its manifest's requires.env,
+// already admitted by the policy layers - against the request's credentials
+// and returns the resolved environment map. It is called after the manifest
+// is read; the bindings are shape-valid (ValidateBindings ran with the
+// manifest).
 //
 // Invariants enforced here:
 //   - the pull credential is refused as a source
 //   - a missing credential or key is a fatal-worthy error
 //   - a NUL byte in a resolved value is refused (WASI limitation)
-//   - an envFrom key that is not a valid variable name (after prefixing)
-//     refuses the run
-//   - a name set twice (across env and envFrom) is refused
-func Materialize(s *v1beta1.Sandbox, src Sources) (map[string]string, error) {
-	if s == nil {
+func Materialize(bindings []EnvBinding, src Sources) (map[string]string, error) {
+	if len(bindings) == 0 {
 		return nil, nil
 	}
-	if len(s.Env) == 0 && len(s.EnvFrom) == 0 {
-		return nil, nil
-	}
-
-	env := make(map[string]string, len(s.Env))
-	seen := make(map[string]string, len(s.Env)) // name -> origin field
-
-	// env[]: literal values and valueFrom references.
-	for i, e := range s.Env {
-		field := fmt.Sprintf("sandbox.env[%d]", i)
-		if e.Value != nil {
-			env[e.Name] = *e.Value
-			seen[e.Name] = field
-			continue
-		}
-		// valueFrom - shape is validated, Credential is non-nil.
-		v, err := resolveCredential(field+".valueFrom.credential", e.ValueFrom.Credential.Name, e.ValueFrom.Credential.Key, src)
+	env := make(map[string]string, len(bindings))
+	for i, b := range bindings {
+		field := fmt.Sprintf("requires.env[%d] (%s)", i, b.Name)
+		v, err := resolveCredential(field, b.FromCredential.Name, b.FromCredential.Key, src)
 		if err != nil {
 			return nil, err
 		}
 		if strings.IndexByte(v, 0) >= 0 {
-			return nil, fmt.Errorf("%s: the value of %s contains a NUL byte, which WASI cannot pass", field, e.Name)
+			return nil, fmt.Errorf("%s: the value of %s contains a NUL byte, which WASI cannot pass", field, b.Name)
 		}
-		env[e.Name] = v
-		seen[e.Name] = field
+		env[b.Name] = v
 	}
-
-	// envFrom[]: bulk import every key of a credential.
-	for i, ef := range s.EnvFrom {
-		field := fmt.Sprintf("sandbox.envFrom[%d]", i)
-		data, err := credentialData(field, ef.Credential.Name, src)
-		if err != nil {
-			return nil, err
-		}
-		// Sort keys for deterministic error messages.
-		keys := make([]string, 0, len(data))
-		for k := range data {
-			keys = append(keys, k)
-		}
-		slices.Sort(keys)
-		for _, k := range keys {
-			name := ef.Prefix + k
-			if !ValidEnvKey(name) {
-				return nil, fmt.Errorf("%s: credential %q has key %q, which is not an environment variable name; name the keys you need in sandbox.env instead", field, ef.Credential.Name, name)
-			}
-			if prev, ok := seen[name]; ok {
-				return nil, fmt.Errorf("%s: %s is already set by %s", field, name, prev)
-			}
-			v := string(data[k])
-			if strings.IndexByte(v, 0) >= 0 {
-				return nil, fmt.Errorf("%s: the value of %s contains a NUL byte, which WASI cannot pass", field, name)
-			}
-			env[name] = v
-			seen[name] = field
-		}
-	}
-
 	return env, nil
 }
 

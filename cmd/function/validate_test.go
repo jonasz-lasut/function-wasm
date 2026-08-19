@@ -46,57 +46,20 @@ func TestValidate(t *testing.T) {
 			},
 		},
 		"Refusals": {
-			reason: "Every refusal reads as the runtime's fatal result would; steps of other functions and non-Input inputs are skipped; a bare Input document is a step of its own; one refusal is exit 1.",
+			reason: "Every refusal reads as the runtime's fatal result would; steps of other functions and non-Input inputs are skipped; a removed field is refused naming its replacement; a bare Input document is a step of its own; one refusal is exit 1.",
 			args:   []string{fixture("refusals.yaml")},
 			want: want{
 				stdout: strings.Join([]string{
-					fixture("refusals.yaml") + ": Composition/refusals pipeline[0] egress-without-policy: refused: sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)",
-					fixture("refusals.yaml") + ": Composition/refusals pipeline[1] limits-over-ceiling: refused: limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi",
-					fixture("refusals.yaml") + ": Composition/refusals pipeline[2] from-without-policy: refused: cannot resolve module: module.from: status.module of the composite resource names a OCI source, but policy.repositoryAllowList is not set: a module the composite resource chooses must be fenced to repositories the Composition names, or its author could point the runtime at any host",
-					fixture("refusals.yaml") + `: Composition/refusals pipeline[3] tag-not-digest: refused: cannot resolve module: module.oci.ref "ghcr.io/example/greeter:v1" must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported`,
-					fixture("refusals.yaml") + ": Composition/refusals pipeline[4] private-tmp-without-policy: refused: sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities",
-					fixture("refusals.yaml") + ": Composition/refusals pipeline[7] wrong-shape: refused: cannot decode the Input: json: cannot unmarshal string into Go struct field Input.module of type v1beta1.ModuleSource",
+					fixture("refusals.yaml") + ": Composition/refusals pipeline[0] limits-over-ceiling: refused: limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi",
+					fixture("refusals.yaml") + ": Composition/refusals pipeline[1] from-without-policy: refused: cannot resolve module: module.from: status.module of the composite resource names a OCI source, but the Input has no compositionPolicy: a module the composite resource chooses must be permitted by the compositionPolicy's pullModule rules, or its author could point the runtime at any host",
+					fixture("refusals.yaml") + `: Composition/refusals pipeline[2] tag-not-digest: refused: cannot resolve module: module.oci.ref "ghcr.io/example/greeter:v1" must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported`,
+					fixture("refusals.yaml") + `: Composition/refusals pipeline[3] bad-composition-policy: refused: compositionPolicy is invalid: cannot compile the compositionPolicy as Cedar: parser error: parse error at <input>:1:18 "": exact got  want ,`,
+					fixture("refusals.yaml") + ": Composition/refusals pipeline[4] removed-policy: refused: the Input's policy field was removed: fence a module.from source with compositionPolicy instead (Cedar pullModule and spendCredential rules)",
+					fixture("refusals.yaml") + ": Composition/refusals pipeline[5] removed-sandbox: refused: the Input's sandbox field was removed: a module requests capabilities through its manifest's requires, granted by the operator's --sandbox-policy-file and narrowed by the Input's compositionPolicy",
+					fixture("refusals.yaml") + ": Composition/refusals pipeline[8] wrong-shape: refused: cannot decode the Input: json: cannot unmarshal string into Go struct field Input.module of type v1beta1.ModuleSource",
 					fixture("refusals.yaml") + ": Input[1] bare: OK (http https://example.com/fn.wasm)",
 					"",
 				}, "\n"),
-				exit: 1,
-			},
-		},
-		"EgressGranted": {
-			reason: "With a policy that enables every capability, every granted host is admitted and listed; the operator host allowlist is Cedar's grantEgress (the OperatorPolicy cases), so no host ceiling refuses here; egress without --cosign-key is a warning.",
-			args:   []string{fixture("egress.yaml"), "--sandbox-policy-file", fixture("policy-permissive.cedar")},
-			want: want{
-				stdout: fixture("egress.yaml") + ": Composition/egress pipeline[0] greeter: OK (oci ghcr.io/example/greeter:v1@" + testDigest + ", limits timeout 5s memory 128Mi, egress api.example.com, private /tmp, env GREETING_STYLE)\n" +
-					"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n" +
-					fixture("egress.yaml") + ": Composition/egress pipeline[1] labeler: OK (oci ghcr.io/example/labeler@" + testDigest + ", egress evil.example.com)\n" +
-					"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n",
-			},
-		},
-		"OperatorPolicy": {
-			reason: "The operator grant policy enables what it permits: the egress it grants, but not the private /tmp (default-deny, no usePrivateTmp permit).",
-			args:   []string{fixture("operator-policy.yaml"), "--sandbox-policy-file", fixture("policy.cedar")},
-			want: want{
-				stdout: fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[0] egress-ok: OK (oci ghcr.io/example/greeter@" + testDigest + ", egress api.example.com)\n" +
-					"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n" +
-					fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[1] tmp-denied: refused: sandbox.filesystem.privateTmp is refused: the operator policy (--sandbox-policy-file) does not permit it for this request\n",
-				exit: 1,
-			},
-		},
-		"OperatorPolicyAbsent": {
-			reason: "Without --sandbox-policy-file the policy enables nothing: the same Composition is refused at every grant.",
-			args:   []string{fixture("operator-policy.yaml")},
-			want: want{
-				stdout: fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[0] egress-ok: refused: sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)\n" +
-					fixture("operator-policy.yaml") + ": Composition/operator-policy pipeline[1] tmp-denied: refused: sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities\n",
-				exit: 1,
-			},
-		},
-		"OperatorPolicyEnvEgressDenied": {
-			reason: "The operator grant policy refuses the environment and egress it does not permit (default-deny), the same refusals the request path emits, so both surface in validate.",
-			args:   []string{fixture("operator-policy-denied.yaml"), "--sandbox-policy-file", fixture("policy-strict.cedar")},
-			want: want{
-				stdout: fixture("operator-policy-denied.yaml") + ": Composition/operator-policy-denied pipeline[0] env-denied: refused: sandbox.env is refused: the operator policy (--sandbox-policy-file) does not permit it for this request\n" +
-					fixture("operator-policy-denied.yaml") + `: Composition/operator-policy-denied pipeline[1] egress-denied: refused: sandbox.egress.http[0] GET to host "api.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it` + "\n",
 				exit: 1,
 			},
 		},
@@ -106,15 +69,6 @@ func TestValidate(t *testing.T) {
 			want: want{
 				stdout: fixture("signature.yaml") + ": Composition/signature pipeline[0] secure: refused: cannot verify module oci ghcr.io/secure/greeter@" + testDigest + ": the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it\n",
 				exit:   1,
-			},
-		},
-		"EgressWithoutPolicy": {
-			reason: "The same Composition against a runtime with no --sandbox-policy-file is refused at the first grant.",
-			args:   []string{fixture("egress.yaml")},
-			want: want{
-				stdout: fixture("egress.yaml") + ": Composition/egress pipeline[0] greeter: refused: sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities\n" +
-					fixture("egress.yaml") + ": Composition/egress pipeline[1] labeler: refused: sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)\n",
-				exit: 1,
 			},
 		},
 		"EgressRateLimitNegative": {
@@ -128,19 +82,19 @@ func TestValidate(t *testing.T) {
 			want:   want{stderr: `function validate: operator policy: dialAddress rule "policy0": unsupported operation "isMulticast" (an ip test uses isInRange, isLoopback or ||)` + "\n", exit: 2},
 		},
 		"FromWithoutXR": {
-			reason: "Without --xr a from source is checked for its policy fence and reported as the composite resource's choice.",
+			reason: "Without --xr a from source is checked for the compositionPolicy fence it requires and reported as the composite resource's choice.",
 			args:   []string{fixture("from.yaml")},
 			want: want{
-				stdout: fixture("from.yaml") + ": Composition/from pipeline[0] chosen: OK (chosen by the composite resource from status.module (policy admits ghcr.io/example/))\n" +
-					fixture("from.yaml") + ": Composition/from pipeline[1] other-registry: OK (chosen by the composite resource from status.other (policy admits ghcr.io/example/))\n",
+				stdout: fixture("from.yaml") + ": Composition/from pipeline[0] chosen: OK (chosen by the composite resource from status.module, compositionPolicy)\n" +
+					fixture("from.yaml") + ": Composition/from pipeline[1] other-registry: OK (chosen by the composite resource from status.other, compositionPolicy)\n",
 			},
 		},
 		"FromWithXR": {
-			reason: "With --xr the source is materialised as the runtime would and judged against the policy.",
+			reason: "With --xr the source is materialised as the runtime would and judged against the compositionPolicy's pullModule fence.",
 			args:   []string{fixture("from.yaml"), "--xr", fixture("xr.yaml")},
 			want: want{
-				stdout: fixture("from.yaml") + ": Composition/from pipeline[0] chosen: OK (oci ghcr.io/example/greeter@" + testDigest + " (from status.module))\n" +
-					fixture("from.yaml") + `: Composition/from pipeline[1] other-registry: refused: cannot resolve module: module.from: status.other of the composite resource names ref "index.docker.io/someone/else", which policy.repositoryAllowList does not admit (allowed prefixes: ghcr.io/example/)` + "\n",
+				stdout: fixture("from.yaml") + ": Composition/from pipeline[0] chosen: OK (oci ghcr.io/example/greeter@" + testDigest + " (from status.module), compositionPolicy)\n" +
+					fixture("from.yaml") + `: Composition/from pipeline[1] other-registry: refused: cannot resolve module: module.from: status.other of the composite resource names ref "index.docker.io/someone/else", which the compositionPolicy does not permit (pullModule)` + "\n",
 				exit: 1,
 			},
 		},
@@ -193,8 +147,8 @@ func TestValidate(t *testing.T) {
 			args:   []string{fixture("ok.yaml"), fixture("from.yaml"), "--xr", fixture("xr.yaml")},
 			want: want{
 				stdout: fixture("ok.yaml") + ": Composition/hello pipeline[0] hello: OK (path fn.wasm, limits timeout 5s memory 128Mi)\n" + warnPath +
-					fixture("from.yaml") + ": Composition/from pipeline[0] chosen: OK (oci ghcr.io/example/greeter@" + testDigest + " (from status.module))\n" +
-					fixture("from.yaml") + `: Composition/from pipeline[1] other-registry: refused: cannot resolve module: module.from: status.other of the composite resource names ref "index.docker.io/someone/else", which policy.repositoryAllowList does not admit (allowed prefixes: ghcr.io/example/)` + "\n",
+					fixture("from.yaml") + ": Composition/from pipeline[0] chosen: OK (oci ghcr.io/example/greeter@" + testDigest + " (from status.module), compositionPolicy)\n" +
+					fixture("from.yaml") + `: Composition/from pipeline[1] other-registry: refused: cannot resolve module: module.from: status.other of the composite resource names ref "index.docker.io/someone/else", which the compositionPolicy does not permit (pullModule)` + "\n",
 				exit: 1,
 			},
 		},
@@ -347,9 +301,10 @@ spec:
 }
 
 // TestValidateResolveManifest pins that --resolve reads a module's manifest
-// from the artifact and holds it against the step's grants as the runtime
-// would: the summary on the resolved line, and the runtime's refusal when a
-// requirement is not granted.
+// from the artifact and decides its requests by the three layers as the
+// runtime would: the summary on the resolved line, the operator layer's
+// refusal without a --sandbox-policy-file, and a compositionPolicy narrowing
+// the module's own ask.
 func TestValidateResolveManifest(t *testing.T) {
 	wasm := testwasm.Fixed(t, &fnv1.RunFunctionResponse{}, testwasm.Options{})
 	ref := pushWithManifest(t, publicRegistry(t)+"/greeter:v1", wasm, `{"abi":1,"name":"greeter","version":"0.1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}`)
@@ -367,17 +322,24 @@ spec:
       apiVersion: wasm.fn.crossplane.io/v1beta1
       kind: Input
       module: {type: OCI, oci: {ref: `+ref+`}}
-      sandbox: {egress: {http: [{host: api.example.com, methods: [GET]}]}}
-  - step: ungranted
+  - step: narrowed
     functionRef: {name: function-wasm}
     input:
       apiVersion: wasm.fn.crossplane.io/v1beta1
       kind: Input
       module: {type: OCI, oci: {ref: `+ref+`}}
+      compositionPolicy: |
+        permit (principal, action == Action::"grantEgress", resource in HostPattern::"other.net");
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
+	digest := ref[strings.Index(ref, "@")+1:]
+	resolved := "  module: " + digest + ", " + humanBytes(len(wasm)) + ", ABI v1; manifest: greeter 0.1.0, requires egress api.example.com\n"
+	warnUnsigned := "  warning: the module requires egress but is not signature-verified: no --cosign-key was given\n"
+
+	// With a permissive operator layer the module's ask is granted; the
+	// compositionPolicy that scopes grantEgress narrows it to a refusal.
 	var stdout, stderr bytes.Buffer
 	cli := &CLI{}
 	cli.Validate.stderr = &stderr
@@ -390,15 +352,30 @@ spec:
 	if !errors.As(err, &e) || e.code != 1 {
 		t.Errorf("Run(): want exit 1, got %v", err)
 	}
-	digest := ref[strings.Index(ref, "@")+1:]
-	resolved := "  module: " + digest + ", " + humanBytes(len(wasm)) + ", ABI v1; manifest: greeter 0.1.0, requires egress api.example.com\n"
-	want := composition + ": Composition/manifest pipeline[0] granted: OK (oci " + ref + ", egress api.example.com)\n" + resolved +
-		"  warning: sandbox.egress is granted to a module that is not signature-verified: no --cosign-key was given\n" +
-		composition + ": Composition/manifest pipeline[1] ungranted: refused: module oci " + ref + " requires sandbox.egress.http host api.example.com methods [GET], which the Composition does not grant\n" + resolved
+	want := composition + ": Composition/manifest pipeline[0] granted: OK (oci " + ref + ")\n" + resolved + warnUnsigned +
+		composition + `: Composition/manifest pipeline[1] narrowed: refused: module oci ` + ref + ` requires egress GET to host "api.example.com" (requires.egress.http[0]), which the compositionPolicy does not permit` + "\n" + resolved + warnUnsigned
 	if diff := cmp.Diff(want, stdout.String()); diff != "" {
 		t.Errorf("stdout: -want, +got:\n%s", diff)
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("unexpected stderr:\n%s", stderr.String())
+	}
+
+	// Without a --sandbox-policy-file the operator layer enables nothing: the
+	// module's ask is refused. The narrowed step still reads its own
+	// compositionPolicy refusal - the layer closest to the author is judged
+	// first.
+	stdout.Reset()
+	cli = &CLI{}
+	cli.Validate.stderr = &stderr
+	ctx, err = parser(cli, &stdout).Parse([]string{"validate", composition, "--resolve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = ctx.Run(cli)
+	want = composition + ": Composition/manifest pipeline[0] granted: refused: module oci " + ref + " requires egress (requires.egress.http), but the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)\n" + resolved + warnUnsigned +
+		composition + `: Composition/manifest pipeline[1] narrowed: refused: module oci ` + ref + ` requires egress GET to host "api.example.com" (requires.egress.http[0]), which the compositionPolicy does not permit` + "\n" + resolved + warnUnsigned
+	if diff := cmp.Diff(want, stdout.String()); diff != "" {
+		t.Errorf("no-policy stdout: -want, +got:\n%s", diff)
 	}
 }

@@ -30,7 +30,7 @@ type HTTPRequester interface {
 // grant the operator policy does not permit, or one on a runtime with no
 // --sandbox-policy-file granting egress, never reaches a run: it is a fatal
 // result before the module is resolved.)
-const noEgress = "sandbox.egress: HTTP egress is not granted to this module: the Composition's Input names no sandbox.egress.http rule"
+const noEgress = "sandbox.egress: HTTP egress is not granted to this module: its manifest requires no egress (requires.egress.http)"
 
 // hostHTTP implements the wasmfn.http import (docs/abi.md): it reads a JSON
 // wire.Request from guest memory, has the Run's HTTPRequester perform it,
