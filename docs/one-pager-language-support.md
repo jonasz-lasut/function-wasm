@@ -81,13 +81,14 @@ Effort below is graded against the Rust flavour (S/S/S — already built) as
 | Go (function-sdk-go + vendored glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) | vendored `internal/wasmfn` |
 | TinyGo | protobuf-go types + vtprotobuf codecs, generated from the vendored proto | ~1.8 MB | `abi_wasip1.go` + `http.go`/`http_wasip1.go` |
 | Rust | prost over the vendored proto | ~250 KB | `src/lib.rs` `abi` module + `src/http.rs` |
+| Zig | zig-protobuf's generated codec over the vendored proto (checked in) | ~95 KB | `src/main.zig` (ABI + `runFunction` + the log/http helpers) |
 
 ## Candidates
 
 | language | evidence | module (ballpark) | protobuf | effort a/b/c | verdict |
 |---|---|---|---|---|---|
-| **Zig** (`wasm32-wasi`) | *Tested*: probe reactor ran a request through `internal/engine`, `checkABI` passed first compile | KB – low MB | `zig-protobuf` (maintained, listed by the protobuf project) | S / S / S | **pursue** |
-| **C / C++** (wasi-sdk) | *Tested*, including a real re-entrant `wasmfn.http` round trip through a hand-written import | tens of KB | nanopb (C), protobuf-c / upb | S / S / S | **pursue** |
+| **Zig** (`wasm32-wasi`) | **Shipped**: `examples/hello-zig`, ~95 KB, passes `TestRunFunctionGuests` | ~95 KB | `zig-protobuf` v5 (WKTs native; `minimum_zig_version` 0.16.0) | done | **shipped** |
+| **C** (via `zig cc`) | toolchain proven (a 228 B ABI-v1 reactor with custom `wasmfn.*` imports); codec is the open work | tens of KB | nanopb (works, callback/malloc-heavy for `structpb`); protobuf-c rejects proto3 `optional`; upb heavy | codec = M | **next (codec spike)** |
 | **AssemblyScript** | docs: reactor build documented; `as-proto`, `protobuf-as` exist | tens of KB (inferred) | two generators, unverified under this ABI | M / S / S | **spike, then pursue** |
 | **Swift** (swift.org WASI SDK) | docs: official toolchain, `-mexec-model=reactor`, `-Xlinker --export=<name>` | low MB (inferred) | swift-protobuf (inferred buildable) | M / M / M | spike; can overtake AssemblyScript |
 | JavaScript (Javy / QuickJS) | *Tested*: shipped `javy build` output is a Command/component shape | ~1.3–1.4 MB if embedded | shifts to the embedding side (prost) | L–XL / L / S | blocked as shipped; unblock = a Rust or C reactor embedding javy-core/QuickJS with our exports |
@@ -148,16 +149,18 @@ the same dependency for `wasi:http`. It is not taken here.
 
 ### Order
 
-1. **Zig** — proven, smallest expected modules (a good "why WASM" artifact),
-   `zig` is a single binary and packaged in nixpkgs. Cost: pre-1.0 churn
-   across minor versions becomes this repository's maintenance surface, the
-   same shape as TinyGo's vtprotobuf workaround.
-2. **C via wasi-sdk** — proven including the hardest mechanic; the boring,
-   stable choice for teams that already write C; smallest real guest with
-   nanopb. Cost: wasi-sdk is a GitHub release tarball (not in nixpkgs), so
-   `guestfn build` needs `WASI_SDK_PATH` detection and CI a pinned download.
-   If only one of the two: C for stability, Zig for ergonomics (`export fn`
-   beats `__attribute__((export_name(...)))` and hand-packed protobuf).
+1. **Zig — done** (`examples/hello-zig`, ~95 KB): `zig` is a single binary
+   in nixpkgs and brew, zig-protobuf v5 handles the well-known types
+   (`Struct`/`Value`/`Duration`) natively. Cost accepted: pre-1.0 churn across
+   zig minor versions, the same shape as TinyGo's vtprotobuf workaround.
+2. **C via `zig cc`** (not wasi-sdk). The Zig toolchain already present builds
+   C too (`zig cc -target wasm32-wasi -mexec-model=reactor`, verified), so the
+   wasi-sdk download/`WASI_SDK_PATH` friction disappears — one `zig` binary for
+   both guests. The open work is the **codec**: protobuf-c rejects the proto's
+   proto3 `optional` fields; nanopb compiles but makes every string, map and the
+   recursive `Value` a `pb_callback_t`, so a real guest needs a `.options` file
+   for the bounded strings plus `PB_ENABLE_MALLOC`/decode-callbacks for
+   `structpb`. That is the M spike for C, tracked separately.
 3. **AssemblyScript** after a half-day spike (reactor build, `wasmfn.http`
    re-entrancy, one of the two protobuf generators against the vendored
    proto). Best DX of the unverified candidates (`npm install`, no per-OS
@@ -187,8 +190,8 @@ it), and decide then whether it is worth carrying at all.
 | phase | work | effort |
 |---|---|---|
 | 0 | decide on `wasmfn_run_json` (reserve it in `docs/abi.md`, or reject it) | S, any time — additive |
-| 1 | `examples/hello-zig` + template + `guestfn build` (zig) + CI render job + Renovate + Nix shell entry | S + S + S |
-| 2 | `examples/hello-c` (wasi-sdk + nanopb) + template + `WASI_SDK_PATH` detection + CI pinned wasi-sdk download | S + S + S |
+| 1 | **done** — `examples/hello-zig` + template + golden + `guestfn build` (zig) + vendorproto + `render (zig)` CI + docs (Renovate/Nix pending #12) | shipped |
+| 2 | `examples/hello-c` (**`zig cc`**, no wasi-sdk) + template + build detection (shares `build.zig` → zig) + `render (c)` CI. The nanopb+`structpb` codec is the M part | S guest/build/CI + M codec |
 | 3 | AssemblyScript spike → template if green; else Swift spike | M (+ S/S if adopted) |
 | later | JSON payload mode when a language needs it; JS via an embedded QuickJS reactor only on demand (L–XL); ABI v2 when wasmtime-go and Go allow | — |
 
