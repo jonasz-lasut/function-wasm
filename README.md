@@ -233,14 +233,15 @@ same greeting function each time:
 | `go` (default) | [`examples/hello-go`](examples/hello-go) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
 | `tinygo` | [`examples/hello-tinygo`](examples/hello-tinygo) | [TinyGo](https://tinygo.org) | protobuf-go message types + [vtprotobuf](https://github.com/planetscale/vtprotobuf)'s reflection-free codecs, generated from the vendored proto (shipped pre-generated; `go generate` + protoc to redo) | ~1.8 MB |
 | `rust` | [`examples/hello-rust`](examples/hello-rust) | Rust, `wasm32-wasip1` (`cargo`, `protoc`) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~250 KB |
+| `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
 
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo;
-a `go.mod` requiring vtprotobuf → tinygo; otherwise go) or takes `--lang`. All
-three flavours carry their ABI glue in the open — the Go scaffold vendors it
-under `internal/wasmfn`, TinyGo and Rust carry theirs beside the module — with
-a small HTTP helper over `wasmfn.http`; each example has a `make render-check`
-that runs it through the runtime, and the root tests run all three through the
-host as well — with and without an egress grant.
+a `build.zig` → zig; a `go.mod` requiring vtprotobuf → tinygo; otherwise go)
+or takes `--lang`. Every flavour carries its ABI glue in the open — the Go
+scaffold vendors it under `internal/wasmfn`, TinyGo, Rust and Zig carry theirs
+beside the module — with a small HTTP helper over `wasmfn.http`; each example
+has a `make render-check` that runs it through the runtime, and the root tests
+run them all through the host as well — with and without an egress grant.
 
 ### Render locally
 
