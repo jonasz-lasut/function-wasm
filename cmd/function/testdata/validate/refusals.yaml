@@ -8,7 +8,7 @@ spec:
     kind: XR
   mode: Pipeline
   pipeline:
-  - step: egress-without-flag
+  - step: egress-without-policy
     functionRef:
       name: function-wasm
     input:
@@ -54,7 +54,7 @@ spec:
         type: OCI
         oci:
           ref: ghcr.io/example/greeter:v1
-  - step: private-tmp-without-flag
+  - step: private-tmp-without-policy
     functionRef:
       name: function-wasm
     input:

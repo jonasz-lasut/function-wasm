@@ -69,11 +69,13 @@ type EgressGrant struct {
 }
 
 // OperatorPolicy is the operator's grant policy, compiled from --sandbox-policy-file
-// and immutable for the process, so it is safe for concurrent use. A nil
-// *OperatorPolicy is the no-policy-file case: every Permits method returns true,
-// so admission is identical to a runtime started without --sandbox-policy-file. The
-// policy can only tighten - it is AND-combined with the --enable-sandbox-*
-// floor and the built-in fences, and evaluates default-deny (forbid wins).
+// and immutable for the process, so it is safe for concurrent use. It is the sole
+// authority that enables a sandbox capability: a nil *OperatorPolicy is the
+// no-policy-file case and every sandbox-capability Permits method returns false,
+// so a runtime with no --sandbox-policy-file grants nothing but the default
+// sandbox. A capability is granted only where a permit matches; the policy
+// evaluates default-deny (forbid wins) and is AND-combined with the built-in
+// fences.
 type OperatorPolicy struct {
 	policy *cedar.PolicySet
 }
@@ -99,16 +101,33 @@ func NewOperatorPolicy(name string, doc []byte) (*OperatorPolicy, error) {
 }
 
 // PermitsPrivateTmp reports whether the operator policy lets principal be
-// granted a private /tmp (action usePrivateTmp). A nil policy permits it.
+// granted a private /tmp (action usePrivateTmp). A nil policy denies it.
 func (p *OperatorPolicy) PermitsPrivateTmp(principal Principal) bool {
 	return p.authorize(principal, usePrivateTmpAction, privateTmpCapability, nil, types.NewRecord(nil))
+}
+
+// HasPrivateTmpRules reports whether the operator policy contains any
+// usePrivateTmp rule, so the runtime probes $TMPDIR at startup only when a
+// private /tmp can ever be granted: a misconfigured $TMPDIR then stops the
+// runtime rather than failing the first request that asks for one. A nil policy
+// has none.
+func (p *OperatorPolicy) HasPrivateTmpRules() bool {
+	if p == nil {
+		return false
+	}
+	for _, pol := range p.policy.All() {
+		if policyScopesAction(pol, string(usePrivateTmpAction.ID)) {
+			return true
+		}
+	}
+	return false
 }
 
 // PermitsEnv reports whether the operator policy lets principal set environment
 // variables (action setEnv). keys are the explicit sandbox.env names, offered
 // as context.keys for a policy that discriminates by variable name; a bulk
 // envFrom import contributes no keys (they are not known until the run), so a
-// key-level condition applies to sandbox.env only. A nil policy permits it.
+// key-level condition applies to sandbox.env only. A nil policy denies it.
 func (p *OperatorPolicy) PermitsEnv(principal Principal, keys []string) bool {
 	vals := make([]types.Value, 0, len(keys))
 	for _, k := range keys {
@@ -122,10 +141,10 @@ func (p *OperatorPolicy) PermitsEnv(principal Principal, keys []string) bool {
 // one egress request (action grantEgress). The resource is the host or pattern
 // within the HostPattern hierarchy (so a policy can write `resource in
 // HostPattern::"example.com"` or `resource.host like "*.example.com"`), and
-// context carries the method and path. A nil policy permits it.
+// context carries the method and path. A nil policy denies it.
 func (p *OperatorPolicy) PermitsEgress(principal Principal, g EgressGrant) bool {
 	if p == nil {
-		return true
+		return false
 	}
 	resource, entities := hostEntities(g)
 	ctx := types.NewRecord(types.RecordMap{
@@ -136,12 +155,13 @@ func (p *OperatorPolicy) PermitsEgress(principal Principal, g EgressGrant) bool 
 }
 
 // authorize evaluates one grant-policy request against the operator's document.
-// A nil policy is the no-policy-file case and permits. The resource entity is
+// A nil policy is the no-policy-file case and denies, so a runtime with no
+// --sandbox-policy-file grants no sandbox capability. The resource entity is
 // added to the store when the caller did not supply it (a flat Capability), so
 // both `resource == ...` and `resource in ...` conditions evaluate.
 func (p *OperatorPolicy) authorize(principal Principal, action, resource types.EntityUID, entities types.EntityMap, ctx types.Record) bool {
 	if p == nil {
-		return true
+		return false
 	}
 	if entities == nil {
 		entities = types.EntityMap{}

@@ -38,6 +38,7 @@ import (
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
 
+	"github.com/jonasz-lasut/function-wasm/internal/authz"
 	"github.com/jonasz-lasut/function-wasm/internal/cache"
 	"github.com/jonasz-lasut/function-wasm/internal/engine"
 	"github.com/jonasz-lasut/function-wasm/internal/manifest"
@@ -47,6 +48,23 @@ import (
 )
 
 const ttl = 60 * time.Second
+
+// permissiveSandboxPolicy is an operator grant policy that enables every
+// sandbox capability for any caller - the Cedar equivalent of the old
+// all-flags-on runtime, for tests that exercise a granted sandbox. The policy
+// is the sole enabler now, so a Function without one grants nothing.
+func permissiveSandboxPolicy(t *testing.T) *authz.OperatorPolicy {
+	t.Helper()
+	p, err := authz.NewOperatorPolicy("test.cedar", []byte(`
+permit (principal, action == Action::"usePrivateTmp", resource);
+permit (principal, action == Action::"setEnv", resource);
+permit (principal, action == Action::"grantEgress", resource);
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
 
 func digestOf(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -186,7 +204,7 @@ func TestRunFunction(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ceiling, err := sandbox.NewCeiling(sandbox.Options{EnablePrivateTmp: true, EnableEnv: true})
+	ceiling, err := sandbox.NewCeiling(sandbox.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,7 +592,7 @@ func TestRunFunction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, sandbox: ceiling}
+	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, sandbox: ceiling, policy: permissiveSandboxPolicy(t)}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -597,18 +615,18 @@ func TestRunFunction(t *testing.T) {
 	}
 }
 
-// TestRunFunctionSandboxCeiling pins that a runtime started without the
-// --enable-sandbox-* flags refuses every filesystem and environment grant
-// with a fatal result naming the grant and the flag, before any module is
-// resolved — the default sandbox is the ceiling.
+// TestRunFunctionSandboxCeiling pins that a runtime with no --sandbox-policy-file
+// refuses every filesystem and environment grant with a fatal result, before
+// any module is resolved: the operator policy is the sole enabler, so with none
+// the default sandbox is all a run gets.
 func TestRunFunctionSandboxCeiling(t *testing.T) {
 	cases := map[string]struct {
 		reason  string
 		sandbox map[string]any
 		want    string
 	}{
-		"PrivateTmp": {reason: "The private /tmp needs --enable-sandbox-private-tmp.", sandbox: map[string]any{"filesystem": map[string]any{"privateTmp": true}}, want: "sandbox.filesystem.privateTmp is refused: the runtime was started without --enable-sandbox-private-tmp"},
-		"Env":        {reason: "Environment variables need --enable-sandbox-env.", sandbox: map[string]any{"env": []any{map[string]any{"name": "GREETING", "value": "hello"}}}, want: "sandbox.env is refused: the runtime was started without --enable-sandbox-env"},
+		"PrivateTmp": {reason: "The private /tmp needs a policy that grants it.", sandbox: map[string]any{"filesystem": map[string]any{"privateTmp": true}}, want: "sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"},
+		"Env":        {reason: "Environment variables need a policy that grants them.", sandbox: map[string]any{"env": []any{map[string]any{"name": "GREETING", "value": "hello"}}}, want: "sandbox.env is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"},
 	}
 
 	eng, err := engine.New(engine.Config{})
@@ -639,27 +657,36 @@ func TestRunFunctionSandboxCeiling(t *testing.T) {
 	}
 }
 
-// TestSandboxFlags pins the shape of the sandbox flags: each capability has
-// its --enable-sandbox-<feature> switch, off by default, readable from the
-// environment; there is no flag that mounts a host directory. serve is the
-// default command, so the flags need no subcommand and a
-// DeploymentRuntimeConfig's args keep working; validate takes the same
-// ceiling flags.
+// TestSandboxFlags pins the sandbox flag surface after enablement moved to
+// Cedar: the per-capability --enable-sandbox-* switches are gone (the operator
+// enables a capability through --sandbox-policy-file), and there is still no
+// flag that mounts a host directory. serve is the default command, so the flags
+// need no subcommand and a DeploymentRuntimeConfig's args keep working; validate
+// takes the same ceiling flags.
 func TestSandboxFlags(t *testing.T) {
-	t.Setenv("ENABLE_SANDBOX_ENV", "true")
+	// The per-capability enable flags and the host-mount flag do not exist.
+	for _, flag := range []string{"--enable-sandbox-private-tmp", "--enable-sandbox-env", "--enable-sandbox-egress", "--enable-sandbox-mounts"} {
+		var c CLI
+		if _, err := parser(&c, io.Discard).Parse([]string{flag, "--insecure"}); err == nil {
+			t.Fatalf("%s must not exist: sandbox capabilities are enabled by the Cedar --sandbox-policy-file, and host directories are never mountable", flag)
+		}
+	}
+
+	// --sandbox-policy-file is an existing file; a mounted ConfigMap satisfies it.
+	policyFile := filepath.Join(t.TempDir(), "policy.cedar")
+	if err := os.WriteFile(policyFile, []byte(`permit (principal, action == Action::"usePrivateTmp", resource);`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	var c CLI
-	p := parser(&c, io.Discard)
-	ctx, err := p.Parse([]string{"--enable-sandbox-private-tmp", "--insecure"})
+	ctx, err := parser(&c, io.Discard).Parse([]string{"--sandbox-policy-file", policyFile, "--insecure"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ctx.Command() != "serve" {
 		t.Errorf("flags without a subcommand select %q, want serve", ctx.Command())
 	}
-	if _, err := p.Parse([]string{"--enable-sandbox-mounts"}); err == nil {
-		t.Fatal("--enable-sandbox-mounts must not exist: host directories are not mountable into modules")
-	}
-	ceilings := CeilingFlags{MaxModuleSize: 128, ModuleTimeout: 30 * time.Second, ModuleMemoryLimit: 512, EnableSandboxPrivateTmp: true, EnableSandboxEnv: true}
+	ceilings := CeilingFlags{MaxModuleSize: 128, ModuleTimeout: 30 * time.Second, ModuleMemoryLimit: 512, SandboxPolicyFile: policyFile}
 	want := ServeCmd{
 		CeilingFlags: ceilings,
 		Network:      "tcp", Address: ":9443", Insecure: true, MaxRecvMessageSize: 4, EnableMemoryCache: true, MaxConcurrentCompiles: 1, HealthAddress: ":8081",
@@ -669,7 +696,7 @@ func TestSandboxFlags(t *testing.T) {
 	}
 
 	c = CLI{}
-	ctx, err = parser(&c, io.Discard).Parse([]string{"validate", "composition.yaml", "--enable-sandbox-private-tmp", "--output", "json"})
+	ctx, err = parser(&c, io.Discard).Parse([]string{"validate", "composition.yaml", "--sandbox-policy-file", policyFile, "--output", "json"})
 	if err != nil {
 		t.Fatal(err)
 	}

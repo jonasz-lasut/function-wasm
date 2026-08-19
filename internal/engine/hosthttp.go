@@ -27,8 +27,9 @@ type HTTPRequester interface {
 }
 
 // noEgress is what a wasmfn.http call gets on a Run without a grant. (A
-// grant on a runtime without --enable-sandbox-egress never reaches a run:
-// it is a fatal result before the module is resolved.)
+// grant the operator policy does not permit, or one on a runtime with no
+// --sandbox-policy-file granting egress, never reaches a run: it is a fatal
+// result before the module is resolved.)
 const noEgress = "sandbox.egress: HTTP egress is not granted to this module: the Composition's Input names no sandbox.egress.http rule"
 
 // hostHTTP implements the wasmfn.http import (docs/abi.md): it reads a JSON

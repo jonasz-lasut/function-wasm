@@ -20,25 +20,32 @@ import (
 const manifestRef = "ghcr.io/example/fn@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 func TestAdmit(t *testing.T) {
-	open, err := sandbox.NewCeiling(sandbox.Options{EnablePrivateTmp: true, EnableEnv: true})
+	open, err := sandbox.NewCeiling(sandbox.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An enabled egress ceiling: the operator host allowlist is Cedar's
-	// (grantEgress), so New with no operator policy admits any host - the host
-	// gate is exercised in the operator-policy cases below.
-	enabledEgress, err := egress.New()
+	// The egress mechanism: the operator host allowlist is Cedar's (grantEgress),
+	// so New itself admits any host - the host gate is the policy, exercised in
+	// the operator-policy cases below.
+	egressMech, err := egress.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	engineCfg := engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20}
-	closed := Ceilings{Engine: engineCfg}
-	all := Ceilings{Engine: engineCfg, Sandbox: open, Egress: enabledEgress}
 	static := v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, OCI: &v1beta1.OCISource{Ref: manifestRef}}
 
-	// An operator grant policy that permits every capability for team-a and,
-	// default-deny, nothing for anyone else. It exercises the AND gate the
-	// --enable-sandbox-* floor sits under.
+	// The operator's grant policy is the sole enabler. base has none, so every
+	// sandbox grant is refused; allowAll permits every capability unconditionally;
+	// teamA permits them only for namespace team-a (default-deny for the rest).
+	base := Ceilings{Engine: engineCfg, Sandbox: open, Egress: egressMech}
+	allowAll, err := authz.NewOperatorPolicy("test.cedar", []byte(`
+permit (principal, action == Action::"usePrivateTmp", resource);
+permit (principal, action == Action::"setEnv", resource);
+permit (principal, action == Action::"grantEgress", resource);
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	teamA, err := authz.NewOperatorPolicy("test.cedar", []byte(`
 permit (principal, action == Action::"usePrivateTmp", resource) when { principal.namespace == "team-a" };
 permit (principal, action == Action::"setEnv", resource) when { principal.namespace == "team-a" };
@@ -47,8 +54,10 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 	if err != nil {
 		t.Fatal(err)
 	}
-	allTeamA := all
-	allTeamA.Policy = teamA
+	allowAllC := base
+	allowAllC.Policy = allowAll
+	teamAC := base
+	teamAC.Policy = teamA
 
 	type args struct {
 		in        *v1beta1.Input
@@ -69,7 +78,7 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 	}{
 		"Default": {
 			reason: "An Input asking for nothing gets the default sandbox and the ceilings.",
-			args:   args{in: &v1beta1.Input{Module: static}, c: closed},
+			args:   args{in: &v1beta1.Input{Module: static}, c: base},
 		},
 		"Everything": {
 			reason: "Grants and limits within the ceilings are what the run gets.",
@@ -81,7 +90,7 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 					Env:        []v1beta1.EnvVar{{Name: "GREETING", Value: new("hi")}},
 					Egress:     &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}},
 				},
-			}, c: all},
+			}, c: allowAllC},
 			want: want{
 				options: engine.RunOptions{Timeout: 5 * time.Second, MemoryLimit: 64 << 20, PrivateTmp: true},
 				grant:   sandbox.Grant{PrivateTmp: true},
@@ -90,58 +99,67 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 		},
 		"BadSandboxShape": {
 			reason: "The sandbox's shape is judged first, before any ceiling.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "1x", Value: new("y")}}}}, c: all},
+			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "1x", Value: new("y")}}}}, c: base},
 			want:   want{err: `sandbox.env[0].name "1x" is not an identifier`},
 		},
-		"PrivateTmpRefused": {
-			reason: "A grant outside the ceiling names the grant and the flag.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}}, c: closed},
-			want:   want{err: "sandbox.filesystem.privateTmp is refused: the runtime was started without --enable-sandbox-private-tmp"},
+		"PrivateTmpRefusedNoPolicy": {
+			reason: "With no --sandbox-policy-file the policy enables nothing: the grant is refused.",
+			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}}, c: base},
+			want:   want{err: "sandbox.filesystem.privateTmp is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"},
 		},
-		"EnvRefused": {
+		"EnvRefusedNoPolicy": {
 			reason: "The same for the environment.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "A", Value: new("b")}}}}, c: closed},
-			want:   want{err: "sandbox.env is refused: the runtime was started without --enable-sandbox-env"},
+			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "A", Value: new("b")}}}}, c: base},
+			want:   want{err: "sandbox.env is refused: the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"},
 		},
-		"EgressDisabled": {
-			reason: "Without the egress flag the capability does not exist.",
-			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}}, c: closed},
-			want:   want{err: "sandbox.egress is refused: the runtime was started without --enable-sandbox-egress"},
+		"EgressRefusedNoPolicy": {
+			reason: "With no --sandbox-policy-file egress is not grantable.",
+			args:   args{in: &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}}, c: base},
+			want:   want{err: "sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)"},
+		},
+		"EgressNoMechanism": {
+			reason: "The policy grants egress but no egress mechanism was built: refused before a run.",
+			args: args{
+				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}},
+				c:         Ceilings{Engine: engineCfg, Sandbox: open, Policy: allowAll},
+				principal: authz.Principal{Namespace: "team-a"},
+			},
+			want: want{err: "sandbox.egress is refused: the runtime has no egress mechanism"},
 		},
 		"TimeoutOverCeiling": {
 			reason: "A limit above its ceiling names both.",
-			args:   args{in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Timeout: &metav1.Duration{Duration: time.Minute}}}, c: all},
+			args:   args{in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Timeout: &metav1.Duration{Duration: time.Minute}}}, c: base},
 			want:   want{err: "limits.timeout 1m0s exceeds the runtime's --module-timeout of 10s"},
 		},
 		"MemoryOverCeiling": {
 			reason: "The same for memory.",
-			args:   args{in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Memory: resource.NewQuantity(1<<30, resource.BinarySI)}}, c: all},
+			args:   args{in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Memory: resource.NewQuantity(1<<30, resource.BinarySI)}}, c: base},
 			want:   want{err: "limits.memory 1Gi exceeds the runtime's --module-memory-limit of 256Mi"},
 		},
 		"NonPositiveTimeout": {
 			reason: "A zero or negative limit is refused.",
-			args:   args{in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Timeout: &metav1.Duration{}}}, c: all},
+			args:   args{in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Timeout: &metav1.Duration{}}}, c: base},
 			want:   want{err: "limits.timeout 0s must be positive"},
 		},
 		"BadModule": {
 			reason: "The module's shape is judged last, in the runtime's words.",
-			args:   args{in: &v1beta1.Input{Module: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI}}, c: all},
+			args:   args{in: &v1beta1.Input{Module: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI}}, c: base},
 			want:   want{err: "cannot resolve module: module.type OCI needs exactly one of module.oci and module.from"},
 		},
 		"BadPolicy": {
 			reason: "So is the policy's.",
-			args:   args{in: &v1beta1.Input{Module: static, Policy: &v1beta1.Policy{CredentialsAllowList: []string{"x"}}}, c: all},
+			args:   args{in: &v1beta1.Input{Module: static, Policy: &v1beta1.Policy{CredentialsAllowList: []string{"x"}}}, c: base},
 			want:   want{err: "cannot resolve module: policy.credentialsAllowList requires policy.repositoryAllowList"},
 		},
 		"FromUnread": {
 			reason: "A module.from source passes shape checks here; the composite resource is FromComposite's business.",
-			args:   args{in: &v1beta1.Input{Module: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}}, c: all},
+			args:   args{in: &v1beta1.Input{Module: v1beta1.ModuleSource{Type: v1beta1.ModuleTypeOCI, From: "status.module"}}, c: base},
 		},
 		"ConcurrencySet": {
 			reason: "A concurrency limit is passed through.",
 			args: args{
 				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(4))}},
-				c:  all,
+				c:  base,
 			},
 			want: want{concurrency: 4},
 		},
@@ -149,7 +167,7 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			reason: "Concurrency above --max-concurrent-runs is silently capped.",
 			args: args{
 				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(10))}},
-				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, MaxConcurrentRuns: 5}, Sandbox: open, Egress: enabledEgress},
+				c:  Ceilings{Engine: engine.Config{Timeout: 10 * time.Second, MemoryLimit: 256 << 20, MaxConcurrentRuns: 5}, Sandbox: open, Egress: egressMech},
 			},
 			want: want{concurrency: 5},
 		},
@@ -157,24 +175,24 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			reason: "Concurrency without --max-concurrent-runs is uncapped.",
 			args: args{
 				in: &v1beta1.Input{Module: static, Limits: &v1beta1.Limits{Concurrency: new(int32(100))}},
-				c:  all,
+				c:  base,
 			},
 			want: want{concurrency: 100},
 		},
 		"OperatorPolicyPrivateTmpAllowed": {
-			reason: "The operator policy permits a capability the floor admitted for a matching principal.",
+			reason: "The operator policy enables a capability for a matching principal.",
 			args: args{
 				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}},
-				c:         allTeamA,
+				c:         teamAC,
 				principal: authz.Principal{Namespace: "team-a"},
 			},
 			want: want{options: engine.RunOptions{PrivateTmp: true}, grant: sandbox.Grant{PrivateTmp: true}},
 		},
 		"OperatorPolicyPrivateTmpDenied": {
-			reason: "The operator policy narrows within the floor: another principal is refused after the floor passed.",
+			reason: "Default-deny: another principal is refused.",
 			args: args{
 				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Filesystem: &v1beta1.SandboxFilesystem{PrivateTmp: true}}},
-				c:         allTeamA,
+				c:         teamAC,
 				principal: authz.Principal{Namespace: "team-b"},
 			},
 			want: want{err: "sandbox.filesystem.privateTmp is refused: the operator policy (--sandbox-policy-file) does not permit it for this request"},
@@ -183,16 +201,16 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			reason: "The environment grant is gated too.",
 			args: args{
 				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Env: []v1beta1.EnvVar{{Name: "A", Value: new("b")}}}},
-				c:         allTeamA,
+				c:         teamAC,
 				principal: authz.Principal{Namespace: "team-b"},
 			},
 			want: want{err: "sandbox.env is refused: the operator policy (--sandbox-policy-file) does not permit it for this request"},
 		},
 		"OperatorPolicyEgressDenied": {
-			reason: "An egress rule the ceiling admitted is refused by the operator policy, naming the method and host.",
+			reason: "An egress rule is refused by the operator policy, naming the method and host.",
 			args: args{
 				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}},
-				c:         allTeamA,
+				c:         teamAC,
 				principal: authz.Principal{Namespace: "team-b"},
 			},
 			want: want{err: `sandbox.egress.http[0] GET to host "api.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it`},
@@ -201,7 +219,7 @@ permit (principal, action == Action::"grantEgress", resource) when { principal.n
 			reason: "A matching principal keeps the egress grant.",
 			args: args{
 				in:        &v1beta1.Input{Module: static, Sandbox: &v1beta1.Sandbox{Egress: &v1beta1.SandboxEgress{HTTP: []v1beta1.SandboxHTTPRule{{Host: "api.example.com", Methods: []string{"GET"}}}}}},
-				c:         allTeamA,
+				c:         teamAC,
 				principal: authz.Principal{Namespace: "team-a"},
 			},
 			want: want{http: true},

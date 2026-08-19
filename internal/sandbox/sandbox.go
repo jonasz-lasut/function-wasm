@@ -1,18 +1,18 @@
 // Package sandbox validates the Input's sandbox grants - a private /tmp, HTTP
 // egress rules, environment variables - as designed in
-// docs/one-pager-sandbox.md and docs/one-pager-request-secrets.md, and checks
-// them against the ceiling the operator set with the --enable-sandbox-* flags.
-// Validate checks the shape of a sandbox; a Ceiling turns it into what one run
-// gets (Grant) or refuses it; Materialize resolves valueFrom references against
-// the request's credentials. The mechanics live in internal/engine; HTTP egress
-// has its own ceiling in internal/egress. Host directories are deliberately not
-// mountable into a module - the request is a module's only view of the world
-// beyond what it may write for itself - so the filesystem grant is the private
-// /tmp alone.
+// docs/one-pager-sandbox.md and docs/one-pager-request-secrets.md. Whether a
+// capability is enabled is the operator's Cedar --sandbox-policy-file's decision,
+// made in internal/admission; this package checks a sandbox's shape (Validate),
+// turns it into what one run gets (Grant), probes $TMPDIR once at startup so a
+// private /tmp a policy can grant is known to be creatable (Ceiling), and
+// resolves valueFrom references against the request's credentials (Materialize).
+// The mechanics live in internal/engine; HTTP egress has its own ceiling in
+// internal/egress. Host directories are deliberately not mountable into a module
+// - the request is a module's only view of the world beyond what it may write
+// for itself - so the filesystem grant is the private /tmp alone.
 package sandbox
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -148,38 +148,38 @@ func RequestsEnv(s *v1beta1.Sandbox) bool {
 	return s != nil && (len(s.Env) > 0 || len(s.EnvFrom) > 0)
 }
 
-// Options are the operator's sandbox flags - the ceiling.
+// Options configure the sandbox startup checks for the capabilities the
+// operator's Cedar policy can grant.
 type Options struct {
-	// EnablePrivateTmp lets Compositions ask for a private /tmp
-	// (--enable-sandbox-private-tmp).
-	EnablePrivateTmp bool
-	// EnableEnv lets Compositions set environment variables
-	// (--enable-sandbox-env).
-	EnableEnv bool
+	// ProbePrivateTmp asks NewCeiling to prove a private /tmp can be created
+	// under $TMPDIR. Set it when the operator policy has a usePrivateTmp rule
+	// (OperatorPolicy.HasPrivateTmpRules), so a misconfigured $TMPDIR stops the
+	// runtime at startup rather than failing the first request that asks for one.
+	ProbePrivateTmp bool
 }
 
-// Ceiling is what the operator allows Compositions to grant their modules.
-// The zero value allows nothing - the default sandbox.
-type Ceiling struct {
-	enablePrivateTmp bool
-	enableEnv        bool
-}
+// Ceiling marks the sandbox startup checks as passed. Enablement is the
+// operator's Cedar --sandbox-policy-file's decision (internal/admission), not a
+// flag, so the ceiling carries no capability state; it exists so the $TMPDIR
+// probe runs once at startup and Grant has a home. A nil *Ceiling is safe: it
+// grants exactly what the sandbox shape asks and the policy permits.
+type Ceiling struct{}
 
-// NewCeiling checks the operator's flags once, at startup, so a misconfigured
-// runtime stops instead of failing every request: a private /tmp is probed
-// under os.TempDir() to make sure one can be created there.
+// NewCeiling runs the operator's sandbox startup checks once so a misconfigured
+// runtime stops instead of failing every request: when a private /tmp can be
+// granted (o.ProbePrivateTmp), one is probed under os.TempDir() to make sure it
+// can be created there.
 func NewCeiling(o Options) (*Ceiling, error) {
-	c := &Ceiling{enablePrivateTmp: o.EnablePrivateTmp, enableEnv: o.EnableEnv}
-	if o.EnablePrivateTmp {
+	if o.ProbePrivateTmp {
 		dir, err := os.MkdirTemp("", privateTmpProbePrefix)
 		if err != nil {
-			return nil, fmt.Errorf("--enable-sandbox-private-tmp: cannot create a private /tmp under %s (set TMPDIR to a writable directory): %w", os.TempDir(), err)
+			return nil, fmt.Errorf("the operator policy grants a private /tmp (usePrivateTmp), but the runtime cannot create one under %s (set TMPDIR to a writable directory): %w", os.TempDir(), err)
 		}
 		if err := os.Remove(dir); err != nil {
-			return nil, fmt.Errorf("--enable-sandbox-private-tmp: cannot remove a private /tmp under %s: %w", os.TempDir(), err)
+			return nil, fmt.Errorf("the operator policy grants a private /tmp (usePrivateTmp), but the runtime cannot remove one under %s: %w", os.TempDir(), err)
 		}
 	}
-	return c, nil
+	return &Ceiling{}, nil
 }
 
 // Grant is what one run gets: the sandbox its Composition asked for, within
@@ -192,36 +192,17 @@ type Grant struct {
 	Env map[string]string
 }
 
-// Grant checks s (already validated for shape) against the ceiling and
-// returns what the run gets. A grant outside the ceiling - a private /tmp or
-// environment the operator did not enable - is an error naming the grant and
-// the flag, so either author can act on it; egress is not this method's
-// business. A nil Ceiling allows nothing, like the zero value. The returned
-// Grant carries PrivateTmp only; Env is populated by Materialize after the
-// pull credential is known.
-func (c *Ceiling) Grant(s *v1beta1.Sandbox) (Grant, error) {
+// Grant turns s (already validated for shape) into the run's sandbox grant.
+// Whether the run may actually use it is the operator policy's decision, made in
+// internal/admission; this only reads the shape. The returned Grant carries
+// PrivateTmp; Env is populated by Materialize after the pull credential is known.
+func (*Ceiling) Grant(s *v1beta1.Sandbox) Grant {
 	var g Grant
 	if s == nil {
-		return g, nil
-	}
-	if c == nil {
-		c = &Ceiling{}
+		return g
 	}
 	if s.Filesystem != nil && s.Filesystem.PrivateTmp {
-		if !c.enablePrivateTmp {
-			return Grant{}, errors.New("sandbox.filesystem.privateTmp is refused: the runtime was started without --enable-sandbox-private-tmp")
-		}
 		g.PrivateTmp = true
 	}
-	if len(s.Env) > 0 {
-		if !c.enableEnv {
-			return Grant{}, errors.New("sandbox.env is refused: the runtime was started without --enable-sandbox-env")
-		}
-	}
-	if len(s.EnvFrom) > 0 {
-		if !c.enableEnv {
-			return Grant{}, errors.New("sandbox.envFrom is refused: the runtime was started without --enable-sandbox-env")
-		}
-	}
-	return g, nil
+	return g
 }

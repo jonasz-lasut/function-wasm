@@ -62,12 +62,12 @@ func TestRunFunctionManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ceiling, err := sandbox.NewCeiling(sandbox.Options{EnablePrivateTmp: true, EnableEnv: true})
+	ceiling, err := sandbox.NewCeiling(sandbox.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := cache.New(afero.NewMemMapFs(), false)
-	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: enabledEgress, sandbox: ceiling, manifests: store}
+	f := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver, egress: enabledEgress, sandbox: ceiling, policy: permissiveSandboxPolicy(t), manifests: store}
 	closed := &Function{log: logging.NewNopLogger(), ttl: ttl, engine: eng, modules: engine.NewCache(eng, engine.CacheOptions{}), resolver: resolver}
 
 	egressGrant := map[string]any{"egress": map[string]any{"http": []any{map[string]any{"host": "api.example.com", "methods": []any{"GET"}, "pathPrefix": "/v1/"}}}}
@@ -107,11 +107,11 @@ func TestRunFunctionManifest(t *testing.T) {
 			fields: map[string]any{"module": oci("egress"), "sandbox": map[string]any{"egress": map[string]any{"http": []any{map[string]any{"host": "api.example.com", "methods": []any{"GET"}, "pathPrefix": "/v1/items/"}}}}},
 			want:   fatal("module oci " + refs["egress"] + " requires sandbox.egress.http host api.example.com methods [GET] pathPrefix /v1/, which the Composition does not grant"),
 		},
-		"CeilingFirst": {
-			reason: "The ceiling refuses before the manifest is consulted: a grant the operator did not enable is the grant-and-flag message, so the manifest never sees what the ceiling would refuse.",
+		"PolicyFirst": {
+			reason: "Admission refuses before the manifest is consulted: a grant no policy enables is refused, so the manifest never sees what admission would refuse.",
 			fn:     closed,
 			fields: map[string]any{"module": oci("egress"), "sandbox": egressGrant},
-			want:   fatal("sandbox.egress is refused: the runtime was started without --enable-sandbox-egress"),
+			want:   fatal("sandbox.egress is refused: the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)"),
 		},
 		"TmpGranted": {
 			reason: "A private /tmp, granted, satisfies the manifest.",

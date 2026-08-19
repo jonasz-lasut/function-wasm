@@ -38,11 +38,11 @@ func TestOperatorPolicyPrivateTmp(t *testing.T) {
 		principal Principal
 		want      bool
 	}{
-		"NilPolicyPermits": {
-			reason:    "No --sandbox-policy-file adds no constraint: a nil policy permits.",
+		"NilPolicyDenies": {
+			reason:    "The policy is the sole enabler: no --sandbox-policy-file grants no private /tmp.",
 			policy:    nil,
 			principal: Principal{Namespace: "team-b"},
-			want:      true,
+			want:      false,
 		},
 		"MatchingTenant": {
 			reason:    "The per-tenant permit admits its namespace.",
@@ -72,6 +72,37 @@ func TestOperatorPolicyPrivateTmp(t *testing.T) {
 	}
 }
 
+func TestOperatorPolicyHasPrivateTmpRules(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		policy *OperatorPolicy
+		want   bool
+	}{
+		"Nil": {
+			reason: "A nil policy has no usePrivateTmp rule, so the runtime does not probe $TMPDIR.",
+			policy: nil,
+			want:   false,
+		},
+		"HasPrivateTmp": {
+			reason: "A policy that grants a private /tmp is detected, so $TMPDIR is probed at startup.",
+			policy: mustOperatorPolicy(t, operatorDoc),
+			want:   true,
+		},
+		"OnlyOtherRules": {
+			reason: "A policy with no usePrivateTmp rule never grants a /tmp, so probing $TMPDIR would be spurious.",
+			policy: mustOperatorPolicy(t, `permit (principal, action == Action::"grantEgress", resource);`),
+			want:   false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := tc.policy.HasPrivateTmpRules(); got != tc.want {
+				t.Fatalf("\n%s\nHasPrivateTmpRules() = %v, want %v", tc.reason, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOperatorPolicyEnv(t *testing.T) {
 	policy := mustOperatorPolicy(t, operatorDoc)
 	cases := map[string]struct {
@@ -80,9 +111,9 @@ func TestOperatorPolicyEnv(t *testing.T) {
 		keys   []string
 		want   bool
 	}{
-		"NilPolicyPermits": {reason: "A nil policy permits.", policy: nil, keys: nil, want: true},
-		"KeyPermitted":     {reason: "The setEnv permit reads context.keys.", policy: policy, keys: []string{"SAFE", "OTHER"}, want: true},
-		"KeyDenied":        {reason: "Keys the permit does not name are refused.", policy: policy, keys: []string{"SECRET"}, want: false},
+		"NilPolicyDenies": {reason: "The policy is the sole enabler: a nil policy grants no env.", policy: nil, keys: nil, want: false},
+		"KeyPermitted":    {reason: "The setEnv permit reads context.keys.", policy: policy, keys: []string{"SAFE", "OTHER"}, want: true},
+		"KeyDenied":       {reason: "Keys the permit does not name are refused.", policy: policy, keys: []string{"SECRET"}, want: false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -101,11 +132,11 @@ func TestOperatorPolicyEgress(t *testing.T) {
 		grant  EgressGrant
 		want   bool
 	}{
-		"NilPolicyPermits": {
-			reason: "A nil policy permits any egress.",
+		"NilPolicyDenies": {
+			reason: "The policy is the sole enabler: a nil policy grants no egress.",
 			policy: nil,
 			grant:  EgressGrant{Host: "anything.example.org", Method: "GET"},
-			want:   true,
+			want:   false,
 		},
 		"HostUnderBoundary": {
 			reason: "A host under the granted boundary is `in` the HostPattern entity.",
