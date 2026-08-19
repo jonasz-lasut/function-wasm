@@ -9,10 +9,11 @@ import (
 	"github.com/jonasz-lasut/function-wasm/input/v1beta1"
 )
 
-// Grant is a Composition's sandbox.egress.http rules admitted by the ceiling
-// — what one run's requests are checked against. It is built per request
-// from the Input, before the module is resolved, so a rule outside the
-// ceiling is refused before anything runs.
+// Grant is a Composition's sandbox.egress.http rules compiled into what one
+// run's requests are checked against. It is built per request from the Input,
+// before the module is resolved. The operator's host allowlist is Cedar's
+// (grantEgress, decided at admission); this holds only the Composition's own
+// rules.
 type Grant struct {
 	egress *Egress
 	rules  []rule
@@ -25,11 +26,10 @@ type rule struct {
 	pathPrefix string
 }
 
-// Grant intersects rules with the ceiling: every host must be one the ceiling
-// admits and every hostPattern must sit under a ceiling pattern. The rules
-// are assumed shape-valid (internal/sandbox.Validate ran); the error names
-// the rule and what the ceiling admits so the Composition author can act on
-// it.
+// Grant compiles a Composition's egress rules into what one run's requests are
+// checked against. The rules are assumed shape-valid (internal/sandbox.Validate
+// ran); the operator's host allowlist is Cedar's (grantEgress, at admission),
+// so this no longer intersects a host ceiling - it only compiles the rules.
 func (e *Egress) Grant(rules []v1beta1.SandboxHTTPRule) (*Grant, error) {
 	g := &Grant{egress: e, rules: make([]rule, 0, len(rules))}
 	for i, r := range rules {
@@ -42,23 +42,17 @@ func (e *Egress) Grant(rules []v1beta1.SandboxHTTPRule) (*Grant, error) {
 		}
 		switch {
 		case r.Host != "":
-			// A host is a bare host name; anything else — a port, a scheme,
-			// a zone, or a "." that normalizes to nothing — would be a rule
+			// A host is a bare host name; anything else - a port, a scheme,
+			// a zone, or a "." that normalizes to nothing - would be a rule
 			// that never matches, or one that matches everything.
 			if !ValidHost(r.Host) {
 				return nil, fmt.Errorf("sandbox.egress.http[%d].host %q must be a bare host name (no scheme, port, path or zone)", i, r.Host)
 			}
 			compiled.host = normalizeHost(r.Host)
-			if !e.admitsHost(compiled.host) {
-				return nil, fmt.Errorf("sandbox.egress.http[%d].host %q is outside the runtime's egress policy (allowed: %s)", i, r.Host, e.describe())
-			}
 		default:
 			suffix, ok := patternSuffix(r.HostPattern)
 			if !ok {
 				return nil, fmt.Errorf("sandbox.egress.http[%d].hostPattern %q must be a host name with one leading wildcard label", i, r.HostPattern)
-			}
-			if !e.admitsPattern(suffix) {
-				return nil, fmt.Errorf("sandbox.egress.http[%d].hostPattern %q is outside the runtime's egress policy (allowed: %s)", i, r.HostPattern, e.describe())
 			}
 			compiled.suffix = suffix
 		}

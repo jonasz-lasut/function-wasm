@@ -332,9 +332,10 @@ type SandboxFilesystem struct {
 // the host on the guest's behalf (the wasmfn.http import), never raw sockets.
 type SandboxEgress struct {
 	// HTTP lists the requests the host will perform for the guest; anything
-	// not matched by an entry is refused. The operator's
-	// --enable-sandbox-egress and --sandbox-egress-policy (allowed hosts,
-	// blocked CIDRs, per-request budgets) are the ceiling.
+	// not matched by an entry is refused. --enable-sandbox-egress enables
+	// egress; the operator's Cedar --sandbox-policy-file narrows the host
+	// allowlist (grantEgress) and adds CIDR rules (dialAddress), and the
+	// per-request budgets are fixed defaults.
 	// +optional
 	HTTP []SandboxHTTPRule `json:"http,omitempty"`
 }

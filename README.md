@@ -267,12 +267,12 @@ go run github.com/jonasz-lasut/function-wasm/cmd/function@latest validate \
   example/composition.yaml --module-dir=. --resolve
 # or, with the released image (its entrypoint is the runtime):
 docker run --rm -v "$PWD:/w" ghcr.io/jonasz-lasut/function-wasm:<version> validate /w/composition.yaml \
-  --enable-sandbox-egress --sandbox-egress-policy /w/egress-policy.yaml
+  --enable-sandbox-egress --sandbox-policy-file /w/policy.cedar
 ```
 
 ```
 composition.yaml: Composition/hello pipeline[0] hello: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, egress api.example.com)
-composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0].host "evil.example.com" is outside the runtime's egress policy (allowed: api.example.com)
+composition.yaml: Composition/hello pipeline[1] labeler: refused: sandbox.egress.http[0] GET to host "evil.example.com" is refused: the operator policy (--sandbox-policy-file) does not permit it
 ```
 
 `--xr xr.yaml` materialises `module.from` sources against that composite
@@ -313,7 +313,7 @@ sandbox:                       # optional; grants within the runtime's --enable-
     privateTmp: true                                # an empty, writable /tmp per request; nothing else is mountable
   env: [{name: LOG_LEVEL, value: debug}]            # non-secret configuration
   egress:
-    http: [{host: api.example.com, methods: [GET]}] # HTTP through the host, within --sandbox-egress-policy
+    http: [{host: api.example.com, methods: [GET]}] # HTTP through the host; the operator's --sandbox-policy-file grantEgress decides
 config: {...}                  # optional; opaque, forwarded to the module
 ```
 
@@ -338,7 +338,7 @@ Everything but the source is read from the Input: `policy`, `limits` and
 | `limits.concurrency` | int32 | at most N runs of this step at once, across all requests, keyed by the module's content digest. A further request waits under its own context; when the deadline passes first, it is a fatal result that consumed nothing and is not counted as a run. A value above `--max-concurrent-runs` is silently capped. No ceiling flag: this only narrows |
 | `sandbox` | object | grants beyond the default sandbox (nothing but the request), each within a ceiling the operator sets with an `--enable-sandbox-*` flag: a grant outside the ceiling is a fatal result naming the grant and the flag, before any module is resolved. Read from the Input only. Filesystem, environment and HTTP egress are implemented ([docs/one-pager-sandbox.md](docs/one-pager-sandbox.md)) |
 | `sandbox.filesystem.privateTmp` | bool | a private, empty, writable `/tmp` for the duration of the request — created under the runtime's `$TMPDIR` before the module runs and removed afterwards, whatever the outcome (`--enable-sandbox-private-tmp`) |
-| `sandbox.egress.http[]` | `{host \| hostPattern, methods, pathPrefix}` | HTTP(S) requests the host performs for the module (`wasmfn.HTTPClient()` in Go, the `wasmfn.http` import elsewhere): exactly one of `host` (exact name, port ignored) and `hostPattern` (`*.example.com`: every name under it, not the apex), at least one of `GET HEAD POST PUT PATCH DELETE OPTIONS`, and an optional `pathPrefix` the (normalized) path must start with. Rules for the same host add up. Needs `--enable-sandbox-egress`; each rule must fit `--sandbox-egress-policy`, else a fatal result names the rule and what the policy allows. See [HTTP egress](#http-egress) |
+| `sandbox.egress.http[]` | `{host \| hostPattern, methods, pathPrefix}` | HTTP(S) requests the host performs for the module (`wasmfn.HTTPClient()` in Go, the `wasmfn.http` import elsewhere): exactly one of `host` (exact name, port ignored) and `hostPattern` (`*.example.com`: every name under it, not the apex), at least one of `GET HEAD POST PUT PATCH DELETE OPTIONS`, and an optional `pathPrefix` the (normalized) path must start with. Rules for the same host add up. Needs `--enable-sandbox-egress`; the operator's Cedar `--sandbox-policy-file` (`grantEgress`) decides which callers may grant which hosts, default-deny, else a fatal result names the rule. See [HTTP egress](#http-egress) |
 | `sandbox.env[]` | `{name, value \| valueFrom}` | environment variables the module sees, exactly these and nothing of the runtime's; names are identifiers, no duplicates. A literal `value` may not contain NUL. A `valueFrom.credential` reads a key of a step credential (`--enable-sandbox-env`) |
 | `sandbox.env[].valueFrom.credential` | `{name, key}` | reads the value from step credential `name`, key `key`; the pull credential (`module.oci.credentials`) is refused as a source |
 | `sandbox.envFrom[]` | `{credential, prefix}` | imports every key of a step credential as environment variables; `prefix` is prepended to each key. Keys that are not valid identifiers (after prefixing) refuse the run. A key colliding with an `env[]` name is refused. The pull credential is refused as a source (`--enable-sandbox-env`) |
@@ -465,50 +465,32 @@ rules, follows redirects within them, enforces the operator's budgets,
 counts and logs every request, and hands the response back. Three parties,
 in the order they decide:
 
-1. **The operator** turns the capability on and sets the ceiling:
+1. **The operator** turns the capability on. The host allowlist and the SSRF
+   CIDR rules are authored in the Cedar `--sandbox-policy-file` (see [operator
+   grant policy](#operator-grant-policy)); the per-run budgets are fixed
+   defaults, and the one tunable budget - the rate limit - is a pair of flags:
 
    ```shell
-   function --enable-sandbox-egress --sandbox-egress-policy /etc/function-wasm/egress.yaml
+   function --enable-sandbox-egress \
+     --sandbox-policy-file /etc/function-wasm/policy.cedar \
+     --egress-rate-limit-per-minute 60 --egress-rate-limit-burst 10
    ```
 
-   ```yaml
-   # /etc/function-wasm/egress.yaml — every field optional
-   hosts: [api.example.com]              # exact hosts a Composition may grant
-   hostPatterns: ["*.googleapis.com"]    # patterns it may grant; a Composition's pattern must sit under one
-   blockedCIDRs: ["203.0.113.0/24"]      # refused whatever the grant, on top of the default block list
-   allowedCIDRs: ["10.96.0.0/12"]        # exceptions to the default block list (a cluster service range, say)
-   timeout: 10s                          # one request, name lookup to last body byte — a duration string
-   maxRequests: 16                       # per run
-   maxResponseBytes: 4194304             # a longer body is an error, not a truncated body (headers are capped separately, at 64 KiB)
-   maxRedirects: 5                       # each hop checked like the first request; hops count here, not against maxRequests
-   rateLimit:                             # process-wide token bucket per module digest; without it, no rate limit
-     requestsPerMinute: 60                # sustained rate
-     burst: 10                            # maximum tokens available at once (default: requestsPerMinute rounded down, at least 1)
-   ```
-
-   Without a file, any public host may be granted within the defaults shown.
-   The default block list — loopback, link-local (the cloud metadata
-   endpoint), RFC 1918, carrier-grade NAT (`100.64.0.0/10`, a common pod
-   range), IPv6 unique-local, the NAT64 and IPv4-compatible prefixes, and the
-   unspecified, multicast and reserved ranges — applies to **every address a name
-   resolves to** (a zoned IPv6 literal such as `[::1%25lo]` is never
-   dialled), and the host dials the address it checked, so a name cannot
-   rebind between the check and the connection. `blockedCIDRs` add to it,
-   `allowedCIDRs` punch holes in it, and an explicit `blockedCIDRs` entry
-   wins over an `allowedCIDRs` one; to reach a loopback service in a local
-   test both `127.0.0.0/8` and `::1/128` need allowing, since every resolved
-   address is judged. `HTTP_PROXY` is not honoured: the host must see the
-   destination address to judge it. What the guest is told about a refusal
-   is only that the policy refused; the resolved address and the block-list
-   entry stay in the runtime's audit line.
-
-   The `blockedCIDRs`/`allowedCIDRs` fields can instead be authored as
-   [Cedar](https://www.cedarpolicy.com) rules in `--sandbox-policy-file`, over the
-   `Action::"dialAddress"` action and the `context.ip` extension: a `forbid`
-   is a block (like `blockedCIDRs`), a `permit` is a hole (like
-   `allowedCIDRs`), and `forbid` wins.
+   With `--enable-sandbox-egress` and no policy, any public host may be granted
+   within the fixed budgets (timeout 10s, maxRequests 16, maxResponseBytes 4 MiB,
+   maxRedirects 5; response headers are capped separately at 64 KiB) and the
+   default block list. The **host allowlist** is the Cedar `grantEgress` action -
+   which callers (`principal.namespace`, `principal.xrKind`) may grant which
+   hosts, methods and paths, default-deny - and the **CIDR block/allow list** is
+   the `Action::"dialAddress"` action over the `context.ip` extension:
 
    ```cedar
+   // Only team-a may grant egress, and only to *.googleapis.com over GET/HEAD.
+   permit (principal, action == Action::"grantEgress", resource)
+   when { principal.namespace == "team-a" &&
+          resource in HostPattern::"googleapis.com" &&
+          ["GET", "HEAD"].contains(context.method) };
+
    // Block an internal range, then open one service inside it.
    forbid (principal, action == Action::"dialAddress", resource)
    when { context.ip.isInRange(ip("10.0.0.0/8")) };
@@ -516,14 +498,25 @@ in the order they decide:
    when { context.ip.isInRange(ip("10.96.0.0/12")) };
    ```
 
-   Each rule's condition is one ip test — `context.ip.isInRange(ip("CIDR"))`,
-   `context.ip.isLoopback()`, or a `||` of those — and it compiles **at load**
-   into the same ordered prefix lists the YAML fields fill, so the dial path
-   stays a few `Prefix.Contains` and **Cedar never runs per resolved IP**. The
-   two sources combine additively (a Cedar `forbid` joins `blockedCIDRs`, a
-   Cedar `permit` joins `allowedCIDRs`); the YAML fields still work unchanged.
-   A malformed rule is refused at startup, so `function validate` reports it
-   too.
+   Each `dialAddress` condition is one ip test - `context.ip.isInRange(ip("CIDR"))`,
+   `context.ip.isLoopback()`, or a `||` of those - and compiles **at load** into
+   an ordered prefix list, so the dial path stays a few `Prefix.Contains` and
+   **Cedar never runs per resolved IP**. A malformed rule is refused at startup,
+   so `function validate` reports it too.
+
+   The default block list - loopback, link-local (the cloud metadata endpoint),
+   RFC 1918, carrier-grade NAT (`100.64.0.0/10`, a common pod range), IPv6
+   unique-local, the NAT64 and IPv4-compatible prefixes, and the unspecified,
+   multicast and reserved ranges - applies to **every address a name resolves
+   to** (a zoned IPv6 literal such as `[::1%25lo]` is never dialled), and the
+   host dials the address it checked, so a name cannot rebind between the check
+   and the connection. A `dialAddress` `forbid` adds to it, a `permit` punches a
+   hole in it, and a `forbid` wins; to reach a loopback service in a local test
+   both `127.0.0.0/8` and `::1/128` need a permit, since every resolved address
+   is judged. `HTTP_PROXY` is not honoured: the host must see the destination
+   address to judge it. What the guest is told about a refusal is only that the
+   policy refused; the resolved address and the block-list entry stay in the
+   runtime's audit line.
 
 2. **The Composition** grants what its module needs, within the ceiling:
 
@@ -544,12 +537,12 @@ in the order they decide:
                methods: [GET, POST]
    ```
 
-   A rule outside the ceiling is a fatal result before the module runs
-   (`sandbox.egress.http[0].host "evil.example.com" is outside the runtime's
-   egress policy (allowed: *.googleapis.com, api.example.com)`), and so is a
-   grant on a runtime without `--enable-sandbox-egress`. `sandbox` is read
-   from the Input only: an XR author who picks a module through
-   `module.from` cannot widen its egress.
+   A host the operator's Cedar policy does not grant is a fatal result before
+   the module runs (`sandbox.egress.http[0] GET to host "evil.example.com" is
+   refused: the operator policy (--sandbox-policy-file) does not permit it`),
+   and so is a grant on a runtime without `--enable-sandbox-egress` (with no
+   policy, any public host is grantable). `sandbox` is read from the Input only:
+   an XR author who picks a module through `module.from` cannot widen its egress.
 
 3. **The module** makes requests. In Go, `wasmfn.HTTPClient()` is an
    `*http.Client` whose transport is the host, so anything that takes a
@@ -662,8 +655,9 @@ flags would admit.
 | `--enable-sandbox-private-tmp` | `ENABLE_SANDBOX_PRIVATE_TMP` | `false` | let Compositions give a module a private, empty, writable `/tmp` per request (`sandbox.filesystem.privateTmp`), created under the runtime's `$TMPDIR` (probed at startup) and removed when the run ends. There is no byte quota: to bound what a module may write, point `TMPDIR` at a tmpfs `emptyDir` with a `sizeLimit` through a `DeploymentRuntimeConfig` |
 | `--enable-sandbox-env` | `ENABLE_SANDBOX_ENV` | `false` | let Compositions set the environment variables a module sees (`sandbox.env`, `sandbox.envFrom`); the runtime's own environment is never passed on |
 | `--enable-sandbox-egress` | `ENABLE_SANDBOX_EGRESS` | `false` | let Compositions grant modules HTTP(S) egress through the host (`sandbox.egress`); off, any such grant is a fatal result naming the flag. See [HTTP egress](#http-egress) |
-| `--sandbox-egress-policy` | `SANDBOX_EGRESS_POLICY` | unset | YAML/JSON file with the egress ceiling: `hosts`, `hostPatterns` (any host when both are empty), `blockedCIDRs`/`allowedCIDRs` on top of the default block list, and the per-run budgets `timeout` (10s), `maxRequests` (16), `maxResponseBytes` (4 MiB), `maxRedirects` (5) |
-| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`). It may also carry the SSRF CIDR block/allow rules (`forbid`/`permit` on `Action::"dialAddress"` with `context.ip.isInRange(ip(…))`/`isLoopback()`), which compile at load into the egress block list alongside `--sandbox-egress-policy`'s `blockedCIDRs`/`allowedCIDRs` — Cedar never runs on the dial path. Evaluated **default-deny** (a `forbid` wins) **after** the `--enable-sandbox-*` floor, so it only tightens: a capability a flag disabled is never grantable whatever the policy says, and a capability the policy does not permit is refused. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). Unset, no operator constraint applies and admission is identical to today. See [operator grant policy](#operator-grant-policy) |
+| `--egress-rate-limit-per-minute` | `EGRESS_RATE_LIMIT_PER_MINUTE` | `0` (off) | Sustained egress requests per minute per module digest (a process-wide token bucket). The one tunable egress budget; the rest are fixed (timeout 10s, maxRequests 16, maxResponseBytes 4 MiB, maxRedirects 5). The host allowlist and CIDR rules live in `--sandbox-policy-file` |
+| `--egress-rate-limit-burst` | `EGRESS_RATE_LIMIT_BURST` | `0` (derived) | Burst tokens for `--egress-rate-limit-per-minute`; `0` derives `max(1, requestsPerMinute)` |
+| `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy: which callers (by `principal.namespace`, `principal.xrKind`) a Composition may be granted a private `/tmp` (`usePrivateTmp`), environment (`setEnv`) or egress (`grantEgress`). It may also carry the SSRF CIDR block/allow rules (`forbid`/`permit` on `Action::"dialAddress"` with `context.ip.isInRange(ip(…))`/`isLoopback()`), which compile at load into the egress block list (with the built-in default block list) - Cedar never runs on the dial path. Evaluated **default-deny** (a `forbid` wins) **after** the `--enable-sandbox-*` floor, so it only tightens: a capability a flag disabled is never grantable whatever the policy says, and a capability the policy does not permit is refused. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). Unset, no operator constraint applies and admission is identical to today. See [operator grant policy](#operator-grant-policy) |
 | `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 

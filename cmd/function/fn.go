@@ -42,8 +42,9 @@ type Function struct {
 	// sandbox is the operator's ceiling for the Input's sandbox grants
 	// (--enable-sandbox-*); nil allows nothing but the default sandbox.
 	sandbox *sandbox.Ceiling
-	// egress is the operator's HTTP egress ceiling (--enable-sandbox-egress,
-	// --sandbox-egress-policy); nil refuses every sandbox.egress grant.
+	// egress is the operator's HTTP egress ceiling (--enable-sandbox-egress; the
+	// host allowlist and CIDR rules are Cedar's, in --sandbox-policy-file); nil
+	// refuses every sandbox.egress grant.
 	egress *egress.Egress
 	// policy is the operator's grant policy (--sandbox-policy-file); nil adds no
 	// constraint, so admission is identical to a runtime without one.

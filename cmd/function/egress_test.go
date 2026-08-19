@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,9 +26,12 @@ import (
 	"github.com/jonasz-lasut/function-wasm/internal/testwasm"
 )
 
-// loopbackPolicy admits the loopback addresses httptest listens on, which the
-// default block list refuses.
-var loopbackPolicy = egress.Policy{AllowedCIDRs: []string{"127.0.0.0/8", "::1/128"}}
+// loopbackCIDRs admit the loopback addresses httptest listens on, which the
+// default block list refuses. In the runtime these prefixes come from an
+// operator Cedar dialAddress permit; a test passes them straight to New.
+func loopbackCIDRs() []netip.Prefix {
+	return []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+}
 
 func egressRules(rules ...map[string]any) map[string]any {
 	list := make([]any, 0, len(rules))
@@ -38,14 +42,18 @@ func egressRules(rules ...map[string]any) map[string]any {
 }
 
 // TestRunFunctionEgress pins how a sandbox.egress grant is admitted before
-// any module runs: refused without the flag, checked against the operator's
-// ceiling, otherwise the module runs.
+// any module runs: refused without the flag, otherwise compiled and the module
+// runs. The operator host allowlist is Cedar's grantEgress (see validate_test).
 func TestRunFunctionEgress(t *testing.T) {
 	moduleDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(moduleDir, "fn.wasm"), testwasm.Fixed(t, guestResponse(), testwasm.Options{}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	fenced, err := egress.New(egress.Policy{Hosts: []string{"api.example.com"}, HostPatterns: []string{"*.internal.example.com"}})
+	// An enabled egress ceiling. The operator host allowlist is Cedar's
+	// (grantEgress, at admission); with no operator policy any granted host is
+	// admitted, so this exercises the grant-compile and run path, not host
+	// capping (that is the OperatorPolicy* cases in validate_test).
+	open, err := egress.New()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,25 +78,9 @@ func TestRunFunctionEgress(t *testing.T) {
 			}},
 			want: want{rsp: fatal("sandbox.egress is refused: the runtime was started without --enable-sandbox-egress")},
 		},
-		"OutsideCeiling": {
-			reason: "A host outside the operator's policy is a fatal result naming the rule and what is allowed.",
-			args: args{egress: fenced, req: &fnv1.RunFunctionRequest{
-				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: inputWith(t, map[string]any{"module": pathModule("missing.wasm"), "sandbox": egressRules(map[string]any{"host": "evil.example.com", "methods": []any{"GET"}})}),
-			}},
-			want: want{rsp: fatal(`sandbox.egress.http[0].host "evil.example.com" is outside the runtime's egress policy (allowed: *.internal.example.com, api.example.com)`)},
-		},
-		"PatternOutsideCeiling": {
-			reason: "A pattern wider than the ceiling's is refused too.",
-			args: args{egress: fenced, req: &fnv1.RunFunctionRequest{
-				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: inputWith(t, map[string]any{"module": pathModule("missing.wasm"), "sandbox": egressRules(map[string]any{"hostPattern": "*.example.com", "methods": []any{"GET"}})}),
-			}},
-			want: want{rsp: fatal(`sandbox.egress.http[0].hostPattern "*.example.com" is outside the runtime's egress policy (allowed: *.internal.example.com, api.example.com)`)},
-		},
-		"WithinCeiling": {
-			reason: "A grant within the ceiling lets the module run; a module that never calls the import is unaffected.",
-			args: args{egress: fenced, req: &fnv1.RunFunctionRequest{
+		"Granted": {
+			reason: "A grant lets the module run; a module that never calls the import is unaffected. Host capping is Cedar's grantEgress, exercised in validate's OperatorPolicy cases, not here.",
+			args: args{egress: open, req: &fnv1.RunFunctionRequest{
 				Meta:  &fnv1.RequestMeta{Tag: "hello"},
 				Input: inputWith(t, map[string]any{"module": pathModule("fn.wasm"), "sandbox": egressRules(map[string]any{"host": "api.example.com", "methods": []any{"GET"}}, map[string]any{"hostPattern": "*.eu.internal.example.com", "methods": []any{"POST"}, "pathPrefix": "/v1/"})}),
 			}},
@@ -135,7 +127,7 @@ func TestRunFunctionEgressGuest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ceiling, err := egress.New(loopbackPolicy)
+	ceiling, err := egress.New(egress.WithAllowedCIDRs(loopbackCIDRs()))
 	if err != nil {
 		t.Fatal(err)
 	}

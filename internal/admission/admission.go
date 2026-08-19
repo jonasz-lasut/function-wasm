@@ -35,8 +35,9 @@ type Ceilings struct {
 	// (--enable-sandbox-private-tmp, --enable-sandbox-env); nil allows
 	// nothing but the default sandbox.
 	Sandbox *sandbox.Ceiling
-	// Egress is the HTTP egress ceiling (--enable-sandbox-egress,
-	// --sandbox-egress-policy); nil refuses every sandbox.egress grant.
+	// Egress is the HTTP egress ceiling (--enable-sandbox-egress; the host
+	// allowlist and CIDR rules are Cedar's, in Policy); nil refuses every
+	// sandbox.egress grant.
 	Egress *egress.Egress
 	// Policy is the operator's grant policy (--sandbox-policy-file), compiled once at
 	// startup; nil when no --sandbox-policy-file is set, in which case it adds no
