@@ -1,0 +1,20 @@
+{
+  "targets": {
+    "release": {
+      "outFile": "fn.wasm",
+      "optimizeLevel": 3,
+      "shrinkLevel": 1,
+      "converge": true
+    }
+  },
+  "options": {
+    "runtime": "stub",
+    "exportStart": "_initialize",
+    "use": [
+      "abort=assembly/host/abortImpl"
+    ],
+    "transform": [
+      "json-as/transform"
+    ]
+  }
+}

@@ -77,6 +77,20 @@ func BuildCGuest(t *testing.T, dir string) []byte {
 	return buildWithZig(t, dir)
 }
 
+// BuildASGuest compiles the AssemblyScript project in dir with asc (through
+// npm ci + npm run build), skipping the test when npm is not on PATH.
+func BuildASGuest(t *testing.T, dir string) []byte {
+	t.Helper()
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("npm not on PATH")
+	}
+	return build(t, "npm", dir, func(out string) *exec.Cmd {
+		// asc writes the target's outFile inside the project; build there and copy.
+		script := "npm ci --no-audit --no-fund && npm run build && cp fn.wasm " + shellQuote(out)
+		return exec.CommandContext(context.Background(), "sh", "-c", script) //nolint:gosec // Test helper building a checked-in guest.
+	})
+}
+
 func buildWithZig(t *testing.T, dir string) []byte {
 	t.Helper()
 	if _, err := exec.LookPath("zig"); err != nil {
