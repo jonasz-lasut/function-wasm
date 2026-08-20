@@ -60,9 +60,9 @@ func (r *recorder) add(msg string, kv []any) {
 
 // TestRunFunctionGuests runs the example guests — the same greeting function
 // written with function-sdk-go (Go), with TinyGo and vtprotobuf, in Rust with
-// prost, in Zig with zig-protobuf and in C with nanopb — through the whole
-// host: path source, compile, per-request instance, guest logging. Every guest
-// must produce the same response.
+// prost, in Zig with zig-protobuf, in C with nanopb and in AssemblyScript with
+// as-proto — through the whole host: path source, compile, per-request
+// instance, guest logging. Every guest must produce the same response.
 func TestRunFunctionGuests(t *testing.T) {
 	guests := map[string]func(t *testing.T) []byte{
 		"go": func(t *testing.T) []byte {
@@ -79,6 +79,9 @@ func TestRunFunctionGuests(t *testing.T) {
 		},
 		"c": func(t *testing.T) []byte {
 			return testwasm.BuildCGuest(t, filepath.Join("..", "..", "examples", "hello-c"))
+		},
+		"assemblyscript": func(t *testing.T) []byte {
+			return testwasm.BuildASGuest(t, filepath.Join("..", "..", "examples", "hello-assemblyscript"))
 		},
 	}
 	for guest, build := range guests {
@@ -216,7 +219,11 @@ func runGuestCases(t *testing.T, guest string, wasm []byte) {
 		t.Run(name, func(t *testing.T) {
 			*log.seen = nil
 			req := &fnv1.RunFunctionRequest{
-				Meta:     &fnv1.RequestMeta{Tag: "hello"},
+				// Capabilities ride along because crossplane always sends
+				// them: protobuf packs the repeated enum, and a guest codec
+				// that cannot decode the packed form desyncs on the whole
+				// request (as-proto's generator did).
+				Meta:     &fnv1.RequestMeta{Tag: "hello", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_CONDITIONS}},
 				Input:    resource.MustStructJSON(tc.input),
 				Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: xr}},
 			}

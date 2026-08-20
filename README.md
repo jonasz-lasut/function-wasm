@@ -236,6 +236,11 @@ same greeting function each time:
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
 
+An **AssemblyScript** flavour exists as an example only for now
+([`examples/hello-assemblyscript`](examples/hello-assemblyscript), ~30 KB — the
+smallest guest; `npm ci && make build`): it passes the same behaviour tests as
+the scaffolded flavours, but `guestfn init` cannot scaffold it yet.
+
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo;
 a `build.zig` → zig, for the zig and c guests alike; a `go.mod` requiring
 vtprotobuf → tinygo; otherwise go) or takes `--lang`. Every flavour carries
