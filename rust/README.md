@@ -69,8 +69,11 @@ Serving today: all three module sources - Path under `--module-dir` (with
 reference, and OCI (a hand-rolled distribution client: anonymous, Basic
 and Bearer-token auth, step credentials with the pull credential withheld
 from the guest, the local Docker config, wasm and tar layers with the
-/fn.wasm rule, the artifact's manifest layer) - `module.from` under a
-`compositionPolicy`, `limits.timeout` / `limits.memory` /
+/fn.wasm rule, the artifact's manifest layer, cosign key-based signature verification
+via sigstore-rs crypto over the runtime's own registry client - both the
+legacy all-or-nothing --cosign-key and the operator policy's
+per-repository requireSignature; keyless stays unsupported by design) -
+`module.from` under a `compositionPolicy`, `limits.timeout` / `limits.memory` /
 `limits.concurrency` against the ceilings, `--max-concurrent-runs` with
 fair per-module scheduling and `--max-total-run-memory`,
 `--warm-modules` behind plain-HTTP `/livez` and `/readyz` on
@@ -85,9 +88,6 @@ meta fill for guests that omit it.
 
 ## Not ported yet (refused or absent, in rough order of the plan)
 
-- Cosign verification (--cosign-key fails closed at startup; a policy
-  that requires a signature refuses the module rather than serving it
-  unverified)
 - `--max-cache-size` LRU sweeps and the rate-limiter idle sweep
 - Metrics (the Prometheus series; function-sdk-rust does not carry a
   metrics server yet)

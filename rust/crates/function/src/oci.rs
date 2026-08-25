@@ -58,6 +58,8 @@ pub struct Descriptor {
     pub media_type: String,
     #[serde(default)]
     pub digest: String,
+    #[serde(default)]
+    pub annotations: std::collections::BTreeMap<String, String>,
 }
 
 /// A distribution-API client for one artifact's registry.
@@ -130,6 +132,23 @@ impl RegistryClient {
             ));
         }
         Ok(m)
+    }
+
+    /// Fetches a manifest by tag - the cosign signature artifact's address
+    /// (`sha256-<hex>.sig`); a missing tag is None, not an error. The
+    /// content is not digest-pinned by design: the signature inside is what
+    /// verifies.
+    pub fn manifest_by_tag(&self, tag: &str) -> Result<Option<OciManifest>, String> {
+        let url = format!("{}/v2/{}/manifests/{tag}", self.base, self.repository);
+        let accept = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json";
+        let raw = match self.get(&url, Some(accept), usize::MAX) {
+            Ok(raw) => raw,
+            Err(e) if e.starts_with("404") => return Ok(None),
+            Err(e) => return Err(format!("cannot fetch cosign signature {tag}: {e}")),
+        };
+        let m: OciManifest = serde_json::from_slice(&raw)
+            .map_err(|e| format!("cannot parse cosign signature {tag}: {e}"))?;
+        Ok(Some(m))
     }
 
     /// Fetches one layer blob by digest, bounded to limit; the caller

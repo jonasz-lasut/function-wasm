@@ -8,6 +8,7 @@
 mod admission;
 mod authz;
 mod cache;
+mod cosign;
 mod egress;
 mod egress_rules;
 mod from;
@@ -169,10 +170,16 @@ fn main() -> ExitCode {
 async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
     logging::configure(args.sdk.debug);
 
-    if args.cosign_key.is_some() {
-        eprintln!("--cosign-key is not implemented yet in the Rust runtime");
-        std::process::exit(1);
-    }
+    let verifier = match &args.cosign_key {
+        None => None,
+        Some(path) => match cosign::Verifier::load(path) {
+            Ok(v) => Some(Arc::new(v)),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+    };
     if args.egress_rate_limit_per_minute < 0.0 || args.egress_rate_limit_burst < 0 {
         eprintln!(
             "--egress-rate-limit-per-minute and --egress-rate-limit-burst must not be negative"
@@ -201,6 +208,17 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
         args.egress_rate_limit_per_minute,
         args.egress_rate_limit_burst,
     ));
+    // A key without a policy is the all-or-nothing regime; a key beside a
+    // policy with no requireSignature rule verifies nothing - warn loudly
+    // rather than let --cosign-key lapse silently.
+    if verifier.is_some()
+        && let Some(p) = &policy
+        && !p.has_signature_rules()
+    {
+        tracing::warn!(
+            "--cosign-key is set but the operator policy has no requireSignature rule: no module will be signature-verified"
+        );
+    }
     // The $TMPDIR probe runs once before serving, only when the policy can
     // grant a private /tmp: a misconfigured $TMPDIR stops the runtime here,
     // not every request.
@@ -282,6 +300,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
         policy,
         egress,
         step_slots: Arc::clone(&step_slots),
+        verifier,
     };
     {
         // The periodic sweep: idle per-step slot entries every ten minutes.

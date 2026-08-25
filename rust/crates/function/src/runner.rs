@@ -43,6 +43,10 @@ pub struct WasmFunction {
     pub egress: Arc<crate::egress::Egress>,
     /// Per-step run slots for limits.concurrency, keyed by module digest.
     pub step_slots: Arc<function_wasm_engine::concurrency::StepSlots>,
+    /// The cosign verifier (--cosign-key); None serves unsigned modules
+    /// except where the operator policy requires a signature, which then
+    /// refuses.
+    pub verifier: Option<Arc<crate::cosign::Verifier>>,
 }
 
 impl WasmFunction {
@@ -116,31 +120,18 @@ impl FunctionRunnerService for WasmFunction {
             }
         };
         // Whether this module must carry a cosign signature is settled
-        // before it is resolved; a required non-OCI source is refused here,
-        // and a required OCI module below - this runtime carries no cosign
-        // keys yet, so a policy that requires one refuses rather than
-        // serving unverified code.
-        if let Err(e) = crate::from::check_signature_requirement(self.policy.as_ref(), &source) {
-            return Ok(Response::new(self.fatal(
-                rsp,
-                OUTCOME_REFUSED,
-                format!("cannot resolve module: {e}"),
-            )));
-        }
-        if source.r#type == "OCI"
-            && let Some(oci) = &source.oci
-            && let Ok(location) = crate::location::oci_location(&oci.r#ref)
-            && self
-                .policy
-                .as_ref()
-                .is_some_and(|p| p.requires_signature(&location))
-        {
+        // before it is resolved: the legacy all-or-nothing --cosign-key
+        // requires every module (and refuses non-OCI), while an operator
+        // policy requires it per repository.
+        let signature_required =
+            crate::from::signature_required(self.policy.as_ref(), self.verifier.is_some(), &source);
+        if signature_required && source.r#type != "OCI" {
             return Ok(Response::new(self.fatal(
                 rsp,
                 OUTCOME_REFUSED,
                 format!(
-                    "cannot verify module oci {}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it",
-                    oci.r#ref
+                    "cannot resolve module: {}",
+                    crate::from::non_oci_signature_refusal(self.policy.as_ref(), &source)
                 ),
             )));
         }
@@ -186,7 +177,7 @@ impl FunctionRunnerService for WasmFunction {
             withheld = name;
         }
 
-        let resolved = match self.resolver.resolve(&source, auth) {
+        let resolved = match self.resolver.resolve(&source, auth.clone()) {
             Ok(resolved) => resolved,
             Err(e) => {
                 return Ok(Response::new(self.fatal(
@@ -196,6 +187,52 @@ impl FunctionRunnerService for WasmFunction {
                 )));
             }
         };
+        // Signature verification gates serving, not fetching: it runs
+        // before any cache is consulted (an artifact on disk may predate
+        // the key), once per digest per process.
+        if signature_required {
+            let Some(verifier) = self.verifier.clone() else {
+                return Ok(Response::new(self.fatal(
+                    rsp,
+                    OUTCOME_REFUSED,
+                    format!(
+                        "cannot verify module {}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it",
+                        resolved.description
+                    ),
+                )));
+            };
+            let reference = crate::location::parse_oci_reference(
+                &source
+                    .oci
+                    .as_ref()
+                    .expect("an OCI source was required above")
+                    .r#ref,
+            )
+            .expect("validated");
+            let verify_auth = auth.clone();
+            let verdict = tokio::task::spawn_blocking(move || {
+                let client = crate::oci::RegistryClient::new(&reference, verify_auth);
+                verifier.verify(&client, &reference)
+            })
+            .await;
+            match verdict {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    return Ok(Response::new(self.fatal(
+                        rsp,
+                        OUTCOME_REFUSED,
+                        format!("cannot verify module {}: {e}", resolved.description),
+                    )));
+                }
+                Err(e) => {
+                    return Ok(Response::new(self.fatal(
+                        rsp,
+                        OUTCOME_ERROR,
+                        format!("internal error while running the module: {e}"),
+                    )));
+                }
+            }
+        }
 
         let module = {
             let resolver = Arc::clone(&self.resolver);
@@ -461,6 +498,7 @@ mod tests {
             policy: None,
             egress: Arc::new(crate::egress::Egress::new(Default::default(), 0.0, 0)),
             step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
+            verifier: None,
         }
     }
 
