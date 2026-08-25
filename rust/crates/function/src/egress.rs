@@ -287,6 +287,9 @@ impl function_wasm_engine::HttpRequester for Client {
         let start = Instant::now();
         let method = method_of(req);
         let (rsp, outcome, url, detail) = self.perform(req, deadline);
+        function_wasm_engine::metrics::HTTP_REQUESTS
+            .with_label_values(&[outcome])
+            .inc();
         // The audit line: method, host and path (never the query, the
         // headers or the body), the status, the byte count and the outcome.
         // What the guest is told is in error; what only the operator should

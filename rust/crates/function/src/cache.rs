@@ -75,9 +75,16 @@ impl ModuleCache {
     where
         F: FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
     {
+        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
         if let Some(m) = self.memory_get(digest) {
+            CACHE_EVENTS
+                .with_label_values(&[metrics::CACHE_COMPILED, metrics::EVENT_HIT])
+                .inc();
             return Ok(m);
         }
+        CACHE_EVENTS
+            .with_label_values(&[metrics::CACHE_COMPILED, metrics::EVENT_MISS])
+            .inc();
         let cell = {
             let mut loading = self.loading.lock().await;
             Arc::clone(loading.entry(digest.to_string()).or_default())
@@ -101,13 +108,27 @@ impl ModuleCache {
     {
         // The artifact on disk: mapped, not compiled. A stale or foreign
         // artifact is a miss - wasmtime refuses it and the module recompiles.
-        if let Some(disk) = &self.disk
-            && let Some(path) = disk.path(digest)
-        {
-            let engine = Arc::clone(&self.engine);
-            let loaded = tokio::task::spawn_blocking(move || engine.deserialize_file(&path)).await;
-            if let Ok(Ok(m)) = loaded {
-                return Ok(m);
+        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
+        if let Some(disk) = &self.disk {
+            if let Some(path) = disk.path(digest) {
+                let engine = Arc::clone(&self.engine);
+                let loaded =
+                    tokio::task::spawn_blocking(move || engine.deserialize_file(&path)).await;
+                if let Ok(Ok(m)) = loaded {
+                    CACHE_EVENTS
+                        .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_HIT])
+                        .inc();
+                    return Ok(m);
+                }
+                // The artifact was there but wasmtime refused it: a miss
+                // that cost a read.
+                CACHE_EVENTS
+                    .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_STALE])
+                    .inc();
+            } else {
+                CACHE_EVENTS
+                    .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_MISS])
+                    .inc();
             }
         }
         // Fetch and compile, at most max_concurrent_compiles at a time;

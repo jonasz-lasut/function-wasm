@@ -158,6 +158,11 @@ struct ServeArgs {
     /// past it, at startup and every ten minutes. 0 leaves them unbounded.
     #[arg(long, default_value_t = 0, env = "MAX_CACHE_SIZE")]
     max_cache_size: u64,
+
+    /// Address of the Prometheus /metrics endpoint - what function-sdk-go
+    /// serves for the Go runtime; empty disables it.
+    #[arg(long, default_value = ":8080", env = "METRICS_ADDRESS")]
+    metrics_address: String,
 }
 
 fn main() -> ExitCode {
@@ -329,6 +334,11 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             if freed > 0 {
                 tracing::info!(freed_bytes = freed, "Swept the on-disk caches");
             }
+            let m = &function_wasm_engine::metrics::CACHE_BYTES;
+            m.with_label_values(&[function_wasm_engine::metrics::CACHE_BLOB])
+                .set(store::bytes(&stores[0]) as f64);
+            m.with_label_values(&[function_wasm_engine::metrics::CACHE_COMPILED_DISK])
+                .set(store::bytes(&stores[1]) as f64);
         };
         sweep_stores();
         tokio::spawn(async move {
@@ -346,6 +356,14 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     // The health endpoints answer while warm-up runs: a probe reads
     // not-ready rather than a refused connection, and an early request is
     // simply served cold or joins the load in flight.
+    if !args.metrics_address.is_empty() {
+        let address = args.metrics_address.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ops::serve_metrics(&address).await {
+                tracing::error!(error = %e, "cannot serve metrics");
+            }
+        });
+    }
     let readiness = ops::Readiness::default();
     if !args.health_address.is_empty() {
         let address = args.health_address.clone();

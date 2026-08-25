@@ -61,6 +61,9 @@ impl WasmFunction {
         reason: String,
     ) -> RunFunctionResponse {
         tracing::info!(outcome, reason = %reason, "Request ended with a fatal result");
+        function_wasm_engine::metrics::REQUESTS
+            .with_label_values(&[outcome])
+            .inc();
         response::fatal(&mut rsp, reason);
         rsp
     }
@@ -323,7 +326,11 @@ impl WasmFunction {
             }
         };
         if let Some(m) = &manifest
-            && let Err(e) = m.check(&caps.grants(), input.config.as_ref(), "")
+            && let Err(e) = m.check(
+                &caps.grants(),
+                input.config.as_ref(),
+                crate::manifest::runtime_version(),
+            )
         {
             return Ok(raw_rsp(self.fatal(
                 rsp,
@@ -438,6 +445,9 @@ impl WasmFunction {
         // A guest that skipped the response meta (a non-Go guest, typically)
         // still gets a well-formed reply - appended to its own bytes, which
         // otherwise travel back exactly as produced.
+        function_wasm_engine::metrics::REQUESTS
+            .with_label_values(&["ok"])
+            .inc();
         if got.meta.is_some() {
             return Ok(out);
         }
@@ -644,6 +654,54 @@ mod tests {
             rsp.results
         );
         assert_eq!(rsp.meta.expect("meta").tag, "t");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn metrics_record_the_request_and_run() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat"),
+        )
+        .expect("write");
+        let f = function(Some(dir.path().to_owned()));
+        let rsp = run(
+            &f,
+            input(serde_json::json!({"type": "Path", "path": "fn.wasm"})),
+        )
+        .await;
+        assert!(rsp.results.is_empty(), "{rsp:?}");
+        // The wiring, not the values: other tests in this process share the
+        // default registry.
+        let m = function_wasm_engine::metrics::sample;
+        assert!(
+            m("function_wasm_module_requests_total", &[("outcome", "ok")]).unwrap_or(0.0) >= 1.0
+        );
+        assert!(
+            m(
+                "function_wasm_module_run_duration_seconds",
+                &[("outcome", "ok")]
+            )
+            .unwrap_or(0.0)
+                >= 1.0
+        );
+        assert!(m("function_wasm_module_compile_duration_seconds", &[]).unwrap_or(0.0) >= 1.0);
+        assert!(
+            m(
+                "function_wasm_module_fetch_duration_seconds",
+                &[("source", "path")]
+            )
+            .unwrap_or(0.0)
+                >= 1.0
+        );
+        assert!(
+            m(
+                "function_wasm_module_cache_events_total",
+                &[("cache", "compiled"), ("event", "miss")]
+            )
+            .unwrap_or(0.0)
+                >= 1.0
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

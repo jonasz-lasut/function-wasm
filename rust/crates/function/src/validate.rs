@@ -624,7 +624,11 @@ impl Validator {
             Ok(caps) => caps,
             Err(e) => refuse!(format!("module {} {e}", resolved.description)),
         };
-        if let Err(e) = m.check(&caps.grants(), input.config.as_ref(), "") {
+        if let Err(e) = m.check(
+            &caps.grants(),
+            input.config.as_ref(),
+            crate::manifest::runtime_version(),
+        ) {
             refuse!(format!("module {} {e}", resolved.description));
         }
         r

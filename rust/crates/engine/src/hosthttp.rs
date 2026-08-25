@@ -100,6 +100,9 @@ fn serve(ctx: &mut Ctx, payload: &[u8]) -> wire::Response {
         Ok(req) => req,
         Err(e) => {
             let msg = format!("sandbox.egress: cannot decode the request: {e}");
+            crate::metrics::HTTP_REQUESTS
+                .with_label_values(&[crate::metrics::OUTCOME_ERROR])
+                .inc();
             tracing::info!(module = %call.module, digest = %call.digest, outcome = "error", error = %msg, "Module HTTP request");
             return wire::Response::refusal(msg);
         }
@@ -119,6 +122,9 @@ fn serve(ctx: &mut Ctx, payload: &[u8]) -> wire::Response {
             tracing::info!(module = %call.module, digest = %call.digest, method, outcome = "refused", host, path, error = NO_EGRESS, "Module HTTP request");
         }
         call.no_grant_logged = true;
+        crate::metrics::HTTP_REQUESTS
+            .with_label_values(&["refused"])
+            .inc();
         return wire::Response::refusal(NO_EGRESS);
     };
     http.do_request(&req, call.deadline)
