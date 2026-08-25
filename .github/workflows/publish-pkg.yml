@@ -61,15 +61,6 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      # go.mod is the source of truth for the Go version the runtime is built
-      # with: its toolchain directive when present, otherwise its go directive.
-      - name: Read Go Version
-        id: go
-        run: |
-          version=$(sed -n 's/^toolchain go//p' go.mod)
-          [ -n "$version" ] || version=$(sed -n 's/^go //p' go.mod)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       - name: Build Runtime
         id: image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -79,8 +70,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           target: image
+          # The release version is stamped into the binary: what minRuntime
+          # rules in module manifests are checked against.
           build-args:
-            GO_VERSION=${{ steps.go.outputs.version }}
+            FUNCTION_WASM_VERSION=${{ github.event.inputs.version }}
           outputs: type=docker,dest=runtime-${{ matrix.arch }}.tar
 
       - name: Setup the Crossplane CLI
