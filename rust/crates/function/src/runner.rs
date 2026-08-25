@@ -30,7 +30,7 @@ const OUTCOME_ERROR: &str = "error";
 
 pub struct WasmFunction {
     pub engine: Arc<Engine>,
-    pub cache: ModuleCache,
+    pub cache: Arc<ModuleCache>,
     pub resolver: Arc<Resolver>,
     pub ttl: Duration,
     /// The operator's grant policy (--sandbox-policy-file), the sole
@@ -158,11 +158,10 @@ impl FunctionRunnerService for WasmFunction {
             && !oci.credentials.is_empty()
         {
             let name = oci.credentials.clone();
-            let Some(data) = all_credentials.get(&name).and_then(|c| match &c.source {
-                Some(function_sdk_rust::proto::v1::credentials::Source::CredentialData(d)) => {
-                    Some(&d.data)
-                }
-                None => None,
+            let Some(data) = all_credentials.get(&name).and_then(|c| {
+                c.source.as_ref().map(
+                    |function_sdk_rust::proto::v1::credentials::Source::CredentialData(d)| &d.data,
+                )
             }) else {
                 return Ok(Response::new(self.fatal(
                     rsp,
@@ -296,8 +295,8 @@ impl FunctionRunnerService for WasmFunction {
             Default::default()
         } else {
             let sources = sandboxenv::Sources {
-                credentials: &req.credentials,
-                withheld: "",
+                credentials: &all_credentials,
+                withheld: &withheld,
             };
             match sandboxenv::materialize(&caps.env, &sources) {
                 Ok(env) => env,
@@ -452,7 +451,10 @@ mod tests {
     fn function(dir: Option<std::path::PathBuf>) -> WasmFunction {
         let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
         WasmFunction {
-            cache: ModuleCache::new(Arc::clone(&engine), crate::cache::CacheOptions::default()),
+            cache: Arc::new(ModuleCache::new(
+                Arc::clone(&engine),
+                crate::cache::CacheOptions::default(),
+            )),
             engine,
             resolver: Arc::new(Resolver::new(dir, 128 << 20, None)),
             ttl: Duration::from_secs(60),

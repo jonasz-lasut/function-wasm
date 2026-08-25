@@ -15,6 +15,7 @@ mod input;
 mod location;
 mod manifest;
 mod oci;
+mod ops;
 mod quantity;
 mod resolver;
 mod runner;
@@ -130,6 +131,24 @@ struct ServeArgs {
     /// reserves its effective limit before it starts. 0 means no bound.
     #[arg(long, default_value_t = 0, env = "MAX_TOTAL_RUN_MEMORY")]
     max_total_run_memory: u64,
+
+    /// Address of the plain-HTTP health endpoints /livez and /readyz (ready
+    /// once the caches are open and --warm-modules are loaded); empty
+    /// disables them.
+    #[arg(long, default_value = ":8081", env = "HEALTH_ADDRESS")]
+    health_address: String,
+
+    /// Modules loaded before /readyz reports ready: OCI references pinned
+    /// to their manifest digest and, with --module-dir, path:<file>
+    /// entries. Repeatable or comma-separated. One that fails to load is
+    /// logged and loaded on its first request instead.
+    #[arg(long, env = "WARM_MODULES", value_delimiter = ',')]
+    warm_modules: Vec<String>,
+
+    /// Time to live for function responses the runtime itself produces
+    /// (fatal results); a module sets the TTL of its own responses.
+    #[arg(long, value_parser = duration::parse)]
+    ttl: Option<Duration>,
 }
 
 fn main() -> ExitCode {
@@ -239,27 +258,68 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
     let _manifests = open(cache_dir.join(store::MANIFESTS_DIR), false);
     let blobs = Arc::clone(&_modules);
 
+    let resolver = Arc::new(resolver::Resolver::new(
+        args.module_dir,
+        args.max_module_size << 20,
+        Some(blobs),
+    ));
+    let module_cache = Arc::new(cache::ModuleCache::new(
+        Arc::clone(&engine),
+        cache::CacheOptions {
+            disk: Some(compiled),
+            no_memory: !args.enable_memory_cache,
+            max_entries: args.max_cached_modules,
+            max_concurrent_compiles: args.max_concurrent_compiles,
+            ..Default::default()
+        },
+    ));
+    let step_slots = Arc::new(function_wasm_engine::concurrency::StepSlots::new());
     let function = runner::WasmFunction {
         engine: Arc::clone(&engine),
-        cache: cache::ModuleCache::new(
-            Arc::clone(&engine),
-            cache::CacheOptions {
-                disk: Some(compiled),
-                no_memory: !args.enable_memory_cache,
-                max_entries: args.max_cached_modules,
-                max_concurrent_compiles: args.max_concurrent_compiles,
-                ..Default::default()
-            },
-        ),
-        resolver: Arc::new(resolver::Resolver::new(
-            args.module_dir,
-            args.max_module_size << 20,
-            Some(blobs),
-        )),
-        ttl: function_sdk_rust::response::DEFAULT_TTL,
+        cache: Arc::clone(&module_cache),
+        resolver: Arc::clone(&resolver),
+        ttl: args.ttl.unwrap_or(function_sdk_rust::response::DEFAULT_TTL),
         policy,
         egress,
-        step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
+        step_slots: Arc::clone(&step_slots),
     };
+    {
+        // The periodic sweep: idle per-step slot entries every ten minutes.
+        let step_slots = Arc::clone(&step_slots);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(10 * 60));
+            loop {
+                tick.tick().await;
+                step_slots.sweep_idle();
+            }
+        });
+    }
+
+    // The health endpoints answer while warm-up runs: a probe reads
+    // not-ready rather than a refused connection, and an early request is
+    // simply served cold or joins the load in flight.
+    let readiness = ops::Readiness::default();
+    if !args.health_address.is_empty() {
+        let address = args.health_address.clone();
+        let r = readiness.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ops::serve_health(&address, r).await {
+                tracing::error!(error = %e, "cannot serve health endpoints");
+            }
+        });
+    }
+    {
+        // Warm-up shares the request path's cache, so a warmed module is
+        // exactly what a request would have loaded; failures never hold
+        // readiness back.
+        let entries = args.warm_modules.clone();
+        let readiness = readiness.clone();
+        let resolver = Arc::clone(&resolver);
+        let module_cache = Arc::clone(&module_cache);
+        tokio::spawn(async move {
+            ops::warm(&entries, &resolver, &module_cache).await;
+            readiness.ready();
+        });
+    }
     serve(function, &args.sdk).await
 }

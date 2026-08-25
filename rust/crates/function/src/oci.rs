@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use serde::Deserialize;
+use sha2::Digest as _;
 
 use crate::location::OciReference;
 
@@ -418,15 +419,13 @@ fn docker_config_auth(registry: &str, raw: &[u8]) -> Option<Auth> {
     None
 }
 
-use sha2::Digest as _;
-
 #[cfg(test)]
 pub(crate) mod testregistry {
     //! A minimal distribution registry for tests: manifests and blobs by
     //! digest, optionally behind the Bearer token flow.
 
     use std::collections::HashMap;
-    use std::io::{Read as _, Write as _};
+    use std::io::Write as _;
     use std::net::TcpListener;
     use std::sync::Arc;
 

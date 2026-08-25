@@ -72,7 +72,9 @@ from the guest, the local Docker config, wasm and tar layers with the
 /fn.wasm rule, the artifact's manifest layer) - `module.from` under a
 `compositionPolicy`, `limits.timeout` / `limits.memory` /
 `limits.concurrency` against the ceilings, `--max-concurrent-runs` with
-fair per-module scheduling and `--max-total-run-memory`, the full ABI v1 run mechanics, the private `/tmp` and env
+fair per-module scheduling and `--max-total-run-memory`,
+`--warm-modules` behind plain-HTTP `/livez` and `/readyz` on
+`--health-address`, `--ttl`, the full ABI v1 run mechanics, the private `/tmp` and env
 grants, HTTP egress through the host (SSRF block list judged per resolved
 address with operator CIDR rules, redirects re-checked per hop, fixed
 budgets, the process-wide rate limit, audit lines - and the in-band
@@ -86,10 +88,9 @@ meta fill for guests that omit it.
 - Cosign verification (--cosign-key fails closed at startup; a policy
   that requires a signature refuses the module rather than serving it
   unverified)
-- `--warm-modules`, `/readyz`, the periodic cache/rate-limiter sweeps and
-  `--max-cache-size`
-- `limits.concurrency`, metrics, `--max-concurrent-runs`,
-  `--max-total-run-memory`, fair scheduling
+- `--max-cache-size` LRU sweeps and the rate-limiter idle sweep
+- Metrics (the Prometheus series; function-sdk-rust does not carry a
+  metrics server yet)
 - minRuntime enforcement runs against an empty version (the Go development
   build's behaviour) until the release packaging stamps one
 - ABI v2 (the component world) - lands in this tree once the v1 base holds

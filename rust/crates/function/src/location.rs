@@ -17,6 +17,7 @@ pub struct OciReference {
 
 impl OciReference {
     /// The normalized location pullModule permits match against.
+    #[allow(dead_code)]
     pub fn location(&self) -> String {
         format!("{}/{}", self.registry, self.repository)
     }
