@@ -116,8 +116,17 @@ impl FunctionRunnerService for WasmFunction {
         if let Err(e) = admission::require_ported(&source) {
             return Ok(Response::new(self.fatal(rsp, OUTCOME_REFUSED, e)));
         }
+        // Whether this module must carry a cosign signature is settled
+        // before it is resolved; a required non-OCI source is refused here.
+        if let Err(e) = crate::from::check_signature_requirement(self.policy.as_ref(), &source) {
+            return Ok(Response::new(self.fatal(
+                rsp,
+                OUTCOME_REFUSED,
+                format!("cannot resolve module: {e}"),
+            )));
+        }
 
-        let resolved = match self.resolver.resolve(&source.path) {
+        let resolved = match self.resolver.resolve(&source) {
             Ok(resolved) => resolved,
             Err(e) => {
                 return Ok(Response::new(self.fatal(
@@ -152,22 +161,22 @@ impl FunctionRunnerService for WasmFunction {
         // three layers: the manifest requests, the compositionPolicy and the
         // operator policy permit. A module without one gets the default
         // sandbox.
-        let manifest = if source.manifest_path.is_empty() {
+        let raw = match self.resolver.manifest(&resolved) {
+            Ok(raw) => raw,
+            Err(e) => {
+                return Ok(Response::new(self.fatal(
+                    rsp,
+                    OUTCOME_REFUSED,
+                    format!(
+                        "cannot read the manifest of module {}: {e}",
+                        resolved.description
+                    ),
+                )));
+            }
+        };
+        let manifest = if raw.is_empty() {
             None
         } else {
-            let raw = match self.resolver.read_manifest(&source.manifest_path) {
-                Ok(raw) => raw,
-                Err(e) => {
-                    return Ok(Response::new(self.fatal(
-                        rsp,
-                        OUTCOME_REFUSED,
-                        format!(
-                            "cannot read the manifest of module {}: {e}",
-                            resolved.description
-                        ),
-                    )));
-                }
-            };
             match crate::manifest::Manifest::parse(&raw) {
                 Ok(m) => Some(m),
                 Err(e) => {
@@ -357,7 +366,7 @@ mod tests {
         WasmFunction {
             cache: ModuleCache::new(Arc::clone(&engine), crate::cache::CacheOptions::default()),
             engine,
-            resolver: Arc::new(Resolver::new(dir, 128 << 20)),
+            resolver: Arc::new(Resolver::new(dir, 128 << 20, None)),
             ttl: Duration::from_secs(60),
             policy: None,
             egress: Arc::new(crate::egress::Egress::new(Default::default(), 0.0, 0)),
