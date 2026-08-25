@@ -8,17 +8,15 @@
     // The repo uses conventional commits; a routine bump is a chore, not a fix.
     ':semanticCommitTypeAll(chore)',
   ],
-  // The dependency surfaces: the go.mod files (root, pkg/wasmfn, the Go
-  // examples), the Rust example's Cargo.toml, the workflows (actions and the
-  // CLI versions in their env), and the Function package refs under the
-  // examples' render files.
-  // go.mod is the single source of truth for the Go version (workflows read
-  // it), so the Dockerfile's golang:1 build stage floats by design; its
-  // runtime base (cgr.dev/chainguard/glibc-dynamic, a `latest`-only image) is
-  // digest-pinned and the dockerfile manager keeps that digest current.
+  // The dependency surfaces: the Cargo workspace and the Rust example's
+  // Cargo.toml, the Go example guests' go.mod files, the workflows (actions
+  // and the CLI versions in their env), and the Function package refs under
+  // the examples' render files. The Dockerfile's rust:1 build stage floats
+  // by design; its runtime base (cgr.dev/chainguard/glibc-dynamic, a
+  // `latest`-only image) is digest-pinned and the dockerfile manager keeps
+  // that digest current.
   enabledManagers: ['gomod', 'cargo', 'github-actions', 'crossplane', 'dockerfile', 'custom.regex'],
-  // CI's check-diff runs `go mod tidy` and fails on a dirty tree, so tidy in
-  // the same commit; update import paths on /vN major bumps.
+  // Tidy the Go example guests' modules in the same commit.
   postUpdateOptions: ['gomodTidy', 'gomodUpdateImportPaths'],
   osvVulnerabilityAlerts: true,
   crossplane: {
@@ -26,15 +24,6 @@
     managerFilePatterns: ['/^examples/.*\\.ya?ml$/'],
   },
   customManagers: [
-    {
-      // golangci-lint version pinned in the CI workflow env.
-      customType: 'regex',
-      description: 'GOLANGCI_VERSION in .github/workflows',
-      managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/'],
-      matchStrings: ["GOLANGCI_VERSION: '(?<currentValue>v[^']+)'"],
-      depNameTemplate: 'golangci/golangci-lint',
-      datasourceTemplate: 'github-releases',
-    },
     {
       // Crossplane CLI version installed by install.sh in the release workflows.
       // Since v2.3.0 the CLI is released from crossplane/cli (XP_CHANNEL=stable).
