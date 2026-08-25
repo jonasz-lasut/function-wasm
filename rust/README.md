@@ -77,7 +77,8 @@ per-repository requireSignature; keyless stays unsupported by design) -
 `limits.concurrency` against the ceilings, `--max-concurrent-runs` with
 fair per-module scheduling and `--max-total-run-memory`,
 `--warm-modules` behind plain-HTTP `/livez` and `/readyz` on
-`--health-address`, `--ttl`, the full ABI v1 run mechanics, the private `/tmp` and env
+`--health-address` and gRPC health on the function port (NOT_SERVING
+until warm-up ends, while requests are already served), `--ttl`, the full ABI v1 run mechanics, the private `/tmp` and env
 grants, HTTP egress through the host (SSRF block list judged per resolved
 address with operator CIDR rules, redirects re-checked per hop, fixed
 budgets, the process-wide rate limit, audit lines - and the in-band

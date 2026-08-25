@@ -356,6 +356,14 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             }
         });
     }
+    // The raw service hands the guest the caller's exact bytes (grpc.rs);
+    // the SDK's serve_service_with_health carries the spec transport around
+    // it and hands back the gRPC health reporter, so readiness on the
+    // function port starts as NOT_SERVING and flips with /readyz.
+    let service = grpc::RawFunctionServer::new(Arc::new(function), args.sdk.max_recv_message_size);
+    let (health, server) = function_sdk_rust::serve_service_with_health(service, &args.sdk)
+        .await
+        .map_err(|e| e.to_string())?;
     {
         // Warm-up shares the request path's cache, so a warmed module is
         // exactly what a request would have loaded; failures never hold
@@ -367,12 +375,8 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         tokio::spawn(async move {
             ops::warm(&entries, &resolver, &module_cache).await;
             readiness.ready();
+            health.set_serving::<grpc::RawFunctionServer>().await;
         });
     }
-    // The raw service hands the guest the caller's exact bytes (grpc.rs);
-    // the SDK's serve_service carries the spec transport around it.
-    let service = grpc::RawFunctionServer::new(Arc::new(function), args.sdk.max_recv_message_size);
-    function_sdk_rust::serve_service(service, &args.sdk)
-        .await
-        .map_err(|e| e.to_string())
+    server.await.map_err(|e| e.to_string())
 }
