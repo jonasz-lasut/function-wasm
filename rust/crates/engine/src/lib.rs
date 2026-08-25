@@ -135,6 +135,14 @@ pub(crate) struct CallState {
 #[derive(Clone)]
 pub struct Module(pub(crate) wasmtime::Module);
 
+/// What Inspect reads from a module: its wasmfn host imports and, when the
+/// module does not implement ABI v1, checkABI's refusal.
+#[derive(Debug)]
+pub struct Inspection {
+    pub host_imports: Vec<String>,
+    pub abi_error: Option<String>,
+}
+
 /// Engine compiles and runs guest modules. It is safe for concurrent use.
 pub struct Engine {
     config: Config,
@@ -212,14 +220,37 @@ impl Engine {
 
     /// Compiles wasm bytes and verifies they export ABI v1.
     pub fn compile(&self, wasm: &[u8]) -> Result<Module, Error> {
-        let m = wasmtime::Module::new(&self.inner, wasm).map_err(|e| {
+        let m = self.compiled(wasm)?;
+        abi::check_abi(&m)?;
+        Ok(Module(m))
+    }
+
+    /// Compiles wasm bytes and reports what the runtime sees in them: the
+    /// host imports and checkABI's verdict - what `function validate
+    /// --resolve` shows. The compiled code is dropped.
+    pub fn inspect(&self, wasm: &[u8]) -> Result<Inspection, Error> {
+        let m = self.compiled(wasm)?;
+        let host_imports = m
+            .imports()
+            .filter(|i| i.module() == HOST_MODULE)
+            .map(|i| format!("{HOST_MODULE}.{}", i.name()))
+            .collect();
+        let abi_error = abi::check_abi(&m).err().map(|e| e.to_string());
+        Ok(Inspection {
+            host_imports,
+            abi_error,
+        })
+    }
+
+    /// Only the binary format is accepted, as in the Go runtime: a module is
+    /// what a toolchain produced, never text.
+    fn compiled(&self, wasm: &[u8]) -> Result<wasmtime::Module, Error> {
+        wasmtime::Module::from_binary(&self.inner, wasm).map_err(|e| {
             Error(format!(
                 "cannot compile module: {}",
                 first_line(&e.to_string())
             ))
-        })?;
-        abi::check_abi(&m)?;
-        Ok(Module(m))
+        })
     }
 
     /// Instantiates the module and hands it the request bytes, within the

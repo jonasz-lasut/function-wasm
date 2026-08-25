@@ -78,6 +78,9 @@ impl FunctionRunnerService for WasmFunction {
             Ok(admitted) => admitted,
             Err(e) => return Ok(Response::new(self.fatal(rsp, OUTCOME_REFUSED, e))),
         };
+        if let Err(e) = admission::require_ported(&input.module) {
+            return Ok(Response::new(self.fatal(rsp, OUTCOME_REFUSED, e)));
+        }
 
         let resolved = match self.resolver.resolve(&input.module.path) {
             Ok(resolved) => resolved,
@@ -225,7 +228,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn runs_a_path_module() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join("fn.wasm"), EMPTY_RESPONSE_WAT).expect("write");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat"),
+        )
+        .expect("write");
         let f = function(Some(dir.path().to_owned()));
 
         let rsp = run(
@@ -245,7 +252,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn refusals_are_fatal_results() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join("fn.wasm"), EMPTY_RESPONSE_WAT).expect("write");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat"),
+        )
+        .expect("write");
 
         let cases: &[(&str, Option<std::path::PathBuf>, serde_json::Value, &str)] = &[
             (

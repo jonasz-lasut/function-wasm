@@ -19,3 +19,4 @@ wasmtime-wasi = "48"
 [dev-dependencies]
 function-sdk-rust = "0.1.0"
 prost = "0.14"
+wat = "1"

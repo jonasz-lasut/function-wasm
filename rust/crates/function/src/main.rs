@@ -2,7 +2,8 @@
 //! runs a user-supplied WebAssembly module in a wasmtime sandbox. This is
 //! the initial implementation (docs/one-pager-abi-v2.md, phase 1); the flags
 //! it carries are the subset of the Go runtime's it serves, with the same
-//! names, defaults and units.
+//! names, defaults and units. Serving is the default; `function validate`
+//! runs the same admission over Compositions offline.
 
 mod admission;
 mod cache;
@@ -10,8 +11,10 @@ mod input;
 mod quantity;
 mod resolver;
 mod runner;
+mod validate;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,6 +29,23 @@ use function_wasm_engine::{Config, Engine, duration};
     about = "A Crossplane composition function that runs WebAssembly modules (Rust runtime)"
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    #[command(flatten)]
+    serve: ServeArgs,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+    /// Validate the function-wasm Inputs of Compositions against these
+    /// flags, offline: the checks a request passes before its module is
+    /// resolved, in the runtime's own words.
+    Validate(validate::ValidateArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct ServeArgs {
     #[command(flatten)]
     sdk: Args,
 
@@ -46,14 +66,27 @@ struct Cli {
     module_memory_limit: u64,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), function_sdk_rust::Error> {
+fn main() -> ExitCode {
     let cli = Cli::parse();
-    logging::configure(cli.sdk.debug);
+    match cli.command {
+        Some(Command::Validate(args)) => validate::run(&args),
+        None => match serve_main(cli.serve) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
+    }
+}
+
+#[tokio::main]
+async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
+    logging::configure(args.sdk.debug);
 
     let engine = Engine::new(Config {
-        timeout: cli.module_timeout,
-        memory_limit: cli.module_memory_limit << 20,
+        timeout: args.module_timeout,
+        memory_limit: args.module_memory_limit << 20,
     })
     .expect("cannot create the wasmtime engine");
     let engine = Arc::new(engine);
@@ -62,10 +95,10 @@ async fn main() -> Result<(), function_sdk_rust::Error> {
         engine: Arc::clone(&engine),
         cache: cache::ModuleCache::new(Arc::clone(&engine)),
         resolver: Arc::new(resolver::Resolver::new(
-            cli.module_dir,
-            cli.max_module_size << 20,
+            args.module_dir,
+            args.max_module_size << 20,
         )),
         ttl: function_sdk_rust::response::DEFAULT_TTL,
     };
-    serve(function, &cli.sdk).await
+    serve(function, &args.sdk).await
 }
