@@ -12,6 +12,7 @@
 //! nothing protocol-specific.
 
 mod abi;
+pub mod concurrency;
 pub mod duration;
 mod hosthttp;
 mod hostlog;
@@ -65,13 +66,21 @@ pub const DEFAULT_MEMORY_LIMIT: u64 = 512 << 20;
 #[error("{0}")]
 pub struct Error(pub(crate) String);
 
-/// Config bounds what a single run may consume.
+/// Config bounds what a single run may consume, and how many may run at
+/// once.
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
     /// The wall-clock budget of one run.
     pub timeout: Duration,
     /// The cap on a guest's linear memory in bytes.
     pub memory_limit: u64,
+    /// Bounds how many runs execute at once on the whole engine, served
+    /// round-robin by module key; 0 leaves concurrency to the caller.
+    pub max_concurrent_runs: usize,
+    /// Bounds the aggregate linear-memory reservation of all running
+    /// modules in bytes; a run reserves its effective limit before it
+    /// starts. 0 means no bound.
+    pub max_total_run_memory: u64,
 }
 
 impl Default for Config {
@@ -79,6 +88,8 @@ impl Default for Config {
         Config {
             timeout: DEFAULT_TIMEOUT,
             memory_limit: DEFAULT_MEMORY_LIMIT,
+            max_concurrent_runs: 0,
+            max_total_run_memory: 0,
         }
     }
 }
@@ -148,6 +159,8 @@ pub struct Engine {
     config: Config,
     pub(crate) inner: wasmtime::Engine,
     pub(crate) linker: Linker<Ctx>,
+    pub(crate) scheduler: Option<concurrency::FairScheduler>,
+    pub(crate) mem: Option<concurrency::MemPool>,
     active: Arc<AtomicI64>,
     stop: Arc<AtomicBool>,
     ticker: Option<thread::JoinHandle<()>>,
@@ -156,6 +169,16 @@ pub struct Engine {
 impl Engine {
     /// Creates an Engine; dropping it stops its epoch ticker.
     pub fn new(config: Config) -> Result<Self, Error> {
+        // A pool smaller than the per-run ceiling could never admit a
+        // full-limit run - caught at startup rather than as a fleet of
+        // timing-out requests.
+        if config.max_total_run_memory > 0 && config.max_total_run_memory < config.memory_limit {
+            return Err(Error(format!(
+                "--max-total-run-memory {} is smaller than the per-run ceiling {} (--module-memory-limit): no full-limit run could ever reserve its memory",
+                concurrency::format_bytes(config.max_total_run_memory),
+                concurrency::format_bytes(config.memory_limit)
+            )));
+        }
         let mut wc = wasmtime::Config::new();
         wc.epoch_interruption(true);
         // Native unwind info only serves host-side profilers; wasmtime's own
@@ -206,6 +229,10 @@ impl Engine {
             config,
             inner,
             linker,
+            scheduler: (config.max_concurrent_runs > 0)
+                .then(|| concurrency::FairScheduler::new(config.max_concurrent_runs)),
+            mem: (config.max_total_run_memory > 0)
+                .then(|| concurrency::MemPool::new(config.max_total_run_memory)),
             active,
             stop,
             ticker: Some(ticker),

@@ -118,6 +118,17 @@ struct ServeArgs {
         allow_negative_numbers = true
     )]
     egress_rate_limit_burst: i64,
+
+    /// Most module runs executing at once; a further request waits for a
+    /// slot until its deadline, then fails with a fatal result. 0 leaves
+    /// concurrency to the caller.
+    #[arg(long, default_value_t = 0, env = "MAX_CONCURRENT_RUNS")]
+    max_concurrent_runs: usize,
+
+    /// Total linear-memory budget in MB across all running modules; a run
+    /// reserves its effective limit before it starts. 0 means no bound.
+    #[arg(long, default_value_t = 0, env = "MAX_TOTAL_RUN_MEMORY")]
+    max_total_run_memory: u64,
 }
 
 fn main() -> ExitCode {
@@ -192,11 +203,18 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
         }
     }
 
-    let engine = Engine::new(Config {
+    let engine = match Engine::new(Config {
         timeout: args.module_timeout,
         memory_limit: args.module_memory_limit << 20,
-    })
-    .expect("cannot create the wasmtime engine");
+        max_concurrent_runs: args.max_concurrent_runs,
+        max_total_run_memory: args.max_total_run_memory << 20,
+    }) {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
     let engine = Arc::new(engine);
 
     // The on-disk caches under the fixed directory: fetched blobs (for the
@@ -240,6 +258,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
         ttl: function_sdk_rust::response::DEFAULT_TTL,
         policy,
         egress,
+        step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
     };
     serve(function, &args.sdk).await
 }

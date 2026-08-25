@@ -220,10 +220,7 @@ impl Resolver {
             .send()
             .map_err(|e| format!("cannot download {what}: {e}"))?;
         if rsp.status() != reqwest::StatusCode::OK {
-            return Err(format!(
-                "cannot download {what}: {}",
-                status_text(rsp.status())
-            ));
+            return Err(format!("cannot download {what}: {}", rsp.status()));
         }
         read_capped(rsp, limit)
     }
@@ -325,14 +322,6 @@ fn manifest_json(raw: &[u8]) -> Result<Vec<u8>, String> {
     let value: serde_json::Value =
         serde_yaml::from_slice(raw).map_err(|e| format!("manifest is not valid YAML: {e}"))?;
     serde_json::to_vec(&value).map_err(|e| format!("manifest is not valid YAML: {e}"))
-}
-
-/// A status line the way Go's net/http renders rsp.Status ("404 Not Found").
-fn status_text(s: reqwest::StatusCode) -> String {
-    match s.canonical_reason() {
-        Some(reason) => format!("{} {reason}", s.as_u16()),
-        None => s.as_u16().to_string(),
-    }
 }
 
 /// Renders an I/O failure the way Go's os package wraps it ("open <path>:
