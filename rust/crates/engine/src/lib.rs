@@ -103,6 +103,10 @@ impl Default for Config {
 pub struct RunOptions {
     /// This run's wall-clock budget.
     pub timeout: Option<Duration>,
+    /// The request's own deadline (its gRPC timeout), when it carries one:
+    /// it bounds the waits for slots and memory and caps the run budget,
+    /// so a run never outlives the caller that asked for it.
+    pub deadline: Option<Instant>,
     /// The cap on this run's linear memory in bytes.
     pub memory_limit: Option<u64>,
 

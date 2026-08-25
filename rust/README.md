@@ -84,11 +84,16 @@ budgets, the process-wide rate limit, audit lines - and the in-band
 refusal for modules with no grant), the three-tier module cache (memory
 with idle TTL and LRU bound, mapped artifacts on disk surviving restarts,
 single-flighted compiles), fatal results for every guest failure, and the
-meta fill for guests that omit it.
+meta fill for guests that omit it, `--max-cache-size` LRU sweeps at startup
+and every ten minutes (with the step-slot and rate-limiter idle sweeps),
+the transparent proxy over raw request bytes (the gRPC server hands the
+guest the caller's exact bytes - unknown fields included - with only the
+withheld pull credential edited out at the wire level, and returns the
+guest's bytes as-is), and the request's own gRPC deadline bounding runs
+and every queue wait.
 
 ## Not ported yet (refused or absent, in rough order of the plan)
 
-- `--max-cache-size` LRU sweeps and the rate-limiter idle sweep
 - Metrics (the Prometheus series; function-sdk-rust does not carry a
   metrics server yet)
 - minRuntime enforcement runs against an empty version (the Go development
@@ -97,13 +102,6 @@ meta fill for guests that omit it.
 
 ## Known divergences from the Go runtime
 
-- The gRPC layer decodes the request into generated prost types and the
-  runtime re-encodes them for the guest, so fields newer than the vendored
-  proto are dropped rather than forwarded (Go's protobuf keeps unknown
-  fields). The transparent-proxy property needs a raw-bytes path at the
-  tonic codec layer; tracked for a later phase.
-- The request context's deadline (gRPC timeout) does not yet bound a run or
-  its queue waits; only `--module-timeout` and `limits.timeout` do.
 - Guest log records are forwarded with their keys and values rendered as one
   JSON `kv` field (tracing has no dynamic fields), not as first-class
   structured fields.
