@@ -14,6 +14,7 @@ mod from;
 mod input;
 mod location;
 mod manifest;
+mod oci;
 mod quantity;
 mod resolver;
 mod runner;

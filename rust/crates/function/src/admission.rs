@@ -235,20 +235,6 @@ fn admit_env(
     Ok(())
 }
 
-/// Refuses, by name, every source feature the port does not carry yet - the
-/// serve path's guard, so nothing runs wider than the Go runtime would
-/// allow. `function validate` deliberately does not apply it: an OCI source
-/// is describable offline even though this runtime cannot serve it yet.
-pub fn require_ported(m: &ModuleSource) -> Result<(), String> {
-    if m.r#type == "OCI" {
-        return Err(
-            "module.type OCI is not implemented yet in the Rust runtime; only Path and HTTP sources are"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
 fn run_options(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<Admitted, String> {
     let mut out = Admitted::default();
     let Some(limits) = &input.limits else {
@@ -511,21 +497,5 @@ mod tests {
             let err = admit(input, &ceilings()).expect_err(name);
             assert_eq!(&err, want, "{name}");
         }
-    }
-    #[test]
-    fn require_ported_refuses_unported_sources() {
-        let src = ModuleSource {
-            r#type: "OCI".to_string(),
-            oci: Some(crate::input::OciSource {
-                r#ref: format!("ghcr.io/example/fn@sha256:{}", "a".repeat(64)),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            require_ported(&src).expect_err("OCI is not ported"),
-            "module.type OCI is not implemented yet in the Rust runtime; only Path and HTTP sources are"
-        );
-        assert_eq!(require_ported(&path_input("fn.wasm").module), Ok(()));
     }
 }
