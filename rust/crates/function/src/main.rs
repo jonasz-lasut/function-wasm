@@ -369,7 +369,10 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             readiness.ready();
         });
     }
-    // The raw server hands the guest the caller's exact bytes - see
-    // grpc.rs; TLS, health, reflection and shutdown mirror the SDK's serve.
-    grpc::serve(Arc::new(function), &args.sdk).await
+    // The raw service hands the guest the caller's exact bytes (grpc.rs);
+    // the SDK's serve_service carries the spec transport around it.
+    let service = grpc::RawFunctionServer::new(Arc::new(function), args.sdk.max_recv_message_size);
+    function_sdk_rust::serve_service(service, &args.sdk)
+        .await
+        .map_err(|e| e.to_string())
 }
