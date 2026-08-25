@@ -1,13 +1,11 @@
-//! The gRPC server over raw message bytes - what keeps the transparent
+//! The gRPC service over raw message bytes - what keeps the transparent
 //! proxy honest. The generated tonic service decodes into prost types,
-//! which drop protobuf fields newer than the vendored proto; this server
+//! which drop protobuf fields newer than the vendored proto; this service
 //! swaps only the codec: the FunctionRunnerService path hands
 //! WasmFunction::handle_raw the caller's exact bytes and returns the
-//! guest's exact bytes, while TLS, health, reflection and shutdown mirror
-//! function-sdk-rust's serve.
+//! guest's exact bytes. The transport (mTLS, health, reflection,
+//! shutdown) is function-sdk-rust's serve_service.
 
-use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -15,7 +13,6 @@ use bytes::{Buf as _, BufMut as _, Bytes};
 use tonic::Status;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::server::NamedService;
-use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 
 use crate::runner::WasmFunction;
 
@@ -150,90 +147,4 @@ where
             Ok(grpc.unary(method, req).await)
         })
     }
-}
-
-/// Serves the raw FunctionRunnerService until SIGTERM or SIGINT - the
-/// mirror of function-sdk-rust's serve (mTLS from the certs dir unless
-/// insecure, gRPC health as serving, v1 and v1alpha reflection, graceful
-/// shutdown), carrying the raw codec the transparent proxy needs.
-pub async fn serve(
-    function: Arc<WasmFunction>,
-    args: &function_sdk_rust::Args,
-) -> Result<(), String> {
-    let address: SocketAddr = args
-        .address
-        .parse()
-        .map_err(|e| format!("cannot parse listen address: {e}"))?;
-
-    let mut builder = Server::builder();
-    if !args.insecure {
-        let dir = args
-            .tls_certs_dir
-            .as_deref()
-            .ok_or("no credentials were provided - supply --tls-certs-dir or use --insecure")?;
-        builder = builder
-            .tls_config(tls_config(dir)?)
-            .map_err(|e| format!("cannot configure TLS: {e}"))?;
-    }
-
-    let service = RawFunctionServer::new(function, args.max_recv_message_size);
-
-    let reflection_v1 = tonic_reflection::server::Builder::configure()
-        .register_encoded_file_descriptor_set(function_sdk_rust::proto::FILE_DESCRIPTOR_SET)
-        .build_v1()
-        .map_err(|e| format!("cannot build gRPC reflection service: {e}"))?;
-    let reflection_v1alpha = tonic_reflection::server::Builder::configure()
-        .register_encoded_file_descriptor_set(function_sdk_rust::proto::FILE_DESCRIPTOR_SET)
-        .build_v1alpha()
-        .map_err(|e| format!("cannot build gRPC reflection service: {e}"))?;
-
-    let (health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter.set_serving::<RawFunctionServer>().await;
-
-    tracing::info!(%address, insecure = args.insecure, "serving FunctionRunnerService");
-
-    builder
-        .add_service(service)
-        .add_service(health_service)
-        .add_service(reflection_v1)
-        .add_service(reflection_v1alpha)
-        .serve_with_shutdown(address, shutdown_signal())
-        .await
-        .map_err(|e| format!("gRPC server error: {e}"))
-}
-
-fn tls_config(dir: &Path) -> Result<ServerTlsConfig, String> {
-    let read = |name: &str| {
-        let path = dir.join(name);
-        std::fs::read(&path).map_err(|e| {
-            format!(
-                "cannot read TLS certificate or key from {}: {e}",
-                path.display()
-            )
-        })
-    };
-    let cert = read("tls.crt")?;
-    let key = read("tls.key")?;
-    let ca = read("ca.crt")?;
-    Ok(ServerTlsConfig::new()
-        .identity(Identity::from_pem(cert, key))
-        .client_ca_root(Certificate::from_pem(ca))
-        .client_auth_optional(false))
-}
-
-#[cfg(unix)]
-async fn shutdown_signal() {
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("cannot install SIGTERM handler");
-    tokio::select! {
-        _ = sigterm.recv() => {}
-        _ = tokio::signal::ctrl_c() => {}
-    }
-    tracing::info!("shutting down");
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
-    tracing::info!("shutting down");
 }
