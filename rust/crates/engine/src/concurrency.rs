@@ -373,7 +373,7 @@ mod tests {
         let p2 = Arc::clone(&p);
         let waiter = std::thread::spawn(move || {
             p2.reserve(40, Instant::now() + Duration::from_secs(5))
-                .map(|g| drop(g))
+                .map(drop)
                 .is_ok()
         });
         std::thread::sleep(Duration::from_millis(30));
