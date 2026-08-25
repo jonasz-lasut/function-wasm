@@ -549,3 +549,122 @@ fn validate_resolve_http_source_matches_the_go_runtime() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
+
+/// The OCI source over a local registry both binaries pull from
+/// (go-containerregistry speaks plain HTTP to 127.0.0.1, as this runtime
+/// does): the module layer fetched and inspected, the artifact's manifest
+/// layer decided by the three layers.
+#[test]
+fn validate_resolve_oci_source_against_the_go_runtime() {
+    use sha2::Digest as _;
+
+    let Some(go) = go_binary() else {
+        eprintln!("skipping: no Go toolchain or the Go build failed");
+        return;
+    };
+    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let cwd = repo_root().join("cmd/function");
+
+    let wasm = wat::parse_str(
+        r#"(module (memory (export "memory") 1)
+          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+    )
+    .expect("wat");
+    let module_manifest =
+        br#"{"abi":1,"name":"greeter","version":"0.1.0","requires":{"filesystem":{"privateTmp":true}}}"#;
+    let digest_of = |b: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)));
+    let wasm_digest = digest_of(&wasm);
+    let manifest_digest = digest_of(module_manifest);
+    let config = br#"{}"#;
+    let manifest_json = serde_json::to_vec(&serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(config), "size": config.len()},
+        "layers": [
+            {"mediaType": "application/wasm", "digest": wasm_digest, "size": wasm.len()},
+            {"mediaType": "application/vnd.wasmfn.manifest.v1+json", "digest": manifest_digest, "size": module_manifest.len()},
+        ],
+    }))
+    .expect("manifest json");
+    let artifact_digest = digest_of(&manifest_json);
+
+    // A tiny anonymous registry on loopback.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    {
+        let blobs: std::collections::HashMap<String, Vec<u8>> = [
+            (wasm_digest.clone(), wasm.clone()),
+            (manifest_digest.clone(), module_manifest.to_vec()),
+        ]
+        .into();
+        let manifests: std::collections::HashMap<String, Vec<u8>> =
+            [(artifact_digest.clone(), manifest_json.clone())].into();
+        std::thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                let mut conn = conn;
+                let mut buf = [0u8; 4096];
+                let n = std::io::Read::read(&mut conn, &mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let path = head.split_whitespace().nth(1).unwrap_or_default();
+                let (status, body, ctype): (&str, Vec<u8>, &str) =
+                    if let Some(d) = path.split("/manifests/").nth(1) {
+                        match manifests.get(d) {
+                            Some(m) => (
+                                "200 OK",
+                                m.clone(),
+                                "application/vnd.oci.image.manifest.v1+json",
+                            ),
+                            None => ("404 Not Found", Vec::new(), "text/plain"),
+                        }
+                    } else if let Some(d) = path.split("/blobs/").nth(1) {
+                        match blobs.get(d) {
+                            Some(b) => ("200 OK", b.clone(), "application/octet-stream"),
+                            None => ("404 Not Found", Vec::new(), "text/plain"),
+                        }
+                    } else {
+                        ("200 OK", Vec::new(), "text/plain")
+                    };
+                let header = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut conn, header.as_bytes());
+                let _ = std::io::Write::write_all(&mut conn, &body);
+            }
+        });
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let composition = dir.path().join("oci.yaml");
+    std::fs::write(
+        &composition,
+        format!(
+            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: oci\nspec:\n  pipeline:\n  - step: oci\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1beta1\n      kind: Input\n      module: {{type: OCI, oci: {{ref: {addr}/example/greeter@{artifact_digest}}}}}\n"
+        ),
+    )
+    .expect("write");
+    let composition = composition.display().to_string();
+
+    let mut failures = Vec::new();
+    for (name, extra, gap) in [
+        ("NoPolicy", vec![], None),
+        (
+            "Granted",
+            vec![
+                "--sandbox-policy-file",
+                "testdata/validate/policy-permissive.cedar",
+            ],
+            None,
+        ),
+    ] {
+        let mut args = vec![composition.as_str(), "--resolve"];
+        args.extend(extra);
+        let go_out = run_validate(go, &args, "", &cwd);
+        let rust_out = run_validate(rust, &args, "", &cwd);
+        if let Some(f) = assert_case(&format!("OCISource/{name}"), gap, &go_out, &rust_out) {
+            failures.push(f);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}

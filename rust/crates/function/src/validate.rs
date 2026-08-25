@@ -499,45 +499,39 @@ impl Validator {
         let (Some(resolver), Some(engine)) = (&self.resolver, &self.engine) else {
             return r;
         };
-        match src.r#type.as_str() {
-            "OCI" => {
-                let oci = src
-                    .oci
-                    .as_ref()
-                    .expect("validated: an OCI source has its object");
-                if !oci.credentials.is_empty() {
-                    r.warnings.push(format!(
-                        "module.oci.credentials {:?} is a step Secret this tool cannot read; the module is pulled with the local Docker config instead",
-                        oci.credentials
-                    ));
-                }
-                let location = match crate::location::oci_location(&oci.r#ref) {
-                    Ok(location) => location,
-                    Err(e) => refuse!(format!("cannot resolve module: {e}")),
-                };
-                let description = format!("oci {}", oci.r#ref);
-                // Whether this module must carry a cosign signature is
-                // settled before any registry is reached.
-                if let Some(policy) = &self.policy
-                    && policy.requires_signature(&location)
-                    && !self.cosign_key
-                {
-                    refuse!(format!(
-                        "cannot verify module {description}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it"
-                    ));
-                }
-                refuse!(format!(
-                    "cannot load module {description}: cannot fetch module: OCI sources are not implemented yet in the Rust runtime"
+        if src.r#type == "OCI" {
+            let oci = src
+                .oci
+                .as_ref()
+                .expect("validated: an OCI source has its object");
+            if !oci.credentials.is_empty() {
+                r.warnings.push(format!(
+                    "module.oci.credentials {:?} is a step Secret this tool cannot read; the module is pulled with the local Docker config instead",
+                    oci.credentials
                 ));
             }
-            _ => {}
+            let location = match crate::location::oci_location(&oci.r#ref) {
+                Ok(location) => location,
+                Err(e) => refuse!(format!("cannot resolve module: {e}")),
+            };
+            // Whether this module must carry a cosign signature is settled
+            // before any registry is reached.
+            if let Some(policy) = &self.policy
+                && policy.requires_signature(&location)
+                && !self.cosign_key
+            {
+                refuse!(format!(
+                    "cannot verify module oci {}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it",
+                    oci.r#ref
+                ));
+            }
         }
         // Whether this module must carry a cosign signature is settled
         // before it is resolved; a required non-OCI source is refused here.
         if let Err(e) = crate::from::check_signature_requirement(self.policy.as_ref(), &src) {
             refuse!(format!("cannot resolve module: {e}"));
         }
-        let resolved = match resolver.resolve(&src) {
+        let resolved = match resolver.resolve(&src, None) {
             Ok(resolved) => resolved,
             Err(e) => refuse!(format!("cannot resolve module: {e}")),
         };

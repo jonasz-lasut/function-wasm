@@ -68,7 +68,7 @@ impl FunctionRunnerService for WasmFunction {
         &self,
         request: Request<RunFunctionRequest>,
     ) -> Result<Response<RunFunctionResponse>, Status> {
-        let req = request.into_inner();
+        let mut req = request.into_inner();
         let tag = req.meta.as_ref().map(|m| m.tag.clone()).unwrap_or_default();
         tracing::info!(tag, "Running function");
         let rsp = response::to(&req, self.ttl);
@@ -115,11 +115,11 @@ impl FunctionRunnerService for WasmFunction {
                 )));
             }
         };
-        if let Err(e) = admission::require_ported(&source) {
-            return Ok(Response::new(self.fatal(rsp, OUTCOME_REFUSED, e)));
-        }
         // Whether this module must carry a cosign signature is settled
-        // before it is resolved; a required non-OCI source is refused here.
+        // before it is resolved; a required non-OCI source is refused here,
+        // and a required OCI module below - this runtime carries no cosign
+        // keys yet, so a policy that requires one refuses rather than
+        // serving unverified code.
         if let Err(e) = crate::from::check_signature_requirement(self.policy.as_ref(), &source) {
             return Ok(Response::new(self.fatal(
                 rsp,
@@ -127,8 +127,67 @@ impl FunctionRunnerService for WasmFunction {
                 format!("cannot resolve module: {e}"),
             )));
         }
+        if source.r#type == "OCI"
+            && let Some(oci) = &source.oci
+            && let Ok(location) = crate::location::oci_location(&oci.r#ref)
+            && self
+                .policy
+                .as_ref()
+                .is_some_and(|p| p.requires_signature(&location))
+        {
+            return Ok(Response::new(self.fatal(
+                rsp,
+                OUTCOME_REFUSED,
+                format!(
+                    "cannot verify module oci {}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it",
+                    oci.r#ref
+                ),
+            )));
+        }
 
-        let resolved = match self.resolver.resolve(&source) {
+        // The credential that pulls the module is the host's business: the
+        // guest sees every other step credential, as a native function
+        // would, but not the one that fetched it. The full set is kept
+        // aside for the manifest's env bindings, which still may not name
+        // the withheld one.
+        let all_credentials = req.credentials.clone();
+        let mut withheld = String::new();
+        let mut auth = None;
+        if source.r#type == "OCI"
+            && let Some(oci) = &source.oci
+            && !oci.credentials.is_empty()
+        {
+            let name = oci.credentials.clone();
+            let Some(data) = all_credentials.get(&name).and_then(|c| match &c.source {
+                Some(function_sdk_rust::proto::v1::credentials::Source::CredentialData(d)) => {
+                    Some(&d.data)
+                }
+                None => None,
+            }) else {
+                return Ok(Response::new(self.fatal(
+                    rsp,
+                    OUTCOME_REFUSED,
+                    format!("cannot get credentials {name:?} for module.oci: the request carries no such credential"),
+                )));
+            };
+            let registry = crate::location::parse_oci_reference(&oci.r#ref)
+                .map(|r| r.registry)
+                .unwrap_or_default();
+            auth = match crate::oci::auth_for(&registry, data) {
+                Ok(a) => Some(a),
+                Err(e) => {
+                    return Ok(Response::new(self.fatal(
+                        rsp,
+                        OUTCOME_REFUSED,
+                        format!("cannot use credentials {name:?} for module.oci: {e}"),
+                    )));
+                }
+            };
+            req.credentials.remove(&name);
+            withheld = name;
+        }
+
+        let resolved = match self.resolver.resolve(&source, auth) {
             Ok(resolved) => resolved,
             Err(e) => {
                 return Ok(Response::new(self.fatal(
@@ -163,17 +222,28 @@ impl FunctionRunnerService for WasmFunction {
         // three layers: the manifest requests, the compositionPolicy and the
         // operator policy permit. A module without one gets the default
         // sandbox.
-        let raw = match self.resolver.manifest(&resolved) {
-            Ok(raw) => raw,
-            Err(e) => {
-                return Ok(Response::new(self.fatal(
-                    rsp,
-                    OUTCOME_REFUSED,
-                    format!(
-                        "cannot read the manifest of module {}: {e}",
-                        resolved.description
-                    ),
-                )));
+        let raw = {
+            let resolver = Arc::clone(&self.resolver);
+            let target = resolved.clone();
+            match tokio::task::spawn_blocking(move || resolver.manifest(&target)).await {
+                Ok(Ok(raw)) => raw,
+                Ok(Err(e)) => {
+                    return Ok(Response::new(self.fatal(
+                        rsp,
+                        OUTCOME_REFUSED,
+                        format!(
+                            "cannot read the manifest of module {}: {e}",
+                            resolved.description
+                        ),
+                    )));
+                }
+                Err(e) => {
+                    return Ok(Response::new(self.fatal(
+                        rsp,
+                        OUTCOME_ERROR,
+                        format!("internal error while running the module: {e}"),
+                    )));
+                }
             }
         };
         let manifest = if raw.is_empty() {
@@ -439,6 +509,36 @@ mod tests {
             rsp.results
         );
         // The guest omitted meta, so the host filled it.
+        assert_eq!(rsp.meta.expect("meta").tag, "t");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn runs_an_oci_module_with_its_manifest_granted() {
+        let wasm = wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat");
+        let module_manifest = br#"{"abi":1,"requires":{"filesystem":{"privateTmp":true}}}"#;
+        let (digest, addr) =
+            crate::oci::testregistry::wasm_artifact(&wasm, Some(module_manifest), true);
+        let mut f = function(None);
+        f.policy = Some(
+            crate::authz::OperatorPolicy::new(
+                "test",
+                r#"permit (principal, action == Action::"usePrivateTmp", resource);"#,
+            )
+            .expect("policy"),
+        );
+        let rsp = run(
+            &f,
+            input(serde_json::json!({
+                "type": "OCI",
+                "oci": {"ref": format!("{addr}/example/greeter@{digest}")},
+            })),
+        )
+        .await;
+        assert!(
+            rsp.results.is_empty(),
+            "unexpected results: {:?}",
+            rsp.results
+        );
         assert_eq!(rsp.meta.expect("meta").tag, "t");
     }
 

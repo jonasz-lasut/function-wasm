@@ -64,10 +64,15 @@ are granted, refused and materialised exactly as the Go runtime does.
 One known gap remains: a permanent wording divergence per embedded
 library message (cedar parse errors, Go's json decoder).
 
-Serving today: `module.type: Path` sources under `--module-dir` (with
-`manifestPath` manifests and the full three-layer decision), `module.from`
-under a `compositionPolicy`, `limits.timeout` / `limits.memory` against the
-ceilings, the full ABI v1 run mechanics, the private `/tmp` and env
+Serving today: all three module sources - Path under `--module-dir` (with
+`manifestPath` manifests), HTTP with stated digests and manifests by
+reference, and OCI (a hand-rolled distribution client: anonymous, Basic
+and Bearer-token auth, step credentials with the pull credential withheld
+from the guest, the local Docker config, wasm and tar layers with the
+/fn.wasm rule, the artifact's manifest layer) - `module.from` under a
+`compositionPolicy`, `limits.timeout` / `limits.memory` /
+`limits.concurrency` against the ceilings, `--max-concurrent-runs` with
+fair per-module scheduling and `--max-total-run-memory`, the full ABI v1 run mechanics, the private `/tmp` and env
 grants, HTTP egress through the host (SSRF block list judged per resolved
 address with operator CIDR rules, redirects re-checked per hop, fixed
 budgets, the process-wide rate limit, audit lines - and the in-band
@@ -78,9 +83,9 @@ meta fill for guests that omit it.
 
 ## Not ported yet (refused or absent, in rough order of the plan)
 
-- The OCI module source (fetching; its admission, locations and policy
-  fences are ported - HTTP sources are fully served, blob-cached and
-  digest-verified), cosign verification, registry credentials
+- Cosign verification (--cosign-key fails closed at startup; a policy
+  that requires a signature refuses the module rather than serving it
+  unverified)
 - `--warm-modules`, `/readyz`, the periodic cache/rate-limiter sweeps and
   `--max-cache-size`
 - `limits.concurrency`, metrics, `--max-concurrent-runs`,

@@ -4,6 +4,38 @@
 //! normalization (default registry, docker.io aliasing, the library/
 //! prefix) reproduced so a policy means the same on both runtimes.
 
+/// A parsed, normalized OCI digest reference.
+#[derive(Debug, Clone)]
+pub struct OciReference {
+    /// The registry as policy locations name it (index.docker.io for
+    /// Docker Hub).
+    pub registry: String,
+    pub repository: String,
+    /// The pinned manifest digest, sha256:<hex>.
+    pub digest: String,
+}
+
+impl OciReference {
+    /// The normalized location pullModule permits match against.
+    pub fn location(&self) -> String {
+        format!("{}/{}", self.registry, self.repository)
+    }
+}
+
+/// Parses an OCI reference pinned to its manifest digest, normalized the
+/// way go-containerregistry normalizes it (default registry, docker.io
+/// aliasing, the library/ prefix).
+pub fn parse_oci_reference(r: &str) -> Result<OciReference, String> {
+    let location = oci_location(r)?;
+    let (registry, repository) = location.split_once('/').expect("a location has a registry");
+    let digest = r.rsplit_once('@').expect("validated by oci_location").1;
+    Ok(OciReference {
+        registry: registry.to_string(),
+        repository: repository.to_string(),
+        digest: digest.to_string(),
+    })
+}
+
 /// Checks an OCI reference and returns "registry/repository", without the
 /// tag or digest.
 pub fn oci_location(r: &str) -> Result<String, String> {

@@ -14,6 +14,8 @@ use std::time::{Duration, SystemTime};
 use sha2::{Digest, Sha256};
 
 use crate::input::ModuleSource;
+use crate::location::OciReference;
+use crate::oci::{Auth, RegistryClient};
 use crate::store::Store;
 
 /// Remembers the digest of a served file by size and modification time, so
@@ -38,8 +40,16 @@ pub struct Resolved {
 
 #[derive(Clone, Debug)]
 enum Source {
-    Path { full: PathBuf },
-    Http { url: String },
+    Path {
+        full: PathBuf,
+    },
+    Http {
+        url: String,
+    },
+    Oci {
+        reference: OciReference,
+        auth: Option<Auth>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -53,6 +63,11 @@ enum ManifestSource {
     Http {
         url: String,
         digest: String,
+    },
+    /// The artifact's own manifest layer, covered by the pinned digest.
+    OciLayer {
+        reference: OciReference,
+        auth: Option<Auth>,
     },
 }
 
@@ -78,10 +93,29 @@ impl Resolver {
     }
 
     /// Resolves a concrete source - one whose from was materialised.
-    /// Resolving does no I/O: the digest comes from the Input, or for a
-    /// served file from the file; fetching is deferred.
-    pub fn resolve(&self, src: &ModuleSource) -> Result<Resolved, String> {
+    /// Resolving does no I/O: the digest comes from the Input (for OCI, the
+    /// manifest digest that pins the layer), or for a served file from the
+    /// file; fetching is deferred. auth authenticates OCI pulls; None falls
+    /// back to the local Docker config and anonymous access.
+    pub fn resolve(&self, src: &ModuleSource, auth: Option<Auth>) -> Result<Resolved, String> {
         match src.r#type.as_str() {
+            "OCI" => {
+                let oci = src
+                    .oci
+                    .as_ref()
+                    .expect("validated: an OCI source has its object");
+                let reference = crate::location::parse_oci_reference(&oci.r#ref)?;
+                let auth = auth.or_else(|| crate::oci::keychain_auth(&reference.registry));
+                Ok(Resolved {
+                    digest: reference.digest.clone(),
+                    description: format!("oci {}", oci.r#ref),
+                    source: Source::Oci {
+                        reference: reference.clone(),
+                        auth: auth.clone(),
+                    },
+                    manifest: ManifestSource::OciLayer { reference, auth },
+                })
+            }
             "HTTP" => {
                 let http = src
                     .http
@@ -136,6 +170,23 @@ impl Resolver {
             Source::Http { url } => self.verified("module", &resolved.digest, || {
                 self.http_get(url, "module", self.max_size)
             }),
+            Source::Oci { reference, auth } => {
+                // The manifest is verified against the pinned digest, the
+                // layer against its own through the blob store, so a module
+                // whose compiled artifact is gone costs one manifest read
+                // and no download.
+                let client = RegistryClient::new(reference, auth.clone());
+                let m = client.manifest(reference)?;
+                let layer = crate::oci::wasm_layer(&m)
+                    .map_err(|e| format!("{}/{} {e}", reference.registry, reference.repository))?;
+                let b = self.verified("module layer", &layer.digest, || {
+                    client.blob(&layer.digest, self.max_size, "module layer")
+                })?;
+                if crate::oci::is_tar_layer(&layer.media_type) {
+                    return crate::oci::extract_wasm(&b, self.max_size);
+                }
+                Ok(b)
+            }
         }
     }
 
@@ -176,6 +227,20 @@ impl Resolver {
                     self.http_get(url, "manifest", crate::manifest::MAX_SIZE as u64)
                 })?;
                 manifest_json(&raw)
+            }
+            ManifestSource::OciLayer { reference, auth } => {
+                let client = RegistryClient::new(reference, auth.clone());
+                let m = client.manifest(reference)?;
+                let Some(layer) = crate::oci::manifest_layer(&m) else {
+                    return Ok(Vec::new());
+                };
+                self.verified("manifest layer", &layer.digest, || {
+                    client.blob(
+                        &layer.digest,
+                        crate::manifest::MAX_SIZE as u64,
+                        "manifest layer",
+                    )
+                })
             }
         }
     }
@@ -368,13 +433,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("fn.wasm"), b"not really wasm").expect("write");
         let r = Resolver::new(Some(dir.path().to_owned()), 1 << 20, None);
-        let resolved = r.resolve(&path_source("fn.wasm")).expect("resolve");
+        let resolved = r.resolve(&path_source("fn.wasm"), None).expect("resolve");
         assert_eq!(resolved.description, "module file fn.wasm");
         assert!(resolved.digest.starts_with("sha256:"));
         assert_eq!(r.fetch(&resolved).expect("fetch"), b"not really wasm");
         // The second resolve hits the stamp.
         assert_eq!(
-            r.resolve(&path_source("fn.wasm")).expect("resolve").digest,
+            r.resolve(&path_source("fn.wasm"), None)
+                .expect("resolve")
+                .digest,
             resolved.digest
         );
     }
@@ -394,12 +461,13 @@ mod tests {
             ),
         ];
         for (rel, want) in cases {
-            assert_eq!(&r.resolve(&path_source(rel)).expect_err(rel), want);
+            assert_eq!(&r.resolve(&path_source(rel), None).expect_err(rel), want);
         }
 
         let none = Resolver::new(None, 1 << 20, None);
         assert_eq!(
-            none.resolve(&path_source("fn.wasm")).expect_err("no dir"),
+            none.resolve(&path_source("fn.wasm"), None)
+                .expect_err("no dir"),
             "module.path is refused: the function was started without --module-dir"
         );
     }
