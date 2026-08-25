@@ -1,29 +1,24 @@
-//! The validate-driven conformance harness: runs the Go runtime's `function
-//! validate` as the reference and the Rust binary as the candidate over the
-//! same fixtures (`cmd/function/testdata/validate/`) with the same flags,
-//! and diffs stdout, stderr and the exit code.
+//! The validate conformance suite: runs `function validate` over the
+//! fixture corpus (`testdata/validate/`) and generated modules, servers and
+//! registries, and compares stdout, stderr and the exit code against
+//! recorded goldens under `testdata/conformance/`.
 //!
-//! Every case is either expected to MATCH exactly - the parity contract, a
-//! regression when it stops matching - or is a KNOWN GAP with a recorded
-//! reason, expected to differ. A known gap that starts matching fails the
-//! suite too, so the gap list only ever shrinks deliberately (a ratchet).
-//!
-//! The suite needs the Go toolchain (a CGo build of ./cmd/function); when
-//! `go` is missing or the build fails, it skips rather than fails, like the
-//! Go tree's guest tests skip without their toolchains.
+//! The goldens were recorded from this runtime the day it last diffed
+//! byte-identical against the Go runtime's own `function validate` (the
+//! original differential harness, retired with the Go tree) - so they are
+//! the Go runtime's words wherever parity held, and a change is a parity
+//! regression until re-recorded deliberately with UPDATE_CONFORMANCE=1.
+//! Run-specific values (temp directories, loopback ports) are replaced
+//! with stable placeholders before comparing.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
 
 struct Case {
     name: &'static str,
     args: &'static [&'static str],
     stdin: &'static str,
-    /// None: outputs must match exactly. Some(reason): a known gap that must
-    /// still differ; remove the entry when the gap is closed.
-    gap: Option<&'static str>,
 }
 
 fn cases() -> Vec<Case> {
@@ -32,15 +27,11 @@ fn cases() -> Vec<Case> {
             name: "Admitted",
             args: &["testdata/validate/ok.yaml"],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "Refusals",
             args: &["testdata/validate/refusals.yaml"],
             stdin: "",
-            gap: Some(
-                "cedar-go and cedar-policy word parse errors differently; the wrong-shape refusal embeds Go's json decoder wording",
-            ),
         },
         Case {
             name: "EgressRateLimitNegative",
@@ -49,7 +40,6 @@ fn cases() -> Vec<Case> {
                 "--egress-rate-limit-per-minute=-1",
             ],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "BadIPRule",
@@ -59,13 +49,11 @@ fn cases() -> Vec<Case> {
                 "testdata/validate/bad-iprule.cedar",
             ],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "FromWithoutXR",
             args: &["testdata/validate/from.yaml"],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "FromWithXR",
@@ -75,13 +63,11 @@ fn cases() -> Vec<Case> {
                 "testdata/validate/xr.yaml",
             ],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "UnknownFields",
             args: &["testdata/validate/unknown.yaml"],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "LimitsEqualCeiling",
@@ -93,13 +79,11 @@ fn cases() -> Vec<Case> {
                 "128",
             ],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "NoInputs",
             args: &["testdata/validate/function.yaml"],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "FunctionName",
@@ -109,31 +93,26 @@ fn cases() -> Vec<Case> {
                 "function-auto-ready",
             ],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "Unparsable",
             args: &["testdata/validate/broken.yaml"],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "Missing",
             args: &["testdata/validate/nope.yaml"],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "Stdin",
             args: &["-"],
             stdin: "apiVersion: wasm.fn.crossplane.io/v1beta1\nkind: Input\nmodule: {type: OCI, oci: {ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a}}\n",
-            gap: None,
         },
         Case {
             name: "ConcurrencyDetail",
             args: &["-"],
             stdin: "apiVersion: wasm.fn.crossplane.io/v1beta1\nkind: Input\nmodule: {type: OCI, oci: {ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a}}\nlimits: {concurrency: 2}\n",
-            gap: None,
         },
         Case {
             name: "SeveralFiles",
@@ -144,7 +123,6 @@ fn cases() -> Vec<Case> {
                 "testdata/validate/xr.yaml",
             ],
             stdin: "",
-            gap: None,
         },
         Case {
             name: "SignatureRequired",
@@ -155,35 +133,12 @@ fn cases() -> Vec<Case> {
                 "--resolve",
             ],
             stdin: "",
-            gap: None,
         },
     ]
 }
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .expect("repo root")
-}
-
-/// Builds the Go reference binary once; None skips the suite.
-fn go_binary() -> Option<&'static Path> {
-    static BIN: OnceLock<Option<PathBuf>> = OnceLock::new();
-    BIN.get_or_init(|| {
-        let root = repo_root();
-        let out = root.join("rust/target/conformance/function-go");
-        std::fs::create_dir_all(out.parent()?).ok()?;
-        let status = Command::new("go")
-            .args(["build", "-o"])
-            .arg(&out)
-            .arg("./cmd/function")
-            .current_dir(&root)
-            .status()
-            .ok()?;
-        status.success().then_some(out)
-    })
-    .as_deref()
+fn crate_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
 struct Output {
@@ -227,44 +182,49 @@ fn run_validate(bin: &Path, args: &[&str], stdin: &str, cwd: &Path) -> Output {
     }
 }
 
-fn diff(name: &str, go: &Output, rust: &Output) -> Option<String> {
-    if go.stdout == rust.stdout && go.stderr == rust.stderr && go.code == rust.code {
+/// Compares one case's output against its golden; UPDATE_CONFORMANCE=1
+/// records instead. subs replace run-specific values with stable
+/// placeholders.
+fn assert_golden(name: &str, out: &Output, subs: &[(String, &str)]) -> Option<String> {
+    let mut rendered = format!(
+        "exit {}\n--- stdout\n{}--- stderr\n{}",
+        out.code, out.stdout, out.stderr
+    );
+    for (needle, placeholder) in subs {
+        rendered = rendered.replace(needle.as_str(), placeholder);
+    }
+    let path = crate_dir()
+        .join("testdata/conformance")
+        .join(format!("{}.golden", name.replace('/', "-")));
+    if std::env::var_os("UPDATE_CONFORMANCE").is_some() {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&path, &rendered).expect("write golden");
+        return None;
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "{name}: cannot read {} ({e}); record with UPDATE_CONFORMANCE=1 cargo test",
+            path.display()
+        )
+    });
+    if want == rendered {
         return None;
     }
     Some(format!(
-        "{name}:\n--- go stdout (exit {})\n{}--- rust stdout (exit {})\n{}--- go stderr\n{}--- rust stderr\n{}",
-        go.code, go.stdout, rust.code, rust.stdout, go.stderr, rust.stderr
+        "{name}: output differs from {}\n--- want\n{want}\n--- got\n{rendered}\n(re-record deliberately with UPDATE_CONFORMANCE=1 cargo test)",
+        path.display()
     ))
 }
 
-fn assert_case(name: &str, gap: Option<&str>, go: &Output, rust: &Output) -> Option<String> {
-    match (diff(name, go, rust), gap) {
-        (None, None) => None,
-        (Some(d), None) => Some(format!("PARITY REGRESSION (not a known gap)\n{d}")),
-        (None, Some(reason)) => Some(format!(
-            "{name}: known gap now matches the Go runtime - remove its entry (was: {reason})"
-        )),
-        (Some(_), Some(reason)) => {
-            eprintln!("known gap {name}: {reason}");
-            None
-        }
-    }
-}
-
 #[test]
-fn validate_matches_the_go_runtime() {
-    let Some(go) = go_binary() else {
-        eprintln!("skipping: no Go toolchain or the Go build failed");
-        return;
-    };
+fn validate_matches_the_goldens() {
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
-    let cwd = repo_root().join("cmd/function");
+    let cwd = crate_dir();
 
     let mut failures = Vec::new();
     for case in cases() {
-        let go_out = run_validate(go, case.args, case.stdin, &cwd);
         let rust_out = run_validate(rust, case.args, case.stdin, &cwd);
-        if let Some(f) = assert_case(case.name, case.gap, &go_out, &rust_out) {
+        if let Some(f) = assert_golden(case.name, &rust_out, &[]) {
             failures.push(f);
         }
     }
@@ -275,13 +235,9 @@ fn validate_matches_the_go_runtime() {
 /// TestValidateResolve: a valid ABI module with a wasmfn.log import, one
 /// missing wasmfn_run, one that is not wasm at all, and one missing file.
 #[test]
-fn validate_resolve_matches_the_go_runtime() {
-    let Some(go) = go_binary() else {
-        eprintln!("skipping: no Go toolchain or the Go build failed");
-        return;
-    };
+fn validate_resolve_matches_the_goldens() {
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
-    let cwd = repo_root().join("cmd/function");
+    let cwd = crate_dir();
 
     let dir = tempfile::tempdir().expect("tempdir");
     let ok = wat::parse_str(
@@ -329,9 +285,9 @@ fn validate_resolve_matches_the_go_runtime() {
             "--output",
             output,
         ];
-        let go_out = run_validate(go, &args, "", &cwd);
         let rust_out = run_validate(rust, &args, "", &cwd);
-        if let Some(f) = assert_case(&format!("ResolvePath/{output}"), None, &go_out, &rust_out) {
+        let subs = [(module_dir.clone(), "<DIR>")];
+        if let Some(f) = assert_golden(&format!("ResolvePath/{output}"), &rust_out, &subs) {
             panic!("\n{f}");
         }
     }
@@ -343,13 +299,9 @@ fn validate_resolve_matches_the_go_runtime() {
 /// and without an operator grant policy. Egress that both layers permit is
 /// the one recorded gap: this runtime does not carry the egress client yet.
 #[test]
-fn validate_resolve_manifest_matches_the_go_runtime() {
-    let Some(go) = go_binary() else {
-        eprintln!("skipping: no Go toolchain or the Go build failed");
-        return;
-    };
+fn validate_resolve_manifest_matches_the_goldens() {
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
-    let cwd = repo_root().join("cmd/function");
+    let cwd = crate_dir();
 
     let dir = tempfile::tempdir().expect("tempdir");
     let ok = wat::parse_str(
@@ -397,16 +349,14 @@ fn validate_resolve_manifest_matches_the_go_runtime() {
             "--module-dir",
             module_dir.as_str(),
         ];
-        let go_out = run_validate(go, &args, "", &cwd);
         let rust_out = run_validate(rust, &args, "", &cwd);
         let name = format!("ManifestNoPolicy/{}", manifests[i].0);
-        if let Some(f) = assert_case(&name, None, &go_out, &rust_out) {
+        if let Some(f) = assert_golden(&name, &rust_out, &[(module_dir.clone(), "<DIR>")]) {
             failures.push(f);
         }
     }
     // With a permissive operator policy every ask - /tmp, egress, env - is
-    // granted exactly as the Go runtime grants it.
-    let gaps: &[Option<&str>] = &[None, None, None];
+    // granted exactly as the Go runtime granted it.
     for (i, composition) in compositions.iter().enumerate() {
         let args = [
             composition.as_str(),
@@ -416,10 +366,9 @@ fn validate_resolve_manifest_matches_the_go_runtime() {
             "--sandbox-policy-file",
             "testdata/validate/policy-permissive.cedar",
         ];
-        let go_out = run_validate(go, &args, "", &cwd);
         let rust_out = run_validate(rust, &args, "", &cwd);
         let name = format!("ManifestPermissive/{}", manifests[i].0);
-        if let Some(f) = assert_case(&name, gaps[i], &go_out, &rust_out) {
+        if let Some(f) = assert_golden(&name, &rust_out, &[(module_dir.clone(), "<DIR>")]) {
             failures.push(f);
         }
     }
@@ -431,15 +380,11 @@ fn validate_resolve_manifest_matches_the_go_runtime() {
 /// reference (manifestURL/manifestDigest) decided by the three layers, and
 /// a stated digest the download does not match.
 #[test]
-fn validate_resolve_http_source_matches_the_go_runtime() {
+fn validate_resolve_http_source_matches_the_goldens() {
     use sha2::Digest as _;
 
-    let Some(go) = go_binary() else {
-        eprintln!("skipping: no Go toolchain or the Go build failed");
-        return;
-    };
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
-    let cwd = repo_root().join("cmd/function");
+    let cwd = crate_dir();
 
     let wasm = wat::parse_str(
         r#"(module (memory (export "memory") 1)
@@ -489,13 +434,12 @@ fn validate_resolve_http_source_matches_the_go_runtime() {
         )
     };
     let base = format!("http://127.0.0.1:{port}");
-    let compositions: Vec<(String, Option<&str>, Vec<&str>)> = vec![
+    let compositions: Vec<(String, Vec<&str>)> = vec![
         (
             step(
                 "plain",
                 &format!("{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}}}}}"),
             ),
-            None,
             vec![],
         ),
         (
@@ -505,7 +449,6 @@ fn validate_resolve_http_source_matches_the_go_runtime() {
                     "{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}, manifestURL: {base}/wasmfn.yaml, manifestDigest: {manifest_digest}}}}}"
                 ),
             ),
-            None,
             vec![],
         ),
         (
@@ -515,7 +458,6 @@ fn validate_resolve_http_source_matches_the_go_runtime() {
                     "{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}, manifestURL: {base}/wasmfn.yaml, manifestDigest: {manifest_digest}}}}}"
                 ),
             ),
-            None,
             vec![
                 "--sandbox-policy-file",
                 "testdata/validate/policy-permissive.cedar",
@@ -529,21 +471,23 @@ fn validate_resolve_http_source_matches_the_go_runtime() {
                     "0".repeat(64)
                 ),
             ),
-            None,
             vec![],
         ),
     ];
 
     let mut failures = Vec::new();
-    for (i, (composition, gap, extra)) in compositions.iter().enumerate() {
+    for (i, (composition, extra)) in compositions.iter().enumerate() {
         let file = dir.path().join(format!("http-{i}.yaml"));
         std::fs::write(&file, composition).expect("write");
         let file = file.display().to_string();
         let mut args = vec![file.as_str(), "--resolve"];
         args.extend(extra);
-        let go_out = run_validate(go, &args, "", &cwd);
         let rust_out = run_validate(rust, &args, "", &cwd);
-        if let Some(f) = assert_case(&format!("HTTPSource/{i}"), *gap, &go_out, &rust_out) {
+        let subs = [
+            (dir.path().display().to_string(), "<DIR>"),
+            (format!("127.0.0.1:{port}"), "<SERVER>"),
+        ];
+        if let Some(f) = assert_golden(&format!("HTTPSource/{i}"), &rust_out, &subs) {
             failures.push(f);
         }
     }
@@ -555,15 +499,11 @@ fn validate_resolve_http_source_matches_the_go_runtime() {
 /// does): the module layer fetched and inspected, the artifact's manifest
 /// layer decided by the three layers.
 #[test]
-fn validate_resolve_oci_source_against_the_go_runtime() {
+fn validate_resolve_oci_source_matches_the_goldens() {
     use sha2::Digest as _;
 
-    let Some(go) = go_binary() else {
-        eprintln!("skipping: no Go toolchain or the Go build failed");
-        return;
-    };
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
-    let cwd = repo_root().join("cmd/function");
+    let cwd = crate_dir();
 
     let wasm = wat::parse_str(
         r#"(module (memory (export "memory") 1)
@@ -647,22 +587,24 @@ fn validate_resolve_oci_source_against_the_go_runtime() {
     let composition = composition.display().to_string();
 
     let mut failures = Vec::new();
-    for (name, extra, gap) in [
-        ("NoPolicy", vec![], None),
+    for (name, extra) in [
+        ("NoPolicy", vec![]),
         (
             "Granted",
             vec![
                 "--sandbox-policy-file",
                 "testdata/validate/policy-permissive.cedar",
             ],
-            None,
         ),
     ] {
         let mut args = vec![composition.as_str(), "--resolve"];
         args.extend(extra);
-        let go_out = run_validate(go, &args, "", &cwd);
         let rust_out = run_validate(rust, &args, "", &cwd);
-        if let Some(f) = assert_case(&format!("OCISource/{name}"), gap, &go_out, &rust_out) {
+        let subs = [
+            (dir.path().display().to_string(), "<DIR>"),
+            (addr.to_string(), "<REGISTRY>"),
+        ];
+        if let Some(f) = assert_golden(&format!("OCISource/{name}"), &rust_out, &subs) {
             failures.push(f);
         }
     }
@@ -675,17 +617,13 @@ fn validate_resolve_oci_source_against_the_go_runtime() {
 /// both binaries verify it under the legacy all-or-nothing --cosign-key.
 /// The unsigned refusal is a recorded wording-only gap.
 #[test]
-fn validate_resolve_cosign_against_the_go_runtime() {
+fn validate_resolve_cosign_matches_the_goldens() {
     use p256::ecdsa::signature::Signer as _;
     use p256::pkcs8::EncodePublicKey as _;
     use sha2::Digest as _;
 
-    let Some(go) = go_binary() else {
-        eprintln!("skipping: no Go toolchain or the Go build failed");
-        return;
-    };
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
-    let cwd = repo_root().join("cmd/function");
+    let cwd = crate_dir();
     let digest_of = |b: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)));
 
     let wasm = wat::parse_str(
@@ -806,14 +744,7 @@ fn validate_resolve_cosign_against_the_go_runtime() {
         )
     };
     let mut failures = Vec::new();
-    for (name, digest, gap) in [
-        ("Signed", &signed_digest, None),
-        (
-            "Unsigned",
-            &unsigned_digest,
-            Some("the missing-signature refusal wording differs (alpha: logical parity only)"),
-        ),
-    ] {
+    for (name, digest) in [("Signed", &signed_digest), ("Unsigned", &unsigned_digest)] {
         let file = dir.path().join(format!("{name}.yaml"));
         std::fs::write(&file, composition(name, digest)).expect("write");
         let file = file.display().to_string();
@@ -823,9 +754,12 @@ fn validate_resolve_cosign_against_the_go_runtime() {
             "--cosign-key",
             key_path.as_str(),
         ];
-        let go_out = run_validate(go, &args, "", &cwd);
         let rust_out = run_validate(rust, &args, "", &cwd);
-        if let Some(f) = assert_case(&format!("Cosign/{name}"), gap, &go_out, &rust_out) {
+        let subs = [
+            (dir.path().display().to_string(), "<DIR>"),
+            (addr.to_string(), "<REGISTRY>"),
+        ];
+        if let Some(f) = assert_golden(&format!("Cosign/{name}"), &rust_out, &subs) {
             failures.push(f);
         }
     }

@@ -1,0 +1,5 @@
+exit 1
+--- stdout
+testdata/validate/from.yaml: Composition/from pipeline[0] chosen: OK (oci ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a (from status.module), compositionPolicy)
+testdata/validate/from.yaml: Composition/from pipeline[1] other-registry: refused: cannot resolve module: module.from: status.other of the composite resource names ref "index.docker.io/someone/else", which the compositionPolicy does not permit (pullModule)
+--- stderr

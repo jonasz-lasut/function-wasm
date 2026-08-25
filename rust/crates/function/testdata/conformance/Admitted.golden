@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+testdata/validate/ok.yaml: Composition/hello pipeline[0] hello: OK (path fn.wasm, limits timeout 5s memory 128Mi)
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+--- stderr

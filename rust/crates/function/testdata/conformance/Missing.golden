@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+function validate: cannot read testdata/validate/nope.yaml: open testdata/validate/nope.yaml: no such file or directory

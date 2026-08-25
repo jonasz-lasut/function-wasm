@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+function validate: --egress-rate-limit-per-minute and --egress-rate-limit-burst must not be negative

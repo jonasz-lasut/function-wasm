@@ -1,0 +1,12 @@
+exit 1
+--- stdout
+<DIR>/composition.yaml: Composition/resolve pipeline[0] ok: OK (path fn.wasm)
+  module: sha256:9af9dc722904bbd1851fb7bd6b6605fc2c0e7e854470ea27448482ef51c8cff1, 122 B, ABI v1, imports wasmfn.log
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+<DIR>/composition.yaml: Composition/resolve pipeline[1] bad: refused: cannot load module module file bad.wasm: module does not export "wasmfn_run"
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+<DIR>/composition.yaml: Composition/resolve pipeline[2] notwasm: refused: cannot load module module file notwasm.wasm: cannot compile module: failed to parse WebAssembly module
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+<DIR>/composition.yaml: Composition/resolve pipeline[3] missing: refused: cannot resolve module: cannot stat module file: stat <DIR>/missing.wasm: no such file or directory
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+--- stderr

@@ -1,0 +1,7 @@
+exit 1
+--- stdout
+testdata/validate/ok.yaml: Composition/hello pipeline[0] hello: OK (path fn.wasm, limits timeout 5s memory 128Mi)
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+testdata/validate/from.yaml: Composition/from pipeline[0] chosen: OK (oci ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a (from status.module), compositionPolicy)
+testdata/validate/from.yaml: Composition/from pipeline[1] other-registry: refused: cannot resolve module: module.from: status.other of the composite resource names ref "index.docker.io/someone/else", which the compositionPolicy does not permit (pullModule)
+--- stderr

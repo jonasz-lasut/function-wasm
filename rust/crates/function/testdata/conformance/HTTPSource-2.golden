@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+<DIR>/http-2.yaml: Composition/granted pipeline[0] granted: OK (http http://<SERVER>/fn.wasm)
+  module: sha256:d8f9c70dd9bca2be5b598bc81ac9dbbd4f49531eb8174e8bcdd1aa895c230ba3, 85 B, ABI v1; manifest: greeter 0.1.0, private /tmp
+--- stderr

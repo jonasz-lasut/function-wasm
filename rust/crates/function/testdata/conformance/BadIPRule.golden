@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+function validate: operator policy: dialAddress rule "policy0": unsupported operation "isMulticast" (an ip test uses isInRange, isLoopback or ||)

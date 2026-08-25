@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+testdata/validate/from.yaml: Composition/from pipeline[0] chosen: OK (chosen by the composite resource from status.module, compositionPolicy)
+testdata/validate/from.yaml: Composition/from pipeline[1] other-registry: OK (chosen by the composite resource from status.other, compositionPolicy)
+--- stderr
