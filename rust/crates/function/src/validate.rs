@@ -18,6 +18,7 @@ use serde::Serialize;
 use function_wasm_engine::{Config, Engine, duration};
 
 use crate::admission;
+use crate::authz::OperatorPolicy;
 use crate::input::{Input, ModuleSource};
 use crate::quantity;
 use crate::resolver::{Resolver, go_io_error};
@@ -137,6 +138,9 @@ struct Resolved {
     abi: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     imports: Vec<String>,
+    /// The module's manifest, when it carries one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest: Option<crate::manifest::Manifest>,
 }
 
 /// One Input found in a file, with where it came from.
@@ -168,11 +172,13 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
                 .to_string(),
         );
     }
-    if args.sandbox_policy_file.is_some() {
-        return Err(
-            "the --sandbox-policy-file operator policy is not implemented yet in the Rust runtime"
-                .to_string(),
-        );
+    let mut policy = None;
+    if let Some(path) = &args.sandbox_policy_file {
+        let p = OperatorPolicy::load(path)?;
+        // The SSRF CIDR rules compile at load, as at the runtime's startup: a
+        // malformed rule stops the tool rather than meaning less than written.
+        p.compile_ip_rules()?;
+        policy = Some(p);
     }
     if args.cosign_key.is_some() {
         return Err("--cosign-key is not implemented yet in the Rust runtime".to_string());
@@ -210,6 +216,8 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
         engine,
         resolver,
         xr,
+        policy,
+        cosign_key: args.cosign_key.is_some(),
     };
     let mut refused = false;
     for file in &args.files {
@@ -262,6 +270,9 @@ fn print_result(output: &str, r: &StepResult) -> Result<(), String> {
         );
         if !resolved.imports.is_empty() {
             line += &format!(", imports {}", resolved.imports.join(" "));
+        }
+        if let Some(m) = &resolved.manifest {
+            line += &format!("; manifest: {}", m.summary());
         }
         println!("{line}");
     }
@@ -405,6 +416,8 @@ struct Validator {
     engine: Option<Engine>,
     resolver: Option<Resolver>,
     xr: Option<serde_json::Value>,
+    policy: Option<OperatorPolicy>,
+    cosign_key: bool,
 }
 
 impl Validator {
@@ -433,47 +446,100 @@ impl Validator {
         };
         r.warnings = warnings;
 
-        // The runtime's admission, verbatim: limits within the ceilings, the
-        // module source's shape (the compositionPolicy layer is not ported).
-        if let Err(e) = admission::admit(&input, &self.ceilings) {
-            refuse!(e);
-        }
-        r.details = describe_admitted(&input);
+        // The runtime's admission, verbatim: the compositionPolicy compiled,
+        // limits within the ceilings, the module source's shape.
+        let admitted = match admission::admit(&input, &self.ceilings) {
+            Ok(admitted) => admitted,
+            Err(e) => refuse!(e),
+        };
+        r.details = describe_admitted(&input, admitted.composition.is_some());
 
-        let src = &input.module;
-        if !src.from.is_empty() {
-            if self.xr.is_some() {
-                refuse!("cannot resolve module: module.from with --xr is not implemented yet in the Rust runtime".to_string());
+        // The module: materialised against the XR when one is given, as the
+        // runtime does on every request; otherwise checked for the fence a
+        // composite-chosen source requires and reported as such.
+        let comp = admitted.composition.as_deref();
+        let src = match (&input.module.from.is_empty(), &self.xr) {
+            (false, Some(xr)) => {
+                let concrete = match crate::from::from_composite(&input.module, comp, Some(xr)) {
+                    Ok(concrete) => concrete,
+                    Err(e) => refuse!(format!("cannot resolve module: {e}")),
+                };
+                r.module = format!(
+                    "{} (from {})",
+                    describe_source(&concrete),
+                    input.module.from
+                );
+                concrete
             }
-            // The fence a composite-chosen source requires, without the XR:
-            // module.ValidateFrom's no-policy refusal. A from source that
-            // reaches here with a compositionPolicy was already refused by
-            // admission (the Cedar layer is not ported).
-            if (src.r#type == "OCI" || src.r#type == "HTTP") && input.composition_policy.is_empty()
-            {
-                refuse!(format!(
-                    "cannot resolve module: module.from: {} of the composite resource names a {} source, but the Input has no compositionPolicy: a module the composite resource chooses must be permitted by the compositionPolicy's pullModule rules, or its author could point the runtime at any host",
-                    src.from, src.r#type
-                ));
+            (false, None) => {
+                if let Err(e) = crate::from::validate_from(&input.module, comp) {
+                    refuse!(format!("cannot resolve module: {e}"));
+                }
+                r.module = describe_source(&input.module);
+                r.warnings.extend(self.warnings(&input));
+                return r;
             }
-            r.module = describe_source(src);
-            r.warnings.extend(self.warnings(&input));
-            return r;
-        }
-        r.module = describe_source(src);
+            _ => {
+                r.module = describe_source(&input.module);
+                input.module.clone()
+            }
+        };
         r.warnings.extend(self.warnings(&input));
 
         let (Some(resolver), Some(engine)) = (&self.resolver, &self.engine) else {
             return r;
         };
-        if src.r#type != "Path" {
-            refuse!(format!(
-                "cannot resolve module: module.type {} is not implemented yet in the Rust runtime; only Path sources are",
-                src.r#type
-            ));
-        }
-        if !src.manifest_path.is_empty() {
-            refuse!("module.manifestPath is not implemented yet in the Rust runtime".to_string());
+        match src.r#type.as_str() {
+            "OCI" => {
+                let oci = src
+                    .oci
+                    .as_ref()
+                    .expect("validated: an OCI source has its object");
+                if !oci.credentials.is_empty() {
+                    r.warnings.push(format!(
+                        "module.oci.credentials {:?} is a step Secret this tool cannot read; the module is pulled with the local Docker config instead",
+                        oci.credentials
+                    ));
+                }
+                let location = match crate::location::oci_location(&oci.r#ref) {
+                    Ok(location) => location,
+                    Err(e) => refuse!(format!("cannot resolve module: {e}")),
+                };
+                let description = format!("oci {}", oci.r#ref);
+                // Whether this module must carry a cosign signature is
+                // settled before any registry is reached.
+                if let Some(policy) = &self.policy
+                    && policy.requires_signature(&location)
+                    && !self.cosign_key
+                {
+                    refuse!(format!(
+                        "cannot verify module {description}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it"
+                    ));
+                }
+                refuse!(format!(
+                    "cannot load module {description}: cannot fetch module: OCI sources are not implemented yet in the Rust runtime"
+                ));
+            }
+            "HTTP" => {
+                let http = src
+                    .http
+                    .as_ref()
+                    .expect("validated: an HTTP source has its object");
+                let description = format!("http {}", http.url);
+                if let (Some(policy), Ok(location)) = (
+                    &self.policy,
+                    crate::location::http_location("module.http.url", &http.url),
+                ) && policy.requires_signature(&location)
+                {
+                    refuse!(format!(
+                        "cannot resolve module: module.http {location:?} requires a cosign signature (operator policy), but only OCI modules can be signature-verified"
+                    ));
+                }
+                refuse!(format!(
+                    "cannot load module {description}: cannot fetch module: HTTP sources are not implemented yet in the Rust runtime"
+                ));
+            }
+            _ => {}
         }
         let resolved = match resolver.resolve(&src.path) {
             Ok(resolved) => resolved,
@@ -501,7 +567,65 @@ impl Validator {
             size: wasm.len(),
             abi: "v1".to_string(),
             imports: inspection.host_imports,
+            manifest: None,
         });
+
+        // The module's manifest: its requests decided by the three layers -
+        // with the principal from --xr when one is given - then held against
+        // what the layers granted, the checks the runtime makes between load
+        // and run.
+        let raw = if src.manifest_path.is_empty() {
+            Vec::new()
+        } else {
+            match resolver.read_manifest(&src.manifest_path) {
+                Ok(raw) => raw,
+                Err(e) => refuse!(format!(
+                    "cannot read the manifest of module {}: {e}",
+                    resolved.description
+                )),
+            }
+        };
+        if raw.is_empty() {
+            return r;
+        }
+        let m = match crate::manifest::Manifest::parse(&raw) {
+            Ok(m) => m,
+            Err(e) => refuse!(format!(
+                "module {} has an invalid manifest: {e}",
+                resolved.description
+            )),
+        };
+        if let Some(res) = &mut r.resolved {
+            res.manifest = Some(m.clone());
+        }
+        if m.requires
+            .as_ref()
+            .and_then(|q| q.egress.as_ref())
+            .is_some_and(|e| !e.http.is_empty())
+            && !self.cosign_key
+        {
+            r.warnings.push(
+                "the module requires egress but is not signature-verified: no --cosign-key was given"
+                    .to_string(),
+            );
+        }
+        let principal = self
+            .xr
+            .as_ref()
+            .map(crate::from::principal_from_composite)
+            .unwrap_or_default();
+        let caps = match admission::admit_requires(
+            m.requires.as_ref(),
+            self.policy.as_ref(),
+            comp,
+            &principal,
+        ) {
+            Ok(caps) => caps,
+            Err(e) => refuse!(format!("module {} {e}", resolved.description)),
+        };
+        if let Err(e) = m.check(&caps.grants(), input.config.as_ref(), "") {
+            refuse!(format!("module {} {e}", resolved.description));
+        }
         r
     }
 
@@ -618,9 +742,9 @@ fn describe_source(src: &ModuleSource) -> String {
     format!("path {}", src.path)
 }
 
-/// Lists what the step was admitted: its limits. (The compositionPolicy
-/// detail arrives with the Cedar port.)
-fn describe_admitted(input: &Input) -> Vec<String> {
+/// Lists what the step was admitted: its limits, and whether a
+/// compositionPolicy layer is present.
+fn describe_admitted(input: &Input, has_composition: bool) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(l) = &input.limits {
         let mut limits = Vec::new();
@@ -635,6 +759,9 @@ fn describe_admitted(input: &Input) -> Vec<String> {
         if !limits.is_empty() {
             out.push(format!("limits {}", limits.join(" ")));
         }
+    }
+    if has_composition {
+        out.push("compositionPolicy".to_string());
     }
     out
 }

@@ -6,11 +6,17 @@
 //! runs the same admission over Compositions offline.
 
 mod admission;
+mod authz;
 mod cache;
+mod egress_rules;
+mod from;
 mod input;
+mod location;
+mod manifest;
 mod quantity;
 mod resolver;
 mod runner;
+mod sandboxenv;
 mod validate;
 
 use std::path::PathBuf;
@@ -64,6 +70,17 @@ struct ServeArgs {
     /// Maximum linear memory of a running module in MB.
     #[arg(long, default_value_t = 512)]
     module_memory_limit: u64,
+
+    /// Cedar document with the operator's grant policy - the sole authority
+    /// that enables a sandbox capability, evaluated default-deny. Unset, no
+    /// sandbox capability is grantable and the runtime offers only the
+    /// default sandbox.
+    #[arg(long, env = "SANDBOX_POLICY_FILE")]
+    sandbox_policy_file: Option<PathBuf>,
+
+    /// PEM file with one or more cosign public keys.
+    #[arg(long, env = "COSIGN_KEY")]
+    cosign_key: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -84,6 +101,48 @@ fn main() -> ExitCode {
 async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
     logging::configure(args.sdk.debug);
 
+    if args.cosign_key.is_some() {
+        eprintln!("--cosign-key is not implemented yet in the Rust runtime");
+        std::process::exit(1);
+    }
+    // The operator policy compiles once at startup and is immutable for the
+    // process; a malformed policy or SSRF CIDR rule stops the runtime here
+    // rather than compiling into a table that means less than written.
+    let policy = match &args.sandbox_policy_file {
+        None => None,
+        Some(path) => match authz::OperatorPolicy::load(path).and_then(|p| {
+            p.compile_ip_rules()?;
+            Ok(p)
+        }) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+    };
+    // The $TMPDIR probe runs once before serving, only when the policy can
+    // grant a private /tmp: a misconfigured $TMPDIR stops the runtime here,
+    // not every request.
+    if policy
+        .as_ref()
+        .is_some_and(authz::OperatorPolicy::has_private_tmp_rules)
+    {
+        match tempfile::Builder::new()
+            .prefix("function-wasm-private-tmp-")
+            .tempdir()
+        {
+            Ok(probe) => drop(probe),
+            Err(e) => {
+                eprintln!(
+                    "the operator policy grants a private /tmp (usePrivateTmp), but the runtime cannot create one under {}: {e}",
+                    std::env::temp_dir().display()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
     let engine = Engine::new(Config {
         timeout: args.module_timeout,
         memory_limit: args.module_memory_limit << 20,
@@ -99,6 +158,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
             args.max_module_size << 20,
         )),
         ttl: function_sdk_rust::response::DEFAULT_TTL,
+        policy,
     };
     serve(function, &args.sdk).await
 }

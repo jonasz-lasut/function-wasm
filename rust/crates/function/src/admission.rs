@@ -5,28 +5,226 @@
 //! with a message naming it - never silently ignored, so nothing runs wider
 //! than the Go runtime would allow.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use function_wasm_engine::duration;
 
+use crate::authz::{
+    ACTION_GRANT_EGRESS, ACTION_SET_ENV, ACTION_SPEND_CREDENTIAL, ACTION_USE_PRIVATE_TMP,
+    CompositionPolicy, EgressGrant, OperatorPolicy, Principal, compile_composition_policy,
+};
+use crate::egress_rules::HttpRule;
 use crate::input::{Input, ModuleSource};
+use crate::location::digest_is_valid;
+use crate::manifest::{Grants, Requires};
 use crate::quantity;
+use crate::sandboxenv::EnvBinding;
 
-/// What a request may consume: the Input's limits, admitted against the
-/// engine's ceilings.
-#[derive(Debug, Default, PartialEq)]
+/// What a request gets when its Input is admitted: its limits within the
+/// ceilings, and the Input's compositionPolicy compiled (content-hash
+/// cached) - the composition layer of the capability decision and the fence
+/// over a module.from source.
+#[derive(Debug, Default)]
 pub struct Admitted {
     pub timeout: Option<Duration>,
     pub memory_limit: Option<u64>,
+    pub composition: Option<Arc<CompositionPolicy>>,
 }
 
 pub fn admit(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<Admitted, String> {
-    if !input.composition_policy.is_empty() {
-        return Err("compositionPolicy is not implemented yet in the Rust runtime".to_string());
-    }
-    let admitted = run_options(input, ceilings)?;
+    let composition = compile_composition_policy(&input.composition_policy)
+        .map_err(|e| format!("compositionPolicy is invalid: {e}"))?;
+    let mut admitted = run_options(input, ceilings)?;
+    admitted.composition = composition;
     validate_source(&input.module).map_err(|e| format!("cannot resolve module: {e}"))?;
     Ok(admitted)
+}
+
+/// What one run gets of the sandbox: the module's requests, each permitted
+/// by the composition and operator layers. The default is the default
+/// sandbox: nothing.
+#[derive(Debug, Default)]
+pub struct Capabilities {
+    pub private_tmp: bool,
+    /// The module's egress rules the layers admitted, as required.
+    pub rules: Vec<HttpRule>,
+    /// The module's env bindings the layers admitted, for materialize.
+    pub env: Vec<EnvBinding>,
+}
+
+impl Capabilities {
+    /// The admitted set in the shape manifest::check holds Requires against.
+    pub fn grants(&self) -> Grants {
+        Grants {
+            private_tmp: self.private_tmp,
+            http: self.rules.clone(),
+            env: self.env.clone(),
+        }
+    }
+}
+
+/// Decides a module's requested capabilities - its manifest's requires (None:
+/// nothing, the default sandbox) - by the three-layer rule: each request must
+/// be permitted by the composition layer (scoped default-permit: absent, or
+/// scoping no rule for the action, it does not narrow) and by the operator
+/// layer (default-deny: no --sandbox-policy-file, no capability). The first
+/// refusal is returned in the runtime's words, for the caller to prefix with
+/// the module's name.
+pub fn admit_requires(
+    r: Option<&Requires>,
+    policy: Option<&OperatorPolicy>,
+    comp: Option<&CompositionPolicy>,
+    principal: &Principal,
+) -> Result<Capabilities, String> {
+    let mut out = Capabilities::default();
+    let Some(r) = r else { return Ok(out) };
+    if r.filesystem.as_ref().is_some_and(|f| f.private_tmp) {
+        if scopes(comp, ACTION_USE_PRIVATE_TMP)
+            && !comp.expect("scoped").permits_private_tmp(principal)
+        {
+            return Err("requires a private /tmp (requires.filesystem.privateTmp), which the compositionPolicy does not permit for this request".to_string());
+        }
+        let Some(policy) = policy else {
+            return Err("requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities".to_string());
+        };
+        if !policy.permits_private_tmp(principal) {
+            return Err("requires a private /tmp (requires.filesystem.privateTmp), which the operator policy (--sandbox-policy-file) does not permit for this request".to_string());
+        }
+        out.private_tmp = true;
+    }
+    if let Some(egress) = &r.egress
+        && !egress.http.is_empty()
+    {
+        admit_egress(&egress.http, policy, comp, principal)?;
+        // The layers permit the rules, but this runtime does not carry the
+        // egress client (internal/egress) yet: the mechanism itself is
+        // missing, refused with the Go runtime's words for that state.
+        return Err(
+            "requires egress (requires.egress.http), but the runtime has no egress mechanism"
+                .to_string(),
+        );
+    }
+    if !r.env.is_empty() {
+        admit_env(&r.env, policy, comp, principal)?;
+        out.env = r.env.clone();
+    }
+    Ok(out)
+}
+
+fn scopes(comp: Option<&CompositionPolicy>, action: &str) -> bool {
+    comp.is_some_and(|c| c.scopes_action(action))
+}
+
+/// Runs both policy layers over the module's egress rules, once per rule and
+/// method, so a policy can key on context.method. The composition layer
+/// first, whole: the author closest to the fix reads their own layer's
+/// refusal even where the operator would also deny.
+fn admit_egress(
+    rules: &[HttpRule],
+    policy: Option<&OperatorPolicy>,
+    comp: Option<&CompositionPolicy>,
+    principal: &Principal,
+) -> Result<(), String> {
+    if scopes(comp, ACTION_GRANT_EGRESS) {
+        let comp = comp.expect("scoped");
+        each_egress(rules, |i, host, g| {
+            if !comp.permits_egress(principal, &g) {
+                return Err(format!(
+                    "requires egress {} to host {host:?} (requires.egress.http[{i}]), which the compositionPolicy does not permit",
+                    g.method
+                ));
+            }
+            Ok(())
+        })?;
+    }
+    let Some(policy) = policy else {
+        return Err("requires egress (requires.egress.http), but the runtime has no --sandbox-policy-file, which is required to grant egress (grantEgress)".to_string());
+    };
+    each_egress(rules, |i, host, g| {
+        if !policy.permits_egress(principal, &g) {
+            return Err(format!(
+                "requires egress {} to host {host:?} (requires.egress.http[{i}]), which the operator policy (--sandbox-policy-file) does not permit",
+                g.method
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// Visits every (rule, method) pair of the module's egress rules.
+fn each_egress(
+    rules: &[HttpRule],
+    mut visit: impl FnMut(usize, &str, EgressGrant) -> Result<(), String>,
+) -> Result<(), String> {
+    for (i, r) in rules.iter().enumerate() {
+        let host = if r.host.is_empty() {
+            &r.host_pattern
+        } else {
+            &r.host
+        };
+        for m in &r.methods {
+            let g = EgressGrant {
+                host: r.host.clone(),
+                host_pattern: r.host_pattern.clone(),
+                method: m.clone(),
+                path: r.path_prefix.clone(),
+            };
+            visit(i, host, g)?;
+        }
+    }
+    Ok(())
+}
+
+/// Runs both policy layers over the module's env bindings: setEnv once with
+/// every bound name as context.keys, then spendCredential per binding.
+fn admit_env(
+    bindings: &[EnvBinding],
+    policy: Option<&OperatorPolicy>,
+    comp: Option<&CompositionPolicy>,
+    principal: &Principal,
+) -> Result<(), String> {
+    let keys: Vec<String> = bindings.iter().map(|b| b.name.clone()).collect();
+    let names = format!("[{}]", keys.join(" "));
+    if scopes(comp, ACTION_SET_ENV) && !comp.expect("scoped").permits_env(principal, &keys) {
+        return Err(format!(
+            "requires env {names} (requires.env), which the compositionPolicy does not permit (setEnv)"
+        ));
+    }
+    let Some(policy) = policy else {
+        return Err(format!(
+            "requires env {names} (requires.env), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities"
+        ));
+    };
+    if !policy.permits_env(principal, &keys) {
+        return Err(format!(
+            "requires env {names} (requires.env), which the operator policy (--sandbox-policy-file) does not permit (setEnv)"
+        ));
+    }
+    let narrows = scopes(comp, ACTION_SPEND_CREDENTIAL);
+    for b in bindings {
+        // An env binding spends a credential with no repository in play, so
+        // the composition layer sees no context.repository.
+        if narrows
+            && !comp.expect("scoped").permits_spend_credential(
+                principal,
+                &b.from_credential.name,
+                "",
+            )
+        {
+            return Err(format!(
+                "requires env {} from credential {:?}, which the compositionPolicy does not permit (spendCredential)",
+                b.name, b.from_credential.name
+            ));
+        }
+        if !policy.permits_spend_credential(principal, &b.from_credential.name) {
+            return Err(format!(
+                "requires env {} from credential {:?}, which the operator policy (--sandbox-policy-file) does not permit (spendCredential)",
+                b.name, b.from_credential.name
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Refuses, by name, every source feature the port does not carry yet - the
@@ -34,9 +232,6 @@ pub fn admit(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<A
 /// allow. `function validate` deliberately does not apply it: an OCI source
 /// is describable offline even though this runtime cannot serve it yet.
 pub fn require_ported(m: &ModuleSource) -> Result<(), String> {
-    if !m.from.is_empty() {
-        return Err("module.from is not implemented yet in the Rust runtime".to_string());
-    }
     match m.r#type.as_str() {
         "OCI" | "HTTP" => {
             return Err(format!(
@@ -45,9 +240,6 @@ pub fn require_ported(m: &ModuleSource) -> Result<(), String> {
             ));
         }
         _ => {}
-    }
-    if !m.manifest_path.is_empty() {
-        return Err("module.manifestPath is not implemented yet in the Rust runtime".to_string());
     }
     Ok(())
 }
@@ -103,7 +295,7 @@ fn run_options(input: &Input, ceilings: &function_wasm_engine::Config) -> Result
 /// The module source shape check, ported from `internal/module.Validate`:
 /// Type is set and exactly one of the object it names (oci, http, path) or
 /// From is set, with no object of another type present.
-fn validate_source(src: &ModuleSource) -> Result<(), String> {
+pub(crate) fn validate_source(src: &ModuleSource) -> Result<(), String> {
     if src.r#type.is_empty() {
         return Err("module.type is required: OCI, HTTP or Path".to_string());
     }
@@ -196,15 +388,6 @@ fn oci_ref_is_pinned(r: &str) -> bool {
     !repo.is_empty() && !repo.contains(char::is_whitespace) && digest_is_valid(digest)
 }
 
-fn digest_is_valid(digest: &str) -> bool {
-    digest.strip_prefix("sha256:").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,10 +410,10 @@ mod tests {
 
     #[test]
     fn admits_a_path_source() {
-        assert_eq!(
-            admit(&path_input("fn.wasm"), &ceilings()).unwrap(),
-            Admitted::default()
-        );
+        let admitted = admit(&path_input("fn.wasm"), &ceilings()).unwrap();
+        assert_eq!(admitted.timeout, None);
+        assert_eq!(admitted.memory_limit, None);
+        assert!(admitted.composition.is_none());
     }
 
     #[test]
@@ -310,14 +493,6 @@ mod tests {
                     ..Default::default()
                 },
                 "limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi",
-            ),
-            (
-                "CompositionPolicyNotImplemented",
-                Input {
-                    composition_policy: "permit(principal, action, resource);".to_string(),
-                    ..path_input("fn.wasm")
-                },
-                "compositionPolicy is not implemented yet in the Rust runtime",
             ),
         ];
         for (name, input, want) in cases {

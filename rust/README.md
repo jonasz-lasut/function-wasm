@@ -47,13 +47,20 @@ without theirs.
 Matching today: admitted steps with limits details and warnings, the
 unknown-field warnings, every non-Cedar refusal family, tool failures
 (unreadable, unparsable and missing files - down to Go's os error wording,
-emulated), stdin, --function-name, and the whole `--resolve` Path flow
-(digest, size, ABI verdict, host imports) in both text and JSON output.
-Known gaps, each requiring the Cedar/authz port or OCI resolution:
-`compositionPolicy` (including its parse-error wording), the operator
-`--sandbox-policy-file`, `module.from` materialisation, and signature
-policy; plus one permanent wording divergence where the Go runtime embeds
-its json decoder's message in a refusal.
+emulated), stdin, --function-name, the whole `--resolve` Path flow (digest,
+size, ABI verdict, host imports, the manifest summary) in both text and
+JSON output, and the policy layers themselves: the `compositionPolicy`
+Cedar layer (boundary-correct `pullModule`/`spendCredential` fences,
+`module.from` materialisation against an XR, docker.io reference
+normalization included), the operator `--sandbox-policy-file` (grants, the
+per-repository `requireSignature` decision, the SSRF `dialAddress` rule
+compiler with Go's exact load errors), and the full three-layer manifest
+decision over `manifestPath` modules - a private `/tmp` and env bindings
+are granted, refused and materialised exactly as the Go runtime does.
+Two known gaps remain: egress that every layer permits (the egress client
+is not ported, refused as "no egress mechanism"), and one permanent
+wording divergence per embedded library message (cedar parse errors, Go's
+json decoder).
 
 Serving today: `module.type: Path` sources under `--module-dir`,
 `limits.timeout` / `limits.memory` against the `--module-timeout` /
@@ -63,17 +70,17 @@ results for every guest failure, and the meta fill for guests that omit it.
 
 ## Not ported yet (refused or absent, in rough order of the plan)
 
-- OCI and HTTP module sources, cosign verification, registry credentials
-- The module manifest and the three-layer capability decision (Cedar on
-  both layers, `AdmitRequires`); with no manifests there are no sandbox
-  grants, so every module gets the default sandbox and `wasmfn.http` answers
-  with the no-grant refusal
-- `module.from`, `compositionPolicy`, `limits.concurrency`
-- The egress client (SSRF block list, budgets, rate limit, audit lines)
+- OCI and HTTP module sources (fetching; their admission, locations and
+  policy fences are ported), cosign verification, registry credentials
+- The egress client (SSRF block list judged per resolved address, budgets,
+  rate limit, audit lines); egress the layers permit is refused as
+  "no egress mechanism" until it lands
 - The disk caches (fetched blobs, serialized artifacts, manifests), idle
   TTL, LRU bounds, `--warm-modules`, `/readyz`
-- Metrics, `--max-concurrent-runs`, `--max-total-run-memory`, fair
-  scheduling
+- `limits.concurrency`, metrics, `--max-concurrent-runs`,
+  `--max-total-run-memory`, fair scheduling
+- minRuntime enforcement runs against an empty version (the Go development
+  build's behaviour) until the release packaging stamps one
 - ABI v2 (the component world) - lands in this tree once the v1 base holds
 
 ## Known divergences from the Go runtime
