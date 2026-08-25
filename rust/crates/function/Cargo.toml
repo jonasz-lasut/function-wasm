@@ -40,6 +40,9 @@ tonic-reflection = "0.14"
 tracing.workspace = true
 
 [dev-dependencies]
+# The crate's own integration tests use the test registry.
+function-wasm = { path = ".", features = ["testutil"] }
+tracing-subscriber = "0.3"
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 tempfile = "3"
 wat = "1"
