@@ -1650,6 +1650,7 @@ dependencies = [
  "clap",
  "flate2",
  "function-sdk-rust",
+ "function-wasm",
  "function-wasm-engine",
  "hex",
  "http",
@@ -1671,6 +1672,7 @@ dependencies = [
  "tonic-health",
  "tonic-reflection",
  "tracing",
+ "tracing-subscriber",
  "wat",
 ]
 
