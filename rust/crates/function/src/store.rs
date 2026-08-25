@@ -101,6 +101,65 @@ impl Store {
     }
 }
 
+/// One stored blob, for the sweep.
+pub struct Entry {
+    pub path: PathBuf,
+    pub size: u64,
+    pub last_used: SystemTime,
+}
+
+impl Store {
+    /// Lists the store's blobs, temporary files excluded.
+    pub fn entries(&self) -> Vec<Entry> {
+        let Ok(dir) = std::fs::read_dir(&self.dir) else {
+            return Vec::new();
+        };
+        dir.flatten()
+            .filter_map(|e| {
+                let meta = e.metadata().ok()?;
+                if meta.is_dir() || e.file_name().to_string_lossy().contains(TMP_MARKER) {
+                    return None;
+                }
+                Some(Entry {
+                    path: e.path(),
+                    size: meta.len(),
+                    last_used: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                })
+            })
+            .collect()
+    }
+}
+
+/// Removes least recently used blobs across stores until they hold at most
+/// max_bytes together - down to nine tenths of it, so consecutive sweeps do
+/// not each remove one entry. Entries are immutable and reproducible, so
+/// removal is always safe: the next request fetches or compiles again.
+/// Reports the bytes freed; max_bytes 0 sweeps nothing.
+pub fn sweep(stores: &[&Store], max_bytes: u64) -> u64 {
+    if max_bytes == 0 {
+        return 0;
+    }
+    let mut all: Vec<Entry> = stores.iter().flat_map(|s| s.entries()).collect();
+    let total: u64 = all.iter().map(|e| e.size).sum();
+    if total <= max_bytes {
+        return 0;
+    }
+    let target = max_bytes / 10 * 9;
+    all.sort_by_key(|e| e.last_used);
+    let mut remaining = total;
+    let mut freed = 0;
+    for e in all {
+        if remaining <= target {
+            break;
+        }
+        if std::fs::remove_file(&e.path).is_ok() {
+            remaining -= e.size;
+            freed += e.size;
+        }
+    }
+    freed
+}
+
 /// Removes every subdirectory of the compiled cache other than the current
 /// engine version's, once it has gone unused for STALE_VERSION_AGE - run at
 /// startup, as the Go runtime does.
@@ -181,6 +240,34 @@ mod tests {
         assert_eq!(s.get(&digest), None);
         // Content that does not match its address is refused.
         assert!(s.put(&digest, b"other").is_err());
+    }
+
+    #[test]
+    fn sweeps_least_recently_used_entries_across_stores() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = Store::open_dir(dir.path().join("a"), false).expect("open");
+        let b = Store::open_dir(dir.path().join("b"), false).expect("open");
+        a.put("sha256:old", &[0u8; 400]).expect("put");
+        b.put("sha256:new", &[0u8; 400]).expect("put");
+        // Age the first entry so the sweep picks it.
+        let old = dir.path().join("a").join("sha256-old");
+        let past = SystemTime::now() - std::time::Duration::from_secs(3600);
+        let times = std::fs::FileTimes::new()
+            .set_accessed(past)
+            .set_modified(past);
+        std::fs::File::options()
+            .append(true)
+            .open(&old)
+            .expect("open")
+            .set_times(times)
+            .expect("times");
+
+        assert_eq!(sweep(&[&a, &b], 0), 0, "0 sweeps nothing");
+        assert_eq!(sweep(&[&a, &b], 2000), 0, "under the bound sweeps nothing");
+        let freed = sweep(&[&a, &b], 700);
+        assert_eq!(freed, 400, "the least recently used entry goes");
+        assert!(a.get("sha256:old").is_none());
+        assert!(b.get("sha256:new").is_some());
     }
 
     #[test]

@@ -150,6 +150,12 @@ struct ServeArgs {
     /// (fatal results); a module sets the TTL of its own responses.
     #[arg(long, value_parser = duration::parse)]
     ttl: Option<Duration>,
+
+    /// Bound in MB on the on-disk caches together (fetched modules and
+    /// compiled artifacts); the least recently used entries are removed
+    /// past it, at startup and every ten minutes. 0 leaves them unbounded.
+    #[arg(long, default_value_t = 0, env = "MAX_CACHE_SIZE")]
+    max_cache_size: u64,
 }
 
 fn main() -> ExitCode {
@@ -272,6 +278,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
         }
     };
     let compiled = open(compiled_parent.join(&version), false);
+    let compiled_store = Arc::clone(&compiled);
     let _modules = open(cache_dir.join(store::MODULES_DIR), true);
     let _manifests = open(cache_dir.join(store::MANIFESTS_DIR), false);
     let blobs = Arc::clone(&_modules);
@@ -298,18 +305,38 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
         resolver: Arc::clone(&resolver),
         ttl: args.ttl.unwrap_or(function_sdk_rust::response::DEFAULT_TTL),
         policy,
-        egress,
+        egress: Arc::clone(&egress),
         step_slots: Arc::clone(&step_slots),
         verifier,
     };
     {
-        // The periodic sweep: idle per-step slot entries every ten minutes.
+        // The periodic sweep, every ten minutes (and the cache sweep once at
+        // startup): the on-disk caches down to --max-cache-size, idle
+        // per-step slot entries, idle egress rate-limit buckets.
         let step_slots = Arc::clone(&step_slots);
+        let egress = Arc::clone(&egress);
+        let stores = [
+            Arc::clone(&_modules),
+            Arc::clone(&compiled_store),
+            Arc::clone(&_manifests),
+        ];
+        let max_cache_bytes = args.max_cache_size << 20;
+        let sweep_stores = move || {
+            let refs: Vec<&store::Store> = stores.iter().map(Arc::as_ref).collect();
+            let freed = store::sweep(&refs, max_cache_bytes);
+            if freed > 0 {
+                tracing::info!(freed_bytes = freed, "Swept the on-disk caches");
+            }
+        };
+        sweep_stores();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(10 * 60));
+            tick.tick().await; // The first tick fires immediately.
             loop {
                 tick.tick().await;
                 step_slots.sweep_idle();
+                egress.sweep_rate_limiters();
+                sweep_stores();
             }
         });
     }

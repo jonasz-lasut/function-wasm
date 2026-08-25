@@ -164,6 +164,19 @@ impl Egress {
         })
     }
 
+    /// Removes rate-limit entries for modules not seen for ten minutes, so a
+    /// module that stops being served does not leak its bucket. Called by
+    /// the same periodic sweep that trims the caches.
+    pub fn sweep_rate_limiters(&self) {
+        if let Some(rl) = &self.rate_limits {
+            let cutoff = Instant::now() - Duration::from_secs(10 * 60);
+            rl.entries
+                .lock()
+                .expect("poisoned")
+                .retain(|_, b| b.last >= cutoff);
+        }
+    }
+
     /// Names the block-list entry that refuses ip, or None when ip may be
     /// dialled: an operator forbid wins over an operator permit, which wins
     /// over the defaults; an IPv4-mapped IPv6 address is judged as the IPv4
