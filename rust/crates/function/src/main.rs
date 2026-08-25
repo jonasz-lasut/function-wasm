@@ -17,6 +17,7 @@ mod quantity;
 mod resolver;
 mod runner;
 mod sandboxenv;
+mod store;
 mod validate;
 
 use std::path::PathBuf;
@@ -81,6 +82,21 @@ struct ServeArgs {
     /// PEM file with one or more cosign public keys.
     #[arg(long, env = "COSIGN_KEY")]
     cosign_key: Option<PathBuf>,
+
+    /// Keep compiled modules in memory between requests. Off, every request
+    /// maps the module's compiled artifact from disk and releases it after.
+    #[arg(long, default_value_t = true, env = "ENABLE_MEMORY_CACHE", action = clap::ArgAction::Set)]
+    enable_memory_cache: bool,
+
+    /// Most compiled modules kept in memory at once; the least recently
+    /// used is dropped beyond it. 0 leaves it to the idle timeout.
+    #[arg(long, default_value_t = 0, env = "MAX_CACHED_MODULES")]
+    max_cached_modules: usize,
+
+    /// Most modules compiled at once; further first requests wait their
+    /// turn.
+    #[arg(long, default_value_t = 1, env = "MAX_CONCURRENT_COMPILES")]
+    max_concurrent_compiles: usize,
 }
 
 fn main() -> ExitCode {
@@ -150,9 +166,38 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
     .expect("cannot create the wasmtime engine");
     let engine = Arc::new(engine);
 
+    // The on-disk caches under the fixed directory: fetched blobs (for the
+    // OCI/HTTP sources when they land), the compiled artifacts namespaced
+    // by the engine version, and module manifests; a filesystem that cannot
+    // hold them stops the runtime here (mount an emptyDir on a read-only
+    // root filesystem).
+    let cache_dir = std::path::Path::new(store::DEFAULT_DIR);
+    let compiled_parent = cache_dir.join(store::COMPILED_DIR);
+    let version = function_wasm_engine::version();
+    store::remove_stale_versions(&compiled_parent, &version);
+    let open = |dir: std::path::PathBuf, verify: bool| match store::Store::open_dir(dir, verify) {
+        Ok(s) => Arc::new(s),
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+    let compiled = open(compiled_parent.join(&version), false);
+    let _modules = open(cache_dir.join(store::MODULES_DIR), true);
+    let _manifests = open(cache_dir.join(store::MANIFESTS_DIR), false);
+
     let function = runner::WasmFunction {
         engine: Arc::clone(&engine),
-        cache: cache::ModuleCache::new(Arc::clone(&engine)),
+        cache: cache::ModuleCache::new(
+            Arc::clone(&engine),
+            cache::CacheOptions {
+                disk: Some(compiled),
+                no_memory: !args.enable_memory_cache,
+                max_entries: args.max_cached_modules,
+                max_concurrent_compiles: args.max_concurrent_compiles,
+                ..Default::default()
+            },
+        ),
         resolver: Arc::new(resolver::Resolver::new(
             args.module_dir,
             args.max_module_size << 20,
