@@ -303,7 +303,7 @@ mod tests {
         for (lang, o) in examples {
             let files = render(o).expect("render");
             let example = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../examples")
+                .join("../../examples")
                 .join(format!("hello-{lang}"));
             for (name, rendered) in &files {
                 if name == "go.mod" {
