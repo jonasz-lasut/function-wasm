@@ -118,7 +118,7 @@ fn type_matches(ft: &FuncType, params: &[ValType], results: &[ValType]) -> bool 
             .all(|(got, want)| kind(&got) == kind(want))
 }
 
-fn signature_of(ft: &FuncType) -> String {
+pub(crate) fn signature_of(ft: &FuncType) -> String {
     signature(
         &ft.params().collect::<Vec<_>>(),
         &ft.results().collect::<Vec<_>>(),

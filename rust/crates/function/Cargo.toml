@@ -43,3 +43,6 @@ tracing.workspace = true
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 tempfile = "3"
 wat = "1"
+
+[features]
+testutil = []

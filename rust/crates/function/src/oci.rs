@@ -47,17 +47,23 @@ pub struct OciManifest {
     #[serde(default, rename = "mediaType")]
     pub media_type: String,
     #[serde(default)]
+    pub config: Option<Descriptor>,
+    #[serde(default)]
     pub layers: Vec<Descriptor>,
+    #[serde(default)]
+    pub annotations: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     manifests: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Descriptor {
     #[serde(default, rename = "mediaType")]
     pub media_type: String,
     #[serde(default)]
     pub digest: String,
+    #[serde(default)]
+    pub size: i64,
     #[serde(default)]
     pub annotations: std::collections::BTreeMap<String, String>,
 }
@@ -201,6 +207,110 @@ impl RegistryClient {
             return Err(format!("module exceeds the size limit of {limit} bytes"));
         }
         Ok(out)
+    }
+
+    /// Fetches a manifest by tag or digest and returns its raw bytes and
+    /// content digest - what guestfn inspect and manifest show read.
+    pub fn raw_manifest(&self, reference: &str) -> Result<(Vec<u8>, String), String> {
+        let url = format!("{}/v2/{}/manifests/{reference}", self.base, self.repository);
+        let accept = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json";
+        let raw = self
+            .get(&url, Some(accept), usize::MAX)
+            .map_err(|e| format!("cannot fetch manifest {reference}: {e}"))?;
+        let digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(&raw)));
+        Ok((raw, digest))
+    }
+
+    /// Uploads one blob (monolithic: POST an upload, PUT the bytes) - what
+    /// guestfn push publishes layers and configs with.
+    pub fn push_blob(&self, digest: &str, data: &[u8]) -> Result<(), String> {
+        let url = format!("{}/v2/{}/blobs/uploads/", self.base, self.repository);
+        let rsp = self
+            .authed(|req| req, reqwest::Method::POST, &url, Vec::new(), None)
+            .map_err(|e| format!("cannot start blob upload: {e}"))?;
+        let location = rsp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .ok_or("registry answered the upload with no Location")?;
+        let upload = if location.starts_with("http") {
+            location.to_string()
+        } else {
+            format!("{}{}", self.base, location)
+        };
+        let sep = if upload.contains('?') { '&' } else { '?' };
+        let upload = format!("{upload}{sep}digest={digest}");
+        self.authed(
+            |req| req.header("Content-Type", "application/octet-stream"),
+            reqwest::Method::PUT,
+            &upload,
+            data.to_vec(),
+            None,
+        )
+        .map_err(|e| format!("cannot upload blob {digest}: {e}"))?;
+        Ok(())
+    }
+
+    /// Publishes a manifest under a tag or digest.
+    pub fn push_manifest(
+        &self,
+        reference: &str,
+        media_type: &str,
+        data: &[u8],
+    ) -> Result<(), String> {
+        let url = format!("{}/v2/{}/manifests/{reference}", self.base, self.repository);
+        self.authed(
+            |req| req,
+            reqwest::Method::PUT,
+            &url,
+            data.to_vec(),
+            Some(media_type),
+        )
+        .map_err(|e| format!("cannot push manifest {reference}: {e}"))?;
+        Ok(())
+    }
+
+    /// One authenticated non-GET request through the same anonymous ->
+    /// challenge -> token dance as get.
+    fn authed(
+        &self,
+        decorate: impl Fn(reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder,
+        method: reqwest::Method,
+        url: &str,
+        body: Vec<u8>,
+        content_type: Option<&str>,
+    ) -> Result<reqwest::blocking::Response, String> {
+        let attempt = |bearer: Option<&str>| -> Result<reqwest::blocking::Response, String> {
+            let mut req = self.http.request(method.clone(), url).body(body.clone());
+            if let Some(ct) = content_type {
+                req = req.header("Content-Type", ct);
+            }
+            req = decorate(req);
+            if let Some(t) = bearer {
+                req = req.bearer_auth(t);
+            } else if let Some(auth) = &self.auth {
+                req = req.basic_auth(&auth.username, Some(&auth.password));
+            }
+            req.send().map_err(|e| e.to_string())
+        };
+        let cached = self.token.lock().expect("poisoned").clone();
+        let mut rsp = attempt(cached.as_deref())?;
+        if rsp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            let challenge = rsp
+                .headers()
+                .get("www-authenticate")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            if let Some(token) = self.bearer_token(&challenge)? {
+                *self.token.lock().expect("poisoned") = Some(token.clone());
+                rsp = attempt(Some(&token))?;
+            }
+        }
+        if !rsp.status().is_success() {
+            return Err(rsp.status().to_string());
+        }
+        Ok(rsp)
     }
 
     /// Answers a Bearer challenge: GET realm?service=&scope=, with the
@@ -438,8 +548,8 @@ fn docker_config_auth(registry: &str, raw: &[u8]) -> Option<Auth> {
     None
 }
 
-#[cfg(test)]
-pub(crate) mod testregistry {
+#[cfg(any(test, feature = "testutil"))]
+pub mod testregistry {
     //! A minimal distribution registry for tests: manifests and blobs by
     //! digest, optionally behind the Bearer token flow.
 
@@ -454,38 +564,89 @@ pub(crate) mod testregistry {
         pub bearer: bool,
     }
 
+    /// Reads one HTTP request: the head up to the blank line, then
+    /// Content-Length bytes of body.
+    fn read_request(conn: &mut std::net::TcpStream) -> (String, Vec<u8>) {
+        use std::io::Read as _;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let split = loop {
+            match conn.read(&mut chunk) {
+                Ok(0) => break buf.len(),
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break i + 4;
+                    }
+                }
+                Err(_) => break buf.len(),
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..split.min(buf.len())]).into_owned();
+        let length = head
+            .lines()
+            .find_map(|l| {
+                l.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(str::trim)
+                    .map(str::to_string)
+            })
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        let mut body = buf[split.min(buf.len())..].to_vec();
+        while body.len() < length {
+            match conn.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => body.extend_from_slice(&chunk[..n]),
+            }
+        }
+        (head, body)
+    }
+
     pub fn serve(registry: TestRegistry) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
-        let registry = Arc::new(registry);
+        let bearer = registry.bearer;
+        let manifests = Arc::new(std::sync::Mutex::new(registry.manifests));
+        let blobs = Arc::new(std::sync::Mutex::new(registry.blobs));
         std::thread::spawn(move || {
             for conn in listener.incoming().flatten() {
                 let mut conn = conn;
-                let mut buf = [0u8; 4096];
-                let n = std::io::Read::read(&mut conn, &mut buf).unwrap_or(0);
-                let head = String::from_utf8_lossy(&buf[..n]).into_owned();
-                let path = head
-                    .split_whitespace()
-                    .nth(1)
-                    .unwrap_or_default()
-                    .to_string();
-                let authorized = !registry.bearer
-                    || head.contains("Bearer testtoken")
-                    || path.starts_with("/token");
-                let (status, body): (&str, Vec<u8>) = if !authorized {
+                let (head, body) = read_request(&mut conn);
+                let mut words = head.split_whitespace();
+                let method = words.next().unwrap_or_default().to_string();
+                let path = words.next().unwrap_or_default().to_string();
+                let authorized =
+                    !bearer || head.contains("Bearer testtoken") || path.starts_with("/token");
+                let mut extra_header = String::new();
+                let (status, rsp_body): (&str, Vec<u8>) = if !authorized {
                     (
                         "401 Unauthorized\r\nWww-Authenticate: Bearer realm=\"http://REALM/token\",service=\"registry\"",
                         b"{}".to_vec(),
                     )
                 } else if path.starts_with("/token") {
                     ("200 OK", br#"{"token":"testtoken"}"#.to_vec())
+                } else if method == "POST" && path.ends_with("/blobs/uploads/") {
+                    extra_header = "Location: /upload\r\n".to_string();
+                    ("202 Accepted", Vec::new())
+                } else if method == "PUT" && path.starts_with("/upload") {
+                    let digest = path.split("digest=").nth(1).unwrap_or_default().to_string();
+                    blobs.lock().expect("poisoned").insert(digest, body);
+                    ("201 Created", Vec::new())
+                } else if method == "PUT" && path.contains("/manifests/") {
+                    let key = path.split("/manifests/").nth(1).unwrap_or_default();
+                    let mut m = manifests.lock().expect("poisoned");
+                    // Addressable by the pushed reference and by content digest.
+                    m.insert(key.to_string(), body.clone());
+                    m.insert(digest_of(&body), body);
+                    ("201 Created", Vec::new())
                 } else if let Some(digest) = path.split("/manifests/").nth(1) {
-                    match registry.manifests.get(digest) {
+                    match manifests.lock().expect("poisoned").get(digest) {
                         Some(m) => ("200 OK", m.clone()),
                         None => ("404 Not Found", Vec::new()),
                     }
                 } else if let Some(digest) = path.split("/blobs/").nth(1) {
-                    match registry.blobs.get(digest) {
+                    match blobs.lock().expect("poisoned").get(digest) {
                         Some(b) => ("200 OK", b.clone()),
                         None => ("404 Not Found", Vec::new()),
                     }
@@ -494,11 +655,11 @@ pub(crate) mod testregistry {
                 };
                 let status = status.replace("REALM", &addr.to_string());
                 let header = format!(
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
+                    "HTTP/1.1 {status}\r\n{extra_header}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    rsp_body.len()
                 );
                 let _ = conn.write_all(header.as_bytes());
-                let _ = conn.write_all(&body);
+                let _ = conn.write_all(&rsp_body);
             }
         });
         addr.to_string()
