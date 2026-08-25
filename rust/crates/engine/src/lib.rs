@@ -132,7 +132,7 @@ pub(crate) struct CallState {
 
 /// A compiled, ABI-checked guest module. It is safe for concurrent runs and
 /// cheap to clone; wasmtime frees the code memory when the last clone drops.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Module(pub(crate) wasmtime::Module);
 
 /// What Inspect reads from a module: its wasmfn host imports and, when the
@@ -242,6 +242,32 @@ impl Engine {
         })
     }
 
+    /// Returns wasmtime's compiled artifact for m: machine code that this
+    /// engine - same wasmtime version, same host - can load again with
+    /// deserialize_file instead of recompiling.
+    pub fn serialize(&self, m: &Module) -> Result<Vec<u8>, Error> {
+        m.0.serialize()
+            .map_err(|e| Error(format!("cannot serialize module: {e}")))
+    }
+
+    /// Loads an artifact serialize produced, mapping the file so the code
+    /// stays file-backed instead of being copied to the heap. wasmtime
+    /// refuses artifacts from another version or host, and the ABI is
+    /// checked again, so a stale or foreign artifact is an error the caller
+    /// treats as a cache miss.
+    pub fn deserialize_file(&self, path: &std::path::Path) -> Result<Module, Error> {
+        // SAFETY: the artifact comes from the runtime's own cache directory,
+        // written by serialize; wasmtime validates its header and version.
+        let m = unsafe { wasmtime::Module::deserialize_file(&self.inner, path) }.map_err(|e| {
+            Error(format!(
+                "cannot load compiled module: {}",
+                first_line(&e.to_string())
+            ))
+        })?;
+        abi::check_abi(&m)?;
+        Ok(Module(m))
+    }
+
     /// Only the binary format is accepted, as in the Go runtime: a module is
     /// what a toolchain produced, never text.
     fn compiled(&self, wasm: &[u8]) -> Result<wasmtime::Module, Error> {
@@ -302,6 +328,20 @@ impl Drop for RunningGuard<'_> {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::Relaxed);
     }
+}
+
+/// Identifies the wasmtime release and host that compiled artifacts are only
+/// valid for - the compiled cache is namespaced by it, so a bump changes the
+/// namespace without anyone remembering to. Distinct from the Go runtime's
+/// namespace on purpose: the two engines' artifacts are never assumed
+/// interchangeable, even at the same wasmtime version.
+pub fn version() -> String {
+    format!(
+        "rust-v{}-{}-{}",
+        env!("FUNCTION_WASM_WASMTIME_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
 }
 
 /// The first line of a multi-line wasmtime message: the finding, without the

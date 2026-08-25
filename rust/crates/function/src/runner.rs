@@ -344,7 +344,7 @@ mod tests {
     fn function(dir: Option<std::path::PathBuf>) -> WasmFunction {
         let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
         WasmFunction {
-            cache: ModuleCache::new(Arc::clone(&engine)),
+            cache: ModuleCache::new(Arc::clone(&engine), crate::cache::CacheOptions::default()),
             engine,
             resolver: Arc::new(Resolver::new(dir, 128 << 20)),
             ttl: Duration::from_secs(60),
