@@ -67,7 +67,9 @@ fn response_bytes() -> Vec<u8> {
 fn fixed_response_round_trip() {
     let e = engine();
     let rsp = response_bytes();
-    let m = e.compile(fixed(&rsp).as_bytes()).expect("compile");
+    let m = e
+        .compile(&wat::parse_str(fixed(&rsp)).expect("wat"))
+        .expect("compile");
     let out = e.run(&m, b"anything", RunOptions::default()).expect("run");
     assert_eq!(out, rsp);
 }
@@ -115,7 +117,7 @@ fn check_abi_refusals() {
     let e = engine();
     for (name, wat, want) in cases {
         let err = e
-            .compile(wat.as_bytes())
+            .compile(&wat::parse_str(wat).expect("wat"))
             .err()
             .unwrap_or_else(|| panic!("{name}: compile should fail"));
         assert_eq!(&err.to_string(), want, "{name}");
@@ -130,7 +132,9 @@ fn run_deadline() {
       (func (export "wasmfn_run") (param i32 i32) (result i64)
         (loop $l br $l)
         i64.const 0))"#;
-    let m = e.compile(wat.as_bytes()).expect("compile");
+    let m = e
+        .compile(&wat::parse_str(wat).expect("wat"))
+        .expect("compile");
     let opts = RunOptions {
         timeout: Some(Duration::from_millis(50)),
         ..Default::default()
@@ -153,7 +157,9 @@ fn run_exit_status() {
         i32.const 7
         call $exit
         i64.const 0))"#;
-    let m = e.compile(wat.as_bytes()).expect("compile");
+    let m = e
+        .compile(&wat::parse_str(wat).expect("wat"))
+        .expect("compile");
     let err = e
         .run(&m, b"", RunOptions::default())
         .expect_err("should exit");
@@ -173,7 +179,9 @@ fn run_invalid_response_buffer() {
           (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const {}))"#,
         packed as i64
     );
-    let m = e.compile(wat.as_bytes()).expect("compile");
+    let m = e
+        .compile(&wat::parse_str(wat).expect("wat"))
+        .expect("compile");
     let err = e
         .run(&m, b"", RunOptions::default())
         .expect_err("should refuse the buffer");
@@ -201,7 +209,9 @@ fn http_without_grant_is_refused_in_band() {
         data = wat_bytes(request),
         len = request.len(),
     );
-    let m = e.compile(wat.as_bytes()).expect("compile");
+    let m = e
+        .compile(&wat::parse_str(wat).expect("wat"))
+        .expect("compile");
     let out = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(
         String::from_utf8_lossy(&out),

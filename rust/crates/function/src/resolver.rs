@@ -57,8 +57,12 @@ impl Resolver {
     /// stamped: a same-size rewrite within the mtime granularity is caught
     /// here and forgotten, so the next request re-hashes.
     pub fn fetch(&self, resolved: &Resolved) -> Result<Vec<u8>, String> {
-        let f = std::fs::File::open(&resolved.full)
-            .map_err(|e| format!("cannot read module file: {e}"))?;
+        let f = std::fs::File::open(&resolved.full).map_err(|e| {
+            format!(
+                "cannot read module file: {}",
+                go_io_error("open", &resolved.full, &e)
+            )
+        })?;
         let b = read_capped(f, self.max_size)?;
         let got = digest_of(&b);
         if got != resolved.digest {
@@ -111,7 +115,8 @@ impl Resolver {
     }
 
     fn file_digest(&self, full: &Path) -> Result<String, String> {
-        let st = std::fs::metadata(full).map_err(|e| format!("cannot stat module file: {e}"))?;
+        let st = std::fs::metadata(full)
+            .map_err(|e| format!("cannot stat module file: {}", go_io_error("stat", full, &e)))?;
         if st.is_dir() {
             return Err(format!(
                 "module file {:?} is a directory",
@@ -134,8 +139,8 @@ impl Resolver {
         {
             return Ok(s.digest.clone());
         }
-        let mut f =
-            std::fs::File::open(full).map_err(|e| format!("cannot read module file: {e}"))?;
+        let mut f = std::fs::File::open(full)
+            .map_err(|e| format!("cannot read module file: {}", go_io_error("open", full, &e)))?;
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 64 * 1024];
         loop {
@@ -158,6 +163,18 @@ impl Resolver {
         );
         Ok(digest)
     }
+}
+
+/// Renders an I/O failure the way Go's os package wraps it ("open <path>:
+/// no such file or directory"): these strings reach refusal messages the Go
+/// runtime pins, so the Rust runtime prints the same words.
+pub(crate) fn go_io_error(op: &str, path: &Path, e: &std::io::Error) -> String {
+    let detail = match e.kind() {
+        std::io::ErrorKind::NotFound => "no such file or directory".to_string(),
+        std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
+        _ => e.to_string(),
+    };
+    format!("{op} {}: {detail}", path.display())
 }
 
 fn read_capped(f: std::fs::File, limit: u64) -> Result<Vec<u8>, String> {

@@ -16,21 +16,44 @@ Two crates:
 - `crates/function` - the gRPC function (binary `function`), on
   [function-sdk-rust](https://crates.io/crates/function-sdk-rust): Input
   admission, the Path source resolver, an in-memory compiled-module cache,
-  and the run flow of `cmd/function/fn.go`.
+  the run flow of `cmd/function/fn.go`, and the `validate` subcommand -
+  the same offline admission as the Go tool, over the same files and flags.
 
 ```sh
 cargo build
 cargo test
 cargo run -p function-wasm -- --insecure --module-dir ../examples/hello-go
+cargo run -p function-wasm -- validate ../cmd/function/testdata/validate/ok.yaml
 ```
 
 ## Parity contract
 
 Where a check is implemented, its refusal string is the Go runtime's,
-verbatim - the strings are the conformance surface (`cmd/function/testdata/
-validate/`, the troubleshooting table in AGENTS.md). Anything the port does
+verbatim - the strings are the conformance surface. Anything the port does
 not carry yet is refused with a message naming it, never silently ignored,
 so nothing runs wider than the Go runtime would allow.
+
+**The claim is measured, not asserted**: `tests/conformance.rs` builds the
+Go runtime from this repository and runs its `function validate` as the
+reference against the Rust binary - same fixtures
+(`cmd/function/testdata/validate/`), same flags, same stdin - and diffs
+stdout, stderr and the exit code. Every case either matches byte-for-byte
+(a mismatch is a parity regression) or sits on a known-gaps list with a
+recorded reason and is required to keep differing - a gap that closes must
+be removed from the list, so the list only ever shrinks deliberately. The
+suite skips without a Go toolchain, like the Go tree's guest tests skip
+without theirs.
+
+Matching today: admitted steps with limits details and warnings, the
+unknown-field warnings, every non-Cedar refusal family, tool failures
+(unreadable, unparsable and missing files - down to Go's os error wording,
+emulated), stdin, --function-name, and the whole `--resolve` Path flow
+(digest, size, ABI verdict, host imports) in both text and JSON output.
+Known gaps, each requiring the Cedar/authz port or OCI resolution:
+`compositionPolicy` (including its parse-error wording), the operator
+`--sandbox-policy-file`, `module.from` materialisation, and signature
+policy; plus one permanent wording divergence where the Go runtime embeds
+its json decoder's message in a refusal.
 
 Serving today: `module.type: Path` sources under `--module-dir`,
 `limits.timeout` / `limits.memory` against the `--module-timeout` /
@@ -49,8 +72,8 @@ results for every guest failure, and the meta fill for guests that omit it.
 - The egress client (SSRF block list, budgets, rate limit, audit lines)
 - The disk caches (fetched blobs, serialized artifacts, manifests), idle
   TTL, LRU bounds, `--warm-modules`, `/readyz`
-- `function validate`, metrics, `--max-concurrent-runs`,
-  `--max-total-run-memory`, fair scheduling
+- Metrics, `--max-concurrent-runs`, `--max-total-run-memory`, fair
+  scheduling
 - ABI v2 (the component world) - lands in this tree once the v1 base holds
 
 ## Known divergences from the Go runtime

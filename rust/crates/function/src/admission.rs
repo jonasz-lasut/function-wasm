@@ -26,11 +26,14 @@ pub fn admit(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<A
     }
     let admitted = run_options(input, ceilings)?;
     validate_source(&input.module).map_err(|e| format!("cannot resolve module: {e}"))?;
+    Ok(admitted)
+}
 
-    // The features the port does not carry yet, refused explicitly. The
-    // module source shape above is already valid, so these name exactly one
-    // missing feature each.
-    let m = &input.module;
+/// Refuses, by name, every source feature the port does not carry yet - the
+/// serve path's guard, so nothing runs wider than the Go runtime would
+/// allow. `function validate` deliberately does not apply it: an OCI source
+/// is describable offline even though this runtime cannot serve it yet.
+pub fn require_ported(m: &ModuleSource) -> Result<(), String> {
     if !m.from.is_empty() {
         return Err("module.from is not implemented yet in the Rust runtime".to_string());
     }
@@ -46,7 +49,7 @@ pub fn admit(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<A
     if !m.manifest_path.is_empty() {
         return Err("module.manifestPath is not implemented yet in the Rust runtime".to_string());
     }
-    Ok(admitted)
+    Ok(())
 }
 
 fn run_options(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<Admitted, String> {
@@ -316,25 +319,26 @@ mod tests {
                 },
                 "compositionPolicy is not implemented yet in the Rust runtime",
             ),
-            (
-                "OCINotImplemented",
-                Input {
-                    module: ModuleSource {
-                        r#type: "OCI".to_string(),
-                        oci: Some(crate::input::OciSource {
-                            r#ref: format!("ghcr.io/example/fn@sha256:{}", "a".repeat(64)),
-                            ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                "module.type OCI is not implemented yet in the Rust runtime; only Path sources are",
-            ),
         ];
         for (name, input, want) in cases {
             let err = admit(input, &ceilings()).expect_err(name);
             assert_eq!(&err, want, "{name}");
         }
+    }
+    #[test]
+    fn require_ported_refuses_unported_sources() {
+        let src = ModuleSource {
+            r#type: "OCI".to_string(),
+            oci: Some(crate::input::OciSource {
+                r#ref: format!("ghcr.io/example/fn@sha256:{}", "a".repeat(64)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            require_ported(&src).expect_err("OCI is not ported"),
+            "module.type OCI is not implemented yet in the Rust runtime; only Path sources are"
+        );
+        assert_eq!(require_ported(&path_input("fn.wasm").module), Ok(()));
     }
 }

@@ -20,6 +20,7 @@ pbjson-types = "0.9"
 prost = "0.14"
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml = "0.9"
 sha2 = "0.11"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tonic = "0.14"
@@ -27,3 +28,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+wat = "1"
