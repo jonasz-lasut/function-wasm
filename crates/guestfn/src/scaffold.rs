@@ -393,6 +393,35 @@ mod tests {
         );
     }
 
+    /// The four polyglot template sets vendor the same run_function.proto:
+    /// one canonical wire contract, four copies kept in lockstep (the
+    /// render-matches-the-examples test extends the lockstep to the
+    /// examples and their generated codecs).
+    #[test]
+    fn vendored_protos_are_identical() {
+        // The first two lines are the per-language vendoring header; the
+        // wire contract below them must be one and the same.
+        let read = |lang: &str| {
+            let raw = TEMPLATES
+                .get_file(format!("{lang}/proto/run_function.proto"))
+                .unwrap_or_else(|| panic!("{lang} template vendors no proto"))
+                .contents();
+            String::from_utf8_lossy(raw)
+                .lines()
+                .skip(2)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let reference = read(LANG_TINYGO);
+        for lang in [LANG_RUST, LANG_ZIG, LANG_C] {
+            assert_eq!(
+                reference,
+                read(lang),
+                "{lang}'s vendored proto differs from tinygo's"
+            );
+        }
+    }
+
     #[test]
     fn write_refuses_overwrite() {
         let dir = tempfile::tempdir().expect("tempdir");

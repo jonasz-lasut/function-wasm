@@ -28,7 +28,8 @@ work=$(mktemp -d)
 trap 'kill "${fn_pid:-}" 2>/dev/null || true; rm -rf "$work"' EXIT
 
 echo "==> building the runtime" >&2
-(cd "$root" && go build -o "$work/function" ./cmd/function)
+(cd "$root" && cargo build --release -p function-wasm >&2)
+cp "$root/target/release/function" "$work/function"
 
 # The runtime's own admission over the example Composition, offline, before
 # anything is served: the same flags the runtime is started with below, and

@@ -1,5 +1,6 @@
 //! Engine tests over WAT fixtures implementing ABI v1, the way the Go
-//! engine's tests use internal/testwasm: a module that returns fixed
+//! engine's tests use WAT fixtures in the spirit of the old Go tree's
+//! internal/testwasm: a module that returns fixed
 //! response bytes, modules that misbehave in one way each, and the ABI
 //! shape refusals.
 

@@ -1,3 +1,0 @@
-apiVersion: apiextensions.crossplane.io/v1
-kind: Composition
-metadata: [not, a, map
