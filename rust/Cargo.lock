@@ -1125,9 +1125,9 @@ checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
 name = "function-sdk-rust"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d60ac6ed4e883336ab4beb72259fbd9acdd9ed78476c7ae8ff8afca4a30f779"
+checksum = "a5c80adc5bd5dfc5ca6928f768417502f2bc858923effda69b0e569a77298b8f"
 dependencies = [
  "clap",
  "pbjson",
