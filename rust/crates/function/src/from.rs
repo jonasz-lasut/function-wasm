@@ -225,34 +225,53 @@ fn kind_of(t: &str) -> &'static str {
     }
 }
 
-/// Whether the operator policy demands a cosign signature for src - settled
-/// before the module is resolved, as the Go runtime does: a required OCI
-/// module is verified with the cosign keys, and a required non-OCI source is
-/// refused here, since it cannot carry a signature.
-pub fn check_signature_requirement(
+/// Whether a module at this source must carry a cosign signature - settled
+/// before it is resolved, as the Go runtime does. With an operator policy
+/// the requirement is per repository (a path source, operator-controlled
+/// and locationless, is never required); without one it is the legacy
+/// all-or-nothing --cosign-key: a configured verifier requires every
+/// module, no key requires none.
+pub fn signature_required(
+    policy: Option<&crate::authz::OperatorPolicy>,
+    verifier_configured: bool,
+    src: &ModuleSource,
+) -> bool {
+    let Some(policy) = policy else {
+        return verifier_configured;
+    };
+    let location = match src.r#type.as_str() {
+        "OCI" => src.oci.as_ref().and_then(|o| oci_location(&o.r#ref).ok()),
+        "HTTP" => src
+            .http
+            .as_ref()
+            .and_then(|h| http_location("module.http.url", &h.url).ok()),
+        _ => None,
+    };
+    location.is_some_and(|l| policy.requires_signature(&l))
+}
+
+/// Why a required non-OCI source cannot run: only OCI artifacts carry a
+/// cosign signature.
+pub fn non_oci_signature_refusal(
     policy: Option<&crate::authz::OperatorPolicy>,
     src: &ModuleSource,
-) -> Result<(), String> {
-    let Some(policy) = policy else { return Ok(()) };
-    let (field, location) = match src.r#type.as_str() {
-        "HTTP" => {
-            let http = src
-                .http
-                .as_ref()
-                .expect("validated: an HTTP source has its object");
-            match http_location("module.http.url", &http.url) {
-                Ok(location) => ("http", location),
-                Err(_) => return Ok(()),
-            }
-        }
-        _ => return Ok(()),
-    };
-    if policy.requires_signature(&location) {
-        return Err(format!(
-            "module.{field} {location:?} requires a cosign signature (operator policy), but only OCI modules can be signature-verified"
-        ));
+) -> String {
+    if policy.is_none() {
+        return "only cosign-signed oci modules are accepted (--cosign-key is set); http and path sources are refused".to_string();
     }
-    Ok(())
+    let (field, location) = match src.r#type.as_str() {
+        "HTTP" => (
+            "http",
+            src.http
+                .as_ref()
+                .and_then(|h| http_location("module.http.url", &h.url).ok())
+                .unwrap_or_default(),
+        ),
+        _ => ("path", src.path.clone()),
+    };
+    format!(
+        "module.{field} {location:?} requires a cosign signature (operator policy), but only OCI modules can be signature-verified"
+    )
 }
 
 #[cfg(test)]

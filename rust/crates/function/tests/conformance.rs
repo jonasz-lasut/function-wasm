@@ -668,3 +668,166 @@ fn validate_resolve_oci_source_against_the_go_runtime() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
+
+/// Cosign verification against the Go runtime: the harness signs an
+/// artifact with a P-256 key (ASN.1 DER ECDSA over SHA-256 of the
+/// simple-signing payload, the shape cosign's key-based flow writes) and
+/// both binaries verify it under the legacy all-or-nothing --cosign-key.
+/// The unsigned refusal is a recorded wording-only gap.
+#[test]
+fn validate_resolve_cosign_against_the_go_runtime() {
+    use p256::ecdsa::signature::Signer as _;
+    use p256::pkcs8::EncodePublicKey as _;
+    use sha2::Digest as _;
+
+    let Some(go) = go_binary() else {
+        eprintln!("skipping: no Go toolchain or the Go build failed");
+        return;
+    };
+    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let cwd = repo_root().join("cmd/function");
+    let digest_of = |b: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)));
+
+    let wasm = wat::parse_str(
+        r#"(module (memory (export "memory") 1)
+          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+    )
+    .expect("wat");
+    let config = br#"{}"#;
+    let module_manifest = |name: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(config), "size": config.len()},
+            "layers": [{"mediaType": "application/wasm", "digest": digest_of(&wasm), "size": wasm.len()}],
+            "annotations": {"org.opencontainers.image.title": name},
+        }))
+        .expect("manifest json")
+    };
+    let signed_manifest = module_manifest("signed");
+    let unsigned_manifest = module_manifest("unsigned");
+    let (signed_digest, unsigned_digest) =
+        (digest_of(&signed_manifest), digest_of(&unsigned_manifest));
+
+    // Sign the signed artifact's digest.
+    let key = p256::ecdsa::SigningKey::from_bytes((&[5u8; 32]).into()).expect("key");
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "critical": {
+            "identity": {"docker-reference": ""},
+            "image": {"docker-manifest-digest": signed_digest},
+            "type": "cosign container image signature",
+        },
+        "optional": null,
+    }))
+    .expect("payload");
+    let signature: p256::ecdsa::DerSignature = key.sign(&payload);
+    use base64::Engine as _;
+    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+    let sig_manifest = serde_json::to_vec(&serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(config), "size": config.len()},
+        "layers": [{
+            "mediaType": "application/vnd.dev.cosign.simplesigning.v1+json",
+            "digest": digest_of(&payload),
+            "size": payload.len(),
+            "annotations": {"dev.cosignproject.cosign/signature": sig_b64},
+        }],
+    }))
+    .expect("sig manifest");
+
+    // The registry: both artifacts, the signature under its cosign tag.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    {
+        let mut manifests: std::collections::HashMap<String, Vec<u8>> = [
+            (signed_digest.clone(), signed_manifest),
+            (unsigned_digest.clone(), unsigned_manifest),
+            (
+                format!("{}.sig", signed_digest.replacen(':', "-", 1)),
+                sig_manifest,
+            ),
+        ]
+        .into();
+        let blobs: std::collections::HashMap<String, Vec<u8>> = [
+            (digest_of(&wasm), wasm.clone()),
+            (digest_of(&payload), payload.clone()),
+        ]
+        .into();
+        manifests.shrink_to_fit();
+        std::thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                let mut conn = conn;
+                let mut buf = [0u8; 4096];
+                let n = std::io::Read::read(&mut conn, &mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let path = head.split_whitespace().nth(1).unwrap_or_default();
+                let (status, body): (&str, Vec<u8>) =
+                    if let Some(d) = path.split("/manifests/").nth(1) {
+                        match manifests.get(d) {
+                            Some(m) => ("200 OK", m.clone()),
+                            None => ("404 Not Found", Vec::new()),
+                        }
+                    } else if let Some(d) = path.split("/blobs/").nth(1) {
+                        match blobs.get(d) {
+                            Some(b) => ("200 OK", b.clone()),
+                            None => ("404 Not Found", Vec::new()),
+                        }
+                    } else {
+                        ("200 OK", Vec::new())
+                    };
+                let ctype = "application/vnd.oci.image.manifest.v1+json";
+                let dcd = digest_of(&body);
+                let header = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nDocker-Content-Digest: {dcd}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut conn, header.as_bytes());
+                let _ = std::io::Write::write_all(&mut conn, &body);
+            }
+        });
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let key_path = dir.path().join("cosign.pub");
+    std::fs::write(
+        &key_path,
+        key.verifying_key()
+            .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+            .expect("pem"),
+    )
+    .expect("write key");
+    let key_path = key_path.display().to_string();
+
+    let composition = |name: &str, digest: &str| {
+        format!(
+            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1beta1\n      kind: Input\n      module: {{type: OCI, oci: {{ref: {addr}/example/greeter@{digest}}}}}\n"
+        )
+    };
+    let mut failures = Vec::new();
+    for (name, digest, gap) in [
+        ("Signed", &signed_digest, None),
+        (
+            "Unsigned",
+            &unsigned_digest,
+            Some("the missing-signature refusal wording differs (alpha: logical parity only)"),
+        ),
+    ] {
+        let file = dir.path().join(format!("{name}.yaml"));
+        std::fs::write(&file, composition(name, digest)).expect("write");
+        let file = file.display().to_string();
+        let args = vec![
+            file.as_str(),
+            "--resolve",
+            "--cosign-key",
+            key_path.as_str(),
+        ];
+        let go_out = run_validate(go, &args, "", &cwd);
+        let rust_out = run_validate(rust, &args, "", &cwd);
+        if let Some(f) = assert_case(&format!("Cosign/{name}"), gap, &go_out, &rust_out) {
+            failures.push(f);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}

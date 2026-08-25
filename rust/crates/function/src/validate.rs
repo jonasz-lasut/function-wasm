@@ -186,9 +186,10 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
         args.egress_rate_limit_per_minute,
         args.egress_rate_limit_burst,
     ));
-    if args.cosign_key.is_some() {
-        return Err("--cosign-key is not implemented yet in the Rust runtime".to_string());
-    }
+    let verifier = match &args.cosign_key {
+        None => None,
+        Some(path) => Some(std::sync::Arc::new(crate::cosign::Verifier::load(path)?)),
+    };
     let ceilings = Config {
         timeout: args.module_timeout,
         memory_limit: args.module_memory_limit << 20,
@@ -227,6 +228,7 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
         policy,
         egress,
         cosign_key: args.cosign_key.is_some(),
+        verifier,
     };
     let mut refused = false;
     for file in &args.files {
@@ -428,6 +430,7 @@ struct Validator {
     policy: Option<OperatorPolicy>,
     egress: std::sync::Arc<crate::egress::Egress>,
     cosign_key: bool,
+    verifier: Option<std::sync::Arc<crate::cosign::Verifier>>,
 }
 
 impl Validator {
@@ -499,42 +502,53 @@ impl Validator {
         let (Some(resolver), Some(engine)) = (&self.resolver, &self.engine) else {
             return r;
         };
-        if src.r#type == "OCI" {
-            let oci = src
-                .oci
-                .as_ref()
-                .expect("validated: an OCI source has its object");
-            if !oci.credentials.is_empty() {
-                r.warnings.push(format!(
-                    "module.oci.credentials {:?} is a step Secret this tool cannot read; the module is pulled with the local Docker config instead",
-                    oci.credentials
-                ));
-            }
-            let location = match crate::location::oci_location(&oci.r#ref) {
-                Ok(location) => location,
-                Err(e) => refuse!(format!("cannot resolve module: {e}")),
-            };
-            // Whether this module must carry a cosign signature is settled
-            // before any registry is reached.
-            if let Some(policy) = &self.policy
-                && policy.requires_signature(&location)
-                && !self.cosign_key
-            {
-                refuse!(format!(
-                    "cannot verify module oci {}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it",
-                    oci.r#ref
-                ));
-            }
+        if src.r#type == "OCI"
+            && let Some(oci) = &src.oci
+            && !oci.credentials.is_empty()
+        {
+            r.warnings.push(format!(
+                "module.oci.credentials {:?} is a step Secret this tool cannot read; the module is pulled with the local Docker config instead",
+                oci.credentials
+            ));
         }
         // Whether this module must carry a cosign signature is settled
-        // before it is resolved; a required non-OCI source is refused here.
-        if let Err(e) = crate::from::check_signature_requirement(self.policy.as_ref(), &src) {
-            refuse!(format!("cannot resolve module: {e}"));
+        // before any registry is reached: a required non-OCI source cannot
+        // carry one, a required OCI module is verified (or refused when no
+        // --cosign-key can check it).
+        let signature_required =
+            crate::from::signature_required(self.policy.as_ref(), self.verifier.is_some(), &src);
+        if signature_required && src.r#type != "OCI" {
+            refuse!(format!(
+                "cannot resolve module: {}",
+                crate::from::non_oci_signature_refusal(self.policy.as_ref(), &src)
+            ));
         }
         let resolved = match resolver.resolve(&src, None) {
             Ok(resolved) => resolved,
             Err(e) => refuse!(format!("cannot resolve module: {e}")),
         };
+        if signature_required {
+            let Some(verifier) = &self.verifier else {
+                refuse!(format!(
+                    "cannot verify module {}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it",
+                    resolved.description
+                ));
+            };
+            let reference = crate::location::parse_oci_reference(
+                &src.oci
+                    .as_ref()
+                    .expect("an OCI source was required above")
+                    .r#ref,
+            )
+            .expect("validated");
+            let client = crate::oci::RegistryClient::new(&reference, None);
+            if let Err(e) = verifier.verify(&client, &reference) {
+                refuse!(format!(
+                    "cannot verify module {}: {e}",
+                    resolved.description
+                ));
+            }
+        }
         let wasm = match resolver.fetch(&resolved) {
             Ok(wasm) => wasm,
             Err(e) => refuse!(format!(
