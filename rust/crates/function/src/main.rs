@@ -12,11 +12,13 @@ mod cosign;
 mod egress;
 mod egress_rules;
 mod from;
+mod grpc;
 mod input;
 mod location;
 mod manifest;
 mod oci;
 mod ops;
+mod protowire;
 mod quantity;
 mod resolver;
 mod runner;
@@ -30,7 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
-use function_sdk_rust::{Args, logging, serve};
+use function_sdk_rust::{Args, logging};
 use function_wasm_engine::{Config, Engine, duration};
 
 #[derive(Parser, Debug)]
@@ -173,7 +175,7 @@ fn main() -> ExitCode {
 }
 
 #[tokio::main]
-async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
+async fn serve_main(args: ServeArgs) -> Result<(), String> {
     logging::configure(args.sdk.debug);
 
     let verifier = match &args.cosign_key {
@@ -367,5 +369,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
             readiness.ready();
         });
     }
-    serve(function, &args.sdk).await
+    // The raw server hands the guest the caller's exact bytes - see
+    // grpc.rs; TLS, health, reflection and shutdown mirror the SDK's serve.
+    grpc::serve(Arc::new(function), &args.sdk).await
 }

@@ -29,8 +29,14 @@ pub(crate) fn run(
     let limits = engine.effective(&opts);
     // A run slot (round-robin by module key when --max-concurrent-runs
     // bounds them) and the memory reservation come first, waited for under
-    // the run's own budget: a wait cut short held and consumed nothing.
-    let wait_deadline = Instant::now() + limits.timeout;
+    // the run's own budget - or the request's deadline when that is
+    // sooner: a wait cut short held and consumed nothing.
+    let mut wait_deadline = Instant::now() + limits.timeout;
+    if let Some(d) = opts.deadline
+        && d < wait_deadline
+    {
+        wait_deadline = d;
+    }
     let _slot = match &engine.scheduler {
         Some(s) => Some(s.acquire(&opts.digest, wait_deadline).map_err(Error)?),
         None => None,
@@ -47,7 +53,13 @@ pub(crate) fn run(
     // the guest's descriptors into it are closed before it is removed.
     let tmp = sandbox::PrivateTmp::create(opts.private_tmp)?;
 
-    let (ticks, budget) = deadline_ticks(limits.timeout);
+    // The run budget is the effective timeout, capped by what remains of
+    // the request's deadline.
+    let mut timeout = limits.timeout;
+    if let Some(d) = opts.deadline {
+        timeout = timeout.min(d.saturating_duration_since(Instant::now()));
+    }
+    let (ticks, budget) = deadline_ticks(timeout);
 
     let mut wasi = WasiCtxBuilder::new();
     wasi.args(&[ARGV0]);

@@ -1645,12 +1645,14 @@ name = "function-wasm"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "bytes",
  "cedar-policy",
  "clap",
  "flate2",
  "function-sdk-rust",
  "function-wasm-engine",
  "hex",
+ "http",
  "jsonschema",
  "p256",
  "pbjson-types",
@@ -1666,6 +1668,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "tonic",
+ "tonic-health",
+ "tonic-reflection",
  "tracing",
  "wat",
 ]

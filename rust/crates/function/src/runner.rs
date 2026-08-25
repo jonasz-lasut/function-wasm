@@ -66,13 +66,20 @@ impl WasmFunction {
     }
 }
 
-#[tonic::async_trait]
-impl FunctionRunnerService for WasmFunction {
-    async fn run_function(
+impl WasmFunction {
+    /// The raw request path: the caller's bytes in, response bytes out. The
+    /// guest receives the caller's own bytes - fields newer than this
+    /// runtime's vendored proto included, which a prost decode cannot
+    /// retain - with only the withheld pull credential edited out at the
+    /// wire level; the guest's response bytes travel back untouched, a meta
+    /// field appended when the guest omitted one.
+    pub async fn handle_raw(
         &self,
-        request: Request<RunFunctionRequest>,
-    ) -> Result<Response<RunFunctionResponse>, Status> {
-        let mut req = request.into_inner();
+        raw: Vec<u8>,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<Vec<u8>, Status> {
+        let req = RunFunctionRequest::decode(raw.as_slice())
+            .map_err(|e| Status::internal(format!("cannot decode the request: {e}")))?;
         let tag = req.meta.as_ref().map(|m| m.tag.clone()).unwrap_or_default();
         tracing::info!(tag, "Running function");
         let rsp = response::to(&req, self.ttl);
@@ -80,7 +87,7 @@ impl FunctionRunnerService for WasmFunction {
         let input: Input = match request::get_input(&req) {
             Ok(input) => input,
             Err(e) => {
-                return Ok(Response::new(self.fatal(
+                return Ok(raw_rsp(self.fatal(
                     rsp,
                     OUTCOME_REFUSED,
                     format!("cannot get function input from *v1.RunFunctionRequest: {e}"),
@@ -92,7 +99,7 @@ impl FunctionRunnerService for WasmFunction {
         // module is read or compiled: nothing will run if it is refused.
         let admitted = match admission::admit(&input, &self.engine.config()) {
             Ok(admitted) => admitted,
-            Err(e) => return Ok(Response::new(self.fatal(rsp, OUTCOME_REFUSED, e))),
+            Err(e) => return Ok(raw_rsp(self.fatal(rsp, OUTCOME_REFUSED, e))),
         };
         // A module.from source names a field of the composite resource; the
         // compositionPolicy fences what it may pick (from.rs, default-deny).
@@ -112,7 +119,7 @@ impl FunctionRunnerService for WasmFunction {
         ) {
             Ok(source) => source,
             Err(e) => {
-                return Ok(Response::new(self.fatal(
+                return Ok(raw_rsp(self.fatal(
                     rsp,
                     OUTCOME_REFUSED,
                     format!("cannot resolve module: {e}"),
@@ -126,7 +133,7 @@ impl FunctionRunnerService for WasmFunction {
         let signature_required =
             crate::from::signature_required(self.policy.as_ref(), self.verifier.is_some(), &source);
         if signature_required && source.r#type != "OCI" {
-            return Ok(Response::new(self.fatal(
+            return Ok(raw_rsp(self.fatal(
                 rsp,
                 OUTCOME_REFUSED,
                 format!(
@@ -154,7 +161,7 @@ impl FunctionRunnerService for WasmFunction {
                     |function_sdk_rust::proto::v1::credentials::Source::CredentialData(d)| &d.data,
                 )
             }) else {
-                return Ok(Response::new(self.fatal(
+                return Ok(raw_rsp(self.fatal(
                     rsp,
                     OUTCOME_REFUSED,
                     format!("cannot get credentials {name:?} for module.oci: the request carries no such credential"),
@@ -166,21 +173,20 @@ impl FunctionRunnerService for WasmFunction {
             auth = match crate::oci::auth_for(&registry, data) {
                 Ok(a) => Some(a),
                 Err(e) => {
-                    return Ok(Response::new(self.fatal(
+                    return Ok(raw_rsp(self.fatal(
                         rsp,
                         OUTCOME_REFUSED,
                         format!("cannot use credentials {name:?} for module.oci: {e}"),
                     )));
                 }
             };
-            req.credentials.remove(&name);
             withheld = name;
         }
 
         let resolved = match self.resolver.resolve(&source, auth.clone()) {
             Ok(resolved) => resolved,
             Err(e) => {
-                return Ok(Response::new(self.fatal(
+                return Ok(raw_rsp(self.fatal(
                     rsp,
                     OUTCOME_REFUSED,
                     format!("cannot resolve module: {e}"),
@@ -192,7 +198,7 @@ impl FunctionRunnerService for WasmFunction {
         // the key), once per digest per process.
         if signature_required {
             let Some(verifier) = self.verifier.clone() else {
-                return Ok(Response::new(self.fatal(
+                return Ok(raw_rsp(self.fatal(
                     rsp,
                     OUTCOME_REFUSED,
                     format!(
@@ -218,14 +224,14 @@ impl FunctionRunnerService for WasmFunction {
             match verdict {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
-                    return Ok(Response::new(self.fatal(
+                    return Ok(raw_rsp(self.fatal(
                         rsp,
                         OUTCOME_REFUSED,
                         format!("cannot verify module {}: {e}", resolved.description),
                     )));
                 }
                 Err(e) => {
-                    return Ok(Response::new(self.fatal(
+                    return Ok(raw_rsp(self.fatal(
                         rsp,
                         OUTCOME_ERROR,
                         format!("internal error while running the module: {e}"),
@@ -245,7 +251,7 @@ impl FunctionRunnerService for WasmFunction {
             match self.cache.get(&resolved.digest, fetch).await {
                 Ok(module) => module,
                 Err(e) => {
-                    return Ok(Response::new(self.fatal(
+                    return Ok(raw_rsp(self.fatal(
                         rsp,
                         OUTCOME_ERROR,
                         format!("cannot load module {}: {e}", resolved.description),
@@ -258,13 +264,13 @@ impl FunctionRunnerService for WasmFunction {
         // three layers: the manifest requests, the compositionPolicy and the
         // operator policy permit. A module without one gets the default
         // sandbox.
-        let raw = {
+        let manifest_bytes = {
             let resolver = Arc::clone(&self.resolver);
             let target = resolved.clone();
             match tokio::task::spawn_blocking(move || resolver.manifest(&target)).await {
-                Ok(Ok(raw)) => raw,
+                Ok(Ok(bytes)) => bytes,
                 Ok(Err(e)) => {
-                    return Ok(Response::new(self.fatal(
+                    return Ok(raw_rsp(self.fatal(
                         rsp,
                         OUTCOME_REFUSED,
                         format!(
@@ -274,7 +280,7 @@ impl FunctionRunnerService for WasmFunction {
                     )));
                 }
                 Err(e) => {
-                    return Ok(Response::new(self.fatal(
+                    return Ok(raw_rsp(self.fatal(
                         rsp,
                         OUTCOME_ERROR,
                         format!("internal error while running the module: {e}"),
@@ -282,13 +288,13 @@ impl FunctionRunnerService for WasmFunction {
                 }
             }
         };
-        let manifest = if raw.is_empty() {
+        let manifest = if manifest_bytes.is_empty() {
             None
         } else {
-            match crate::manifest::Manifest::parse(&raw) {
+            match crate::manifest::Manifest::parse(&manifest_bytes) {
                 Ok(m) => Some(m),
                 Err(e) => {
-                    return Ok(Response::new(self.fatal(
+                    return Ok(raw_rsp(self.fatal(
                         rsp,
                         OUTCOME_REFUSED,
                         format!(
@@ -309,7 +315,7 @@ impl FunctionRunnerService for WasmFunction {
         ) {
             Ok(caps) => caps,
             Err(e) => {
-                return Ok(Response::new(self.fatal(
+                return Ok(raw_rsp(self.fatal(
                     rsp,
                     OUTCOME_REFUSED,
                     format!("module {} {e}", resolved.description),
@@ -319,7 +325,7 @@ impl FunctionRunnerService for WasmFunction {
         if let Some(m) = &manifest
             && let Err(e) = m.check(&caps.grants(), input.config.as_ref(), "")
         {
-            return Ok(Response::new(self.fatal(
+            return Ok(raw_rsp(self.fatal(
                 rsp,
                 OUTCOME_REFUSED,
                 format!("module {} {e}", resolved.description),
@@ -338,7 +344,7 @@ impl FunctionRunnerService for WasmFunction {
             match sandboxenv::materialize(&caps.env, &sources) {
                 Ok(env) => env,
                 Err(e) => {
-                    return Ok(Response::new(self.fatal(
+                    return Ok(raw_rsp(self.fatal(
                         rsp,
                         OUTCOME_REFUSED,
                         format!("module {}: {e}", resolved.description),
@@ -347,9 +353,14 @@ impl FunctionRunnerService for WasmFunction {
             }
         };
 
-        // The whole request is forwarded and the whole response returned; the
-        // engine works on the protobuf bytes.
-        let bytes = req.encode_to_vec();
+        // The whole request is forwarded and the whole response returned:
+        // the caller's own bytes, with only the pull credential edited out
+        // at the wire level; the engine works on the protobuf bytes.
+        let bytes = if withheld.is_empty() {
+            raw
+        } else {
+            crate::protowire::strip_credential(&raw, &withheld)
+        };
         // The per-run client logs every request with the module's reference
         // and digest attached.
         let http = caps.grant.map(|grant| {
@@ -358,6 +369,7 @@ impl FunctionRunnerService for WasmFunction {
         });
         let opts = RunOptions {
             timeout: admitted.timeout,
+            deadline,
             memory_limit: admitted.memory_limit,
             private_tmp: caps.private_tmp,
             env,
@@ -371,8 +383,13 @@ impl FunctionRunnerService for WasmFunction {
         let step_slots = Arc::clone(&self.step_slots);
         let concurrency = admitted.concurrency;
         let step_key = resolved.digest.clone();
-        let wait =
+        let mut wait =
             std::time::Instant::now() + admitted.timeout.unwrap_or(self.engine.config().timeout);
+        if let Some(d) = deadline
+            && d < wait
+        {
+            wait = d;
+        }
         let engine = Arc::clone(&self.engine);
         let out = tokio::task::spawn_blocking(move || {
             let _step = if concurrency > 0 {
@@ -388,7 +405,7 @@ impl FunctionRunnerService for WasmFunction {
             Err(e) => {
                 // A panic in the run is this request's fatal result, never
                 // the process's end.
-                return Ok(Response::new(self.fatal(
+                return Ok(raw_rsp(self.fatal(
                     rsp,
                     OUTCOME_ERROR,
                     format!("internal error while running the module: {e}"),
@@ -398,17 +415,17 @@ impl FunctionRunnerService for WasmFunction {
         let out = match out {
             Ok(out) => out,
             Err(e) => {
-                return Ok(Response::new(self.fatal(
+                return Ok(raw_rsp(self.fatal(
                     rsp,
                     OUTCOME_ERROR,
                     format!("module {} failed: {e}", resolved.description),
                 )));
             }
         };
-        let mut got = match RunFunctionResponse::decode(out.as_slice()) {
+        let got = match RunFunctionResponse::decode(out.as_slice()) {
             Ok(got) => got,
             Err(e) => {
-                return Ok(Response::new(self.fatal(
+                return Ok(raw_rsp(self.fatal(
                     rsp,
                     OUTCOME_ERROR,
                     format!(
@@ -419,17 +436,48 @@ impl FunctionRunnerService for WasmFunction {
             }
         };
         // A guest that skipped the response meta (a non-Go guest, typically)
-        // still gets a well-formed reply.
-        if got.meta.is_none() {
-            got.meta = Some(ResponseMeta {
-                tag,
-                ttl: Some(pbjson_types::Duration {
-                    seconds: self.ttl.as_secs() as i64,
-                    nanos: self.ttl.subsec_nanos() as i32,
-                }),
-            });
+        // still gets a well-formed reply - appended to its own bytes, which
+        // otherwise travel back exactly as produced.
+        if got.meta.is_some() {
+            return Ok(out);
         }
-        Ok(Response::new(got))
+        let meta = ResponseMeta {
+            tag,
+            ttl: Some(pbjson_types::Duration {
+                seconds: self.ttl.as_secs() as i64,
+                nanos: self.ttl.subsec_nanos() as i32,
+            }),
+        };
+        Ok(crate::protowire::append_meta(out, &meta.encode_to_vec()))
+    }
+}
+
+/// A runtime-produced response (a fatal result) as wire bytes.
+fn raw_rsp(rsp: RunFunctionResponse) -> Vec<u8> {
+    rsp.encode_to_vec()
+}
+
+#[tonic::async_trait]
+impl FunctionRunnerService for WasmFunction {
+    async fn run_function(
+        &self,
+        request: Request<RunFunctionRequest>,
+    ) -> Result<Response<RunFunctionResponse>, Status> {
+        // The request's own deadline: its gRPC timeout, when the caller set
+        // one. (The typed path re-encodes; the production server serves
+        // handle_raw directly with the caller's bytes.)
+        let deadline = request
+            .metadata()
+            .get("grpc-timeout")
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_grpc_timeout)
+            .map(|t| std::time::Instant::now() + t);
+        let out = self
+            .handle_raw(request.into_inner().encode_to_vec(), deadline)
+            .await?;
+        let rsp = RunFunctionResponse::decode(out.as_slice())
+            .map_err(|e| Status::internal(format!("cannot encode the response: {e}")))?;
+        Ok(Response::new(rsp))
     }
 }
 
@@ -469,6 +517,22 @@ fn principal_from(req: &RunFunctionRequest) -> Principal {
         xr_kind: str_field(xr, "kind"),
         composition: String::new(),
     }
+}
+
+/// Parses a gRPC timeout header ("5S", "100m"): an integer value and one of
+/// H, M, S (hours, minutes, seconds) or m, u, n (milli, micro, nano).
+pub(crate) fn parse_grpc_timeout(v: &str) -> Option<Duration> {
+    let (value, unit) = v.split_at(v.len().checked_sub(1)?);
+    let value: u64 = value.parse().ok()?;
+    Some(match unit {
+        "H" => Duration::from_secs(value * 3600),
+        "M" => Duration::from_secs(value * 60),
+        "S" => Duration::from_secs(value),
+        "m" => Duration::from_millis(value),
+        "u" => Duration::from_micros(value),
+        "n" => Duration::from_nanos(value),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -580,6 +644,93 @@ mod tests {
             rsp.results
         );
         assert_eq!(rsp.meta.expect("meta").tag, "t");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_proxy_is_transparent_to_unknown_fields() {
+        // An echo guest: wasmfn_run returns the request buffer itself, so
+        // the response is exactly what the runtime forwarded.
+        const ECHO_WAT: &str = r#"(module
+          (memory (export "memory") 2)
+          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 1024)
+          (func (export "wasmfn_run") (param i32 i32) (result i64)
+            (i64.or
+              (i64.shl (i64.extend_i32_u (local.get 0)) (i64.const 32))
+              (i64.extend_i32_u (local.get 1)))))"#;
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            wat::parse_str(ECHO_WAT).expect("wat"),
+        )
+        .expect("write");
+        let f = function(Some(dir.path().to_owned()));
+
+        let typed = RunFunctionRequest {
+            meta: Some(RequestMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            input: Some(resource::json_to_struct(
+                serde_json::json!({
+                    "apiVersion": "wasm.fn.crossplane.io/v1beta1",
+                    "kind": "Input",
+                    "module": {"type": "Path", "path": "fn.wasm"},
+                })
+                .as_object()
+                .expect("object"),
+            )),
+            ..Default::default()
+        };
+        let mut raw = typed.encode_to_vec();
+        // A field this runtime's vendored proto does not know: field 999.
+        let unknown = [0xba, 0x3e, 0x03, b'x', b'y', b'z'];
+        raw.extend_from_slice(&unknown);
+
+        let out = f.handle_raw(raw.clone(), None).await.expect("run");
+        // The guest saw - and echoed - the caller's exact bytes, the
+        // unknown field included; and since the echo carries a field-1
+        // message (read back as meta), the response returned untouched.
+        assert_eq!(out, raw);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_expired_deadline_ends_the_run() {
+        const LOOP_WAT: &str = r#"(module (memory (export "memory") 1)
+          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+          (func (export "wasmfn_run") (param i32 i32) (result i64)
+            (loop $l br $l)
+            i64.const 0))"#;
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            wat::parse_str(LOOP_WAT).expect("wat"),
+        )
+        .expect("write");
+        let f = function(Some(dir.path().to_owned()));
+        let raw = RunFunctionRequest {
+            input: Some(resource::json_to_struct(
+                serde_json::json!({
+                    "apiVersion": "wasm.fn.crossplane.io/v1beta1",
+                    "kind": "Input",
+                    "module": {"type": "Path", "path": "fn.wasm"},
+                })
+                .as_object()
+                .expect("object"),
+            )),
+            ..Default::default()
+        };
+        let out = f
+            .handle_raw(raw.encode_to_vec(), Some(std::time::Instant::now()))
+            .await
+            .expect("handled");
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        let result = rsp.results.first().expect("a fatal result");
+        assert_eq!(result.severity, Severity::Fatal as i32);
+        assert!(
+            result.message.contains("exceeded its execution deadline"),
+            "{}",
+            result.message
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
