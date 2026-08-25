@@ -29,6 +29,9 @@ use crate::sandboxenv::EnvBinding;
 pub struct Admitted {
     pub timeout: Option<Duration>,
     pub memory_limit: Option<u64>,
+    /// The per-step concurrency limit (limits.concurrency), 0 when unset;
+    /// keyed by the module's digest, taken before the global run slot.
+    pub concurrency: usize,
     pub composition: Option<Arc<CompositionPolicy>>,
 }
 
@@ -255,7 +258,14 @@ fn run_options(input: &Input, ceilings: &function_wasm_engine::Config) -> Result
         if n <= 0 {
             return Err(format!("limits.concurrency {n} must be positive"));
         }
-        return Err("limits.concurrency is not implemented yet in the Rust runtime".to_string());
+        // Silently cap to the global bound when set: a per-step limit above
+        // the global one would never help, but refusing it would force
+        // every Composition to know the operator's flag.
+        let mut n = n as usize;
+        if ceilings.max_concurrent_runs > 0 && n > ceilings.max_concurrent_runs {
+            n = ceilings.max_concurrent_runs;
+        }
+        out.concurrency = n;
     }
     if let Some(t) = &limits.timeout {
         let timeout = duration::parse(t)

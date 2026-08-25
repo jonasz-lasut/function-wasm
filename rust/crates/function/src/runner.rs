@@ -41,6 +41,8 @@ pub struct WasmFunction {
     /// operator's Cedar CIDR rules and rate limit. Always built; whether a
     /// run may use it is the policy layers' grantEgress decision.
     pub egress: Arc<crate::egress::Egress>,
+    /// Per-step run slots for limits.concurrency, keyed by module digest.
+    pub step_slots: Arc<function_wasm_engine::concurrency::StepSlots>,
 }
 
 impl WasmFunction {
@@ -257,8 +259,24 @@ impl FunctionRunnerService for WasmFunction {
             module: resolved.description.clone(),
             digest: resolved.digest.clone(),
         };
+        // A per-step slot, when limits.concurrency is set, is taken before
+        // the engine's global slot: one step does not take every global slot
+        // from every other. Held until the run ends.
+        let step_slots = Arc::clone(&self.step_slots);
+        let concurrency = admitted.concurrency;
+        let step_key = resolved.digest.clone();
+        let wait =
+            std::time::Instant::now() + admitted.timeout.unwrap_or(self.engine.config().timeout);
         let engine = Arc::clone(&self.engine);
-        let out = tokio::task::spawn_blocking(move || engine.run(&module, &bytes, opts)).await;
+        let out = tokio::task::spawn_blocking(move || {
+            let _step = if concurrency > 0 {
+                Some(step_slots.acquire(&step_key, concurrency, wait)?)
+            } else {
+                None
+            };
+            engine.run(&module, &bytes, opts).map_err(|e| e.to_string())
+        })
+        .await;
         let out = match out {
             Ok(out) => out,
             Err(e) => {
@@ -370,6 +388,7 @@ mod tests {
             ttl: Duration::from_secs(60),
             policy: None,
             egress: Arc::new(crate::egress::Egress::new(Default::default(), 0.0, 0)),
+            step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
         }
     }
 

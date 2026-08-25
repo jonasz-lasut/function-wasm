@@ -192,6 +192,7 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
     let ceilings = Config {
         timeout: args.module_timeout,
         memory_limit: args.module_memory_limit << 20,
+        ..Default::default()
     };
     let mut engine = None;
     let mut resolver = None;
@@ -461,7 +462,7 @@ impl Validator {
             Ok(admitted) => admitted,
             Err(e) => refuse!(e),
         };
-        r.details = describe_admitted(&input, admitted.composition.is_some());
+        r.details = describe_admitted(&input, &admitted);
 
         // The module: materialised against the XR when one is given, as the
         // runtime does on every request; otherwise checked for the fence a
@@ -736,7 +737,7 @@ fn describe_source(src: &ModuleSource) -> String {
 
 /// Lists what the step was admitted: its limits, and whether a
 /// compositionPolicy layer is present.
-fn describe_admitted(input: &Input, has_composition: bool) -> Vec<String> {
+fn describe_admitted(input: &Input, admitted: &admission::Admitted) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(l) = &input.limits {
         let mut limits = Vec::new();
@@ -748,11 +749,14 @@ fn describe_admitted(input: &Input, has_composition: bool) -> Vec<String> {
         if let Some(mem) = &l.memory {
             limits.push(format!("memory {mem}"));
         }
+        if l.concurrency.is_some() {
+            limits.push(format!("concurrency {}", admitted.concurrency));
+        }
         if !limits.is_empty() {
             out.push(format!("limits {}", limits.join(" ")));
         }
     }
-    if has_composition {
+    if admitted.composition.is_some() {
         out.push("compositionPolicy".to_string());
     }
     out

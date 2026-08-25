@@ -26,11 +26,27 @@ pub(crate) fn run(
         )));
     }
 
+    let limits = engine.effective(&opts);
+    // A run slot (round-robin by module key when --max-concurrent-runs
+    // bounds them) and the memory reservation come first, waited for under
+    // the run's own budget: a wait cut short held and consumed nothing.
+    let wait_deadline = Instant::now() + limits.timeout;
+    let _slot = match &engine.scheduler {
+        Some(s) => Some(s.acquire(&opts.digest, wait_deadline).map_err(Error)?),
+        None => None,
+    };
+    let _mem = match &engine.mem {
+        Some(m) => Some(
+            m.reserve(limits.memory_limit, wait_deadline)
+                .map_err(Error)?,
+        ),
+        None => None,
+    };
+
     // The private /tmp outlives the store (declared first, so it drops last):
     // the guest's descriptors into it are closed before it is removed.
     let tmp = sandbox::PrivateTmp::create(opts.private_tmp)?;
 
-    let limits = engine.effective(&opts);
     let (ticks, budget) = deadline_ticks(limits.timeout);
 
     let mut wasi = WasiCtxBuilder::new();

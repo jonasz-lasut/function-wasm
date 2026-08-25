@@ -130,6 +130,12 @@ fn cases() -> Vec<Case> {
             gap: None,
         },
         Case {
+            name: "ConcurrencyDetail",
+            args: &["-"],
+            stdin: "apiVersion: wasm.fn.crossplane.io/v1beta1\nkind: Input\nmodule: {type: OCI, oci: {ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a}}\nlimits: {concurrency: 2}\n",
+            gap: None,
+        },
+        Case {
             name: "SeveralFiles",
             args: &[
                 "testdata/validate/ok.yaml",

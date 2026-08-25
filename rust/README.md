@@ -28,10 +28,14 @@ cargo run -p function-wasm -- validate ../cmd/function/testdata/validate/ok.yaml
 
 ## Parity contract
 
-Where a check is implemented, its refusal string is the Go runtime's,
-verbatim - the strings are the conformance surface. Anything the port does
-not carry yet is refused with a message naming it, never silently ignored,
-so nothing runs wider than the Go runtime would allow.
+The contract is logical compatibility: the same Inputs admitted, the same
+requests refused for the same reasons, nothing running wider than the Go
+runtime would allow - anything the port does not carry yet is refused with
+a message naming it, never silently ignored. Refusal strings match the Go
+runtime where that came naturally (most admission and policy messages do);
+byte-level wording is not chased for its own sake, and a divergence that is
+wording-only goes on the conformance gap list rather than getting an
+emulation shim.
 
 **The claim is measured, not asserted**: `tests/conformance.rs` builds the
 Go runtime from this repository and runs its `function validate` as the
