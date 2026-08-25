@@ -193,11 +193,7 @@ fn go_version() -> String {
     {
         let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if let Some(v) = v.strip_prefix("go") {
-            let v = v
-                .split([' ', '-'])
-                .next()
-                .unwrap_or(v)
-                .to_string();
+            let v = v.split([' ', '-']).next().unwrap_or(v).to_string();
             if !v.is_empty() {
                 return v;
             }

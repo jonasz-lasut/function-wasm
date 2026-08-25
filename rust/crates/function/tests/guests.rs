@@ -54,9 +54,8 @@ fn examples() -> PathBuf {
 }
 
 fn on_path(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|p| p.join(name).is_file())
-    })
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|p| p.join(name).is_file()))
 }
 
 fn command(dir: &Path, name: &str, args: &[&str], envs: &[(&str, &str)]) -> bool {
@@ -404,9 +403,7 @@ fn run_guest(guest: &str) {
                 tag: "hello".to_string(),
                 ..Default::default()
             }),
-            input: Some(resource::json_to_struct(
-                input.as_object().expect("object"),
-            )),
+            input: Some(resource::json_to_struct(input.as_object().expect("object"))),
             observed: Some(State {
                 composite: Some(Resource {
                     resource: Some(resource::json_to_struct(

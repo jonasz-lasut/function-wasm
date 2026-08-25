@@ -1,0 +1,11 @@
+exit 1
+--- stdout
+testdata/validate/refusals.yaml: Composition/refusals pipeline[0] limits-over-ceiling: refused: limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi
+testdata/validate/refusals.yaml: Composition/refusals pipeline[1] from-without-policy: refused: cannot resolve module: module.from: status.module of the composite resource names a OCI source, but the Input has no compositionPolicy: a module the composite resource chooses must be permitted by the compositionPolicy's pullModule rules, or its author could point the runtime at any host
+testdata/validate/refusals.yaml: Composition/refusals pipeline[2] tag-not-digest: refused: cannot resolve module: module.oci.ref "ghcr.io/example/greeter:v1" must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported
+testdata/validate/refusals.yaml: Composition/refusals pipeline[3] bad-composition-policy: refused: compositionPolicy is invalid: cannot compile the compositionPolicy as Cedar: unexpected end of input
+testdata/validate/refusals.yaml: Composition/refusals pipeline[4] removed-policy: refused: the Input's policy field was removed: fence a module.from source with compositionPolicy instead (Cedar pullModule and spendCredential rules)
+testdata/validate/refusals.yaml: Composition/refusals pipeline[5] removed-sandbox: refused: the Input's sandbox field was removed: a module requests capabilities through its manifest's requires, granted by the operator's --sandbox-policy-file and narrowed by the Input's compositionPolicy
+testdata/validate/refusals.yaml: Composition/refusals pipeline[8] wrong-shape: refused: cannot decode the Input: invalid type: string "fn.wasm", expected struct ModuleSource
+testdata/validate/refusals.yaml: Input[1] bare: OK (http https://example.com/fn.wasm)
+--- stderr

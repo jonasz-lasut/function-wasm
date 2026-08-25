@@ -1,0 +1,6 @@
+exit 1
+--- stdout
+<DIR>/env.yaml: Composition/env pipeline[0] env: refused: module module file fn.wasm requires env [API_TOKEN] (requires.env), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities
+  module: sha256:d8f9c70dd9bca2be5b598bc81ac9dbbd4f49531eb8174e8bcdd1aa895c230ba3, 85 B, ABI v1; manifest: greeter 0.1.0, env API_TOKEN
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+--- stderr
