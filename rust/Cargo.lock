@@ -1620,27 +1620,6 @@ checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 [[package]]
 name = "function-sdk-rust"
 version = "0.2.0"
-dependencies = [
- "clap",
- "pbjson",
- "pbjson-types",
- "prost",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.20",
- "tokio",
- "tonic",
- "tonic-health",
- "tonic-prost",
- "tonic-reflection",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "function-sdk-rust"
-version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5c80adc5bd5dfc5ca6928f768417502f2bc858923effda69b0e569a77298b8f"
 dependencies = [
@@ -1670,7 +1649,7 @@ dependencies = [
  "cedar-policy",
  "clap",
  "flate2",
- "function-sdk-rust 0.2.0",
+ "function-sdk-rust",
  "function-wasm-engine",
  "hex",
  "http",
@@ -1689,6 +1668,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "tonic",
+ "tonic-health",
+ "tonic-reflection",
  "tracing",
  "wat",
 ]
@@ -1697,7 +1678,7 @@ dependencies = [
 name = "function-wasm-engine"
 version = "0.1.0"
 dependencies = [
- "function-sdk-rust 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "function-sdk-rust",
  "prost",
  "serde",
  "serde_json",
