@@ -57,26 +57,27 @@ per-repository `requireSignature` decision, the SSRF `dialAddress` rule
 compiler with Go's exact load errors), and the full three-layer manifest
 decision over `manifestPath` modules - a private `/tmp` and env bindings
 are granted, refused and materialised exactly as the Go runtime does.
-Two known gaps remain: egress that every layer permits (the egress client
-is not ported, refused as "no egress mechanism"), and one permanent
-wording divergence per embedded library message (cedar parse errors, Go's
-json decoder).
+One known gap remains: a permanent wording divergence per embedded
+library message (cedar parse errors, Go's json decoder).
 
-Serving today: `module.type: Path` sources under `--module-dir`,
-`limits.timeout` / `limits.memory` against the `--module-timeout` /
-`--module-memory-limit` ceilings, the full ABI v1 run mechanics (including
-the in-band `wasmfn.http` refusal for modules with no egress grant), fatal
-results for every guest failure, and the meta fill for guests that omit it.
+Serving today: `module.type: Path` sources under `--module-dir` (with
+`manifestPath` manifests and the full three-layer decision), `module.from`
+under a `compositionPolicy`, `limits.timeout` / `limits.memory` against the
+ceilings, the full ABI v1 run mechanics, the private `/tmp` and env
+grants, HTTP egress through the host (SSRF block list judged per resolved
+address with operator CIDR rules, redirects re-checked per hop, fixed
+budgets, the process-wide rate limit, audit lines - and the in-band
+refusal for modules with no grant), the three-tier module cache (memory
+with idle TTL and LRU bound, mapped artifacts on disk surviving restarts,
+single-flighted compiles), fatal results for every guest failure, and the
+meta fill for guests that omit it.
 
 ## Not ported yet (refused or absent, in rough order of the plan)
 
 - OCI and HTTP module sources (fetching; their admission, locations and
   policy fences are ported), cosign verification, registry credentials
-- The egress client (SSRF block list judged per resolved address, budgets,
-  rate limit, audit lines); egress the layers permit is refused as
-  "no egress mechanism" until it lands
-- The disk caches (fetched blobs, serialized artifacts, manifests), idle
-  TTL, LRU bounds, `--warm-modules`, `/readyz`
+- `--warm-modules`, `/readyz`, the periodic cache/rate-limiter sweeps and
+  `--max-cache-size`
 - `limits.concurrency`, metrics, `--max-concurrent-runs`,
   `--max-total-run-memory`, fair scheduling
 - minRuntime enforcement runs against an empty version (the Go development
@@ -95,5 +96,9 @@ results for every guest failure, and the meta fill for guests that omit it.
 - Guest log records are forwarded with their keys and values rendered as one
   JSON `kv` field (tracing has no dynamic fields), not as first-class
   structured fields.
+- Egress transport-level error text (DNS, TLS, connection failures) is
+  reqwest's wording, not net/http's; refusals, budget messages and the
+  audit-line fields match. The response-header block is not size-capped
+  (Go caps it at 64KiB), and HTTP/2 is not attempted.
 - Parse errors for `limits.timeout` / `limits.memory` word their messages
   differently (the checks and ceiling refusals match verbatim).

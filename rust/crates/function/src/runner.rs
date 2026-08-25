@@ -37,6 +37,10 @@ pub struct WasmFunction {
     /// authority that enables a sandbox capability; None refuses every
     /// sandbox grant, so the runtime offers only the default sandbox.
     pub policy: Option<OperatorPolicy>,
+    /// The egress mechanism: the SSRF block list, fixed budgets, the
+    /// operator's Cedar CIDR rules and rate limit. Always built; whether a
+    /// run may use it is the policy layers' grantEgress decision.
+    pub egress: Arc<crate::egress::Egress>,
 }
 
 impl WasmFunction {
@@ -181,6 +185,7 @@ impl FunctionRunnerService for WasmFunction {
         let principal = principal_from(&req);
         let caps = match admission::admit_requires(
             manifest.as_ref().and_then(|m| m.requires.as_ref()),
+            Some(&self.egress),
             self.policy.as_ref(),
             admitted.composition.as_deref(),
             &principal,
@@ -228,14 +233,20 @@ impl FunctionRunnerService for WasmFunction {
         // The whole request is forwarded and the whole response returned; the
         // engine works on the protobuf bytes.
         let bytes = req.encode_to_vec();
+        // The per-run client logs every request with the module's reference
+        // and digest attached.
+        let http = caps.grant.map(|grant| {
+            Arc::new(grant.client(resolved.description.clone(), resolved.digest.clone()))
+                as Arc<dyn function_wasm_engine::HttpRequester>
+        });
         let opts = RunOptions {
             timeout: admitted.timeout,
             memory_limit: admitted.memory_limit,
             private_tmp: caps.private_tmp,
             env,
+            http,
             module: resolved.description.clone(),
             digest: resolved.digest.clone(),
-            ..Default::default()
         };
         let engine = Arc::clone(&self.engine);
         let out = tokio::task::spawn_blocking(move || engine.run(&module, &bytes, opts)).await;
@@ -349,6 +360,7 @@ mod tests {
             resolver: Arc::new(Resolver::new(dir, 128 << 20)),
             ttl: Duration::from_secs(60),
             policy: None,
+            egress: Arc::new(crate::egress::Egress::new(Default::default(), 0.0, 0)),
         }
     }
 

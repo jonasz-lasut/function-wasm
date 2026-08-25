@@ -8,6 +8,7 @@
 mod admission;
 mod authz;
 mod cache;
+mod egress;
 mod egress_rules;
 mod from;
 mod input;
@@ -97,6 +98,26 @@ struct ServeArgs {
     /// turn.
     #[arg(long, default_value_t = 1, env = "MAX_CONCURRENT_COMPILES")]
     max_concurrent_compiles: usize,
+
+    /// Sustained egress requests per minute per module digest. 0 leaves
+    /// egress unrated.
+    #[arg(
+        long,
+        default_value_t = 0.0,
+        env = "EGRESS_RATE_LIMIT_PER_MINUTE",
+        allow_negative_numbers = true
+    )]
+    egress_rate_limit_per_minute: f64,
+
+    /// Burst tokens for --egress-rate-limit-per-minute; 0 derives
+    /// max(1, requestsPerMinute).
+    #[arg(
+        long,
+        default_value_t = 0,
+        env = "EGRESS_RATE_LIMIT_BURST",
+        allow_negative_numbers = true
+    )]
+    egress_rate_limit_burst: i64,
 }
 
 fn main() -> ExitCode {
@@ -121,13 +142,20 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
         eprintln!("--cosign-key is not implemented yet in the Rust runtime");
         std::process::exit(1);
     }
+    if args.egress_rate_limit_per_minute < 0.0 || args.egress_rate_limit_burst < 0 {
+        eprintln!(
+            "--egress-rate-limit-per-minute and --egress-rate-limit-burst must not be negative"
+        );
+        std::process::exit(1);
+    }
     // The operator policy compiles once at startup and is immutable for the
     // process; a malformed policy or SSRF CIDR rule stops the runtime here
     // rather than compiling into a table that means less than written.
+    let mut ip_rules = authz::IpRules::default();
     let policy = match &args.sandbox_policy_file {
         None => None,
         Some(path) => match authz::OperatorPolicy::load(path).and_then(|p| {
-            p.compile_ip_rules()?;
+            ip_rules = p.compile_ip_rules()?;
             Ok(p)
         }) {
             Ok(p) => Some(p),
@@ -137,6 +165,11 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
             }
         },
     };
+    let egress = Arc::new(egress::Egress::new(
+        ip_rules,
+        args.egress_rate_limit_per_minute,
+        args.egress_rate_limit_burst,
+    ));
     // The $TMPDIR probe runs once before serving, only when the policy can
     // grant a private /tmp: a misconfigured $TMPDIR stops the runtime here,
     // not every request.
@@ -204,6 +237,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
         )),
         ttl: function_sdk_rust::response::DEFAULT_TTL,
         policy,
+        egress,
     };
     serve(function, &args.sdk).await
 }

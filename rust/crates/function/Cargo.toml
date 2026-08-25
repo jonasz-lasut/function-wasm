@@ -12,6 +12,7 @@ name = "function"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
 cedar-policy = "4"
 clap = { version = "4", features = ["derive", "env"] }
 function-sdk-rust = "0.2.0"
@@ -21,6 +22,7 @@ jsonschema = "0.33"
 tempfile = "3"
 pbjson-types = "0.9"
 prost = "0.14"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"

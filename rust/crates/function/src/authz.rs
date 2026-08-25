@@ -380,7 +380,7 @@ impl IpPrefix {
         Ok(IpPrefix { addr, len }.masked())
     }
 
-    fn masked(self) -> Self {
+    pub(crate) fn masked(self) -> Self {
         let addr = match self.addr {
             IpAddr::V4(v4) => {
                 let bits = u32::from(v4);
@@ -407,10 +407,22 @@ impl IpPrefix {
         }
     }
 
+    /// Parses a plain CIDR ("10.0.0.0/8"), masked.
+    pub fn parse(s: &str) -> Result<IpPrefix, String> {
+        let (addr, len) = s
+            .split_once('/')
+            .ok_or_else(|| format!("{s:?} is not a CIDR"))?;
+        let addr: IpAddr = addr
+            .parse()
+            .map_err(|e| format!("{s:?} is not a CIDR: {e}"))?;
+        let len: u8 = len
+            .parse()
+            .map_err(|e| format!("{s:?} is not a CIDR: {e}"))?;
+        Ok(IpPrefix { addr, len }.masked())
+    }
+
     /// Whether ip falls inside this prefix; an IPv4 prefix never contains an
-    /// IPv6 address and vice versa, as with netip. (The egress dial path's
-    /// check, once the client is ported.)
-    #[allow(dead_code)]
+    /// IPv6 address and vice versa, as with netip.
     pub fn contains(&self, ip: IpAddr) -> bool {
         IpPrefix {
             addr: ip,
@@ -730,6 +742,12 @@ fn normalize_host(h: &str) -> String {
 
 fn egress_context(g: &EgressGrant) -> Value {
     json!({ "method": g.method.to_uppercase(), "path": g.path })
+}
+
+impl std::fmt::Display for IpPrefix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.addr, self.len)
+    }
 }
 
 #[cfg(test)]

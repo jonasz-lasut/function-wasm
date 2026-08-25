@@ -173,13 +173,19 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
         );
     }
     let mut policy = None;
+    let mut ip_rules = crate::authz::IpRules::default();
     if let Some(path) = &args.sandbox_policy_file {
         let p = OperatorPolicy::load(path)?;
         // The SSRF CIDR rules compile at load, as at the runtime's startup: a
         // malformed rule stops the tool rather than meaning less than written.
-        p.compile_ip_rules()?;
+        ip_rules = p.compile_ip_rules()?;
         policy = Some(p);
     }
+    let egress = std::sync::Arc::new(crate::egress::Egress::new(
+        ip_rules,
+        args.egress_rate_limit_per_minute,
+        args.egress_rate_limit_burst,
+    ));
     if args.cosign_key.is_some() {
         return Err("--cosign-key is not implemented yet in the Rust runtime".to_string());
     }
@@ -217,6 +223,7 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
         resolver,
         xr,
         policy,
+        egress,
         cosign_key: args.cosign_key.is_some(),
     };
     let mut refused = false;
@@ -417,6 +424,7 @@ struct Validator {
     resolver: Option<Resolver>,
     xr: Option<serde_json::Value>,
     policy: Option<OperatorPolicy>,
+    egress: std::sync::Arc<crate::egress::Egress>,
     cosign_key: bool,
 }
 
@@ -616,6 +624,7 @@ impl Validator {
             .unwrap_or_default();
         let caps = match admission::admit_requires(
             m.requires.as_ref(),
+            Some(&self.egress),
             self.policy.as_ref(),
             comp,
             &principal,
