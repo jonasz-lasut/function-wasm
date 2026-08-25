@@ -49,6 +49,33 @@ pub(crate) fn run(
         None => None,
     };
 
+    // The run is timed from here - the slot and memory waits above are not
+    // part of run_duration_seconds, and a wait cut short never ran.
+    let start = Instant::now();
+    let result = execute(engine, m, request, opts, limits);
+    crate::metrics::RUN_DURATION
+        .with_label_values(&[run_outcome(&result)])
+        .observe(start.elapsed().as_secs_f64());
+    result
+}
+
+fn run_outcome<T>(result: &Result<T, Error>) -> &'static str {
+    match result {
+        Ok(_) => crate::metrics::OUTCOME_OK,
+        Err(e) if e.0.contains("exceeded its execution deadline") => {
+            crate::metrics::OUTCOME_TIMEOUT
+        }
+        Err(_) => crate::metrics::OUTCOME_ERROR,
+    }
+}
+
+fn execute(
+    engine: &Engine,
+    m: &Module,
+    request: &[u8],
+    opts: RunOptions,
+    limits: crate::Config,
+) -> Result<Vec<u8>, Error> {
     // The private /tmp outlives the store (declared first, so it drops last):
     // the guest's descriptors into it are closed before it is removed.
     let tmp = sandbox::PrivateTmp::create(opts.private_tmp)?;

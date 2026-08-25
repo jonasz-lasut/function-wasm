@@ -130,6 +130,10 @@ impl Store {
     }
 }
 
+/// The bytes a store holds right now.
+pub fn bytes(store: &Store) -> u64 {
+    store.entries().iter().map(|e| e.size).sum()
+}
 /// Removes least recently used blobs across stores until they hold at most
 /// max_bytes together - down to nine tenths of it, so consecutive sweeps do
 /// not each remove one entry. Entries are immutable and reproducible, so

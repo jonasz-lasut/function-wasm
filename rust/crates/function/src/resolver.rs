@@ -165,6 +165,20 @@ impl Resolver {
     /// download against the Input's stated digest (through the blob store
     /// when one is configured).
     pub fn fetch(&self, resolved: &Resolved) -> Result<Vec<u8>, String> {
+        let source = match &resolved.source {
+            Source::Path { .. } => "path",
+            Source::Http { .. } => "http",
+            Source::Oci { .. } => "oci",
+        };
+        let start = std::time::Instant::now();
+        let result = self.fetch_inner(resolved);
+        function_wasm_engine::metrics::FETCH_DURATION
+            .with_label_values(&[source])
+            .observe(start.elapsed().as_secs_f64());
+        result
+    }
+
+    fn fetch_inner(&self, resolved: &Resolved) -> Result<Vec<u8>, String> {
         match &resolved.source {
             Source::Path { full } => self.fetch_path(full, &resolved.digest),
             Source::Http { url } => self.verified("module", &resolved.digest, || {
@@ -253,10 +267,17 @@ impl Resolver {
         digest: &str,
         fetch: impl FnOnce() -> Result<Vec<u8>, String>,
     ) -> Result<Vec<u8>, String> {
-        if let Some(blobs) = &self.blobs
-            && let Some(b) = blobs.get(digest)
-        {
-            return Ok(b);
+        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
+        if let Some(blobs) = &self.blobs {
+            if let Some(b) = blobs.get(digest) {
+                CACHE_EVENTS
+                    .with_label_values(&[metrics::CACHE_BLOB, metrics::EVENT_HIT])
+                    .inc();
+                return Ok(b);
+            }
+            CACHE_EVENTS
+                .with_label_values(&[metrics::CACHE_BLOB, metrics::EVENT_MISS])
+                .inc();
         }
         let b = fetch()?;
         let got = digest_of(&b);

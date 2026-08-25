@@ -88,6 +88,14 @@ pub struct Grants {
     pub env: Vec<EnvBinding>,
 }
 
+/// The runtime's own release version, stamped at build time
+/// (FUNCTION_WASM_VERSION, set by the release pipeline); empty for a
+/// development build, which passes every minRuntime rule - the Go runtime's
+/// debug.ReadBuildInfo behaviour.
+pub fn runtime_version() -> &'static str {
+    option_env!("FUNCTION_WASM_VERSION").unwrap_or("")
+}
+
 impl Manifest {
     /// Decodes a manifest layer's JSON payload, at most MAX_SIZE. Unknown
     /// top-level fields are ignored, so a module built by a newer guestfn

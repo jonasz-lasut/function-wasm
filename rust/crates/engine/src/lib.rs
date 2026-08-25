@@ -16,6 +16,7 @@ pub mod concurrency;
 pub mod duration;
 mod hosthttp;
 mod hostlog;
+pub mod metrics;
 mod run;
 mod sandbox;
 pub mod wire;
@@ -251,7 +252,9 @@ impl Engine {
 
     /// Compiles wasm bytes and verifies they export ABI v1.
     pub fn compile(&self, wasm: &[u8]) -> Result<Module, Error> {
+        let start = std::time::Instant::now();
         let m = self.compiled(wasm)?;
+        metrics::COMPILE_DURATION.observe(start.elapsed().as_secs_f64());
         abi::check_abi(&m)?;
         Ok(Module(m))
     }
@@ -340,6 +343,7 @@ impl Engine {
     /// Marks a run in flight for the epoch ticker; the guard marks it done.
     pub(crate) fn running(&self) -> RunningGuard<'_> {
         self.active.fetch_add(1, Ordering::Relaxed);
+        metrics::RUNS_IN_FLIGHT.inc();
         RunningGuard(&self.active)
     }
 }
@@ -358,6 +362,7 @@ pub(crate) struct RunningGuard<'a>(&'a AtomicI64);
 impl Drop for RunningGuard<'_> {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::Relaxed);
+        metrics::RUNS_IN_FLIGHT.dec();
     }
 }
 

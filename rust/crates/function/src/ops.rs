@@ -31,6 +31,40 @@ impl Readiness {
 
 /// Serves /livez (always 200) and /readyz (200 once ready, 503 before) on
 /// address; any other path is 404. Runs until the process ends.
+/// Serves Prometheus metrics on address at /metrics - what function-sdk-go
+/// serves on :8080 for the Go runtime.
+pub async fn serve_metrics(address: &str) -> Result<(), std::io::Error> {
+    let address = if address.starts_with(':') {
+        format!("0.0.0.0{address}")
+    } else {
+        address.to_string()
+    };
+    let listener = tokio::net::TcpListener::bind(&address).await?;
+    tracing::info!(address = %address, "serving metrics");
+    loop {
+        let Ok((mut conn, _)) = listener.accept().await else {
+            continue;
+        };
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            let n = conn.read(&mut buf).await.unwrap_or(0);
+            let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let path = head.split_whitespace().nth(1).unwrap_or_default();
+            let response = if path == "/metrics" {
+                let body = function_wasm_engine::metrics::render();
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            } else {
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_string()
+            };
+            let _ = conn.write_all(response.as_bytes()).await;
+        });
+    }
+}
+
 pub async fn serve_health(address: &str, readiness: Readiness) -> Result<(), std::io::Error> {
     // The Go flag's ":8081" shorthand means every interface.
     let address = if address.starts_with(':') {
