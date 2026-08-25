@@ -74,8 +74,9 @@ meta fill for guests that omit it.
 
 ## Not ported yet (refused or absent, in rough order of the plan)
 
-- OCI and HTTP module sources (fetching; their admission, locations and
-  policy fences are ported), cosign verification, registry credentials
+- The OCI module source (fetching; its admission, locations and policy
+  fences are ported - HTTP sources are fully served, blob-cached and
+  digest-verified), cosign verification, registry credentials
 - `--warm-modules`, `/readyz`, the periodic cache/rate-limiter sweeps and
   `--max-cache-size`
 - `limits.concurrency`, metrics, `--max-concurrent-runs`,

@@ -237,14 +237,11 @@ fn admit_env(
 /// allow. `function validate` deliberately does not apply it: an OCI source
 /// is describable offline even though this runtime cannot serve it yet.
 pub fn require_ported(m: &ModuleSource) -> Result<(), String> {
-    match m.r#type.as_str() {
-        "OCI" | "HTTP" => {
-            return Err(format!(
-                "module.type {} is not implemented yet in the Rust runtime; only Path sources are",
-                m.r#type
-            ));
-        }
-        _ => {}
+    if m.r#type == "OCI" {
+        return Err(
+            "module.type OCI is not implemented yet in the Rust runtime; only Path and HTTP sources are"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -517,7 +514,7 @@ mod tests {
         };
         assert_eq!(
             require_ported(&src).expect_err("OCI is not ported"),
-            "module.type OCI is not implemented yet in the Rust runtime; only Path sources are"
+            "module.type OCI is not implemented yet in the Rust runtime; only Path and HTTP sources are"
         );
         assert_eq!(require_ported(&path_input("fn.wasm").module), Ok(()));
     }

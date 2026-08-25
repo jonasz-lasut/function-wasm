@@ -419,3 +419,127 @@ fn validate_resolve_manifest_matches_the_go_runtime() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
+
+/// The HTTP module source over a local server both binaries fetch from:
+/// a module pinned by its stated digest, a wasmfn.yaml manifest by
+/// reference (manifestURL/manifestDigest) decided by the three layers, and
+/// a stated digest the download does not match.
+#[test]
+fn validate_resolve_http_source_matches_the_go_runtime() {
+    use sha2::Digest as _;
+
+    let Some(go) = go_binary() else {
+        eprintln!("skipping: no Go toolchain or the Go build failed");
+        return;
+    };
+    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let cwd = repo_root().join("cmd/function");
+
+    let wasm = wat::parse_str(
+        r#"(module (memory (export "memory") 1)
+          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+    )
+    .expect("wat");
+    let manifest =
+        b"abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n"
+            .to_vec();
+    let digest = |b: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)));
+    let (wasm_digest, manifest_digest) = (digest(&wasm), digest(&manifest));
+
+    // A tiny HTTP file server on loopback; both binaries fetch from it.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    {
+        let wasm = wasm.clone();
+        let manifest = manifest.clone();
+        std::thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                let mut conn = conn;
+                let mut buf = [0u8; 2048];
+                let n = std::io::Read::read(&mut conn, &mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]);
+                let body: &[u8] = if head.starts_with("GET /fn.wasm") {
+                    &wasm
+                } else if head.starts_with("GET /wasmfn.yaml") {
+                    &manifest
+                } else {
+                    b""
+                };
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut conn, header.as_bytes());
+                let _ = std::io::Write::write_all(&mut conn, body);
+            }
+        });
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let step = |name: &str, module: &str| {
+        format!(
+            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1beta1\n      kind: Input\n      module: {module}\n"
+        )
+    };
+    let base = format!("http://127.0.0.1:{port}");
+    let compositions: Vec<(String, Option<&str>, Vec<&str>)> = vec![
+        (
+            step(
+                "plain",
+                &format!("{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}}}}}"),
+            ),
+            None,
+            vec![],
+        ),
+        (
+            step(
+                "with-manifest",
+                &format!(
+                    "{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}, manifestURL: {base}/wasmfn.yaml, manifestDigest: {manifest_digest}}}}}"
+                ),
+            ),
+            None,
+            vec![],
+        ),
+        (
+            step(
+                "granted",
+                &format!(
+                    "{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}, manifestURL: {base}/wasmfn.yaml, manifestDigest: {manifest_digest}}}}}"
+                ),
+            ),
+            None,
+            vec![
+                "--sandbox-policy-file",
+                "testdata/validate/policy-permissive.cedar",
+            ],
+        ),
+        (
+            step(
+                "bad-digest",
+                &format!(
+                    "{{type: HTTP, http: {{url: {base}/fn.wasm, digest: sha256:{}}}}}",
+                    "0".repeat(64)
+                ),
+            ),
+            None,
+            vec![],
+        ),
+    ];
+
+    let mut failures = Vec::new();
+    for (i, (composition, gap, extra)) in compositions.iter().enumerate() {
+        let file = dir.path().join(format!("http-{i}.yaml"));
+        std::fs::write(&file, composition).expect("write");
+        let file = file.display().to_string();
+        let mut args = vec![file.as_str(), "--resolve"];
+        args.extend(extra);
+        let go_out = run_validate(go, &args, "", &cwd);
+        let rust_out = run_validate(rust, &args, "", &cwd);
+        if let Some(f) = assert_case(&format!("HTTPSource/{i}"), *gap, &go_out, &rust_out) {
+            failures.push(f);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}

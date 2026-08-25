@@ -202,6 +202,7 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
         resolver = Some(Resolver::new(
             args.module_dir.clone(),
             args.max_module_size << 20,
+            None,
         ));
     }
     let mut xr = None;
@@ -528,28 +529,14 @@ impl Validator {
                     "cannot load module {description}: cannot fetch module: OCI sources are not implemented yet in the Rust runtime"
                 ));
             }
-            "HTTP" => {
-                let http = src
-                    .http
-                    .as_ref()
-                    .expect("validated: an HTTP source has its object");
-                let description = format!("http {}", http.url);
-                if let (Some(policy), Ok(location)) = (
-                    &self.policy,
-                    crate::location::http_location("module.http.url", &http.url),
-                ) && policy.requires_signature(&location)
-                {
-                    refuse!(format!(
-                        "cannot resolve module: module.http {location:?} requires a cosign signature (operator policy), but only OCI modules can be signature-verified"
-                    ));
-                }
-                refuse!(format!(
-                    "cannot load module {description}: cannot fetch module: HTTP sources are not implemented yet in the Rust runtime"
-                ));
-            }
             _ => {}
         }
-        let resolved = match resolver.resolve(&src.path) {
+        // Whether this module must carry a cosign signature is settled
+        // before it is resolved; a required non-OCI source is refused here.
+        if let Err(e) = crate::from::check_signature_requirement(self.policy.as_ref(), &src) {
+            refuse!(format!("cannot resolve module: {e}"));
+        }
+        let resolved = match resolver.resolve(&src) {
             Ok(resolved) => resolved,
             Err(e) => refuse!(format!("cannot resolve module: {e}")),
         };
@@ -582,16 +569,12 @@ impl Validator {
         // with the principal from --xr when one is given - then held against
         // what the layers granted, the checks the runtime makes between load
         // and run.
-        let raw = if src.manifest_path.is_empty() {
-            Vec::new()
-        } else {
-            match resolver.read_manifest(&src.manifest_path) {
-                Ok(raw) => raw,
-                Err(e) => refuse!(format!(
-                    "cannot read the manifest of module {}: {e}",
-                    resolved.description
-                )),
-            }
+        let raw = match resolver.manifest(&resolved) {
+            Ok(raw) => raw,
+            Err(e) => refuse!(format!(
+                "cannot read the manifest of module {}: {e}",
+                resolved.description
+            )),
         };
         if raw.is_empty() {
             return r;

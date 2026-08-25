@@ -218,6 +218,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
     let compiled = open(compiled_parent.join(&version), false);
     let _modules = open(cache_dir.join(store::MODULES_DIR), true);
     let _manifests = open(cache_dir.join(store::MANIFESTS_DIR), false);
+    let blobs = Arc::clone(&_modules);
 
     let function = runner::WasmFunction {
         engine: Arc::clone(&engine),
@@ -234,6 +235,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), function_sdk_rust::Error> {
         resolver: Arc::new(resolver::Resolver::new(
             args.module_dir,
             args.max_module_size << 20,
+            Some(blobs),
         )),
         ttl: function_sdk_rust::response::DEFAULT_TTL,
         policy,
