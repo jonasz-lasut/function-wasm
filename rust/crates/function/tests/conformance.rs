@@ -398,14 +398,9 @@ fn validate_resolve_manifest_matches_the_go_runtime() {
             failures.push(f);
         }
     }
-    // With a permissive operator policy the /tmp and env asks are granted
-    // exactly as the Go runtime grants them; the egress ask is the recorded
-    // gap - the layers permit it, but the egress client is not ported.
-    let gaps: &[Option<&str>] = &[
-        None,
-        Some("the egress mechanism (internal/egress client) is not ported"),
-        None,
-    ];
+    // With a permissive operator policy every ask - /tmp, egress, env - is
+    // granted exactly as the Go runtime grants it.
+    let gaps: &[Option<&str>] = &[None, None, None];
     for (i, composition) in compositions.iter().enumerate() {
         let args = [
             composition.as_str(),

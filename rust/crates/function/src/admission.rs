@@ -44,11 +44,14 @@ pub fn admit(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<A
 /// What one run gets of the sandbox: the module's requests, each permitted
 /// by the composition and operator layers. The default is the default
 /// sandbox: nothing.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Capabilities {
     pub private_tmp: bool,
     /// The module's egress rules the layers admitted, as required.
     pub rules: Vec<HttpRule>,
+    /// The run's egress grant, compiled from the module's rules; None when
+    /// the module requires no egress.
+    pub grant: Option<crate::egress::Grant>,
     /// The module's env bindings the layers admitted, for materialize.
     pub env: Vec<EnvBinding>,
 }
@@ -73,6 +76,7 @@ impl Capabilities {
 /// the module's name.
 pub fn admit_requires(
     r: Option<&Requires>,
+    egress: Option<&std::sync::Arc<crate::egress::Egress>>,
     policy: Option<&OperatorPolicy>,
     comp: Option<&CompositionPolicy>,
     principal: &Principal,
@@ -93,17 +97,18 @@ pub fn admit_requires(
         }
         out.private_tmp = true;
     }
-    if let Some(egress) = &r.egress
-        && !egress.http.is_empty()
+    if let Some(required) = &r.egress
+        && !required.http.is_empty()
     {
-        admit_egress(&egress.http, policy, comp, principal)?;
-        // The layers permit the rules, but this runtime does not carry the
-        // egress client (internal/egress) yet: the mechanism itself is
-        // missing, refused with the Go runtime's words for that state.
-        return Err(
-            "requires egress (requires.egress.http), but the runtime has no egress mechanism"
-                .to_string(),
-        );
+        admit_egress(&required.http, policy, comp, principal)?;
+        let Some(egress) = egress else {
+            return Err(
+                "requires egress (requires.egress.http), but the runtime has no egress mechanism"
+                    .to_string(),
+            );
+        };
+        out.grant = Some(egress.grant(&required.http)?);
+        out.rules = required.http.clone();
     }
     if !r.env.is_empty() {
         admit_env(&r.env, policy, comp, principal)?;
