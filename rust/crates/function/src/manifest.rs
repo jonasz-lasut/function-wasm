@@ -92,6 +92,9 @@ pub struct Grants {
 /// (FUNCTION_WASM_VERSION, set by the release pipeline); empty for a
 /// development build, which passes every minRuntime rule - the Go runtime's
 /// debug.ReadBuildInfo behaviour.
+/// The manifest file a guest project carries.
+pub const FILE_NAME: &str = "wasmfn.yaml";
+
 pub fn runtime_version() -> &'static str {
     option_env!("FUNCTION_WASM_VERSION").unwrap_or("")
 }
@@ -102,6 +105,42 @@ impl Manifest {
     /// still loads; an unknown field anywhere under requires is refused, so
     /// a requirement this runtime cannot honour fails closed. The result is
     /// validated.
+    /// Loads and validates a wasmfn.yaml file - what guestfn build and
+    /// push read. Unknown top-level fields are refused: a typo in the file
+    /// the author is editing should not vanish silently.
+    pub fn load(path: &std::path::Path) -> Result<Manifest, String> {
+        let raw =
+            std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let value: serde_json::Value = serde_yaml::from_slice(&raw)
+            .map_err(|e| format!("{} is not valid YAML: {e}", path.display()))?;
+        if let Some(map) = value.as_object() {
+            const KNOWN: [&str; 8] = [
+                "abi",
+                "name",
+                "version",
+                "source",
+                "description",
+                "requires",
+                "config",
+                "minRuntime",
+            ];
+            for key in map.keys() {
+                if !KNOWN.contains(&key.as_str()) {
+                    return Err(format!("{}: unknown field {key:?}", path.display()));
+                }
+            }
+        }
+        let json =
+            serde_json::to_vec(&value).map_err(|e| format!("cannot encode manifest: {e}"))?;
+        Self::parse(&json).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// The manifest as the JSON bytes guestfn push publishes as the
+    /// artifact's manifest layer.
+    pub fn json(&self) -> Result<Vec<u8>, String> {
+        serde_json::to_vec(self).map_err(|e| format!("cannot encode manifest: {e}"))
+    }
+
     pub fn parse(raw: &[u8]) -> Result<Manifest, String> {
         if raw.len() > MAX_SIZE {
             return Err(format!(

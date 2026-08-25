@@ -37,6 +37,78 @@ pub fn parse_oci_reference(r: &str) -> Result<OciReference, String> {
     })
 }
 
+/// A parsed, normalized OCI reference that may carry a tag, a digest, both
+/// or neither - what guestfn's push and inspect take, where the runtime
+/// itself only ever accepts digest-pinned references.
+#[derive(Debug, Clone)]
+pub struct AnyReference {
+    pub registry: String,
+    pub repository: String,
+    pub tag: Option<String>,
+    pub digest: Option<String>,
+}
+
+impl AnyReference {
+    /// The reference as a Composition should hold it: pinned to digest,
+    /// with the tag kept for readability when there is one.
+    pub fn pinned(&self, digest: &str) -> String {
+        let mut out = format!("{}/{}", self.registry, self.repository);
+        if let Some(t) = &self.tag {
+            out.push(':');
+            out.push_str(t);
+        }
+        out.push('@');
+        out.push_str(self.digest.as_deref().unwrap_or(digest));
+        out
+    }
+
+    /// The distribution-API reference to address a manifest with: the
+    /// digest when pinned, else the tag, else latest.
+    pub fn manifest_ref(&self) -> String {
+        self.digest
+            .clone()
+            .or_else(|| self.tag.clone())
+            .unwrap_or_else(|| "latest".to_string())
+    }
+}
+
+/// Parses any OCI reference - name[:tag][@sha256:...] - normalized the way
+/// go-containerregistry normalizes it.
+pub fn parse_any_reference(r: &str) -> Result<AnyReference, String> {
+    let bad = || format!("cannot parse reference {r:?}");
+    let (name, digest) = match r.rsplit_once('@') {
+        Some((n, d)) => {
+            if !digest_is_valid(d) {
+                return Err(bad());
+            }
+            (n, Some(d.to_string()))
+        }
+        None => (r, None),
+    };
+    // A ':' after the last '/' is the tag separator (before it, a port).
+    let last_slash = name.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let (name, tag) = match name[last_slash..].find(':') {
+        Some(i) => {
+            let (n, t) = name.split_at(last_slash + i);
+            (n, Some(t[1..].to_string()))
+        }
+        None => (name, None),
+    };
+    if name.is_empty() || name.contains(char::is_whitespace) {
+        return Err(bad());
+    }
+    // Reuse the normalization (default registry, docker.io aliasing, the
+    // library/ prefix) by pinning to a placeholder digest.
+    let location = oci_location(&format!("{name}@sha256:{}", "0".repeat(64))).map_err(|_| bad())?;
+    let (registry, repository) = location.split_once('/').expect("a location has a registry");
+    Ok(AnyReference {
+        registry: registry.to_string(),
+        repository: repository.to_string(),
+        tag,
+        digest,
+    })
+}
+
 /// Checks an OCI reference and returns "registry/repository", without the
 /// tag or digest.
 pub fn oci_location(r: &str) -> Result<String, String> {

@@ -157,6 +157,53 @@ pub struct Module(pub(crate) wasmtime::Module);
 pub struct Inspection {
     pub host_imports: Vec<String>,
     pub abi_error: Option<String>,
+    /// Exports in declaration order.
+    pub exports: Vec<Extern>,
+    /// Imports in declaration order.
+    pub imports: Vec<Extern>,
+    /// Memories the module defines or imports.
+    pub memories: Vec<MemoryLimits>,
+}
+
+/// One export or import, as a listing shows it.
+#[derive(Debug, Clone)]
+pub struct Extern {
+    /// An import's module; empty for an export.
+    pub module: String,
+    pub name: String,
+    /// func, memory, table or global.
+    pub kind: String,
+    /// A function's signature, "(i32, i32) -> (i64)"; empty otherwise.
+    pub ty: String,
+}
+
+/// A memory's limits in 64 KiB pages.
+#[derive(Debug, Clone)]
+pub struct MemoryLimits {
+    pub min: u64,
+    /// None when unbounded.
+    pub max: Option<u64>,
+    pub shared: bool,
+    pub memory64: bool,
+}
+
+fn extern_kind(ty: &wasmtime::ExternType) -> (String, String) {
+    match ty {
+        wasmtime::ExternType::Func(ft) => ("func".to_string(), abi::signature_of(ft)),
+        wasmtime::ExternType::Memory(_) => ("memory".to_string(), String::new()),
+        wasmtime::ExternType::Table(_) => ("table".to_string(), String::new()),
+        wasmtime::ExternType::Global(_) => ("global".to_string(), String::new()),
+        _ => ("?".to_string(), String::new()),
+    }
+}
+
+fn memory_limits(mt: &wasmtime::MemoryType) -> MemoryLimits {
+    MemoryLimits {
+        min: mt.minimum(),
+        max: mt.maximum(),
+        shared: mt.is_shared(),
+        memory64: mt.is_64(),
+    }
 }
 
 /// Engine compiles and runs guest modules. It is safe for concurrent use.
@@ -270,9 +317,41 @@ impl Engine {
             .map(|i| format!("{HOST_MODULE}.{}", i.name()))
             .collect();
         let abi_error = abi::check_abi(&m).err().map(|e| e.to_string());
+        let mut exports = Vec::new();
+        let mut imports = Vec::new();
+        let mut memories = Vec::new();
+        for ex in m.exports() {
+            let (kind, ty) = extern_kind(&ex.ty());
+            if let wasmtime::ExternType::Memory(mt) = ex.ty() {
+                memories.push(memory_limits(&mt));
+            }
+            exports.push(Extern {
+                module: String::new(),
+                name: ex.name().to_string(),
+                kind,
+                ty,
+            });
+        }
+        for im in m.imports() {
+            let (kind, ty) = extern_kind(&im.ty());
+            if let wasmtime::ExternType::Memory(mt) = im.ty() {
+                // An imported memory precedes defined ones in the index
+                // space.
+                memories.insert(0, memory_limits(&mt));
+            }
+            imports.push(Extern {
+                module: im.module().to_string(),
+                name: im.name().to_string(),
+                kind,
+                ty,
+            });
+        }
         Ok(Inspection {
             host_imports,
             abi_error,
+            exports,
+            imports,
+            memories,
         })
     }
 

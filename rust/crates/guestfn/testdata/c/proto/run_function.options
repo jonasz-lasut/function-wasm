@@ -1,0 +1,8 @@
+# nanopb options for run_function.proto (docs: nanopb "Generator options").
+# Strings, bytes, repeated fields and maps have no fixed bound in this
+# contract, so they are heap allocated (fallback_type with PB_ENABLE_MALLOC);
+# scalars and singular submessages stay inline in the generated structs.
+* fallback_type:FT_POINTER
+# Name the C types fnv1_RunFunctionRequest rather than
+# apiextensions_fn_proto_v1_RunFunctionRequest.
+*run_function.proto package:"fnv1"
