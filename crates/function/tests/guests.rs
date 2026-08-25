@@ -50,7 +50,7 @@ static LOGS: LazyLock<Arc<Mutex<Vec<u8>>>> = LazyLock::new(|| {
 });
 
 fn examples() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
 }
 
 fn on_path(name: &str) -> bool {

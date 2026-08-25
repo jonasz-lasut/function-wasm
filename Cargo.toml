@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/engine", "crates/function", "crates/guestfn"]
+# The example guest is deliberately standalone: a guest depends on nothing
+# in this repository.
+exclude = ["examples/hello-rust"]
 
 [workspace.package]
 edition = "2024"
