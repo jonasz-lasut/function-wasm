@@ -11,8 +11,9 @@ pub struct Input {
     pub module: ModuleSource,
     pub composition_policy: String,
     pub limits: Option<Limits>,
-    // Config is passed to the module verbatim as part of its request input;
-    // the runtime does not interpret it, so it is not deserialized here.
+    /// Passed to the module verbatim as part of its request input; the
+    /// runtime only ever holds it against a manifest's config.schema.
+    pub config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]

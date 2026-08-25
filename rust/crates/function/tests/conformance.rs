@@ -39,7 +39,7 @@ fn cases() -> Vec<Case> {
             args: &["testdata/validate/refusals.yaml"],
             stdin: "",
             gap: Some(
-                "compositionPolicy (Cedar) not ported; the wrong-shape refusal embeds Go's json decoder wording",
+                "cedar-go and cedar-policy word parse errors differently; the wrong-shape refusal embeds Go's json decoder wording",
             ),
         },
         Case {
@@ -59,13 +59,13 @@ fn cases() -> Vec<Case> {
                 "testdata/validate/bad-iprule.cedar",
             ],
             stdin: "",
-            gap: Some("the operator policy (--sandbox-policy-file, Cedar) is not ported"),
+            gap: None,
         },
         Case {
             name: "FromWithoutXR",
             args: &["testdata/validate/from.yaml"],
             stdin: "",
-            gap: Some("compositionPolicy (Cedar) not ported"),
+            gap: None,
         },
         Case {
             name: "FromWithXR",
@@ -75,7 +75,7 @@ fn cases() -> Vec<Case> {
                 "testdata/validate/xr.yaml",
             ],
             stdin: "",
-            gap: Some("compositionPolicy (Cedar) and module.from materialisation not ported"),
+            gap: None,
         },
         Case {
             name: "UnknownFields",
@@ -138,7 +138,7 @@ fn cases() -> Vec<Case> {
                 "testdata/validate/xr.yaml",
             ],
             stdin: "",
-            gap: Some("compositionPolicy (Cedar) and module.from materialisation not ported"),
+            gap: None,
         },
         Case {
             name: "SignatureRequired",
@@ -149,7 +149,7 @@ fn cases() -> Vec<Case> {
                 "--resolve",
             ],
             stdin: "",
-            gap: Some("the operator policy (Cedar) and OCI resolution are not ported"),
+            gap: None,
         },
     ]
 }
@@ -329,4 +329,98 @@ fn validate_resolve_matches_the_go_runtime() {
             panic!("\n{f}");
         }
     }
+}
+
+/// The manifest path of the three-layer decision over generated fixtures,
+/// the shape of the Go tree's TestValidateResolvePathManifest: a module
+/// whose wasmfn.yaml requires a private /tmp, env bindings, or egress, with
+/// and without an operator grant policy. Egress that both layers permit is
+/// the one recorded gap: this runtime does not carry the egress client yet.
+#[test]
+fn validate_resolve_manifest_matches_the_go_runtime() {
+    let Some(go) = go_binary() else {
+        eprintln!("skipping: no Go toolchain or the Go build failed");
+        return;
+    };
+    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let cwd = repo_root().join("cmd/function");
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ok = wat::parse_str(
+        r#"(module (memory (export "memory") 1)
+          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+    )
+    .expect("wat");
+    std::fs::write(dir.path().join("fn.wasm"), &ok).expect("write");
+    let manifests: &[(&str, &str)] = &[
+        (
+            "tmp",
+            "abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n",
+        ),
+        (
+            "egress",
+            "abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  egress:\n    http:\n    - host: api.example.com\n      methods: [GET]\n",
+        ),
+        (
+            "env",
+            "abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n",
+        ),
+    ];
+    let mut compositions = Vec::new();
+    for (name, manifest) in manifests {
+        std::fs::write(dir.path().join(format!("{name}-manifest.yaml")), manifest).expect("write");
+        let composition = dir.path().join(format!("{name}.yaml"));
+        std::fs::write(
+            &composition,
+            format!(
+                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1beta1\n      kind: Input\n      module: {{type: Path, path: fn.wasm, manifestPath: {name}-manifest.yaml}}\n"
+            ),
+        )
+        .expect("write composition");
+        compositions.push(composition.display().to_string());
+    }
+
+    let module_dir = dir.path().display().to_string();
+    let mut failures = Vec::new();
+    // Without an operator policy every requirement is refused, identically.
+    for (i, composition) in compositions.iter().enumerate() {
+        let args = [
+            composition.as_str(),
+            "--resolve",
+            "--module-dir",
+            module_dir.as_str(),
+        ];
+        let go_out = run_validate(go, &args, "", &cwd);
+        let rust_out = run_validate(rust, &args, "", &cwd);
+        let name = format!("ManifestNoPolicy/{}", manifests[i].0);
+        if let Some(f) = assert_case(&name, None, &go_out, &rust_out) {
+            failures.push(f);
+        }
+    }
+    // With a permissive operator policy the /tmp and env asks are granted
+    // exactly as the Go runtime grants them; the egress ask is the recorded
+    // gap - the layers permit it, but the egress client is not ported.
+    let gaps: &[Option<&str>] = &[
+        None,
+        Some("the egress mechanism (internal/egress client) is not ported"),
+        None,
+    ];
+    for (i, composition) in compositions.iter().enumerate() {
+        let args = [
+            composition.as_str(),
+            "--resolve",
+            "--module-dir",
+            module_dir.as_str(),
+            "--sandbox-policy-file",
+            "testdata/validate/policy-permissive.cedar",
+        ];
+        let go_out = run_validate(go, &args, "", &cwd);
+        let rust_out = run_validate(rust, &args, "", &cwd);
+        let name = format!("ManifestPermissive/{}", manifests[i].0);
+        if let Some(f) = assert_case(&name, gaps[i], &go_out, &rust_out) {
+            failures.push(f);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }

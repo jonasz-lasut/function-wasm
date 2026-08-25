@@ -165,6 +165,26 @@ impl Resolver {
     }
 }
 
+impl Resolver {
+    /// Reads a wasmfn.yaml manifest named by module.manifestPath, confined
+    /// under --module-dir like the module and normalized to JSON the way an
+    /// OCI manifest layer arrives - read fresh each request (a path file may
+    /// change), the directory being the operator's.
+    pub fn read_manifest(&self, rel: &str) -> Result<Vec<u8>, String> {
+        let full = self.confined_path("module.manifestPath", rel)?;
+        let f = std::fs::File::open(&full).map_err(|e| {
+            format!(
+                "cannot read manifest file: {}",
+                go_io_error("open", &full, &e)
+            )
+        })?;
+        let b = read_capped(f, crate::manifest::MAX_SIZE as u64)?;
+        let value: serde_json::Value =
+            serde_yaml::from_slice(&b).map_err(|e| format!("manifest is not valid YAML: {e}"))?;
+        serde_json::to_vec(&value).map_err(|e| format!("manifest is not valid YAML: {e}"))
+    }
+}
+
 /// Renders an I/O failure the way Go's os package wraps it ("open <path>:
 /// no such file or directory"): these strings reach refusal messages the Go
 /// runtime pins, so the Rust runtime prints the same words.

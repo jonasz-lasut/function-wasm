@@ -249,3 +249,63 @@ fn runs_the_real_rust_example_guest() {
         "empty response: {rsp:?}"
     );
 }
+
+#[test]
+fn env_reaches_the_guest_sorted() {
+    let e = engine();
+    let wat = r#"(module
+      (import "wasi_snapshot_preview1" "environ_sizes_get" (func $sizes (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "environ_get" (func $get (param i32 i32) (result i32)))
+      (memory (export "memory") 1)
+      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+      (func (export "wasmfn_run") (param i32 i32) (result i64)
+        (drop (call $sizes (i32.const 0) (i32.const 4)))
+        (drop (call $get (i32.const 1024) (i32.const 2048)))
+        (i64.or
+          (i64.shl (i64.const 2048) (i64.const 32))
+          (i64.extend_i32_u (i32.load (i32.const 4))))))"#;
+    let m = e
+        .compile(&wat::parse_str(wat).expect("wat"))
+        .expect("compile");
+    let opts = RunOptions {
+        env: [
+            ("B".to_string(), "2".to_string()),
+            ("A".to_string(), "1".to_string()),
+        ]
+        .into(),
+        ..Default::default()
+    };
+    let out = e.run(&m, b"", opts).expect("run");
+    // A BTreeMap serves the environ sorted, like the Go engine's SetEnv.
+    assert_eq!(String::from_utf8_lossy(&out), "A=1\0B=2\0");
+}
+
+#[test]
+fn private_tmp_is_the_only_preopen() {
+    let e = engine();
+    // fd_prestat_get(3) answers 0 (success) exactly when a directory is
+    // pre-opened at descriptor 3 - the private /tmp - and EBADF (8) when the
+    // run has none; the errno travels back as the response length.
+    let wat = r#"(module
+      (import "wasi_snapshot_preview1" "fd_prestat_get" (func $prestat (param i32 i32) (result i32)))
+      (memory (export "memory") 1)
+      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+      (func (export "wasmfn_run") (param i32 i32) (result i64)
+        (i64.extend_i32_u (call $prestat (i32.const 3) (i32.const 0)))))"#;
+    let m = e
+        .compile(&wat::parse_str(wat).expect("wat"))
+        .expect("compile");
+    let with_tmp = e
+        .run(
+            &m,
+            b"",
+            RunOptions {
+                private_tmp: true,
+                ..Default::default()
+            },
+        )
+        .expect("run");
+    assert_eq!(with_tmp.len(), 0, "errno should be 0 with a private /tmp");
+    let without = e.run(&m, b"", RunOptions::default()).expect("run");
+    assert_eq!(without.len(), 8, "errno should be EBADF (8) without one");
+}

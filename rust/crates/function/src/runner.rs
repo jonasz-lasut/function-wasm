@@ -16,9 +16,11 @@ use prost::Message;
 use tonic::{Request, Response, Status};
 
 use crate::admission;
+use crate::authz::{OperatorPolicy, Principal};
 use crate::cache::ModuleCache;
 use crate::input::Input;
 use crate::resolver::Resolver;
+use crate::sandboxenv;
 
 /// Request outcomes, as the Go runtime's metrics label them: refused is the
 /// runtime declining before running the module, error is the load or the run
@@ -31,6 +33,10 @@ pub struct WasmFunction {
     pub cache: ModuleCache,
     pub resolver: Arc<Resolver>,
     pub ttl: Duration,
+    /// The operator's grant policy (--sandbox-policy-file), the sole
+    /// authority that enables a sandbox capability; None refuses every
+    /// sandbox grant, so the runtime offers only the default sandbox.
+    pub policy: Option<OperatorPolicy>,
 }
 
 impl WasmFunction {
@@ -78,11 +84,36 @@ impl FunctionRunnerService for WasmFunction {
             Ok(admitted) => admitted,
             Err(e) => return Ok(Response::new(self.fatal(rsp, OUTCOME_REFUSED, e))),
         };
-        if let Err(e) = admission::require_ported(&input.module) {
+        // A module.from source names a field of the composite resource; the
+        // compositionPolicy fences what it may pick (from.rs, default-deny).
+        let composite = if input.module.from.is_empty() {
+            None
+        } else {
+            req.observed
+                .as_ref()
+                .and_then(|o| o.composite.as_ref())
+                .and_then(|c| c.resource.as_ref())
+                .map(function_sdk_rust::resource::struct_to_json)
+        };
+        let source = match crate::from::from_composite(
+            &input.module,
+            admitted.composition.as_deref(),
+            composite.as_ref(),
+        ) {
+            Ok(source) => source,
+            Err(e) => {
+                return Ok(Response::new(self.fatal(
+                    rsp,
+                    OUTCOME_REFUSED,
+                    format!("cannot resolve module: {e}"),
+                )));
+            }
+        };
+        if let Err(e) = admission::require_ported(&source) {
             return Ok(Response::new(self.fatal(rsp, OUTCOME_REFUSED, e)));
         }
 
-        let resolved = match self.resolver.resolve(&input.module.path) {
+        let resolved = match self.resolver.resolve(&source.path) {
             Ok(resolved) => resolved,
             Err(e) => {
                 return Ok(Response::new(self.fatal(
@@ -113,12 +144,95 @@ impl FunctionRunnerService for WasmFunction {
             }
         };
 
+        // The module's ask - its manifest's requires - is decided by the
+        // three layers: the manifest requests, the compositionPolicy and the
+        // operator policy permit. A module without one gets the default
+        // sandbox.
+        let manifest = if source.manifest_path.is_empty() {
+            None
+        } else {
+            let raw = match self.resolver.read_manifest(&source.manifest_path) {
+                Ok(raw) => raw,
+                Err(e) => {
+                    return Ok(Response::new(self.fatal(
+                        rsp,
+                        OUTCOME_REFUSED,
+                        format!(
+                            "cannot read the manifest of module {}: {e}",
+                            resolved.description
+                        ),
+                    )));
+                }
+            };
+            match crate::manifest::Manifest::parse(&raw) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    return Ok(Response::new(self.fatal(
+                        rsp,
+                        OUTCOME_REFUSED,
+                        format!(
+                            "module {} has an invalid manifest: {e}",
+                            resolved.description
+                        ),
+                    )));
+                }
+            }
+        };
+        let principal = principal_from(&req);
+        let caps = match admission::admit_requires(
+            manifest.as_ref().and_then(|m| m.requires.as_ref()),
+            self.policy.as_ref(),
+            admitted.composition.as_deref(),
+            &principal,
+        ) {
+            Ok(caps) => caps,
+            Err(e) => {
+                return Ok(Response::new(self.fatal(
+                    rsp,
+                    OUTCOME_REFUSED,
+                    format!("module {} {e}", resolved.description),
+                )));
+            }
+        };
+        if let Some(m) = &manifest
+            && let Err(e) = m.check(&caps.grants(), input.config.as_ref(), "")
+        {
+            return Ok(Response::new(self.fatal(
+                rsp,
+                OUTCOME_REFUSED,
+                format!("module {} {e}", resolved.description),
+            )));
+        }
+        // The manifest's env bindings resolve against the request's own
+        // credentials. (The withheld pull credential arrives with OCI
+        // sources; a Path source has none.)
+        let env = if caps.env.is_empty() {
+            Default::default()
+        } else {
+            let sources = sandboxenv::Sources {
+                credentials: &req.credentials,
+                withheld: "",
+            };
+            match sandboxenv::materialize(&caps.env, &sources) {
+                Ok(env) => env,
+                Err(e) => {
+                    return Ok(Response::new(self.fatal(
+                        rsp,
+                        OUTCOME_REFUSED,
+                        format!("module {}: {e}", resolved.description),
+                    )));
+                }
+            }
+        };
+
         // The whole request is forwarded and the whole response returned; the
         // engine works on the protobuf bytes.
         let bytes = req.encode_to_vec();
         let opts = RunOptions {
             timeout: admitted.timeout,
             memory_limit: admitted.memory_limit,
+            private_tmp: caps.private_tmp,
+            env,
             module: resolved.description.clone(),
             digest: resolved.digest.clone(),
             ..Default::default()
@@ -175,6 +289,44 @@ impl FunctionRunnerService for WasmFunction {
     }
 }
 
+/// The operator-policy principal from the observed composite resource: its
+/// kind and namespace, read without converting the whole object. A request
+/// with no observed composite yields the zero principal, which matches no
+/// principal condition - safe, since the policy layers only narrow.
+fn principal_from(req: &RunFunctionRequest) -> Principal {
+    use pbjson_types::value::Kind;
+    let Some(xr) = req
+        .observed
+        .as_ref()
+        .and_then(|o| o.composite.as_ref())
+        .and_then(|c| c.resource.as_ref())
+    else {
+        return Principal::default();
+    };
+    let str_field = |s: &pbjson_types::Struct, key: &str| -> String {
+        s.fields
+            .get(key)
+            .and_then(|v| match &v.kind {
+                Some(Kind::StringValue(s)) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+    let namespace = xr
+        .fields
+        .get("metadata")
+        .and_then(|v| match &v.kind {
+            Some(Kind::StructValue(md)) => Some(str_field(md, "namespace")),
+            _ => None,
+        })
+        .unwrap_or_default();
+    Principal {
+        namespace,
+        xr_kind: str_field(xr, "kind"),
+        composition: String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +348,7 @@ mod tests {
             engine,
             resolver: Arc::new(Resolver::new(dir, 128 << 20)),
             ttl: Duration::from_secs(60),
+            policy: None,
         }
     }
 

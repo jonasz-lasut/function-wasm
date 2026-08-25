@@ -12,10 +12,13 @@ name = "function"
 path = "src/main.rs"
 
 [dependencies]
+cedar-policy = "4"
 clap = { version = "4", features = ["derive", "env"] }
 function-sdk-rust = "0.1.0"
 function-wasm-engine = { path = "../engine" }
 hex = "0.4"
+jsonschema = "0.33"
+tempfile = "3"
 pbjson-types = "0.9"
 prost = "0.14"
 serde.workspace = true
