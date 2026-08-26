@@ -8,21 +8,19 @@
     // The repo uses conventional commits; a routine bump is a chore, not a fix.
     ':semanticCommitTypeAll(chore)',
   ],
-  // The dependency surfaces: the Cargo workspace and the Rust example's
-  // Cargo.toml, the Go example guests' go.mod files, the workflows (actions
-  // and the CLI versions in their env), and the Function package refs under
-  // the examples' render files. The Dockerfile's rust:1 build stage floats
-  // by design; its runtime base (cgr.dev/chainguard/glibc-dynamic, a
-  // `latest`-only image) is digest-pinned and the dockerfile manager keeps
-  // that digest current.
-  enabledManagers: ['gomod', 'cargo', 'github-actions', 'crossplane', 'dockerfile', 'custom.regex'],
-  // Tidy the Go example guests' modules in the same commit.
-  postUpdateOptions: ['gomodTidy', 'gomodUpdateImportPaths'],
+  // The dependency surfaces: the Cargo workspace, the workflows (actions and
+  // the CLI versions in their env), and the Dockerfile. The Dockerfile's
+  // rust:1 build stage floats by design; its runtime base
+  // (cgr.dev/chainguard/glibc-dynamic, a `latest`-only image) is digest-pinned
+  // and the dockerfile manager keeps that digest current.
+  //
+  // The example guests and the scaffold goldens are NOT a surface: they
+  // mirror the templates under crates/guestfn/templates, which Renovate
+  // cannot parse (`.tmpl`), so a bot bump desyncs the three copies and fails
+  // the render-matches goldens. Their dependencies - and the function package
+  // refs in their render files - move by hand, together with the templates.
+  enabledManagers: ['cargo', 'github-actions', 'dockerfile', 'custom.regex'],
   osvVulnerabilityAlerts: true,
-  crossplane: {
-    // Function package refs in the example guest's render files.
-    managerFilePatterns: ['/^examples/.*\\.ya?ml$/'],
-  },
   customManagers: [
     {
       // Crossplane CLI version installed by install.sh in the release workflows.
@@ -37,53 +35,6 @@
   ],
   // Rules are evaluated in order; later rules win.
   packageRules: [
-    // Catch-all: every remaining Go module lands in one PR.
-    { matchManagers: ['gomod'], groupName: 'go modules' },
-
-    // Kubernetes staging modules and controller-tools move together. Their
-    // minor version follows what crossplane-runtime / function-sdk-go pull in,
-    // so only patches flow freely; minors and majors wait for approval on the
-    // dependency dashboard.
-    {
-      matchManagers: ['gomod'],
-      matchPackageNames: ['k8s.io/**', 'sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools'],
-      groupName: 'kubernetes',
-    },
-    {
-      matchManagers: ['gomod'],
-      matchPackageNames: ['k8s.io/**', 'sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools'],
-      matchUpdateTypes: ['major', 'minor'],
-      dependencyDashboardApproval: true,
-    },
-
-    // Crossplane SDK modules are released together and depend on each other.
-    {
-      matchManagers: ['gomod'],
-      matchPackageNames: ['github.com/crossplane/**'],
-      groupName: 'crossplane',
-    },
-
-    // wasmtime-go tracks wasmtime: every release is a new Go major with a
-    // new import path (/v47 → /v48; gomodUpdateImportPaths rewrites the one
-    // importer, internal/engine). Keep it out of the catch-all so the diff
-    // and the guest end-to-end tests are judged on their own.
-    {
-      matchManagers: ['gomod'],
-      matchPackageNames: ['github.com/bytecodealliance/wasmtime-go/**'],
-      groupName: 'wasmtime',
-    },
-
-    // The go directive is the Go version CI builds and tests with (setup-go and
-    // the runtime image read go.mod), so bump it — Go patch releases carry the
-    // toolchain security fixes. Renovate leaves it alone unless told to bump.
-    {
-      matchManagers: ['gomod'],
-      matchDepNames: ['go'],
-      matchDepTypes: ['golang'],
-      rangeStrategy: 'bump',
-      groupName: 'go',
-    },
-
     // GitHub Actions: let a release settle before pulling its digest, batch
     // non-major bumps into one PR, and keep majors as separate PRs since they
     // tend to need workflow changes.
@@ -94,23 +45,26 @@
       groupName: 'github-actions',
     },
 
-    // The Rust example's crates move together (prost, prost-types, prost-build
-    // share a version line).
+    // The workspace crates move together.
     { matchManagers: ['cargo'], groupName: 'rust' },
 
-    // Package refs in the render examples.
-    { matchManagers: ['crossplane'], groupName: 'examples' },
-
-    // Dockerfile: the golang build stage follows go.mod, not Renovate; the
-    // runtime base is pinned to a digest that moves with Chainguard's daily
-    // rebuilds — one PR per digest bump, so a rebuild that breaks the image
-    // is judged on its own.
-    { matchManagers: ['dockerfile'], matchPackageNames: ['golang'], enabled: false },
+    // Dockerfile: the rust build stage floats by design; the runtime base is
+    // pinned to a digest that moves with Chainguard's daily rebuilds - one PR
+    // per digest bump, so a rebuild that breaks the image is judged on its
+    // own.
+    { matchManagers: ['dockerfile'], matchPackageNames: ['rust'], enabled: false },
     {
       matchManagers: ['dockerfile'],
       matchPackageNames: ['cgr.dev/chainguard/glibc-dynamic'],
       pinDigests: true,
       groupName: 'runtime image',
+    },
+
+    // Nothing under the example guests or the scaffold goldens (see the
+    // surface note above).
+    {
+      matchFileNames: ['examples/**', 'crates/guestfn/testdata/**'],
+      enabled: false,
     },
   ],
 }
