@@ -17,7 +17,7 @@ bytes = "1"
 flate2 = "1"
 cedar-policy = "4"
 clap = { version = "4", features = ["derive", "env"] }
-function-sdk-rust = "0.2.0"
+function-sdk-rust = "0.3.0"
 function-wasm-engine = { path = "../engine" }
 hex = "0.4"
 http = "1"
