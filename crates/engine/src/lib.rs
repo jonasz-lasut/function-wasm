@@ -154,6 +154,47 @@ pub(crate) struct CallState {
     // Throttles the audit line of a guest that calls wasmfn.http without a
     // grant to one info line per run.
     no_grant_logged: bool,
+    timer: HostTimer,
+}
+
+/// Splits a run's wall clock between guest code and host imports: every
+/// call_hook transition charges the elapsed slice to whichever side the
+/// innermost frame was on, so time a host import spends re-entered in the
+/// guest (wasmfn.http calling wasmfn_alloc) counts as guest time.
+pub(crate) struct HostTimer {
+    /// One entry per live host<->wasm frame; true is a host frame.
+    stack: Vec<bool>,
+    last: Instant,
+    host_total: Duration,
+}
+
+impl HostTimer {
+    fn new() -> Self {
+        HostTimer {
+            stack: Vec::with_capacity(8),
+            last: Instant::now(),
+            host_total: Duration::ZERO,
+        }
+    }
+
+    pub(crate) fn transition(&mut self, hook: wasmtime::CallHook) {
+        let now = Instant::now();
+        if self.stack.last() == Some(&true) {
+            self.host_total += now - self.last;
+        }
+        self.last = now;
+        match hook {
+            wasmtime::CallHook::CallingWasm => self.stack.push(false),
+            wasmtime::CallHook::CallingHost => self.stack.push(true),
+            _ => {
+                self.stack.pop();
+            }
+        }
+    }
+
+    pub(crate) fn host_total(&self) -> Duration {
+        self.host_total
+    }
 }
 
 /// A compiled, ABI-checked guest module with its imports resolved once into
