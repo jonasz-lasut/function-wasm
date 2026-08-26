@@ -15,14 +15,18 @@ use crate::sandboxenv::{self, EnvBinding};
 /// Bounds the layer and the file: a manifest is a few lines of requirements
 /// and a schema, never a document.
 pub const MAX_SIZE: usize = 64 << 10;
-/// The ABI this runtime implements (docs/abi.md).
-pub const ABI_VERSION: i64 = 1;
+/// The ABIs this runtime implements: v1 (docs/abi.md, core modules) and v2
+/// (docs/abi-v2.md, components). The binary format decides which one a
+/// module actually is; the manifest's abi is the declaration checked
+/// against it.
+pub const SUPPORTED_ABIS: [i64; 2] = [1, 2];
 
 /// What a module declares about itself.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Manifest {
-    /// The ABI version the module implements; required, must be ABI_VERSION.
+    /// The ABI version the module implements; required, one of
+    /// SUPPORTED_ABIS, and it must match the module's binary format.
     pub abi: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
@@ -169,14 +173,14 @@ impl Manifest {
         Ok(m)
     }
 
-    /// Checks the manifest's shape and compiles its schema: abi is
-    /// ABI_VERSION, every required egress rule passes the checks a
+    /// Checks the manifest's shape and compiles its schema: abi is one of
+    /// SUPPORTED_ABIS, every required egress rule passes the checks a
     /// Composition's rule passes, minRuntime is a semantic version, and
     /// config.schema is a JSON Schema.
     pub fn validate(&self) -> Result<(), String> {
-        if self.abi != ABI_VERSION {
+        if !SUPPORTED_ABIS.contains(&self.abi) {
             return Err(format!(
-                "abi must be {ABI_VERSION} (this runtime implements ABI v{ABI_VERSION}), got {}",
+                "abi must be 1 or 2 (this runtime implements ABI v1 and v2), got {}",
                 self.abi
             ));
         }
@@ -271,19 +275,31 @@ impl Manifest {
     }
 
     /// Holds the manifest against what one run was granted - narrowing only:
-    /// every requirement must be covered by g, the runtime must be at least
-    /// minRuntime, and config must satisfy the schema. The first miss is the
-    /// error, worded for a fatal result the caller prefixes with the
+    /// every requirement must be covered by g, the declared abi must be the
+    /// module's actual binary format (module_abi), the runtime must be at
+    /// least minRuntime, and config must satisfy the schema. The first miss
+    /// is the error, worded for a fatal result the caller prefixes with the
     /// module's name.
     pub fn check(
         &self,
         g: &Grants,
         config: Option<&Value>,
         runtime_version: &str,
+        module_abi: u8,
     ) -> Result<(), String> {
-        if self.abi != ABI_VERSION {
+        if !SUPPORTED_ABIS.contains(&self.abi) {
             return Err(format!(
-                "requires ABI v{}, this runtime implements ABI v{ABI_VERSION}",
+                "requires ABI v{}, this runtime implements ABI v1 and v2",
+                self.abi
+            ));
+        }
+        if self.abi != i64::from(module_abi) {
+            let actual = match module_abi {
+                1 => "a core module (ABI v1)",
+                _ => "a component (ABI v2)",
+            };
+            return Err(format!(
+                "manifest says abi: {}, but the module is {actual}",
                 self.abi
             ));
         }
@@ -497,8 +513,8 @@ mod tests {
     fn refuses_with_go_strings() {
         let cases: &[(&str, &str)] = &[
             (
-                r#"{"abi":2}"#,
-                "abi must be 1 (this runtime implements ABI v1), got 2",
+                r#"{"abi":3}"#,
+                "abi must be 1 or 2 (this runtime implements ABI v1 and v2), got 3",
             ),
             (
                 r#"{"abi":1,"requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,
@@ -540,11 +556,28 @@ mod tests {
             }],
             env: Vec::new(),
         };
-        assert!(m.check(&full, None, "").is_ok());
+        assert!(m.check(&full, None, "", 1).is_ok());
         let none = Grants::default();
         assert_eq!(
-            m.check(&none, None, "").expect_err("refuse"),
+            m.check(&none, None, "", 1).expect_err("refuse"),
             "requires egress host api.example.com methods [GET], which was not granted"
+        );
+    }
+
+    #[test]
+    fn check_holds_abi_against_the_binary_format() {
+        let v2 = manifest(r#"{"abi":2}"#);
+        assert_eq!(
+            v2.check(&Grants::default(), None, "", 1)
+                .expect_err("refuse"),
+            "manifest says abi: 2, but the module is a core module (ABI v1)"
+        );
+        assert!(v2.check(&Grants::default(), None, "", 2).is_ok());
+        let v1 = manifest(r#"{"abi":1}"#);
+        assert_eq!(
+            v1.check(&Grants::default(), None, "", 2)
+                .expect_err("refuse"),
+            "manifest says abi: 1, but the module is a component (ABI v2)"
         );
     }
 
@@ -570,11 +603,11 @@ mod tests {
     #[test]
     fn min_runtime_compares() {
         let m = manifest(r#"{"abi":1,"minRuntime":"0.2.0"}"#);
-        assert!(m.check(&Grants::default(), None, "(devel)").is_ok());
-        assert!(m.check(&Grants::default(), None, "").is_ok());
-        assert!(m.check(&Grants::default(), None, "v0.3.0").is_ok());
+        assert!(m.check(&Grants::default(), None, "(devel)", 1).is_ok());
+        assert!(m.check(&Grants::default(), None, "", 1).is_ok());
+        assert!(m.check(&Grants::default(), None, "v0.3.0", 1).is_ok());
         assert_eq!(
-            m.check(&Grants::default(), None, "v0.1.0")
+            m.check(&Grants::default(), None, "v0.1.0", 1)
                 .expect_err("refuse"),
             "requires runtime v0.2.0 or newer, this is v0.1.0"
         );

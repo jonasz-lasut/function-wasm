@@ -12,6 +12,7 @@
 //! nothing protocol-specific.
 
 mod abi;
+mod component;
 pub mod concurrency;
 pub mod duration;
 mod hosthttp;
@@ -19,7 +20,10 @@ mod hostlog;
 pub mod metrics;
 mod run;
 mod sandbox;
+mod wasihttp;
 pub mod wire;
+
+pub use component::ABI_V2_WORLD;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -299,43 +303,71 @@ impl HostTimer {
     }
 }
 
-/// A compiled, ABI-checked guest module with its imports resolved once into
-/// an InstancePre, so a run only instantiates. It is safe for concurrent
-/// runs and cheap to clone; wasmtime frees the code memory when the last
-/// clone drops.
+/// A compiled, ABI-checked guest with its imports resolved once (an
+/// InstancePre), so a run only instantiates. It is safe for concurrent runs
+/// and cheap to clone; wasmtime frees the code memory when the last clone
+/// drops. The binary format decided the ABI at compile: a core module is
+/// ABI v1, a component is ABI v2.
 #[derive(Clone)]
 pub struct Module {
-    pub(crate) inner: wasmtime::Module,
-    pub(crate) pre: wasmtime::InstancePre<Ctx>,
+    pub(crate) repr: Repr,
+}
+
+#[derive(Clone)]
+pub(crate) enum Repr {
+    Core {
+        inner: wasmtime::Module,
+        pre: wasmtime::InstancePre<Ctx>,
+    },
+    Component(component::ComponentModule),
 }
 
 impl std::fmt::Debug for Module {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Module").field(&self.inner).finish()
+        f.debug_struct("Module")
+            .field("abi", &self.abi_version())
+            .finish()
     }
 }
 
 impl Module {
+    /// The ABI the guest implements, decided by its binary format: 1 for a
+    /// core module, 2 for a component.
+    pub fn abi_version(&self) -> u8 {
+        match &self.repr {
+            Repr::Core { .. } => 1,
+            Repr::Component(_) => 2,
+        }
+    }
+
     /// The initial size in bytes of the module's exported memory - what
     /// instantiation claims before the guest runs, and so what a run
-    /// reserves from the shared memory pool up front.
+    /// reserves from the shared memory pool up front. A component exports no
+    /// top-level memory, so its whole footprint is charged incrementally by
+    /// the run's limiter as the guest grows.
     pub(crate) fn initial_memory_bytes(&self) -> u64 {
-        self.inner
-            .exports()
-            .find_map(|e| match e.ty() {
-                wasmtime::ExternType::Memory(mt) if e.name() == EXPORT_MEMORY => {
-                    Some(mt.minimum() << 16)
-                }
-                _ => None,
-            })
-            .unwrap_or(0)
+        match &self.repr {
+            Repr::Core { inner, .. } => inner
+                .exports()
+                .find_map(|e| match e.ty() {
+                    wasmtime::ExternType::Memory(mt) if e.name() == EXPORT_MEMORY => {
+                        Some(mt.minimum() << 16)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(0),
+            Repr::Component(_) => 0,
+        }
     }
 }
 
-/// What Inspect reads from a module: its wasmfn host imports and, when the
-/// module does not implement ABI v1, checkABI's refusal.
+/// What Inspect reads from a module: its ABI (decided by the binary
+/// format), its wasmfn host imports and, when the module does not implement
+/// that ABI, the load check's refusal.
 #[derive(Debug)]
 pub struct Inspection {
+    /// 1 for a core module, 2 for a component.
+    pub abi_version: u8,
     pub host_imports: Vec<String>,
     pub abi_error: Option<String>,
     /// Exports in declaration order.
@@ -392,6 +424,7 @@ pub struct Engine {
     config: Config,
     pub(crate) inner: wasmtime::Engine,
     pub(crate) linker: Linker<Ctx>,
+    pub(crate) clinker: wasmtime::component::Linker<component::CtxV2>,
     pub(crate) scheduler: Option<concurrency::FairScheduler>,
     pub(crate) mem: Option<Arc<concurrency::MemPool>>,
     active: Arc<AtomicI64>,
@@ -452,6 +485,7 @@ impl Engine {
                     "cannot define {HOST_MODULE}.{HOST_HTTP} import: {e}"
                 ))
             })?;
+        let clinker = component::linker(&inner)?;
 
         let active = Arc::new(AtomicI64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
@@ -477,6 +511,7 @@ impl Engine {
             config,
             inner,
             linker,
+            clinker,
             scheduler: (config.max_concurrent_runs > 0)
                 .then(|| concurrency::FairScheduler::new(config.max_concurrent_runs)),
             mem: (config.max_total_run_memory > 0)
@@ -493,9 +528,18 @@ impl Engine {
         self.config
     }
 
-    /// Compiles wasm bytes and verifies they export ABI v1.
+    /// Compiles wasm bytes and verifies they implement their ABI: checkABI
+    /// for a core module (ABI v1), the world typecheck for a component
+    /// (ABI v2). The binary format decides which.
     pub fn compile(&self, wasm: &[u8]) -> Result<Module, Error> {
         let start = std::time::Instant::now();
+        if component::is_component_binary(wasm) {
+            let c = self.compiled_component(wasm)?;
+            metrics::COMPILE_DURATION.observe(start.elapsed().as_secs_f64());
+            return Ok(Module {
+                repr: Repr::Component(self.pre_component(c)?),
+            });
+        }
         let m = self.compiled(wasm)?;
         metrics::COMPILE_DURATION.observe(start.elapsed().as_secs_f64());
         abi::check_abi(&m)?;
@@ -513,13 +557,19 @@ impl Engine {
                 first_line(&e.to_string())
             ))
         })?;
-        Ok(Module { inner: m, pre })
+        Ok(Module {
+            repr: Repr::Core { inner: m, pre },
+        })
     }
 
     /// Compiles wasm bytes and reports what the runtime sees in them: the
-    /// host imports and checkABI's verdict - what `function validate
-    /// --resolve` shows. The compiled code is dropped.
+    /// ABI (from the binary format), the host imports and the load check's
+    /// verdict - what `function validate --resolve` shows. The compiled
+    /// code is dropped.
     pub fn inspect(&self, wasm: &[u8]) -> Result<Inspection, Error> {
+        if component::is_component_binary(wasm) {
+            return self.inspect_component(wasm);
+        }
         let m = self.compiled(wasm)?;
         let host_imports = m
             .imports()
@@ -557,6 +607,7 @@ impl Engine {
             });
         }
         Ok(Inspection {
+            abi_version: 1,
             host_imports,
             abi_error,
             exports,
@@ -565,13 +616,64 @@ impl Engine {
         })
     }
 
+    /// The component arm of inspect: the top-level component items and the
+    /// world typecheck's verdict. A component has no top-level memory and no
+    /// core wasmfn imports; its host surface is the world's.
+    fn inspect_component(&self, wasm: &[u8]) -> Result<Inspection, Error> {
+        let c = self.compiled_component(wasm)?;
+        let abi_error = self.pre_component(c.clone()).err().map(|e| e.to_string());
+        let ty = c.component_type();
+        let item_kind = |item: &wasmtime::component::types::ComponentItem| match item {
+            wasmtime::component::types::ComponentItem::ComponentFunc(_) => "func",
+            wasmtime::component::types::ComponentItem::CoreFunc(_) => "core func",
+            wasmtime::component::types::ComponentItem::Module(_) => "module",
+            wasmtime::component::types::ComponentItem::Component(_) => "component",
+            wasmtime::component::types::ComponentItem::ComponentInstance(_) => "instance",
+            wasmtime::component::types::ComponentItem::Type(_) => "type",
+            wasmtime::component::types::ComponentItem::Resource(_) => "resource",
+        };
+        let imports: Vec<Extern> = ty
+            .imports(&self.inner)
+            .map(|(name, item)| Extern {
+                module: String::new(),
+                name: name.to_string(),
+                kind: item_kind(&item.ty).to_string(),
+                ty: String::new(),
+            })
+            .collect();
+        let exports = ty
+            .exports(&self.inner)
+            .map(|(name, item)| Extern {
+                module: String::new(),
+                name: name.to_string(),
+                kind: item_kind(&item.ty).to_string(),
+                ty: String::new(),
+            })
+            .collect();
+        let host_imports = imports
+            .iter()
+            .filter(|i| i.name == HOST_LOG)
+            .map(|i| i.name.clone())
+            .collect();
+        Ok(Inspection {
+            abi_version: 2,
+            host_imports,
+            abi_error,
+            exports,
+            imports,
+            memories: Vec::new(),
+        })
+    }
+
     /// Returns wasmtime's compiled artifact for m: machine code that this
     /// engine - same wasmtime version, same host - can load again with
     /// deserialize_file instead of recompiling.
     pub fn serialize(&self, m: &Module) -> Result<Vec<u8>, Error> {
-        m.inner
-            .serialize()
-            .map_err(|e| Error(format!("cannot serialize module: {e}")))
+        match &m.repr {
+            Repr::Core { inner, .. } => inner.serialize(),
+            Repr::Component(c) => c.inner.serialize(),
+        }
+        .map_err(|e| Error(format!("cannot serialize module: {e}")))
     }
 
     /// Loads an artifact serialize produced, mapping the file so the code
@@ -580,8 +682,30 @@ impl Engine {
     /// checked again, so a stale or foreign artifact is an error the caller
     /// treats as a cache miss.
     pub fn deserialize_file(&self, path: &std::path::Path) -> Result<Module, Error> {
-        // SAFETY: the artifact comes from the runtime's own cache directory,
-        // written by serialize; wasmtime validates its header and version.
+        // The artifact says what it is (module or component); both kinds
+        // share the cache namespace because wasmtime tells them apart.
+        let kind = wasmtime::Engine::detect_precompiled_file(path).map_err(|e| {
+            Error(format!(
+                "cannot load compiled module: {}",
+                first_line(&e.to_string())
+            ))
+        })?;
+        if matches!(kind, Some(wasmtime::Precompiled::Component)) {
+            // SAFETY: the artifact comes from the runtime's own cache
+            // directory, written by serialize; wasmtime validates its
+            // header and version.
+            let c = unsafe { wasmtime::component::Component::deserialize_file(&self.inner, path) }
+                .map_err(|e| {
+                    Error(format!(
+                        "cannot load compiled module: {}",
+                        first_line(&e.to_string())
+                    ))
+                })?;
+            return Ok(Module {
+                repr: Repr::Component(self.pre_component(c)?),
+            });
+        }
+        // SAFETY: as above.
         let m = unsafe { wasmtime::Module::deserialize_file(&self.inner, path) }.map_err(|e| {
             Error(format!(
                 "cannot load compiled module: {}",
