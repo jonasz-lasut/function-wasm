@@ -144,11 +144,6 @@ struct ServeArgs {
     #[arg(long, default_value_t = 0, env = "MAX_CACHE_SIZE")]
     max_cache_size: u64,
 
-    /// Address of the Prometheus /metrics endpoint - what function-sdk-go
-    /// serves for the Go runtime; empty disables it.
-    #[arg(long, default_value = ":8080", env = "METRICS_ADDRESS")]
-    metrics_address: String,
-
     /// Directory to write a Firefox-profiler JSON profile of every run
     /// into - debug tooling, so it requires --debug.
     #[arg(long, env = "PROFILE_GUESTS")]
@@ -362,8 +357,8 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     // The health endpoints answer while warm-up runs: a probe reads
     // not-ready rather than a refused connection, and an early request is
     // simply served cold or joins the load in flight.
-    if !args.metrics_address.is_empty() {
-        let address = args.metrics_address.clone();
+    if !args.sdk.metrics_address.is_empty() {
+        let address = args.sdk.metrics_address.clone();
         tokio::spawn(async move {
             if let Err(e) = ops::serve_metrics(&address).await {
                 tracing::error!(error = %e, "cannot serve metrics");
