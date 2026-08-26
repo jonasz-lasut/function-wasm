@@ -137,12 +137,6 @@ pub struct RunOptions {
     /// The module's description and digest, attached to guest log lines.
     pub module: String,
     pub digest: String,
-
-    /// Writes a Firefox-profiler JSON profile of this run into the
-    /// directory (the runtime's --profile-guests, gated on --debug): the
-    /// guest sampled every epoch tick, host imports marked. None runs
-    /// without any profiling cost.
-    pub profile_dir: Option<std::path::PathBuf>,
 }
 
 /// The per-store data: the WASI context, the memory limiter and the state
