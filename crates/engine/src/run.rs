@@ -113,9 +113,9 @@ fn execute(
 
     let _running = engine.running();
 
-    let instance = engine
-        .linker
-        .instantiate(&mut store, &m.0)
+    let instance = m
+        .pre
+        .instantiate(&mut store)
         .map_err(|e| guest_error("cannot instantiate module", e, budget))?;
     if let Some(init) = instance.get_func(&mut store, EXPORT_INITIALIZE) {
         let init = init

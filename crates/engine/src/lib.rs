@@ -146,10 +146,21 @@ pub(crate) struct CallState {
     no_grant_logged: bool,
 }
 
-/// A compiled, ABI-checked guest module. It is safe for concurrent runs and
-/// cheap to clone; wasmtime frees the code memory when the last clone drops.
-#[derive(Clone, Debug)]
-pub struct Module(pub(crate) wasmtime::Module);
+/// A compiled, ABI-checked guest module with its imports resolved once into
+/// an InstancePre, so a run only instantiates. It is safe for concurrent
+/// runs and cheap to clone; wasmtime frees the code memory when the last
+/// clone drops.
+#[derive(Clone)]
+pub struct Module {
+    pub(crate) inner: wasmtime::Module,
+    pub(crate) pre: wasmtime::InstancePre<Ctx>,
+}
+
+impl std::fmt::Debug for Module {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Module").field(&self.inner).finish()
+    }
+}
 
 /// What Inspect reads from a module: its wasmfn host imports and, when the
 /// module does not implement ABI v1, checkABI's refusal.
@@ -303,7 +314,21 @@ impl Engine {
         let m = self.compiled(wasm)?;
         metrics::COMPILE_DURATION.observe(start.elapsed().as_secs_f64());
         abi::check_abi(&m)?;
-        Ok(Module(m))
+        self.pre(m)
+    }
+
+    /// Resolves the module's imports against the linker once, so every run
+    /// skips that work. After checkABI the only way this fails is a WASI
+    /// import wasmtime-wasi does not define - refused here, at load, with
+    /// the wording a run-time instantiation failure carried before.
+    fn pre(&self, m: wasmtime::Module) -> Result<Module, Error> {
+        let pre = self.linker.instantiate_pre(&m).map_err(|e| {
+            Error(format!(
+                "cannot instantiate module: {}",
+                first_line(&e.to_string())
+            ))
+        })?;
+        Ok(Module { inner: m, pre })
     }
 
     /// Compiles wasm bytes and reports what the runtime sees in them: the
@@ -359,7 +384,8 @@ impl Engine {
     /// engine - same wasmtime version, same host - can load again with
     /// deserialize_file instead of recompiling.
     pub fn serialize(&self, m: &Module) -> Result<Vec<u8>, Error> {
-        m.0.serialize()
+        m.inner
+            .serialize()
             .map_err(|e| Error(format!("cannot serialize module: {e}")))
     }
 
@@ -378,7 +404,7 @@ impl Engine {
             ))
         })?;
         abi::check_abi(&m)?;
-        Ok(Module(m))
+        self.pre(m)
     }
 
     /// Only the binary format is accepted, as in the Go runtime: a module is
