@@ -872,8 +872,15 @@ budgets is
 
 ## Metrics
 
-The runtime serves Prometheus metrics where function-sdk-go puts them
-(`:8080/metrics`), next to the [gRPC server series](#grpc-server-metrics):
+The runtime serves metrics where function-sdk-go puts them
+(`:8080/metrics`), next to the [gRPC server series](#grpc-server-metrics).
+The main exposition format is [OpenMetrics](https://prometheus.io/docs/specs/om/open_metrics_spec/)
+1.0 (`application/openmetrics-text; version=1.0.0`), readable by any
+OpenMetrics-capable collector, not only Prometheus; a scraper whose
+`Accept` header asks for the classic Prometheus text format without
+accepting OpenMetrics gets `text/plain; version=0.0.4` instead. The two
+renderings carry identical series - same names, labels and values - so the
+format never changes what a dashboard sees:
 
 | metric | labels | meaning |
 |---|---|---|

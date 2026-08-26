@@ -6,6 +6,7 @@
 //! unbounded set of modules and digests, and per-module series would grow
 //! without bound. Logs carry the digest.
 
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use prometheus::{
@@ -181,13 +182,132 @@ pub static CACHE_BYTES: LazyLock<GaugeVec> = LazyLock::new(|| {
     .expect("register")
 });
 
-/// The default registry rendered in Prometheus text exposition format - what
-/// the /metrics endpoint serves.
+/// The default registry rendered in Prometheus text exposition format
+/// (`text/plain; version=0.0.4`) - what /metrics serves to a scraper that
+/// asks for the classic format.
 pub fn render() -> String {
     let encoder = prometheus::TextEncoder::new();
     encoder
         .encode_to_string(&prometheus::gather())
         .unwrap_or_default()
+}
+
+/// The content type of render_openmetrics.
+pub const OPENMETRICS_CONTENT_TYPE: &str =
+    "application/openmetrics-text; version=1.0.0; charset=utf-8";
+
+/// The default registry rendered as OpenMetrics 1.0 text - the /metrics
+/// endpoint's main format, readable beyond Prometheus. Hand-encoded over
+/// the same gathered families as render() because the prometheus crate
+/// only speaks the classic format: the runtime's three metric types
+/// (counter, gauge, histogram) are covered, and the differences from
+/// classic are exactly a counter family named without its `_total` suffix,
+/// the bucket-count-sum order, and the terminating `# EOF`. Series names,
+/// labels and values are identical in both renderings.
+pub fn render_openmetrics() -> String {
+    let mut out = String::new();
+    for family in prometheus::gather() {
+        let name = family.name();
+        let help = escape_help(family.help());
+        match family.get_field_type() {
+            prometheus::proto::MetricType::COUNTER => {
+                // An OpenMetrics counter family is named without the
+                // `_total` its samples carry.
+                let base = name.strip_suffix("_total").unwrap_or(name);
+                let _ = writeln!(out, "# HELP {base} {help}");
+                let _ = writeln!(out, "# TYPE {base} counter");
+                for m in family.get_metric() {
+                    let labels = render_labels(m.get_label());
+                    let value = fmt_f64(m.get_counter().value());
+                    let _ = writeln!(out, "{base}_total{labels} {value}");
+                }
+            }
+            prometheus::proto::MetricType::GAUGE => {
+                let _ = writeln!(out, "# HELP {name} {help}");
+                let _ = writeln!(out, "# TYPE {name} gauge");
+                for m in family.get_metric() {
+                    let labels = render_labels(m.get_label());
+                    let value = fmt_f64(m.get_gauge().value());
+                    let _ = writeln!(out, "{name}{labels} {value}");
+                }
+            }
+            prometheus::proto::MetricType::HISTOGRAM => {
+                let _ = writeln!(out, "# HELP {name} {help}");
+                let _ = writeln!(out, "# TYPE {name} histogram");
+                for m in family.get_metric() {
+                    let h = m.get_histogram();
+                    let mut saw_inf = false;
+                    for b in h.get_bucket() {
+                        saw_inf = saw_inf || b.upper_bound().is_infinite();
+                        let labels =
+                            render_labels_with(m.get_label(), "le", fmt_f64(b.upper_bound()));
+                        let _ = writeln!(out, "{name}_bucket{labels} {}", b.cumulative_count());
+                    }
+                    if !saw_inf {
+                        let labels = render_labels_with(m.get_label(), "le", "+Inf".to_string());
+                        let _ = writeln!(out, "{name}_bucket{labels} {}", h.get_sample_count());
+                    }
+                    let labels = render_labels(m.get_label());
+                    let _ = writeln!(out, "{name}_count{labels} {}", h.get_sample_count());
+                    let _ = writeln!(out, "{name}_sum{labels} {}", fmt_f64(h.get_sample_sum()));
+                }
+            }
+            // The runtime registers no other type; a family from a future
+            // dependency is skipped rather than mis-rendered.
+            _ => {}
+        }
+    }
+    out.push_str("# EOF\n");
+    out
+}
+
+fn render_labels(labels: &[prometheus::proto::LabelPair]) -> String {
+    if labels.is_empty() {
+        return String::new();
+    }
+    let inner: Vec<String> = labels
+        .iter()
+        .map(|l| format!("{}=\"{}\"", l.name(), escape_label(l.value())))
+        .collect();
+    format!("{{{}}}", inner.join(","))
+}
+
+/// The metric's labels plus one extra (a histogram bucket's le), in label
+/// order with the extra last, as the classic encoder renders it.
+fn render_labels_with(
+    labels: &[prometheus::proto::LabelPair],
+    name: &str,
+    value: String,
+) -> String {
+    let mut inner: Vec<String> = labels
+        .iter()
+        .map(|l| format!("{}=\"{}\"", l.name(), escape_label(l.value())))
+        .collect();
+    inner.push(format!("{name}=\"{value}\""));
+    format!("{{{}}}", inner.join(","))
+}
+
+fn escape_label(v: &str) -> String {
+    v.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+fn escape_help(v: &str) -> String {
+    v.replace('\\', "\\\\").replace('\n', "\\n")
+}
+
+fn fmt_f64(v: f64) -> String {
+    if v == f64::INFINITY {
+        return "+Inf".to_string();
+    }
+    if v == f64::NEG_INFINITY {
+        return "-Inf".to_string();
+    }
+    if v.is_nan() {
+        return "NaN".to_string();
+    }
+    format!("{v}")
 }
 
 /// Reads one series from the default registry: the counter or gauge value or
@@ -224,4 +344,49 @@ pub fn sample(name: &str, labels: &[(&str, &str)]) -> Option<f64> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The OpenMetrics rendering differs from classic exactly where the
+    /// spec does: counter families named without _total, the terminating
+    /// EOF, and bucket-count-sum order - over the same series and values.
+    #[test]
+    fn openmetrics_rendering_matches_the_spec_shape() {
+        // Touch one of each type so the families exist.
+        CACHE_EVENTS
+            .with_label_values(&[CACHE_BLOB, EVENT_HIT])
+            .inc();
+        RUNS_IN_FLIGHT.set(0.0);
+        COMPILE_DURATION.observe(0.1);
+
+        let om = render_openmetrics();
+        assert!(om.ends_with("# EOF\n"), "OpenMetrics must end with EOF");
+        assert!(
+            om.contains("# TYPE function_wasm_module_cache_events counter"),
+            "counter family named without _total:\n{om}"
+        );
+        assert!(
+            om.contains("function_wasm_module_cache_events_total{cache=\"blob\",event=\"hit\"}"),
+            "counter samples keep _total:\n{om}"
+        );
+        assert!(om.contains("# TYPE function_wasm_module_runs_in_flight gauge"));
+        assert!(om.contains("# TYPE function_wasm_module_compile_duration_seconds histogram"));
+        assert!(om.contains("function_wasm_module_compile_duration_seconds_bucket{le=\"+Inf\"}"));
+        let count = om
+            .find("function_wasm_module_compile_duration_seconds_count")
+            .expect("count sample");
+        let sum = om
+            .find("function_wasm_module_compile_duration_seconds_sum")
+            .expect("sum sample");
+        assert!(count < sum, "OpenMetrics orders histogram count before sum");
+
+        // The classic rendering carries the same series for the same
+        // scrape, classic-formatted.
+        let classic = render();
+        assert!(classic.contains("# TYPE function_wasm_module_cache_events_total counter"));
+        assert!(!classic.contains("# EOF"));
+    }
 }
