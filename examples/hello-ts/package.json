@@ -1,0 +1,21 @@
+{
+  "name": "hello-ts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A function-wasm ABI v2 guest in TypeScript, componentized with jco; fetch() rides wasi:http through the host's egress policy",
+  "scripts": {
+    "gen-proto": "protoc --plugin=protoc-gen-es=./node_modules/.bin/protoc-gen-es --es_out=src/gen --es_opt=target=js+dts,import_extension=js -I proto proto/run_function.proto",
+    "build": "esbuild src/main.ts --bundle --format=esm --external:log --outfile=dist/bundle.js && jco componentize dist/bundle.js --wit wit -n function -o fn.wasm",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit && node --test 'test/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@bufbuild/protobuf": "^2.9.0",
+    "@bufbuild/protoc-gen-es": "^2.9.0",
+    "@bytecodealliance/jco": "^1.32.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0",
+    "@types/node": "^25.0.0"
+  }
+}

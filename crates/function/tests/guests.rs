@@ -180,6 +180,19 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
             std::fs::copy(&wasm, out).ok()?;
             true
         }
+        "ts" => {
+            if !on_path("npm") {
+                eprintln!("skipping: npm not on PATH");
+                return None;
+            }
+            if !command(&dir, "npm", &["ci", "--no-audit", "--no-fund"], &[])
+                || !command(&dir, "npm", &["run", "build"], &[])
+            {
+                return Some(Vec::new());
+            }
+            std::fs::copy(dir.join("fn.wasm"), out).ok()?;
+            true
+        }
         "assemblyscript" => {
             if !on_path("npm") {
                 eprintln!("skipping: npm not on PATH");
@@ -538,6 +551,11 @@ fn rust_guest() {
 #[test]
 fn rust_v2_guest() {
     run_guest("rust-v2");
+}
+
+#[test]
+fn ts_guest() {
+    run_guest("ts");
 }
 
 #[test]

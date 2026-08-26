@@ -23,7 +23,7 @@ wasmtime-wasi = { version = "48", features = ["p3"] }
 # default-send-request stays off on purpose: the compiler then requires the
 # egress hooks implementation - a run can never fall through to an
 # unpoliced default HTTP client.
-wasmtime-wasi-http = { version = "48", default-features = false, features = ["p3"] }
+wasmtime-wasi-http = { version = "48", default-features = false, features = ["p2", "p3"] }
 
 [dev-dependencies]
 function-sdk-rust = "0.3.0"

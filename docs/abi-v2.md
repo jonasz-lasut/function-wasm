@@ -55,7 +55,10 @@ world function {
   same sandbox as v1: no network sockets, no filesystem beyond the granted
   private `/tmp`, env exactly as granted.
 - **HTTP egress** - through `wasi:http/client@0.3.0` (`send: async func`),
-  implemented by the host over the same egress policy as v1's `wasmfn.http`:
+  and equally through `wasi:http@0.2`'s `outgoing-handler` (what
+  componentize-js's `fetch()` reaches for) - both generations are served by
+  one host bridge - implemented over the same egress policy as v1's
+  `wasmfn.http`:
   the three-layer grant decides whether `send` is backed by the policy
   client or refuses, and the SSRF block list, budgets, rate limit, audit
   line and `http_requests_total` metric apply unchanged. Bodies are

@@ -141,9 +141,14 @@ pub(crate) fn linker(
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(|e| Error(format!("cannot define WASI 0.2 imports: {e}")))?;
     // The import always exists; the run's grant decides what answers it,
-    // exactly as with v1's wasmfn.http.
+    // exactly as with v1's wasmfn.http. Both wasi:http generations serve
+    // the same hooks bridge: 0.3 for async guests, 0.2 for toolchains that
+    // reach fetch through it (componentize-js) - one egress policy either
+    // way.
     wasmtime_wasi_http::p3::add_to_linker(&mut linker)
         .map_err(|e| Error(format!("cannot define wasi:http imports: {e}")))?;
+    wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
+        .map_err(|e| Error(format!("cannot define wasi:http 0.2 imports: {e}")))?;
     Function::add_to_linker::<CtxV2, wasmtime::component::HasSelf<CtxV2>>(&mut linker, |c| c)
         .map_err(|e| Error(format!("cannot define the log import: {e}")))?;
     Ok(linker)
