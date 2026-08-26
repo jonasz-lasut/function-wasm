@@ -654,8 +654,9 @@ your organisation signed run.
    with the module reference attached; stdout and stderr are the pod's, so a
    Go panic's stack shows up in `kubectl logs`.
 4. The response is returned as the module produced it. A trap, timeout
-   (`limits.timeout` or `--module-timeout`, or the request deadline if
-   shorter), memory limit (`limits.memory` or `--module-memory-limit`) or an
+   (`limits.timeout` or `--module-timeout` - guest compute, with time spent
+   waiting on `wasmfn.http` credited back - or the request deadline if
+   sooner), memory limit (`limits.memory` or `--module-memory-limit`) or an
    unusable module is a fatal result naming the module — never a crashed
    function pod. So is a request that, with `--max-concurrent-runs` set,
    reaches its deadline while waiting for a run slot (`waiting for a run
@@ -691,6 +692,7 @@ flags would admit.
 | `--egress-rate-limit-burst` | `EGRESS_RATE_LIMIT_BURST` | `0` (derived) | Burst tokens for `--egress-rate-limit-per-minute`; `0` derives `max(1, requestsPerMinute)` |
 | `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy - the operator layer of the three-layer capability decision and **the sole authority that enables a sandbox capability**: which callers (by `principal.namespace`, `principal.xrKind`) a module's manifest may be granted a private `/tmp` (`usePrivateTmp`), environment bound to step credentials (`setEnv`, `spendCredential`) or egress (`grantEgress`, also the host allowlist) for. It may also carry the SSRF CIDR block/allow rules (`forbid`/`permit` on `Action::"dialAddress"` with `context.ip.isInRange(ip(…))`/`isLoopback()`), which compile at load into the egress block list (with the built-in default block list) - Cedar never runs on the dial path. Evaluated **default-deny** (a `forbid` wins): a capability no permit matches is refused. Unset, no sandbox capability is grantable and a runtime offers only the default sandbox. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). See [operator grant policy](#operator-grant-policy) |
 | `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
+| `--metrics-address` | `METRICS_ADDRESS` | `:8080` | plain-HTTP Prometheus `/metrics` endpoint (see [Metrics](#metrics)) - the port function-sdk-go serves for the Go runtime; empty disables it |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 | `--profile-guests` | `PROFILE_GUESTS` | unset | directory to write a per-run guest profile into, as [Firefox-profiler](https://profiler.firefox.com) JSON named `<digest>-<millis>.json` - the guest sampled every 10 ms, host imports marked. Debug tooling: it requires `--debug`, costs symbolication per run and writes a file per request, so never leave it set in production |
 
@@ -883,9 +885,36 @@ The runtime serves Prometheus metrics where function-sdk-go puts them
 | `function_wasm_module_cache_events_total` | `cache` = compiled (memory), compiled-disk, blob; `event` = hit, miss, stale (compiled-disk only: an artifact wasmtime refused) | cache lookups |
 | `function_wasm_module_cache_bytes` | `cache` = compiled-disk, blob | bytes on disk per store, measured every ten minutes |
 | `function_wasm_module_http_requests_total` | `outcome` = ok, refused, budget, error | HTTP requests modules made through the host (`sandbox.egress`): the server answered; refused by the grant or the egress policy; a per-run budget or the timeout was hit; the request failed. No host label — the audit log line names it |
+| `function_wasm_module_hostcall_duration_seconds` | | histogram of the slice of a run spent inside host imports (`wasmfn.log`, `wasmfn.http` and WASI); the rest of `run_duration_seconds` is guest compute. A run that is slow here is waiting on the host - usually an upstream `wasmfn.http` talks to |
+| `function_wasm_module_memory_denials_total` | `reason` = limit, pool | guest memory growths denied - at the run's ceiling (`limits.memory` or `--module-memory-limit`) or because `--max-total-run-memory` could not serve the growth before the run's deadline. The guest sees `memory.grow` fail |
 
 No metric carries a module identity: the set of digests a Function serves is
 unbounded. Logs carry the module reference and digest.
+
+### Profiling a module
+
+To see where a module's milliseconds go, start the runtime with `--debug
+--profile-guests=<dir>`: every run then writes one profile into that
+directory, named `<digest>-<millis>.json` - load it at
+[profiler.firefox.com](https://profiler.firefox.com). The guest is sampled
+every 10 ms with full wasm stacks (build the module with DWARF, i.e.
+without stripping, for file-and-line frames), and every `wasmfn.log`,
+`wasmfn.http` and WASI call appears as a marker, so time spent in guest
+compute, in the runtime's host imports and waiting on an upstream server
+are distinguishable at a glance.
+
+The natural place to use it is the [local render loop](#render-locally):
+
+```bash
+cargo run --release -p function-wasm -- --insecure --debug --module-dir=. --profile-guests=/tmp/profiles
+```
+
+Profiling is debug tooling: the flag refuses to start without `--debug`,
+each profiled run pays symbol-table setup (noticeable for a large Go
+guest), and every request writes a file. Do not leave it set in
+production - there, the `run_duration_seconds` /
+`hostcall_duration_seconds` split answers the coarse version of the same
+question continuously.
 
 ## Trust model
 
