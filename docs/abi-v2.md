@@ -57,9 +57,15 @@ world function {
 - **HTTP egress** - through `wasi:http/client@0.3.0` (`send: async func`),
   implemented by the host over the same egress policy as v1's `wasmfn.http`:
   the three-layer grant decides whether `send` is backed by the policy
-  client or refuses, and the SSRF block list, budgets, rate limit and audit
-  line apply unchanged. (Served starting with the wasi-http runtime change;
-  until it lands a component importing `wasi:http` is refused at load.)
+  client or refuses, and the SSRF block list, budgets, rate limit, audit
+  line and `http_requests_total` metric apply unchanged. Bodies are
+  complete on both sides, as under v1: the response budget acts on whole
+  responses. A failure the host reports - the grant refusal, a blocked
+  address, a budget, a transport error - reaches the guest as the
+  `internal-error` code carrying exactly the string v1 put in the wire's
+  `error` field: the refusal wording is contract, and no other `error-code`
+  variant carries a reason. Time the guest spends awaiting `send` is
+  credited back to its compute deadline, as v1 credits `wasmfn.http`.
 
 ## Errors
 

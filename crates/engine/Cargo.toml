@@ -8,6 +8,10 @@ description = "The wasmtime engine of function-wasm: compiles and runs ABI v1 an
 publish = false
 
 [dependencies]
+base64 = "0.23"
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
 prometheus-client = "0.25.0"
 serde.workspace = true
 serde_json.workspace = true
@@ -16,6 +20,10 @@ thiserror = "2"
 tracing.workspace = true
 wasmtime = { version = "48", features = ["call-hook"] }
 wasmtime-wasi = { version = "48", features = ["p3"] }
+# default-send-request stays off on purpose: the compiler then requires the
+# egress hooks implementation - a run can never fall through to an
+# unpoliced default HTTP client.
+wasmtime-wasi-http = { version = "48", default-features = false, features = ["p3"] }
 
 [dev-dependencies]
 function-sdk-rust = "0.3.0"
