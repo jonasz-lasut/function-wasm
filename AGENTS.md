@@ -189,6 +189,13 @@ examples/hello-rust-v2      the same guest as an ABI v2 component (example only,
                             awaiting wasi:http/client for greetingUrl; vendors the world WIT
                             byte-identical plus its own guest world and the wasi:http deps; no ABI
                             glue - the canonical ABI owns it. ~220 KB
+examples/hello-ts           the same guest in TypeScript via jco (example only, no scaffold):
+                            protobuf-es codec (js+dts, checked in), tsc --noEmit gate, esbuild
+                            bundle, componentize-js; sync-lifted run (jco cannot async-lift a
+                            custom world yet - the world accepts sync), fetch() over
+                            wasi:http@0.2 through the same egress hooks; root-world imports
+                            arrive as default imports (import log from "log", kept external in
+                            the bundle). ~14 MB (SpiderMonkey)
 examples/hello-assemblyscript  the same guest, AssemblyScript + as-proto (example only, no
                             scaffold yet): the generated codec is checked in (make gen-proto),
                             four files hand-written where as-proto-gen 1.3.0 gets this proto
@@ -221,7 +228,7 @@ Guest exports `memory`, `wasmfn_alloc(u32)->u32`, `wasmfn_run(u32,u32)->u64`, op
 
 ### ABI v2
 
-The component-model contract, served by the same runtime (`docs/abi-v2.md`, design in `docs/one-pager-abi-v2.md`, tracking issue #65): a guest is a WebAssembly **component** targeting the WIT world `wasmfn:function@2.0.0-draft` (`wit/wasmfn-function.wit`) — export `run: async func(list<u8>) -> result<list<u8>, string>` (v1's protobuf payload), a typed `log` import, WASI 0.3+0.2 linked under the same sandbox. Detection is the binary format (the layer bytes): a component is v2, a core module is v1; the manifest's `abi:` is cross-checked against it. v2's checkABI is the world typecheck at load (`engine/src/component.rs`, the bindgen `FunctionPre`); a sync-lifted `run` satisfies the async world (what the WAT fixtures use). v2 egress is `wasi:http/client@0.3.0` bridged onto the same `HttpRequester` grant (`engine/src/wasihttp.rs`, the `WasiHttpHooks::send_request` seam with wasmtime-wasi-http's default client compiled out); host-reported failures reach the guest as `internal-error` carrying v1's exact wire error string, and send waits are credited back to the compute deadline. One wasmtime engine serves both ABIs (async-ness is per-store), and both artifact kinds share `compiled/<version()>` (they self-describe). The v1 `i32::MAX` request cap does not apply to v2; a component reserves nothing from the memory pool up front (no top-level memory) — growth is charged incrementally. A guest `err(string)` from `run` becomes `module <desc> failed: run returned an error: <s>`. The example guests land with the rest of issue #65.
+The component-model contract, served by the same runtime (`docs/abi-v2.md`, design in `docs/one-pager-abi-v2.md`, tracking issue #65): a guest is a WebAssembly **component** targeting the WIT world `wasmfn:function@2.0.0-draft` (`wit/wasmfn-function.wit`) — export `run: async func(list<u8>) -> result<list<u8>, string>` (v1's protobuf payload), a typed `log` import, WASI 0.3+0.2 linked under the same sandbox. Detection is the binary format (the layer bytes): a component is v2, a core module is v1; the manifest's `abi:` is cross-checked against it. v2's checkABI is the world typecheck at load (`engine/src/component.rs`, the bindgen `FunctionPre`); a sync-lifted `run` satisfies the async world (what the WAT fixtures use). v2 egress is wasi:http - 0.3 `client.send` and 0.2 `outgoing-handler` both - bridged onto the same `HttpRequester` grant (`engine/src/wasihttp.rs`, the `WasiHttpHooks::send_request` seam, unified across the two generations, with wasmtime-wasi-http's default client compiled out); host-reported failures reach the guest as `internal-error` carrying v1's exact wire error string, and send waits are credited back to the compute deadline. One wasmtime engine serves both ABIs (async-ness is per-store), and both artifact kinds share `compiled/<version()>` (they self-describe). The v1 `i32::MAX` request cap does not apply to v2; a component reserves nothing from the memory pool up front (no top-level memory) — growth is charged incrementally. A guest `err(string)` from `run` becomes `module <desc> failed: run returned an error: <s>`. The example guests land with the rest of issue #65.
 
 ### The transparent proxy is wire-level
 

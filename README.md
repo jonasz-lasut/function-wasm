@@ -250,6 +250,16 @@ egress policy. No ABI glue at all: the canonical ABI owns what the other
 flavours carry by hand. It passes the same behaviour tests; `guestfn init`
 cannot scaffold it yet.
 
+A **TypeScript** ABI v2 flavour exists as an example only as well:
+[`examples/hello-ts`](examples/hello-ts) (~14 MB, SpiderMonkey embedded;
+`npm install` is the whole toolchain) - typed end to end (protobuf-es
+generated types, `tsc --noEmit` in the test gate), componentized with
+[jco](https://github.com/bytecodealliance/jco), its greeting fetched with
+the platform's own `fetch()`, which the runtime serves over `wasi:http@0.2`
+through the same egress policy as every other guest. Its `run` is
+sync-lifted (componentize-js cannot async-lift a custom world yet - the
+world accepts that); the TypeScript itself awaits freely.
+
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo;
 a `build.zig` → zig, for the zig and c guests alike; a `go.mod` requiring
 vtprotobuf → tinygo; otherwise go) or takes `--lang`. Every flavour carries
