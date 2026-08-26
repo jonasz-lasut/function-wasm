@@ -8,7 +8,7 @@ description = "The wasmtime engine of function-wasm: compiles and runs ABI v1 gu
 publish = false
 
 [dependencies]
-prometheus = "0.14"
+prometheus-client = "0.25.0"
 serde.workspace = true
 serde_json.workspace = true
 tempfile = "3"

@@ -13,45 +13,41 @@ use std::pin::Pin;
 use std::sync::LazyLock;
 use std::task::{Context, Poll};
 
-use prometheus::{CounterVec, register_counter_vec};
+use function_wasm_engine::metrics::LabeledCounter;
 
 const RUN_FUNCTION_SERVICE: &str = "apiextensions.fn.proto.v1.FunctionRunnerService";
 const HEALTH_SERVICE: &str = "grpc.health.v1.Health";
 
-static STARTED: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
-        "grpc_server_started_total",
+static STARTED: LazyLock<LabeledCounter> = LazyLock::new(|| {
+    LabeledCounter::new(
+        "grpc_server_started",
         "Total number of RPCs started on the server.",
-        &["grpc_type", "grpc_service", "grpc_method"]
+        &["grpc_type", "grpc_service", "grpc_method"],
     )
-    .expect("register")
 });
 
-static HANDLED: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
-        "grpc_server_handled_total",
+static HANDLED: LazyLock<LabeledCounter> = LazyLock::new(|| {
+    LabeledCounter::new(
+        "grpc_server_handled",
         "Total number of RPCs completed on the server, regardless of success or failure.",
-        &["grpc_type", "grpc_service", "grpc_method", "grpc_code"]
+        &["grpc_type", "grpc_service", "grpc_method", "grpc_code"],
     )
-    .expect("register")
 });
 
-static MSG_RECEIVED: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
-        "grpc_server_msg_received_total",
+static MSG_RECEIVED: LazyLock<LabeledCounter> = LazyLock::new(|| {
+    LabeledCounter::new(
+        "grpc_server_msg_received",
         "Total number of RPC stream messages received on the server.",
-        &["grpc_type", "grpc_service", "grpc_method"]
+        &["grpc_type", "grpc_service", "grpc_method"],
     )
-    .expect("register")
 });
 
-static MSG_SENT: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
-        "grpc_server_msg_sent_total",
+static MSG_SENT: LazyLock<LabeledCounter> = LazyLock::new(|| {
+    LabeledCounter::new(
+        "grpc_server_msg_sent",
         "Total number of gRPC stream messages sent by the server.",
-        &["grpc_type", "grpc_service", "grpc_method"]
+        &["grpc_type", "grpc_service", "grpc_method"],
     )
-    .expect("register")
 });
 
 /// The gRPC status code names, indexed by their wire value - the strings
