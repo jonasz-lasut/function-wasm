@@ -25,9 +25,13 @@ on:
   issue_comment:
     types: [created]
 
+# Reactions and the head lookup on a pull request's comment go through the
+# pull-requests permission (an explicit permissions block zeroes everything
+# unlisted); issues: write stays for comments on plain issues.
 permissions:
   contents: read
   issues: write
+  pull-requests: write
   statuses: write
 
 jobs:
@@ -42,9 +46,11 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      # Best effort: the acknowledgement is cosmetic and must never take
+      # the run down.
       - name: Acknowledge the Comment
         run: |
-          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=rocket
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=rocket || true
 
       - name: Resolve the PR Head
         id: pr
