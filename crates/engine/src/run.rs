@@ -106,11 +106,42 @@ fn execute(
             deadline: Instant::now() + budget,
             no_grant_logged: false,
             timer: HostTimer::new(),
+            http_host: Duration::ZERO,
         },
     };
     let mut store = Store::new(&engine.inner, ctx);
     store.limiter(|c| &mut c.limits);
     store.set_epoch_deadline(ticks);
+    // The deadline meters guest compute: time the run was blocked in
+    // wasmfn.http is credited back tick for tick when the deadline fires,
+    // so limits.timeout is not consumed by a slow server. The request's own
+    // gRPC deadline stays the hard wall-clock cap; without one the credit
+    // is still bounded, because every http request is capped by the run
+    // deadline set above. A fired deadline with nothing to credit is the
+    // timeout trap.
+    let hard = opts.deadline;
+    let mut credited = Duration::ZERO;
+    store.epoch_deadline_callback(move |cx| {
+        let now = Instant::now();
+        if let Some(h) = hard
+            && now >= h
+        {
+            return Ok(wasmtime::UpdateDeadline::Interrupt);
+        }
+        let credit = cx.data().call.http_host.saturating_sub(credited);
+        let mut extend = (credit.as_nanos() / EPOCH_TICK.as_nanos()) as u64;
+        if extend == 0 {
+            return Ok(wasmtime::UpdateDeadline::Interrupt);
+        }
+        if let Some(h) = hard {
+            // Never extend past the hard deadline; at least one tick keeps
+            // the callback re-firing to enforce it.
+            let cap = (h.duration_since(now).as_nanos() / EPOCH_TICK.as_nanos()).max(1) as u64;
+            extend = extend.min(cap);
+        }
+        credited += Duration::from_nanos(EPOCH_TICK.as_nanos() as u64 * extend);
+        Ok(wasmtime::UpdateDeadline::Continue(extend))
+    });
     // Every host<->wasm transition feeds the guest/host time split.
     store.call_hook(|mut cx, hook| {
         cx.data_mut().call.timer.transition(hook);

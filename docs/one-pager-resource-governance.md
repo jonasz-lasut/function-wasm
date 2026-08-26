@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.2
+* Status: Implemented, revision 1.3
 
 One runtime serves many Compositions, many teams and many modules. This
 document is the model of what a module may consume, what bounds the runtime
@@ -12,7 +12,17 @@ Revision 1.1 adds the per-Composition `limits` (the Input shape is the
 module-source-schema one-pager's); revision 1.2 the bound on concurrent
 runs (`--max-concurrent-runs`), the one knob 1.1 left to the caller, what
 bounds the sandbox's private `/tmp`, and the per-run HTTP egress budgets
-(sandbox one-pager, revision 1.0). Everything below is implemented.
+(sandbox one-pager, revision 1.0). Revision 1.3 makes the run deadline
+meter guest compute: time a run is blocked in `wasmfn.http` is credited
+back to its epoch deadline, so a slow upstream no longer spends
+`limits.timeout`. The request's own gRPC deadline stays the hard wall-clock
+cap; without one the credit is still bounded, because every egress request
+is itself cut at the run's deadline — a run can stretch to at most about
+twice its budget, never indefinitely. Only `wasmfn.http` time is
+creditable: crediting arbitrary host time would let a `wasmfn.log` loop
+stretch the wall clock without such a bound. Revision 1.3 also adds
+`--module-stack-limit` (the call-stack ceiling, engine-wide). Everything
+below is implemented.
 
 
 ## What was unbounded

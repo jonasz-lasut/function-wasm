@@ -45,7 +45,12 @@ pub(crate) fn host_http(mut caller: Caller<'_, Ctx>, ptr: i32, size: i32) -> was
         .map_err(|b| wasmtime::Error::msg(format!("wasmfn.http: request buffer {b}")))?;
     let payload = data[p as usize..][..n as usize].to_vec();
 
-    let out = encode_response(&serve(caller.data_mut(), &payload));
+    // Time spent answering (the requester, not the guest-side copy below) is
+    // credited back to the run's epoch deadline.
+    let started = Instant::now();
+    let rsp = serve(caller.data_mut(), &payload);
+    caller.data_mut().call.http_host += started.elapsed();
+    let out = encode_response(&rsp);
 
     // The response lives in a buffer the guest allocated, so a guest finds it
     // in its pinned buffers the way it finds the request.
