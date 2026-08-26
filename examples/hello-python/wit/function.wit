@@ -1,0 +1,20 @@
+/// The wasmfn:function contract as this guest targets it. Two deliberate
+/// differences from the runtime's wit/wasmfn-function.wit: `run` is declared
+/// sync (componentize-py takes the sync shape - a sync-lifted implementation
+/// satisfies the runtime's async world, docs/abi-v2.md), and the guest
+/// imports wasi:http@0.2's outgoing-handler for its greeting fetch - the
+/// runtime serves both wasi:http generations through one egress policy.
+package wasmfn:function@2.0.0-draft;
+
+world function {
+    enum log-level {
+        debug,
+        info,
+    }
+
+    import log: func(level: log-level, msg: string, kv: list<tuple<string, string>>);
+
+    import wasi:http/outgoing-handler@0.2.12;
+
+    export run: func(request: list<u8>) -> result<list<u8>, string>;
+}
