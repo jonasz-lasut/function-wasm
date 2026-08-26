@@ -21,6 +21,7 @@ function-sdk-rust = "0.2.0"
 function-wasm-engine = { path = "../engine" }
 hex = "0.4"
 http = "1"
+http-body = "1"
 jsonschema = "0.51"
 tempfile = "3"
 pbjson-types = "0.9"
@@ -37,6 +38,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tonic = { version = "0.14", features = ["tls-aws-lc"] }
 tonic-health = "0.14"
 tonic-reflection = "0.14"
+tower-layer = "0.3"
+tower-service = "0.3"
 tracing.workspace = true
 
 [dev-dependencies]

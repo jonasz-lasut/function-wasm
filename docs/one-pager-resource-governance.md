@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.2
+* Status: Implemented, revision 1.3
 
 One runtime serves many Compositions, many teams and many modules. This
 document is the model of what a module may consume, what bounds the runtime
@@ -12,7 +12,20 @@ Revision 1.1 adds the per-Composition `limits` (the Input shape is the
 module-source-schema one-pager's); revision 1.2 the bound on concurrent
 runs (`--max-concurrent-runs`), the one knob 1.1 left to the caller, what
 bounds the sandbox's private `/tmp`, and the per-run HTTP egress budgets
-(sandbox one-pager, revision 1.0). Everything below is implemented.
+(sandbox one-pager, revision 1.0). Revision 1.3 makes the run deadline
+meter guest compute: time a run is blocked in `wasmfn.http` is credited
+back to its epoch deadline, so a slow upstream no longer spends
+`limits.timeout`. The request's own gRPC deadline stays the hard wall-clock
+cap; without one the credit is still bounded, because every egress request
+is itself cut at the run's deadline — a run can stretch to at most about
+twice its budget, never indefinitely. Only `wasmfn.http` time is
+creditable: crediting arbitrary host time would let a `wasmfn.log` loop
+stretch the wall clock without such a bound. Revision 1.3 also adds
+`--module-stack-limit` (the call-stack ceiling, engine-wide) and makes the
+`--max-total-run-memory` pool incremental: a run reserves its module's
+initial memory up front and every growth as its guest grows, so the pool
+holds what runs actually use and a small guest no longer blocks on a
+worst-case ceiling it never claims. Everything below is implemented.
 
 
 ## What was unbounded
@@ -49,7 +62,7 @@ for less than a ceiling through the Input's `limits`, never more.
 | module size | cap on fetched bytes (and on tar extraction, ×8) | `--max-module-size` | 128 MB | fetch fails; fatal result |
 | concurrent runs | semaphore around one run (instantiate to response), taken after the module is loaded | `--max-concurrent-runs` | 0 (unbounded — see below) | a further request waits for a slot under its own deadline; if that passes first it is a fatal result (`waiting for a run slot: context deadline exceeded`) that consumed nothing and is not counted as a run |
 | concurrent runs, per step | per-module-digest semaphore, taken before the global slot so one step does not fill every slot | `limits.concurrency` | 0 (the global bound only) | a further request waits for one of this step's slots; capped to `--max-concurrent-runs` when set |
-| total run memory | a Run reserves its effective memory limit from a global pool before it starts and releases it after; a Run that cannot fit waits under its context | `--max-total-run-memory` | 0 (unbounded) | a further request waits; if its deadline passes first it is a fatal result (`waiting for 512Mi of run memory (--max-total-run-memory 2Gi): context deadline exceeded`) |
+| total run memory | a Run reserves its module's initial linear memory from a global pool before it starts and each growth beyond it as its guest grows (revision 1.3; before, the whole effective limit up front), releasing everything when its store drops; an initial reservation that cannot fit waits under the run's deadline | `--max-total-run-memory` | 0 (unbounded) | an initial reservation waits; if the deadline passes first it is a fatal result (`waiting for 512Mi of run memory (--max-total-run-memory 2Gi): context deadline exceeded`) without having run. A growth the pool cannot serve before the deadline is denied: the guest sees `memory.grow` fail, counted in `memory_denials_total{reason="pool"}` |
 | one run, private `/tmp` bytes | *none in the runtime* — the directory lives under the runtime's `$TMPDIR` and is removed when the run ends; the filesystem behind it is the bound | `TMPDIR` → a tmpfs `emptyDir` with `sizeLimit` (private `/tmp` enabled by the policy's `usePrivateTmp`) | the pod's `/tmp` | the guest's write fails (ENOSPC), the run continues or ends as the guest decides; the runtime is unaffected |
 | one run, HTTP egress (`requires.egress`) | per-run budgets (fixed defaults): request count, response bytes, redirects, per-request timeout; a request is also cut at the run's deadline | fixed defaults (not operator-configurable) | 16, 4 MiB, 5, 10 s | the request is answered with an error the guest sees; the run goes on |
 | HTTP egress rate, per module | process-wide token bucket per module digest: a burst of concurrent requests and a sustained rate; keyed by the module's content digest so one noisy module cannot exhaust the rate for others | `--egress-rate-limit-per-minute`, `--egress-rate-limit-burst` | off (no rate limit) | the request is answered with a budget error the guest sees; the run goes on; idle entries are swept every ten minutes |

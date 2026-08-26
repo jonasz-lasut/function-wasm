@@ -60,6 +60,8 @@ const EPOCH_TICK: Duration = Duration::from_millis(10);
 /// Defaults applied for unset Config fields.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_MEMORY_LIMIT: u64 = 512 << 20;
+/// wasmtime's own default wasm stack ceiling, kept as ours.
+pub const DEFAULT_STACK_LIMIT: u64 = 512 << 10;
 
 /// An engine failure, formatted exactly as the Go runtime formats it: the
 /// message is the contract (it ends up in an XR condition), not a type.
@@ -75,12 +77,20 @@ pub struct Config {
     pub timeout: Duration,
     /// The cap on a guest's linear memory in bytes.
     pub memory_limit: u64,
+    /// The cap on a guest's call stack in bytes; engine-wide, there is no
+    /// Input field to narrow it per run.
+    pub stack_limit: u64,
+    /// Resolve trap backtraces to file and line through the module's DWARF
+    /// (the runtime's --debug); costs DWARF parsing at compile time.
+    pub backtrace_details: bool,
     /// Bounds how many runs execute at once on the whole engine, served
     /// round-robin by module key; 0 leaves concurrency to the caller.
     pub max_concurrent_runs: usize,
     /// Bounds the aggregate linear-memory reservation of all running
-    /// modules in bytes; a run reserves its effective limit before it
-    /// starts. 0 means no bound.
+    /// modules in bytes; a run reserves its module's initial linear memory
+    /// before it starts and each growth beyond it as the guest grows, so
+    /// only memory a guest actually claims counts against the pool. 0 means
+    /// no bound.
     pub max_total_run_memory: u64,
 }
 
@@ -89,6 +99,8 @@ impl Default for Config {
         Config {
             timeout: DEFAULT_TIMEOUT,
             memory_limit: DEFAULT_MEMORY_LIMIT,
+            stack_limit: DEFAULT_STACK_LIMIT,
+            backtrace_details: false,
             max_concurrent_runs: 0,
             max_total_run_memory: 0,
         }
@@ -125,14 +137,114 @@ pub struct RunOptions {
     /// The module's description and digest, attached to guest log lines.
     pub module: String,
     pub digest: String,
+
+    /// Writes a Firefox-profiler JSON profile of this run into the
+    /// directory (the runtime's --profile-guests, gated on --debug): the
+    /// guest sampled every epoch tick, host imports marked. None runs
+    /// without any profiling cost.
+    pub profile_dir: Option<std::path::PathBuf>,
 }
 
 /// The per-store data: the WASI context, the memory limiter and the state
 /// host functions reach through the store.
 pub(crate) struct Ctx {
     wasi: WasiP1Ctx,
-    limits: wasmtime::StoreLimits,
+    limits: RunLimiter,
     call: CallState,
+}
+
+/// A run's reservation from the shared memory pool; dropping it - with the
+/// store, whatever the run's outcome - releases the whole reservation.
+pub(crate) struct PoolHold {
+    pool: Arc<concurrency::MemPool>,
+    n: u64,
+}
+
+impl PoolHold {
+    /// A reservation of n bytes already taken from pool.
+    pub(crate) fn new(pool: Arc<concurrency::MemPool>, n: u64) -> Self {
+        PoolHold { pool, n }
+    }
+
+    fn grow(&mut self, delta: u64, deadline: Instant) -> Result<(), String> {
+        self.pool.reserve(delta, deadline)?;
+        self.n += delta;
+        Ok(())
+    }
+}
+
+impl Drop for PoolHold {
+    fn drop(&mut self) {
+        if self.n > 0 {
+            self.pool.release(self.n);
+        }
+    }
+}
+
+/// The per-run memory limiter: enforces the run's ceiling (limits.memory or
+/// the engine's memory_limit) per memory, and reserves growth beyond the
+/// pre-reserved initial memory from the shared pool incrementally - so a
+/// run's pool footprint is what its guest actually claimed, not the
+/// worst-case ceiling. A growth the pool cannot serve before the run's
+/// deadline is denied: the guest sees memory.grow fail, exactly as it does
+/// at the ceiling.
+pub(crate) struct RunLimiter {
+    limit: usize,
+    hold: Option<PoolHold>,
+    /// Total bytes the store's memories have claimed (the sum of grow
+    /// deltas, initial sizes included).
+    charged: u64,
+    deadline: Instant,
+}
+
+impl RunLimiter {
+    pub(crate) fn new(limit: u64, hold: Option<PoolHold>, deadline: Instant) -> Self {
+        RunLimiter {
+            limit: limit as usize,
+            hold,
+            charged: 0,
+            deadline,
+        }
+    }
+}
+
+impl wasmtime::ResourceLimiter for RunLimiter {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        if desired > self.limit {
+            metrics::MEMORY_DENIALS.with_label_values(&["limit"]).inc();
+            return Ok(false);
+        }
+        let delta = (desired - current) as u64;
+        self.charged += delta;
+        if let Some(hold) = &mut self.hold
+            && self.charged > hold.n
+        {
+            let need = self.charged - hold.n;
+            if let Err(e) = hold.grow(need, self.deadline) {
+                self.charged -= delta;
+                metrics::MEMORY_DENIALS.with_label_values(&["pool"]).inc();
+                tracing::info!(error = %e, "Denied a memory growth");
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        // Tables were never bounded (StoreLimits bounded memory_size only);
+        // parity kept.
+        Ok(true)
+    }
 }
 
 /// The per-run state host functions reach through the store data.
@@ -144,12 +256,87 @@ pub(crate) struct CallState {
     // Throttles the audit line of a guest that calls wasmfn.http without a
     // grant to one info line per run.
     no_grant_logged: bool,
+    timer: HostTimer,
+    /// Time this run spent waiting on wasmfn.http answers - credited back to
+    /// the epoch deadline so limits.timeout means guest compute. Only http
+    /// time is creditable: each request is capped by the run's deadline, so
+    /// the credit is self-limiting where crediting arbitrary host time
+    /// (a wasmfn.log loop) would not be.
+    http_host: Duration,
 }
 
-/// A compiled, ABI-checked guest module. It is safe for concurrent runs and
-/// cheap to clone; wasmtime frees the code memory when the last clone drops.
-#[derive(Clone, Debug)]
-pub struct Module(pub(crate) wasmtime::Module);
+/// Splits a run's wall clock between guest code and host imports: every
+/// call_hook transition charges the elapsed slice to whichever side the
+/// innermost frame was on, so time a host import spends re-entered in the
+/// guest (wasmfn.http calling wasmfn_alloc) counts as guest time.
+pub(crate) struct HostTimer {
+    /// One entry per live host<->wasm frame; true is a host frame.
+    stack: Vec<bool>,
+    last: Instant,
+    host_total: Duration,
+}
+
+impl HostTimer {
+    fn new() -> Self {
+        HostTimer {
+            stack: Vec::with_capacity(8),
+            last: Instant::now(),
+            host_total: Duration::ZERO,
+        }
+    }
+
+    pub(crate) fn transition(&mut self, hook: wasmtime::CallHook) {
+        let now = Instant::now();
+        if self.stack.last() == Some(&true) {
+            self.host_total += now - self.last;
+        }
+        self.last = now;
+        match hook {
+            wasmtime::CallHook::CallingWasm => self.stack.push(false),
+            wasmtime::CallHook::CallingHost => self.stack.push(true),
+            _ => {
+                self.stack.pop();
+            }
+        }
+    }
+
+    pub(crate) fn host_total(&self) -> Duration {
+        self.host_total
+    }
+}
+
+/// A compiled, ABI-checked guest module with its imports resolved once into
+/// an InstancePre, so a run only instantiates. It is safe for concurrent
+/// runs and cheap to clone; wasmtime frees the code memory when the last
+/// clone drops.
+#[derive(Clone)]
+pub struct Module {
+    pub(crate) inner: wasmtime::Module,
+    pub(crate) pre: wasmtime::InstancePre<Ctx>,
+}
+
+impl std::fmt::Debug for Module {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Module").field(&self.inner).finish()
+    }
+}
+
+impl Module {
+    /// The initial size in bytes of the module's exported memory - what
+    /// instantiation claims before the guest runs, and so what a run
+    /// reserves from the shared memory pool up front.
+    pub(crate) fn initial_memory_bytes(&self) -> u64 {
+        self.inner
+            .exports()
+            .find_map(|e| match e.ty() {
+                wasmtime::ExternType::Memory(mt) if e.name() == EXPORT_MEMORY => {
+                    Some(mt.minimum() << 16)
+                }
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+}
 
 /// What Inspect reads from a module: its wasmfn host imports and, when the
 /// module does not implement ABI v1, checkABI's refusal.
@@ -212,7 +399,7 @@ pub struct Engine {
     pub(crate) inner: wasmtime::Engine,
     pub(crate) linker: Linker<Ctx>,
     pub(crate) scheduler: Option<concurrency::FairScheduler>,
-    pub(crate) mem: Option<concurrency::MemPool>,
+    pub(crate) mem: Option<Arc<concurrency::MemPool>>,
     active: Arc<AtomicI64>,
     stop: Arc<AtomicBool>,
     ticker: Option<thread::JoinHandle<()>>,
@@ -231,11 +418,26 @@ impl Engine {
                 concurrency::format_bytes(config.memory_limit)
             )));
         }
+        if config.stack_limit == 0 {
+            return Err(Error(
+                "--module-stack-limit must be positive: a guest cannot run on an empty stack"
+                    .to_string(),
+            ));
+        }
         let mut wc = wasmtime::Config::new();
         wc.epoch_interruption(true);
         // Native unwind info only serves host-side profilers; wasmtime's own
         // unwinder produces wasm traps and backtraces without it.
         wc.native_unwind_info(false);
+        wc.max_wasm_stack(config.stack_limit as usize);
+        // Explicit in both directions: the decision is the runtime's --debug,
+        // never the WASMTIME_BACKTRACE_DETAILS environment wasmtime would
+        // otherwise read.
+        wc.wasm_backtrace_details(if config.backtrace_details {
+            wasmtime::WasmBacktraceDetails::Enable
+        } else {
+            wasmtime::WasmBacktraceDetails::Disable
+        });
         let inner =
             wasmtime::Engine::new(&wc).map_err(|e| Error(format!("cannot create engine: {e}")))?;
 
@@ -284,7 +486,7 @@ impl Engine {
             scheduler: (config.max_concurrent_runs > 0)
                 .then(|| concurrency::FairScheduler::new(config.max_concurrent_runs)),
             mem: (config.max_total_run_memory > 0)
-                .then(|| concurrency::MemPool::new(config.max_total_run_memory)),
+                .then(|| Arc::new(concurrency::MemPool::new(config.max_total_run_memory))),
             active,
             stop,
             ticker: Some(ticker),
@@ -303,7 +505,21 @@ impl Engine {
         let m = self.compiled(wasm)?;
         metrics::COMPILE_DURATION.observe(start.elapsed().as_secs_f64());
         abi::check_abi(&m)?;
-        Ok(Module(m))
+        self.pre(m)
+    }
+
+    /// Resolves the module's imports against the linker once, so every run
+    /// skips that work. After checkABI the only way this fails is a WASI
+    /// import wasmtime-wasi does not define - refused here, at load, with
+    /// the wording a run-time instantiation failure carried before.
+    fn pre(&self, m: wasmtime::Module) -> Result<Module, Error> {
+        let pre = self.linker.instantiate_pre(&m).map_err(|e| {
+            Error(format!(
+                "cannot instantiate module: {}",
+                first_line(&e.to_string())
+            ))
+        })?;
+        Ok(Module { inner: m, pre })
     }
 
     /// Compiles wasm bytes and reports what the runtime sees in them: the
@@ -359,7 +575,8 @@ impl Engine {
     /// engine - same wasmtime version, same host - can load again with
     /// deserialize_file instead of recompiling.
     pub fn serialize(&self, m: &Module) -> Result<Vec<u8>, Error> {
-        m.0.serialize()
+        m.inner
+            .serialize()
             .map_err(|e| Error(format!("cannot serialize module: {e}")))
     }
 
@@ -378,12 +595,20 @@ impl Engine {
             ))
         })?;
         abi::check_abi(&m)?;
-        Ok(Module(m))
+        self.pre(m)
     }
 
     /// Only the binary format is accepted, as in the Go runtime: a module is
-    /// what a toolchain produced, never text.
+    /// what a toolchain produced, never text. A wasmtime compiled artifact
+    /// (what serialize writes, a .cwasm) is named for what it is rather than
+    /// failing as malformed wasm: artifacts are host- and version-specific
+    /// cache entries, never a module source.
     fn compiled(&self, wasm: &[u8]) -> Result<wasmtime::Module, Error> {
+        if wasmtime::Engine::detect_precompiled(wasm).is_some() {
+            return Err(Error(
+                "module is a wasmtime compiled artifact (.cwasm), not a wasm module".to_string(),
+            ));
+        }
         wasmtime::Module::from_binary(&self.inner, wasm).map_err(|e| {
             Error(format!(
                 "cannot compile module: {}",

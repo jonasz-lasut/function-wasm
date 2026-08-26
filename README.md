@@ -348,7 +348,7 @@ operator's Cedar `--sandbox-policy-file` both permit it
 | `module.manifestPath` | string | *optional*, `type: Path` only — a `wasmfn.yaml` under `--module-dir`, the request layer for a Path module, so a local or volume-mounted module can declare the capabilities it needs. Read from the Input only (never through `module.from`) and re-read each request, so a local edit takes effect without a restart |
 | `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names — an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` — e.g. `status.module`; read on every request and decoded strictly (a typo or a wrong shape is a fatal result naming the field), so each XR can choose its module. What it may choose is fenced by `compositionPolicy` (`pullModule`, default-deny) |
 | `compositionPolicy` | string | the composition author's own Cedar policy layer, over the same schema as the operator's `--sandbox-policy-file` (actions `pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv`; a `Request` principal carrying `namespace` and `xrKind`; `Repository`, `HostPattern`, `Capability` and `Credential` entities). AND-combined with the module's manifest and the operator's policy, so it can only narrow. Two regimes: a sandbox action it scopes no rule for is not narrowed (the operator and the manifest decide alone), while a module chosen through `module.from` is refused unless a `pullModule` permit matches its normalized location - matched over a boundary-correct `Repository` hierarchy, so `Repository::"ghcr.io/example-org"` admits `ghcr.io/example-org/mod` but never the sibling namespace `ghcr.io/example-org-other/...` - and may spend a step credential only where a `spendCredential` permit matches (`context.repository` carries the ref's location). **Required whenever `module.from` names an `OCI` or `HTTP` source** — an unfenced XR author could point the runtime at any host and read what its answer says. Read from the Input only; malformed Cedar is a fatal result at admission |
-| `limits.timeout` | duration | wall-clock budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). The request deadline still applies if shorter |
+| `limits.timeout` | duration | compute budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). Time the run spends waiting on `wasmfn.http` answers is credited back, so a slow upstream does not spend the budget; the request's own gRPC deadline is the hard wall-clock cap and still applies if shorter |
 | `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`; at most `--module-memory-limit`, else a fatal result naming both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
 | `limits.concurrency` | int32 | at most N runs of this step at once, across all requests, keyed by the module's content digest. A further request waits under its own context; when the deadline passes first, it is a fatal result that consumed nothing and is not counted as a run. A value above `--max-concurrent-runs` is silently capped. No ceiling flag: this only narrows |
 | `config` | object | opaque, passed to the module untouched inside the request input; a Go guest reads it with `wasmfn.GetConfig`. Non-secret module configuration belongs here - the module's environment comes only from its manifest's `requires.env` credential bindings |
@@ -654,8 +654,9 @@ your organisation signed run.
    with the module reference attached; stdout and stderr are the pod's, so a
    Go panic's stack shows up in `kubectl logs`.
 4. The response is returned as the module produced it. A trap, timeout
-   (`limits.timeout` or `--module-timeout`, or the request deadline if
-   shorter), memory limit (`limits.memory` or `--module-memory-limit`) or an
+   (`limits.timeout` or `--module-timeout` - guest compute, with time spent
+   waiting on `wasmfn.http` credited back - or the request deadline if
+   sooner), memory limit (`limits.memory` or `--module-memory-limit`) or an
    unusable module is a fatal result naming the module — never a crashed
    function pod. So is a request that, with `--max-concurrent-runs` set,
    reaches its deadline while waiting for a run slot (`waiting for a run
@@ -678,19 +679,22 @@ flags would admit.
 | `--max-module-size` | | `128` MB | largest module accepted |
 | `--module-timeout` | | `30s` | wall-clock budget of one run; the ceiling for `limits.timeout` |
 | `--module-memory-limit` | | `512` MB | linear memory a run may use; the ceiling for `limits.memory` |
+| `--module-stack-limit` | `MODULE_STACK_LIMIT` | `512` KB | call stack a run may use (wasmtime's own default); past it the run fails with `trap: call stack exhausted`. Engine-wide - no Input field narrows it |
 | `--enable-memory-cache` | `ENABLE_MEMORY_CACHE` | `true` | keep compiled modules in memory between requests. With `--enable-memory-cache=false` (or `--no-enable-memory-cache`) each request maps the module's compiled artifact from disk (6–8 ms for a large Go module) and releases it afterwards |
 | `--max-cached-modules` | `MAX_CACHED_MODULES` | `0` (unbounded) | most compiled modules resident at once; the least recently used is dropped beyond it (freed once its last run ends). Artifacts are mapped from disk, so a resident Go module costs ~90 MB of file-backed memory |
 | `--max-concurrent-compiles` | `MAX_CONCURRENT_COMPILES` | `1` | modules compiled at once. One compile already uses every core (~25 CPU-seconds and ~1 GB for a large Go module); further first requests wait their turn instead of multiplying that |
 | `--max-cache-size` | `MAX_CACHE_SIZE` | `0` (unbounded) | MB the two on-disk caches may hold together; past it the least recently used entries (fetched modules and artifacts alike, ~230 MB per Go module version) are removed, at startup and every ten minutes. Size the volume, or set this below its size |
 | `--cosign-key` | `COSIGN_KEY` | unset | PEM file of cosign public key(s); on its own, all-or-nothing — only OCI modules with a matching `cosign sign --key` signature run and `http`/`path` sources are refused. With a `--sandbox-policy-file`, it supplies the keys while the policy's `requireSignature` rules decide which repositories must be signed (a repository no rule names runs unsigned) |
 | `--max-concurrent-runs` | `MAX_CONCURRENT_RUNS` | `0` (unbounded) | module runs executing at once; a further request waits for a slot under its own deadline and, if that passes first, is a fatal result (`waiting for a run slot: context deadline exceeded`) without having run. Unbounded, concurrency is the caller's — Crossplane's reconcile workers |
-| `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | total linear-memory budget in MB across all running modules; a run reserves its effective limit (`limits.memory` or `--module-memory-limit`) from the pool before it starts and waits under its deadline when the pool is full. A step that states a small `limits.memory` gets more parallelism |
+| `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | total linear-memory budget in MB across all running modules; a run reserves its module's initial linear memory from the pool before it starts (waiting under its deadline when the pool is full) and each growth beyond it as its guest actually grows - so the pool holds what runs use, not their worst-case ceilings. A growth the pool cannot serve before the run's deadline is denied: the guest sees `memory.grow` fail, counted in `function_wasm_module_memory_denials_total` |
 | `--warm-modules` | `WARM_MODULES` | unset | modules loaded before the health service reports Serving — resolved, verified (`--cosign-key` applies), then compiled or mapped through the same caches a request uses: OCI references pinned to their manifest digest (`repo[:tag]@sha256:…`, pulled with the runtime's Docker config) and, with `--module-dir`, `path:<file>` entries. Repeatable or comma-separated. An entry that fails to load is logged with the reason and does not stop the pod from serving; that module is loaded on its first request as usual |
 | `--egress-rate-limit-per-minute` | `EGRESS_RATE_LIMIT_PER_MINUTE` | `0` (off) | Sustained egress requests per minute per module digest (a process-wide token bucket). The one tunable egress budget; the rest are fixed (timeout 10s, maxRequests 16, maxResponseBytes 4 MiB, maxRedirects 5). Enablement and the host allowlist and CIDR rules live in `--sandbox-policy-file` |
 | `--egress-rate-limit-burst` | `EGRESS_RATE_LIMIT_BURST` | `0` (derived) | Burst tokens for `--egress-rate-limit-per-minute`; `0` derives `max(1, requestsPerMinute)` |
 | `--sandbox-policy-file` | `SANDBOX_POLICY_FILE` | unset | [Cedar](https://www.cedarpolicy.com) document with the operator's grant policy - the operator layer of the three-layer capability decision and **the sole authority that enables a sandbox capability**: which callers (by `principal.namespace`, `principal.xrKind`) a module's manifest may be granted a private `/tmp` (`usePrivateTmp`), environment bound to step credentials (`setEnv`, `spendCredential`) or egress (`grantEgress`, also the host allowlist) for. It may also carry the SSRF CIDR block/allow rules (`forbid`/`permit` on `Action::"dialAddress"` with `context.ip.isInRange(ip(…))`/`isLoopback()`), which compile at load into the egress block list (with the built-in default block list) - Cedar never runs on the dial path. Evaluated **default-deny** (a `forbid` wins): a capability no permit matches is refused. Unset, no sandbox capability is grantable and a runtime offers only the default sandbox. A mounted ConfigMap satisfies it; it is compiled once and immutable for the process (restart to reload). See [operator grant policy](#operator-grant-policy) |
 | `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
+| `--metrics-address` | `METRICS_ADDRESS` | `:8080` | plain-HTTP Prometheus `/metrics` endpoint (see [Metrics](#metrics)) - the port function-sdk-go serves for the Go runtime; empty disables it |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
+| `--profile-guests` | `PROFILE_GUESTS` | unset | directory to write a per-run guest profile into, as [Firefox-profiler](https://profiler.firefox.com) JSON named `<digest>-<millis>.json` - the guest sampled every 10 ms, host imports marked. Debug tooling: it requires `--debug`, costs symbolication per run and writes a file per request, so never leave it set in production |
 
 The usual function-sdk-go flags (`--insecure`, `--debug`, `--tls-certs-dir`,
 `--address`, `--max-recv-message-size`) apply too. The caches live under
@@ -868,8 +872,15 @@ budgets is
 
 ## Metrics
 
-The runtime serves Prometheus metrics where function-sdk-go puts them
-(`:8080/metrics`), next to the gRPC server metrics:
+The runtime serves metrics where function-sdk-go puts them
+(`:8080/metrics`), next to the [gRPC server series](#grpc-server-metrics).
+The main exposition format is [OpenMetrics](https://prometheus.io/docs/specs/om/open_metrics_spec/)
+1.0 (`application/openmetrics-text; version=1.0.0`), readable by any
+OpenMetrics-capable collector, not only Prometheus; a scraper whose
+`Accept` header asks for the classic Prometheus text format without
+accepting OpenMetrics gets `text/plain; version=0.0.4` instead. The two
+renderings carry identical series - same names, labels and values - so the
+format never changes what a dashboard sees:
 
 | metric | labels | meaning |
 |---|---|---|
@@ -881,9 +892,53 @@ The runtime serves Prometheus metrics where function-sdk-go puts them
 | `function_wasm_module_cache_events_total` | `cache` = compiled (memory), compiled-disk, blob; `event` = hit, miss, stale (compiled-disk only: an artifact wasmtime refused) | cache lookups |
 | `function_wasm_module_cache_bytes` | `cache` = compiled-disk, blob | bytes on disk per store, measured every ten minutes |
 | `function_wasm_module_http_requests_total` | `outcome` = ok, refused, budget, error | HTTP requests modules made through the host (`sandbox.egress`): the server answered; refused by the grant or the egress policy; a per-run budget or the timeout was hit; the request failed. No host label — the audit log line names it |
+| `function_wasm_module_hostcall_duration_seconds` | | histogram of the slice of a run spent inside host imports (`wasmfn.log`, `wasmfn.http` and WASI); the rest of `run_duration_seconds` is guest compute. A run that is slow here is waiting on the host - usually an upstream `wasmfn.http` talks to |
+| `function_wasm_module_memory_denials_total` | `reason` = limit, pool | guest memory growths denied - at the run's ceiling (`limits.memory` or `--module-memory-limit`) or because `--max-total-run-memory` could not serve the growth before the run's deadline. The guest sees `memory.grow` fail |
 
 No metric carries a module identity: the set of digests a Function serves is
 unbounded. Logs carry the module reference and digest.
+
+### gRPC server metrics
+
+The transport also serves the gRPC server series the Go runtime got from
+function-sdk-go's grpc-prometheus interceptor, with the same names, labels
+and meanings - dashboards and alerts built on them keep working:
+`grpc_server_started_total`, `grpc_server_handled_total` (with a
+`grpc_code` label carrying the gRPC code name, `OK` … `Unauthenticated`),
+`grpc_server_msg_received_total` and `grpc_server_msg_sent_total`, each
+labelled `grpc_type`/`grpc_service`/`grpc_method`. As under the Go
+runtime - whose interceptor was unary-only - unary calls (`RunFunction`,
+health `Check`) are counted and streaming methods (reflection, health
+`Watch`) exist as permanently zero series; every method the server carries
+is pre-created at zero on startup, so a scrape sees the full set before
+the first request. There is no `grpc_server_handling_seconds`:
+function-sdk-go never enabled the histogram, and
+`function_wasm_module_run_duration_seconds` covers latency.
+
+### Profiling a module
+
+To see where a module's milliseconds go, start the runtime with `--debug
+--profile-guests=<dir>`: every run then writes one profile into that
+directory, named `<digest>-<millis>.json` - load it at
+[profiler.firefox.com](https://profiler.firefox.com). The guest is sampled
+every 10 ms with full wasm stacks (build the module with DWARF, i.e.
+without stripping, for file-and-line frames), and every `wasmfn.log`,
+`wasmfn.http` and WASI call appears as a marker, so time spent in guest
+compute, in the runtime's host imports and waiting on an upstream server
+are distinguishable at a glance.
+
+The natural place to use it is the [local render loop](#render-locally):
+
+```bash
+cargo run --release -p function-wasm -- --insecure --debug --module-dir=. --profile-guests=/tmp/profiles
+```
+
+Profiling is debug tooling: the flag refuses to start without `--debug`,
+each profiled run pays symbol-table setup (noticeable for a large Go
+guest), and every request writes a file. Do not leave it set in
+production - there, the `run_duration_seconds` /
+`hostcall_duration_seconds` split answers the coarse version of the same
+question continuously.
 
 ## Trust model
 

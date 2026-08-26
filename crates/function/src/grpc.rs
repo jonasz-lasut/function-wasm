@@ -202,10 +202,16 @@ pub async fn serve(
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter.set_not_serving::<RawFunctionServer>().await;
 
+    // The Go runtime's gRPC server metrics, pre-created at zero the way
+    // grpc-prometheus's InitializeMetrics did; the layer wraps the whole
+    // router so the health service is counted like every other unary call.
+    crate::grpcmetrics::initialize();
+
     let insecure = args.insecure;
     let server = async move {
         tracing::info!(%address, insecure, "serving FunctionRunnerService");
         builder
+            .layer(crate::grpcmetrics::MetricsLayer)
             .add_service(service)
             .add_service(health_service)
             .add_service(reflection_v1)
