@@ -1,6 +1,7 @@
-//! The five example guests - the same greeting function written with
+//! The six example guests - the same greeting function written with
 //! function-sdk-go (Go), with TinyGo and vtprotobuf, in Rust with prost, in
-//! Zig with zig-protobuf and in C with nanopb - through the whole host:
+//! Zig with zig-protobuf, in C with nanopb and in AssemblyScript with
+//! as-proto - through the whole host:
 //! path and OCI sources, compile, per-request instance, egress through
 //! wasmfn.http, guest logging. Every guest must produce the same response.
 //! A guest whose toolchain is not on PATH is skipped, like the Go tree's
@@ -11,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use function_sdk_rust::proto::v1::{
-    Condition, RequestMeta, Resource, ResponseMeta, Result as FnResult, RunFunctionRequest,
-    RunFunctionResponse, Severity, State, Status, Target,
+    Capability, Condition, RequestMeta, Resource, ResponseMeta, Result as FnResult,
+    RunFunctionRequest, RunFunctionResponse, Severity, State, Status, Target,
 };
 use function_sdk_rust::resource;
 use function_wasm::authz::{IpPrefix, IpRules, OperatorPolicy};
@@ -146,6 +147,19 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 .map(|e| e.path())
                 .find(|p| p.extension().is_some_and(|e| e == "wasm"))?;
             std::fs::copy(&wasm, out).ok()?;
+            true
+        }
+        "assemblyscript" => {
+            if !on_path("npm") {
+                eprintln!("skipping: npm not on PATH");
+                return None;
+            }
+            if !command(&dir, "npm", &["ci", "--no-audit", "--no-fund"], &[])
+                || !command(&dir, "npm", &["run", "build"], &[])
+            {
+                return Some(Vec::new());
+            }
+            std::fs::copy(dir.join("fn.wasm"), out).ok()?;
             true
         }
         "zig" | "c" => {
@@ -406,9 +420,16 @@ fn run_guest(guest: &str) {
         let start = logs.lock().expect("poisoned").len();
         let input: serde_json::Value = serde_json::from_str(&input).expect("input json");
         let req = RunFunctionRequest {
+            // Capabilities ride along because crossplane always sends
+            // them: protobuf packs the repeated enum, and a guest codec
+            // that cannot decode the packed form desyncs on the whole
+            // request (as-proto's generator did).
             meta: Some(RequestMeta {
                 tag: "hello".to_string(),
-                ..Default::default()
+                capabilities: vec![
+                    Capability::Capabilities as i32,
+                    Capability::Conditions as i32,
+                ],
             }),
             input: Some(resource::json_to_struct(input.as_object().expect("object"))),
             observed: Some(State {
@@ -481,4 +502,9 @@ fn zig_guest() {
 #[test]
 fn c_guest() {
     run_guest("c");
+}
+
+#[test]
+fn assemblyscript_guest() {
+    run_guest("assemblyscript");
 }

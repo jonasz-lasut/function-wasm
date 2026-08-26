@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.3
+* Status: Draft, revision 0.4
 
 Which languages a function-wasm module can be written in today, which could
 come next and at what cost, which are blocked and by what, and what
@@ -83,6 +83,7 @@ Effort below is graded against the Rust flavour (S/S/S — already built) as
 | Rust | prost over the vendored proto | ~250 KB | `src/lib.rs` `abi` module + `src/http.rs` |
 | Zig | zig-protobuf's generated codec over the vendored proto (checked in) | ~95 KB | `src/main.zig` (ABI + `runFunction` + the log/http helpers) |
 | C (`zig cc`) | nanopb's generated codec over the vendored proto (checked in; `fallback_type:FT_POINTER` + `PB_ENABLE_MALLOC`, so every dynamic field is heap allocated and `structpb`'s recursion is pointers, no callbacks); cJSON for the host payloads | ~70 KB | `src/wasmfn.{h,c}` (ABI + handle + log/http) + `src/structpb.{h,c}` |
+| AssemblyScript (example only - no scaffold yet) | as-proto's generated codec over the vendored proto (checked in), four files hand-written where the 2023-era generator gets this proto wrong (the `Value` oneof, `optional` presence, packed repeated enums); json-as for the host payloads | ~30 KB | `assembly/{main,abi,host,http,log,structpb}.ts` |
 
 ## Candidates
 
@@ -90,7 +91,7 @@ Effort below is graded against the Rust flavour (S/S/S — already built) as
 |---|---|---|---|---|---|
 | **Zig** (`wasm32-wasi`) | **Shipped**: `examples/hello-zig`, ~95 KB, passes `TestRunFunctionGuests` | ~95 KB | `zig-protobuf` v5 (WKTs native; `minimum_zig_version` 0.16.0) | done | **shipped** |
 | **C** (via `zig cc`) | **Shipped**: `examples/hello-c`, ~70 KB, passes `TestRunFunctionGuests`; one zig binary, no wasi-sdk | ~70 KB | nanopb 0.4.9.1 with `fallback_type:FT_POINTER` (no callbacks, no bounds; protobuf-c rejects proto3 `optional`, upb heavy) | done | **shipped** |
-| **AssemblyScript** | docs: reactor build documented; `as-proto`, `protobuf-as` exist | tens of KB (inferred) | two generators, unverified under this ABI | M / S / S | **spike, then pursue** |
+| **AssemblyScript** | **MVP shipped**: `examples/hello-assemblyscript`, ~30 KB - the smallest guest - passes the guest behaviour suite and `crossplane render`; scaffold still open | ~30 KB | `as-proto` 1.3.0 generates the messages, four hand-written files correct it (`Value` oneof encode, `optional` presence, packed `capabilities` decode); the codec spike the M grade predicted | example done; scaffold = S | **example shipped; scaffold to follow** |
 | **Swift** (swift.org WASI SDK) | docs: official toolchain, `-mexec-model=reactor`, `-Xlinker --export=<name>` | low MB (inferred) | swift-protobuf (inferred buildable) | M / M / M | spike; can overtake AssemblyScript |
 | JavaScript (Javy / QuickJS) | *Tested*: shipped `javy build` output is a Command/component shape | ~1.3–1.4 MB if embedded | shifts to the embedding side (prost) | L–XL / L / S | blocked as shipped; unblock = a Rust or C reactor embedding javy-core/QuickJS with our exports |
 | Python (CPython wasip1, componentize-py, py2wasm) | *Tested*: the official wasip1 build is a Command; componentize-py is component-only | 30 MB+ | pure-Python protobuf (inferred) | XL / XL / M | blocked; unblock = embed CPython + a frozen/zipped stdlib in a reactor, and reconcile with the no-filesystem sandbox |

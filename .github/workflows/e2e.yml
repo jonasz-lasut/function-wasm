@@ -106,6 +106,13 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: examples/hello-assemblyscript/package-lock.json
+
       - name: Run the Guest Suite
         run: cargo test --locked -p function-wasm --test guests
 
@@ -396,10 +403,50 @@ jobs:
       - name: Render the C Guest
         run: make -C examples/hello-c render-check
 
+  # The same guest in AssemblyScript (as-proto over the vendored proto, four
+  # hand-written codec files where the generator gets this proto wrong),
+  # rendered through the runtime. protoc and as-proto-gen are only needed to
+  # regenerate the checked-in codec (make gen-proto).
+  render-assemblyscript:
+    name: render (assemblyscript)
+    runs-on: ubuntu-24.04
+    needs: start
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: examples/hello-assemblyscript/package-lock.json
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the AssemblyScript Guest
+        run: make -C examples/hello-assemblyscript render-check
+
   # One commit status carries the verdict back to the PR.
   report:
     runs-on: ubuntu-24.04
-    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-zig, render-c]
+    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-zig, render-c, render-assemblyscript]
     if: always() && needs.start.result == 'success'
     env:
       GH_TOKEN: ${{ github.token }}
@@ -410,7 +457,8 @@ jobs:
           description="all jobs passed"
           for result in "${{ needs.guest-suite.result }}" "${{ needs.render-go.result }}" \
             "${{ needs.render-tinygo.result }}" "${{ needs.render-rust.result }}" \
-            "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}"; do
+            "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}" \
+            "${{ needs.render-assemblyscript.result }}"; do
             if [ "$result" != "success" ]; then
               state=failure
               description="at least one job did not pass"
