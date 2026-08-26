@@ -1,5 +1,5 @@
 // Vendored from github.com/crossplane/function-sdk-go v0.7.1 (proto/v1/run_function.proto), Apache-2.0,
-// by go generate in the function-wasm repository. Regenerate the Go code with `go generate ./...` (see generate.go).
+// kept in lockstep by guestfn's scaffold tests. Regenerate the Go code with `go generate ./...` in the project (see generate.go).
 
 //
 //Copyright 2022 The Crossplane Authors.
