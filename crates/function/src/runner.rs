@@ -47,9 +47,6 @@ pub struct WasmFunction {
     /// except where the operator policy requires a signature, which then
     /// refuses.
     pub verifier: Option<Arc<crate::cosign::Verifier>>,
-    /// Directory for per-run Firefox-profiler profiles (--profile-guests,
-    /// gated on --debug); None profiles nothing.
-    pub profile_dir: Option<std::path::PathBuf>,
 }
 
 impl WasmFunction {
@@ -401,7 +398,6 @@ impl WasmFunction {
             http,
             module: resolved.description.clone(),
             digest: resolved.digest.clone(),
-            profile_dir: self.profile_dir.clone(),
         };
         // A per-step slot, when limits.concurrency is set, is taken before
         // the engine's global slot: one step does not take every global slot
@@ -592,7 +588,6 @@ mod tests {
             egress: Arc::new(crate::egress::Egress::new(Default::default(), 0.0, 0)),
             step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
             verifier: None,
-            profile_dir: None,
         }
     }
 
