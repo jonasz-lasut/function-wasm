@@ -179,6 +179,11 @@ examples/hello-rust         the same guest, Rust + prost — Cargo crate (exclud
                             guests depend on nothing in this repository)
 examples/hello-zig          the same guest, Zig + zig-protobuf — build.zig
 examples/hello-c            the same guest, C + nanopb + cJSON, compiled by zig cc — build.zig
+examples/hello-assemblyscript  the same guest, AssemblyScript + as-proto (example only, no
+                            scaffold yet): the generated codec is checked in (make gen-proto),
+                            four files hand-written where as-proto-gen 1.3.0 gets this proto
+                            wrong (the Value oneof, proto3 optional presence, packed repeated
+                            enums), stub runtime with a bump allocator, ~30 KB - the smallest guest
 examples/render.sh          shared: cargo-build the runtime serving an example dir, crossplane
                             render its example/, optionally --check
 package/                    crossplane.yaml + the checked-in Input CRD (documentation for tooling;
@@ -277,7 +282,7 @@ cargo test -p guestfn                     # scaffold goldens, render-matches-the
 (cd examples/hello-c && zig build test)
 ```
 
-`crates/function/tests/guests.rs` builds all five example guests and runs each through the whole host with the same expectations — default and configured greeting, a greeting fetched through the host's egress (via an OCI manifest layer and via `module.manifestPath`) and refused without a grant, guest-side fatal on a bad config, guest logs — the five guests must stay behaviourally identical. A guest whose toolchain is not on PATH is skipped. Toolchains: `rustup target add wasm32-wasip1`; TinyGo ≥ 0.41; Zig 0.16; `protoc` only for the codec regeneration targets; `nanopb_generator` (`pip install nanopb==0.4.9.1`) only for `zig build gen-proto` in hello-c.
+`crates/function/tests/guests.rs` builds all six example guests (AssemblyScript skipped without `npm`) and runs each through the whole host with the same expectations — default and configured greeting, a greeting fetched through the host's egress (via an OCI manifest layer and via `module.manifestPath`) and refused without a grant, guest-side fatal on a bad config, guest logs — the guests must stay behaviourally identical. A guest whose toolchain is not on PATH is skipped. Toolchains: `rustup target add wasm32-wasip1`; TinyGo ≥ 0.41; Zig 0.16; `protoc` only for the codec regeneration targets; `nanopb_generator` (`pip install nanopb==0.4.9.1`) only for `zig build gen-proto` in hello-c.
 
 Goldens: `UPDATE_CONFORMANCE=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
 

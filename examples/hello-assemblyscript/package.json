@@ -1,0 +1,18 @@
+{
+  "name": "hello-assemblyscript",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Crossplane composition function in AssemblyScript, run by function-wasm",
+  "type": "module",
+  "scripts": {
+    "build": "asc assembly/main.ts --target release"
+  },
+  "dependencies": {
+    "as-proto": "^1.3.0",
+    "json-as": "^1.6.0"
+  },
+  "devDependencies": {
+    "as-proto-gen": "^1.3.0",
+    "assemblyscript": "^0.28.20"
+  }
+}
