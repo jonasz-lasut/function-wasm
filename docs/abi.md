@@ -188,21 +188,15 @@ optional imports (`wasmfn.http` was): a module that does not import one is
 unaffected, and their JSON payloads may gain fields.
 
 This ABI is a **WASI Preview 1 core module** contract (WASI 0.1): a raw
-module with linear-memory, pointer-typed exports. That is one of the two WASI
-execution models; the other is the **Component Model** (WASI 0.2, and the
-async 0.3), a different binary format of WIT-typed worlds. A future **ABI v2**
-would adopt it — a WIT world mirroring `RunFunctionRequest`/`Response`, with
-`wasi:http` behind the same host policy — and would let toolchains that only
-emit components (`componentize-py`, `componentize-dotnet`, JS→component) run
-without the core-module reactor shape this ABI requires. It is not in scope
-here and is gated on the **wasmtime-go binding**, not on the engine:
-Wasmtime itself is the reference component host (the Rust `wasmtime` crate has
-full component support), and the bundled C-API exposes the component calls,
-but the Go wrappers are not written yet
-([wasmtime-go#280](https://github.com/bytecodealliance/wasmtime-go/issues/280),
-PRs #290/#291/#292). A Go host never needs a Go component *target* to run
-components; only a Go *guest* under ABI v2 would. The design rationale lives in
-`docs/one-pager-language-support.md`.
+module with linear-memory, pointer-typed exports. The other WASI execution
+model - the **Component Model** - is **ABI v2**, served by the same runtime:
+a WebAssembly *component* targeting the `wasmfn:function@2.0.0-draft` WIT
+world, with the same protobuf payload, a typed `log` import and `wasi:http`
+egress behind the same host policy. The binary format is the ABI version - a
+component is v2, a core module is v1 - and this v1 contract is served
+indefinitely alongside it. The v2 contract lives in
+[`docs/abi-v2.md`](abi-v2.md); the design rationale in
+`docs/one-pager-abi-v2.md` and `docs/one-pager-language-support.md`.
 
 ## Examples
 
