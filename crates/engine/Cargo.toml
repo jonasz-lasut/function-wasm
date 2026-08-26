@@ -14,7 +14,7 @@ serde_json.workspace = true
 tempfile = "3"
 thiserror = "2"
 tracing.workspace = true
-wasmtime = "48"
+wasmtime = { version = "48", features = ["call-hook"] }
 wasmtime-wasi = "48"
 
 [dev-dependencies]

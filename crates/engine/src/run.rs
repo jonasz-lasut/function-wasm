@@ -10,7 +10,7 @@ use wasmtime_wasi::WasiCtxBuilder;
 
 use crate::{
     ARGV0, CallState, Ctx, EPOCH_TICK, EXPORT_ALLOC, EXPORT_INITIALIZE, EXPORT_MEMORY, EXPORT_RUN,
-    Engine, Error, Module, RunOptions, duration, first_line, sandbox,
+    Engine, Error, HostTimer, Module, RunOptions, duration, first_line, sandbox,
 };
 
 pub(crate) fn run(
@@ -105,63 +105,83 @@ fn execute(
             http: opts.http.clone(),
             deadline: Instant::now() + budget,
             no_grant_logged: false,
+            timer: HostTimer::new(),
         },
     };
     let mut store = Store::new(&engine.inner, ctx);
     store.limiter(|c| &mut c.limits);
     store.set_epoch_deadline(ticks);
+    // Every host<->wasm transition feeds the guest/host time split.
+    store.call_hook(|mut cx, hook| {
+        cx.data_mut().call.timer.transition(hook);
+        Ok(())
+    });
 
     let _running = engine.running();
 
+    let result = drive(&mut store, m, request, budget);
+    crate::metrics::HOSTCALL_DURATION.observe(store.data().call.timer.host_total().as_secs_f64());
+    result
+}
+
+/// Instantiates the module in the prepared store and drives the ABI calls;
+/// split from execute so the run's timing splits can be read off the store
+/// whatever path it exits through.
+fn drive(
+    store: &mut Store<Ctx>,
+    m: &Module,
+    request: &[u8],
+    budget: Duration,
+) -> Result<Vec<u8>, Error> {
     let instance = m
         .pre
-        .instantiate(&mut store)
+        .instantiate(&mut *store)
         .map_err(|e| guest_error("cannot instantiate module", e, budget))?;
-    if let Some(init) = instance.get_func(&mut store, EXPORT_INITIALIZE) {
+    if let Some(init) = instance.get_func(&mut *store, EXPORT_INITIALIZE) {
         let init = init
-            .typed::<(), ()>(&store)
+            .typed::<(), ()>(&*store)
             .map_err(|e| guest_error(&format!("{EXPORT_INITIALIZE} failed"), e, budget))?;
-        init.call(&mut store, ())
+        init.call(&mut *store, ())
             .map_err(|e| guest_error(&format!("{EXPORT_INITIALIZE} failed"), e, budget))?;
     }
 
     // The ABI check guarantees the exports exist with these types.
     let memory = instance
-        .get_memory(&mut store, EXPORT_MEMORY)
+        .get_memory(&mut *store, EXPORT_MEMORY)
         .ok_or_else(|| {
             Error(format!(
                 "module does not export a memory named {EXPORT_MEMORY:?}"
             ))
         })?;
     let alloc = instance
-        .get_typed_func::<i32, i32>(&mut store, EXPORT_ALLOC)
+        .get_typed_func::<i32, i32>(&mut *store, EXPORT_ALLOC)
         .map_err(|e| Error(format!("{EXPORT_ALLOC}: {}", first_line(&e.to_string()))))?;
     let run = instance
-        .get_typed_func::<(i32, i32), i64>(&mut store, EXPORT_RUN)
+        .get_typed_func::<(i32, i32), i64>(&mut *store, EXPORT_RUN)
         .map_err(|e| Error(format!("{EXPORT_RUN}: {}", first_line(&e.to_string()))))?;
 
     // wasm i32 and i64 values carry the ABI's unsigned pointers and lengths;
     // the conversions below reinterpret bits, they do not change values.
     let size = request.len() as i32;
     let allocated = alloc
-        .call(&mut store, size)
+        .call(&mut *store, size)
         .map_err(|e| guest_error(&format!("{EXPORT_ALLOC} failed"), e, budget))?;
     let ptr = allocated as u32;
-    check_bounds(memory.data_size(&store), ptr, size as u32)
+    check_bounds(memory.data_size(&*store), ptr, size as u32)
         .map_err(|b| Error(format!("{EXPORT_ALLOC} returned an invalid buffer: {b}")))?;
-    memory.data_mut(&mut store)[ptr as usize..][..request.len()].copy_from_slice(request);
+    memory.data_mut(&mut *store)[ptr as usize..][..request.len()].copy_from_slice(request);
 
     let packed =
-        run.call(&mut store, (ptr as i32, size))
+        run.call(&mut *store, (ptr as i32, size))
             .map_err(|e| guest_error(&format!("{EXPORT_RUN} failed"), e, budget))? as u64;
     let (out_ptr, out_len) = ((packed >> 32) as u32, packed as u32);
-    check_bounds(memory.data_size(&store), out_ptr, out_len).map_err(|b| {
+    check_bounds(memory.data_size(&*store), out_ptr, out_len).map_err(|b| {
         Error(format!(
             "{EXPORT_RUN} returned an invalid response buffer: {b}"
         ))
     })?;
     // The store dies with this call, so the response is copied out.
-    Ok(memory.data(&store)[out_ptr as usize..][..out_len as usize].to_vec())
+    Ok(memory.data(&*store)[out_ptr as usize..][..out_len as usize].to_vec())
 }
 
 /// Converts a run's budget into epoch ticks, at least one.

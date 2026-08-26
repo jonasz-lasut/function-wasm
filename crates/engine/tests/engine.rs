@@ -126,6 +126,22 @@ fn check_abi_refusals() {
 }
 
 #[test]
+fn a_run_observes_the_hostcall_split() {
+    let e = engine();
+    let rsp = response_bytes();
+    let m = e
+        .compile(&wat::parse_str(fixed(&rsp)).expect("wat"))
+        .expect("compile");
+    let name = "function_wasm_module_hostcall_duration_seconds";
+    let before = function_wasm_engine::metrics::sample(name, &[]).unwrap_or(0.0);
+    e.run(&m, b"", RunOptions::default()).expect("run");
+    // Other tests' runs share the process-global registry, so the count is
+    // only monotonic: this run added at least its own observation.
+    let after = function_wasm_engine::metrics::sample(name, &[]).expect("series registered");
+    assert!(after >= before + 1.0, "the run observes the split");
+}
+
+#[test]
 fn the_stack_limit_bounds_recursion() {
     // 4000 frames fit in the default 512 KiB stack and overflow an 8 KiB
     // one; the trap carries the Go runtime's wording.

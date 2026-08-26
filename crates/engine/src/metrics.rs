@@ -79,6 +79,24 @@ pub static RUN_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
     .expect("register")
 });
 
+/// How much of a run was spent inside host imports. Additive to the Go
+/// runtime's series (which had no such split); run_duration minus this is
+/// guest compute.
+pub static HOSTCALL_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
+    register_histogram!(
+        HistogramOpts::new(
+            "hostcall_duration_seconds",
+            "Time one run spent inside host imports (wasmfn.log, wasmfn.http and WASI); the rest of run_duration_seconds is guest compute.",
+        )
+        .namespace(NAMESPACE)
+        .subsystem(SUBSYSTEM)
+        .buckets(vec![
+            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0
+        ])
+    )
+    .expect("register")
+});
+
 /// How many guest runs are executing right now - pinned at
 /// --max-concurrent-runs, it says the bound is what requests wait on.
 pub static RUNS_IN_FLIGHT: LazyLock<Gauge> = LazyLock::new(|| {
