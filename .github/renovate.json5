@@ -32,6 +32,23 @@
       depNameTemplate: 'crossplane/cli',
       datasourceTemplate: 'github-releases',
     },
+    {
+      // The crossplane/crossplane release every vendored run_function.proto
+      // was copied from - the same tripwire function-sdk-rust carries. A bump
+      // PR moves the version in the header comment of all copies at once; it
+      // does NOT re-download the file, so treat the PR as the signal to
+      // re-vendor by hand (the header says how) and regenerate each guest's
+      // checked-in codec. Merging it without re-vendoring would claim a
+      // version the file is not.
+      customType: 'regex',
+      description: 'crossplane/crossplane release the vendored run_function.proto came from',
+      managerFilePatterns: ['/(^|/)proto/run_function\\.proto$/'],
+      matchStrings: [
+        'Vendored from crossplane/crossplane (?<currentValue>v\\d+\\.\\d+\\.\\d+)\\.',
+      ],
+      depNameTemplate: 'crossplane/crossplane',
+      datasourceTemplate: 'github-releases',
+    },
   ],
   // Rules are evaluated in order; later rules win.
   packageRules: [
@@ -65,6 +82,18 @@
     {
       matchFileNames: ['examples/**', 'crates/guestfn/testdata/**'],
       enabled: false,
+    },
+
+    // The one exception, and the reason it is safe: the vendored proto's
+    // version header is the same dep in all thirteen copies, so Renovate
+    // moves templates, goldens and examples in a single PR. Left disabled
+    // under those paths it would update the templates alone - desyncing the
+    // very copies the rule above exists to protect.
+    {
+      matchManagers: ['custom.regex'],
+      matchPackageNames: ['crossplane/crossplane'],
+      enabled: true,
+      groupName: 'vendored run_function.proto',
     },
   ],
 }
