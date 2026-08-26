@@ -87,8 +87,10 @@ pub struct Config {
     /// round-robin by module key; 0 leaves concurrency to the caller.
     pub max_concurrent_runs: usize,
     /// Bounds the aggregate linear-memory reservation of all running
-    /// modules in bytes; a run reserves its effective limit before it
-    /// starts. 0 means no bound.
+    /// modules in bytes; a run reserves its module's initial linear memory
+    /// before it starts and each growth beyond it as the guest grows, so
+    /// only memory a guest actually claims counts against the pool. 0 means
+    /// no bound.
     pub max_total_run_memory: u64,
 }
 
@@ -147,8 +149,102 @@ pub struct RunOptions {
 /// host functions reach through the store.
 pub(crate) struct Ctx {
     wasi: WasiP1Ctx,
-    limits: wasmtime::StoreLimits,
+    limits: RunLimiter,
     call: CallState,
+}
+
+/// A run's reservation from the shared memory pool; dropping it - with the
+/// store, whatever the run's outcome - releases the whole reservation.
+pub(crate) struct PoolHold {
+    pool: Arc<concurrency::MemPool>,
+    n: u64,
+}
+
+impl PoolHold {
+    /// A reservation of n bytes already taken from pool.
+    pub(crate) fn new(pool: Arc<concurrency::MemPool>, n: u64) -> Self {
+        PoolHold { pool, n }
+    }
+
+    fn grow(&mut self, delta: u64, deadline: Instant) -> Result<(), String> {
+        self.pool.reserve(delta, deadline)?;
+        self.n += delta;
+        Ok(())
+    }
+}
+
+impl Drop for PoolHold {
+    fn drop(&mut self) {
+        if self.n > 0 {
+            self.pool.release(self.n);
+        }
+    }
+}
+
+/// The per-run memory limiter: enforces the run's ceiling (limits.memory or
+/// the engine's memory_limit) per memory, and reserves growth beyond the
+/// pre-reserved initial memory from the shared pool incrementally - so a
+/// run's pool footprint is what its guest actually claimed, not the
+/// worst-case ceiling. A growth the pool cannot serve before the run's
+/// deadline is denied: the guest sees memory.grow fail, exactly as it does
+/// at the ceiling.
+pub(crate) struct RunLimiter {
+    limit: usize,
+    hold: Option<PoolHold>,
+    /// Total bytes the store's memories have claimed (the sum of grow
+    /// deltas, initial sizes included).
+    charged: u64,
+    deadline: Instant,
+}
+
+impl RunLimiter {
+    pub(crate) fn new(limit: u64, hold: Option<PoolHold>, deadline: Instant) -> Self {
+        RunLimiter {
+            limit: limit as usize,
+            hold,
+            charged: 0,
+            deadline,
+        }
+    }
+}
+
+impl wasmtime::ResourceLimiter for RunLimiter {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        if desired > self.limit {
+            metrics::MEMORY_DENIALS.with_label_values(&["limit"]).inc();
+            return Ok(false);
+        }
+        let delta = (desired - current) as u64;
+        self.charged += delta;
+        if let Some(hold) = &mut self.hold
+            && self.charged > hold.n
+        {
+            let need = self.charged - hold.n;
+            if let Err(e) = hold.grow(need, self.deadline) {
+                self.charged -= delta;
+                metrics::MEMORY_DENIALS.with_label_values(&["pool"]).inc();
+                tracing::info!(error = %e, "Denied a memory growth");
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        // Tables were never bounded (StoreLimits bounded memory_size only);
+        // parity kept.
+        Ok(true)
+    }
 }
 
 /// The per-run state host functions reach through the store data.
@@ -225,6 +321,23 @@ impl std::fmt::Debug for Module {
     }
 }
 
+impl Module {
+    /// The initial size in bytes of the module's exported memory - what
+    /// instantiation claims before the guest runs, and so what a run
+    /// reserves from the shared memory pool up front.
+    pub(crate) fn initial_memory_bytes(&self) -> u64 {
+        self.inner
+            .exports()
+            .find_map(|e| match e.ty() {
+                wasmtime::ExternType::Memory(mt) if e.name() == EXPORT_MEMORY => {
+                    Some(mt.minimum() << 16)
+                }
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+}
+
 /// What Inspect reads from a module: its wasmfn host imports and, when the
 /// module does not implement ABI v1, checkABI's refusal.
 #[derive(Debug)]
@@ -286,7 +399,7 @@ pub struct Engine {
     pub(crate) inner: wasmtime::Engine,
     pub(crate) linker: Linker<Ctx>,
     pub(crate) scheduler: Option<concurrency::FairScheduler>,
-    pub(crate) mem: Option<concurrency::MemPool>,
+    pub(crate) mem: Option<Arc<concurrency::MemPool>>,
     active: Arc<AtomicI64>,
     stop: Arc<AtomicBool>,
     ticker: Option<thread::JoinHandle<()>>,
@@ -373,7 +486,7 @@ impl Engine {
             scheduler: (config.max_concurrent_runs > 0)
                 .then(|| concurrency::FairScheduler::new(config.max_concurrent_runs)),
             mem: (config.max_total_run_memory > 0)
-                .then(|| concurrency::MemPool::new(config.max_total_run_memory)),
+                .then(|| Arc::new(concurrency::MemPool::new(config.max_total_run_memory))),
             active,
             stop,
             ticker: Some(ticker),

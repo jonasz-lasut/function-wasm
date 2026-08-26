@@ -139,6 +139,20 @@ pub static HTTP_REQUESTS: LazyLock<CounterVec> = LazyLock::new(|| {
     .expect("register")
 });
 
+/// Memory growths the run limiter denied.
+pub static MEMORY_DENIALS: LazyLock<CounterVec> = LazyLock::new(|| {
+    register_counter_vec!(
+        Opts::new(
+            "memory_denials_total",
+            "Guest memory growths denied, by reason (limit = the run's memory ceiling, pool = --max-total-run-memory exhausted before the run's deadline). The guest sees memory.grow fail.",
+        )
+        .namespace(NAMESPACE)
+        .subsystem(SUBSYSTEM),
+        &["reason"]
+    )
+    .expect("register")
+});
+
 /// Requests by outcome.
 pub static REQUESTS: LazyLock<CounterVec> = LazyLock::new(|| {
     register_counter_vec!(
