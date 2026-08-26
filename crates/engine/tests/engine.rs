@@ -288,6 +288,37 @@ fn http_without_grant_is_refused_in_band() {
     );
 }
 
+/// A profiled run writes one Firefox-profiler JSON document per request
+/// into the profile directory.
+#[test]
+fn a_profiled_run_writes_firefox_profiler_json() {
+    let e = engine();
+    let rsp = response_bytes();
+    let m = e
+        .compile(&wat::parse_str(fixed(&rsp)).expect("wat"))
+        .expect("compile");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let opts = RunOptions {
+        digest: "sha256:abc".to_string(),
+        profile_dir: Some(dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = e.run(&m, b"", opts).expect("run");
+    assert_eq!(out, rsp);
+    let profiles: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("read dir")
+        .map(|f| f.expect("entry").path())
+        .collect();
+    assert_eq!(profiles.len(), 1, "one run, one profile: {profiles:?}");
+    let name = profiles[0].file_name().expect("name").to_string_lossy();
+    assert!(
+        name.starts_with("sha256-abc-") && name.ends_with(".json"),
+        "unexpected profile name: {name}"
+    );
+    let body = std::fs::read(&profiles[0]).expect("read profile");
+    serde_json::from_slice::<serde_json::Value>(&body).expect("profile is JSON");
+}
+
 struct SlowOk(Duration);
 
 impl function_wasm_engine::HttpRequester for SlowOk {

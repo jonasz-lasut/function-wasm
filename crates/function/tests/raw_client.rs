@@ -103,6 +103,7 @@ async fn the_served_runtime_is_byte_transparent() {
         )),
         step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
         verifier: None,
+        profile_dir: None,
     };
 
     let port = std::net::TcpListener::bind("127.0.0.1:0")

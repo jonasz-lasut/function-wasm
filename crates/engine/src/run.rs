@@ -2,6 +2,7 @@
 //! deadline and memory limiter, the ABI calls, and the translation of
 //! wasmtime failures into the messages the Go runtime produces.
 
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use wasmtime::{Store, StoreLimitsBuilder, Trap};
@@ -111,7 +112,32 @@ fn execute(
     };
     let mut store = Store::new(&engine.inner, ctx);
     store.limiter(|c| &mut c.limits);
-    store.set_epoch_deadline(ticks);
+
+    // A profiled run (--profile-guests) samples the guest every epoch tick;
+    // the profiler lives beside the store so the epoch and call hooks reach
+    // it without borrowing through the store. A profiler that cannot be
+    // built is logged, never the run's failure.
+    let profiler: Option<Arc<Mutex<Option<wasmtime::GuestProfiler>>>> =
+        opts.profile_dir.as_ref().and_then(|_| {
+            let name = if opts.module.is_empty() {
+                "module"
+            } else {
+                opts.module.as_str()
+            };
+            match wasmtime::GuestProfiler::new(
+                &engine.inner,
+                name,
+                EPOCH_TICK,
+                [(name.to_string(), m.inner.clone())],
+            ) {
+                Ok(p) => Some(Arc::new(Mutex::new(Some(p)))),
+                Err(e) => {
+                    tracing::info!(module = %opts.module, error = %e, "Cannot profile the run");
+                    None
+                }
+            }
+        });
+
     // The deadline meters guest compute: time the run was blocked in
     // wasmfn.http is credited back tick for tick when the deadline fires,
     // so limits.timeout is not consumed by a slow server. The request's own
@@ -121,30 +147,76 @@ fn execute(
     // timeout trap.
     let hard = opts.deadline;
     let mut credited = Duration::ZERO;
-    store.epoch_deadline_callback(move |cx| {
-        let now = Instant::now();
-        if let Some(h) = hard
-            && now >= h
-        {
-            return Ok(wasmtime::UpdateDeadline::Interrupt);
+    match &profiler {
+        None => {
+            store.set_epoch_deadline(ticks);
+            store.epoch_deadline_callback(move |cx| {
+                let now = Instant::now();
+                if let Some(h) = hard
+                    && now >= h
+                {
+                    return Ok(wasmtime::UpdateDeadline::Interrupt);
+                }
+                let credit = cx.data().call.http_host.saturating_sub(credited);
+                let mut extend = (credit.as_nanos() / EPOCH_TICK.as_nanos()) as u64;
+                if extend == 0 {
+                    return Ok(wasmtime::UpdateDeadline::Interrupt);
+                }
+                if let Some(h) = hard {
+                    // Never extend past the hard deadline; at least one tick
+                    // keeps the callback re-firing to enforce it.
+                    let cap =
+                        (h.duration_since(now).as_nanos() / EPOCH_TICK.as_nanos()).max(1) as u64;
+                    extend = extend.min(cap);
+                }
+                credited += Duration::from_nanos(EPOCH_TICK.as_nanos() as u64 * extend);
+                Ok(wasmtime::UpdateDeadline::Continue(extend))
+            });
         }
-        let credit = cx.data().call.http_host.saturating_sub(credited);
-        let mut extend = (credit.as_nanos() / EPOCH_TICK.as_nanos()) as u64;
-        if extend == 0 {
-            return Ok(wasmtime::UpdateDeadline::Interrupt);
+        Some(p) => {
+            // Sampling needs the callback every tick, so the budget is
+            // bookkept here - one tick spent per fire, http credit added -
+            // rather than in the deadline itself.
+            let p = Arc::clone(p);
+            let mut left = ticks;
+            store.set_epoch_deadline(1);
+            store.epoch_deadline_callback(move |cx| {
+                if let Ok(mut guard) = p.lock()
+                    && let Some(prof) = guard.as_mut()
+                {
+                    prof.sample(&cx, EPOCH_TICK);
+                }
+                let now = Instant::now();
+                if let Some(h) = hard
+                    && now >= h
+                {
+                    return Ok(wasmtime::UpdateDeadline::Interrupt);
+                }
+                let credit = cx.data().call.http_host.saturating_sub(credited);
+                let extend = (credit.as_nanos() / EPOCH_TICK.as_nanos()) as u64;
+                if extend > 0 {
+                    credited += Duration::from_nanos(EPOCH_TICK.as_nanos() as u64 * extend);
+                    left += extend;
+                }
+                if left == 0 {
+                    return Ok(wasmtime::UpdateDeadline::Interrupt);
+                }
+                left -= 1;
+                Ok(wasmtime::UpdateDeadline::Continue(1))
+            });
         }
-        if let Some(h) = hard {
-            // Never extend past the hard deadline; at least one tick keeps
-            // the callback re-firing to enforce it.
-            let cap = (h.duration_since(now).as_nanos() / EPOCH_TICK.as_nanos()).max(1) as u64;
-            extend = extend.min(cap);
-        }
-        credited += Duration::from_nanos(EPOCH_TICK.as_nanos() as u64 * extend);
-        Ok(wasmtime::UpdateDeadline::Continue(extend))
-    });
-    // Every host<->wasm transition feeds the guest/host time split.
-    store.call_hook(|mut cx, hook| {
+    }
+    // Every host<->wasm transition feeds the guest/host time split (and the
+    // profile's host markers when this run is profiled).
+    let ph = profiler.clone();
+    store.call_hook(move |mut cx, hook| {
         cx.data_mut().call.timer.transition(hook);
+        if let Some(p) = &ph
+            && let Ok(mut guard) = p.lock()
+            && let Some(prof) = guard.as_mut()
+        {
+            prof.call_hook(&cx, hook);
+        }
         Ok(())
     });
 
@@ -152,7 +224,45 @@ fn execute(
 
     let result = drive(&mut store, m, request, budget);
     crate::metrics::HOSTCALL_DURATION.observe(store.data().call.timer.host_total().as_secs_f64());
+    if let (Some(dir), Some(p)) = (&opts.profile_dir, profiler) {
+        write_profile(dir, &opts.digest, &p);
+    }
     result
+}
+
+/// Writes a finished run's profile as Firefox-profiler JSON named by the
+/// module digest and a timestamp. A write failure is logged; the run's
+/// outcome is the guest's.
+fn write_profile(
+    dir: &std::path::Path,
+    digest: &str,
+    profiler: &Mutex<Option<wasmtime::GuestProfiler>>,
+) {
+    let Some(p) = profiler.lock().ok().and_then(|mut guard| guard.take()) else {
+        return;
+    };
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let name = if digest.is_empty() {
+        format!("module-{millis}")
+    } else {
+        format!("{}-{millis}", digest.replace(':', "-"))
+    };
+    let path = dir.join(format!("{name}.json"));
+    let written = std::fs::File::create(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|f| {
+            p.finish(std::io::BufWriter::new(f))
+                .map_err(|e| e.to_string())
+        });
+    match written {
+        Ok(()) => tracing::info!(profile = %path.display(), "Wrote a guest profile"),
+        Err(e) => {
+            tracing::info!(error = %e, profile = %path.display(), "Cannot write the guest profile");
+        }
+    }
 }
 
 /// Instantiates the module in the prepared store and drives the ABI calls;
