@@ -184,6 +184,11 @@ examples/hello-rust         the same guest, Rust + prost — Cargo crate (exclud
                             guests depend on nothing in this repository)
 examples/hello-zig          the same guest, Zig + zig-protobuf — build.zig
 examples/hello-c            the same guest, C + nanopb + cJSON, compiled by zig cc — build.zig
+examples/hello-rust-v2      the same guest as an ABI v2 component (example only, no scaffold):
+                            async Rust on stable (wasm32-wasip2 + wit-bindgen), run is an async fn
+                            awaiting wasi:http/client for greetingUrl; vendors the world WIT
+                            byte-identical plus its own guest world and the wasi:http deps; no ABI
+                            glue - the canonical ABI owns it. ~220 KB
 examples/hello-assemblyscript  the same guest, AssemblyScript + as-proto (example only, no
                             scaffold yet): the generated codec is checked in (make gen-proto),
                             four files hand-written where as-proto-gen 1.3.0 gets this proto

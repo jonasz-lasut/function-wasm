@@ -60,15 +60,22 @@ impl WasiHttpView for CtxV2 {
 /// memory read are gone, the canonical ABI hands the host native values.
 impl FunctionImports for CtxV2 {
     fn log(&mut self, level: LogLevel, msg: String, kv: Vec<(String, String)>) {
-        let kv = serde_json::to_string(&kv).unwrap_or_default();
-        // The module identity attached the way hostlog does it; kv rendered
-        // as one JSON field because tracing fields are static.
+        let (module, digest) = (self.call.module.as_str(), self.call.digest.as_str());
+        // The module identity attached the way hostlog does it, and the
+        // guest's keys and values rendered as the same one JSON field (the
+        // flat alternating array v1's payload carries) - tracing fields are
+        // static, and the two ABIs' log lines should read identically.
+        let flat: Vec<serde_json::Value> = kv
+            .into_iter()
+            .flat_map(|(k, v)| [serde_json::Value::String(k), serde_json::Value::String(v)])
+            .collect();
+        let kv = serde_json::Value::Array(flat).to_string();
         match level {
             LogLevel::Debug => {
-                tracing::debug!(module = %self.call.module, digest = %self.call.digest, kv = %kv, "{msg}");
+                tracing::debug!(module, digest, kv = %kv, "{msg}");
             }
             LogLevel::Info => {
-                tracing::info!(module = %self.call.module, digest = %self.call.digest, kv = %kv, "{msg}");
+                tracing::info!(module, digest, kv = %kv, "{msg}");
             }
         }
     }
