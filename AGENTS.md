@@ -164,7 +164,9 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
   src/main.rs                 clap CLI: init/build/push/inspect/manifest/scaffold; shared helpers
   src/scaffold.rs             template rendering ([[ ]] delimiters, zigid/zigfp helpers), write with
                               overwrite refusal; the golden and render-matches-the-examples tests
-  src/buildcmd.rs             toolchain detection (Cargo.toml → rust, build.zig → zig/c, vtprotobuf
+  src/buildcmd.rs             toolchain detection (Cargo.toml → rust - wasip2 with a wit/ dir,
+                              wasip1 without; package.json sans asconfig.json → ts via npm;
+                              requirements.txt → python via componentize-py; build.zig → zig/c; vtprotobuf
                               in go.mod → tinygo, else go), the builds, the ABI verdict, wasmfn.yaml
                               validation, the example-config warning
   src/push.rs                 the CNCF wasm OCI artifact (wasm layer, manifest layer, layerDigests
@@ -180,15 +182,30 @@ examples/hello-go           the Go example guest — separate go.mod; vendors it
                             internal/wasmfn (no external SDK); built by tests, the /e2e render job and
                             local rendering, never published
 examples/hello-tinygo       the same guest, TinyGo + vtprotobuf — separate go.mod, `make generate`
-examples/hello-rust         the same guest, Rust + prost — Cargo crate (excluded from the workspace:
+examples/hello-rust         the same guest, Rust + prost, ABI v1 wasip1 — example-only now (the
+                            rust scaffold emits ABI v2); Cargo crate (excluded from the workspace:
                             guests depend on nothing in this repository)
 examples/hello-zig          the same guest, Zig + zig-protobuf — build.zig
 examples/hello-c            the same guest, C + nanopb + cJSON, compiled by zig cc — build.zig
-examples/hello-rust-v2      the same guest as an ABI v2 component (example only, no scaffold):
+examples/hello-rust-v2      the same guest as an ABI v2 component - the rust scaffold's example
+                            pair (render-matches-the-examples):
                             async Rust on stable (wasm32-wasip2 + wit-bindgen), run is an async fn
                             awaiting wasi:http/client for greetingUrl; vendors the world WIT
                             byte-identical plus its own guest world and the wasi:http deps; no ABI
                             glue - the canonical ABI owns it. ~220 KB
+examples/hello-ts           the same guest in TypeScript via jco (example only, no scaffold):
+                            protobuf-es codec (js+dts, checked in), tsc --noEmit gate, esbuild
+                            bundle, componentize-js; sync-lifted run (jco cannot async-lift a
+                            custom world yet - the world accepts sync), fetch() over
+                            wasi:http@0.2 through the same egress hooks; root-world imports
+                            arrive as default imports (import log from "log", kept external in
+                            the bundle). ~14 MB (SpiderMonkey)
+examples/hello-python       the same guest in Python via componentize-py (example only, no
+                            scaffold): protoc codec checked in, pure-Python protobuf runtime
+                            bundled (the C extension cannot exist in wasm; the fallback engages
+                            by itself), sync-lifted run, greeting fetched over wasi:http@0.2 on
+                            componentize-py's poll loop through the same egress hooks. ~21 MB
+                            (CPython)
 examples/hello-assemblyscript  the same guest, AssemblyScript + as-proto (example only, no
                             scaffold yet): the generated codec is checked in (make gen-proto),
                             four files hand-written where as-proto-gen 1.3.0 gets this proto
@@ -221,7 +238,7 @@ Guest exports `memory`, `wasmfn_alloc(u32)->u32`, `wasmfn_run(u32,u32)->u64`, op
 
 ### ABI v2
 
-The component-model contract, served by the same runtime (`docs/abi-v2.md`, design in `docs/one-pager-abi-v2.md`, tracking issue #65): a guest is a WebAssembly **component** targeting the WIT world `wasmfn:function@2.0.0-draft` (`wit/wasmfn-function.wit`) — export `run: async func(list<u8>) -> result<list<u8>, string>` (v1's protobuf payload), a typed `log` import, WASI 0.3+0.2 linked under the same sandbox. Detection is the binary format (the layer bytes): a component is v2, a core module is v1; the manifest's `abi:` is cross-checked against it. v2's checkABI is the world typecheck at load (`engine/src/component.rs`, the bindgen `FunctionPre`); a sync-lifted `run` satisfies the async world (what the WAT fixtures use). v2 egress is `wasi:http/client@0.3.0` bridged onto the same `HttpRequester` grant (`engine/src/wasihttp.rs`, the `WasiHttpHooks::send_request` seam with wasmtime-wasi-http's default client compiled out); host-reported failures reach the guest as `internal-error` carrying v1's exact wire error string, and send waits are credited back to the compute deadline. One wasmtime engine serves both ABIs (async-ness is per-store), and both artifact kinds share `compiled/<version()>` (they self-describe). The v1 `i32::MAX` request cap does not apply to v2; a component reserves nothing from the memory pool up front (no top-level memory) — growth is charged incrementally. A guest `err(string)` from `run` becomes `module <desc> failed: run returned an error: <s>`. The example guests land with the rest of issue #65.
+The component-model contract, served by the same runtime (`docs/abi-v2.md`, design in `docs/one-pager-abi-v2.md`, tracking issue #65): a guest is a WebAssembly **component** targeting the WIT world `wasmfn:function@2.0.0-draft` (`wit/wasmfn-function.wit`) — export `run: async func(list<u8>) -> result<list<u8>, string>` (v1's protobuf payload), a typed `log` import, WASI 0.3+0.2 linked under the same sandbox. Detection is the binary format (the layer bytes): a component is v2, a core module is v1; the manifest's `abi:` is cross-checked against it. v2's checkABI is the world typecheck at load (`engine/src/component.rs`, the bindgen `FunctionPre`); a sync-lifted `run` satisfies the async world (what the WAT fixtures use). v2 egress is wasi:http - 0.3 `client.send` and 0.2 `outgoing-handler` both - bridged onto the same `HttpRequester` grant (`engine/src/wasihttp.rs`, the `WasiHttpHooks::send_request` seam, unified across the two generations, with wasmtime-wasi-http's default client compiled out); host-reported failures reach the guest as `internal-error` carrying v1's exact wire error string, and send waits are credited back to the compute deadline. One wasmtime engine serves both ABIs (async-ness is per-store), and both artifact kinds share `compiled/<version()>` (they self-describe). The v1 `i32::MAX` request cap does not apply to v2; a component reserves nothing from the memory pool up front (no top-level memory) — growth is charged incrementally. A guest `err(string)` from `run` becomes `module <desc> failed: run returned an error: <s>`. The example guests land with the rest of issue #65.
 
 ### The transparent proxy is wire-level
 
@@ -345,7 +362,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ### Changing the scaffold
 
-Edit the example **and** its template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; the examples are the templates rendered for themselves; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the render-matches-the-examples test keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, `Cargo.lock` and the go example's glue tests are extra). The thirteen vendored `run_function.proto` copies (four templates, four goldens, five examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file**: treat the PR as the signal to re-vendor by hand from the URL in the header, update the copies in the templates **and** examples, regenerate the checked-in codecs (`make -C examples/hello-tinygo generate`, `zig build gen-proto` in hello-zig and hello-c, `make gen-proto` in hello-assemblyscript), and refresh the goldens; the /e2e render jobs fail on codec drift. Per-language identity (template ↔ golden ↔ example) is enforced by the goldens and the render-matches-the-examples test.
+Edit the example **and** its template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; the examples are the templates rendered for themselves; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the render-matches-the-examples test keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, `Cargo.lock` and the go example's glue tests are extra). The sixteen vendored `run_function.proto` copies (four templates, four goldens, eight examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file**: treat the PR as the signal to re-vendor by hand from the URL in the header, update the copies in the templates **and** examples, regenerate the checked-in codecs (`make -C examples/hello-tinygo generate`, `zig build gen-proto` in hello-zig and hello-c, `make gen-proto` in hello-assemblyscript), and refresh the goldens; the /e2e render jobs fail on codec drift. Per-language identity (template ↔ golden ↔ example) is enforced by the goldens and the render-matches-the-examples test.
 
 ### Rendering Locally
 

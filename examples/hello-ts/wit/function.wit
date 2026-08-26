@@ -1,0 +1,18 @@
+/// The wasmfn:function contract as this guest targets it. One deliberate
+/// difference from the runtime's wit/wasmfn-function.wit: `run` is declared
+/// sync here, because componentize-js cannot async-lift a custom world's
+/// export yet - and a sync-lifted implementation satisfies the runtime's
+/// async world (docs/abi-v2.md). The JS code still awaits inside run;
+/// componentize-js resolves the promise before the export returns.
+package wasmfn:function@2.0.0-draft;
+
+world function {
+    enum log-level {
+        debug,
+        info,
+    }
+
+    import log: func(level: log-level, msg: string, kv: list<tuple<string, string>>);
+
+    export run: func(request: list<u8>) -> result<list<u8>, string>;
+}

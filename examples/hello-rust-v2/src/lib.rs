@@ -1,12 +1,11 @@
-//! The hello-rust-v2 guest: the same Crossplane composition function as
-//! hello-rust, compiled to a WebAssembly component implementing ABI v2
-//! (docs/abi-v2.md). `run_function` is ordinary async Rust over the protobuf
-//! messages prost generated from the vendored crossplane proto; `bindings`
-//! holds the wit-bindgen world (the `run` export, the typed `log` import and
-//! the async `wasi:http/client` fetch) and only exists on the wasm target,
-//! so the crate also builds and tests natively. Where hello-rust carries
-//! ~150 lines of ABI glue (an allocator pin-set, a JSON http codec), the
-//! canonical ABI owns all of that here.
+//! The hello-rust-v2 guest: a Crossplane composition function compiled to a
+//! WebAssembly component implementing ABI v2 (docs/abi-v2.md).
+//! `run_function` is ordinary async Rust over the protobuf messages prost
+//! generated from the vendored crossplane proto; `bindings` holds the
+//! wit-bindgen world (the `run` export, the typed `log` import and the
+//! async `wasi:http/client` fetch) and only exists on the wasm target, so
+//! the crate also builds and tests natively. There is no hand-written ABI
+//! glue: the canonical ABI owns what an ABI v1 guest carries by hand.
 
 use std::collections::BTreeMap;
 use std::future::Future;

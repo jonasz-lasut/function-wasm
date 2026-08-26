@@ -180,6 +180,61 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
             std::fs::copy(&wasm, out).ok()?;
             true
         }
+        "ts" => {
+            if !on_path("npm") {
+                eprintln!("skipping: npm not on PATH");
+                return None;
+            }
+            if !command(&dir, "npm", &["ci", "--no-audit", "--no-fund"], &[])
+                || !command(&dir, "npm", &["run", "build"], &[])
+            {
+                return Some(Vec::new());
+            }
+            std::fs::copy(dir.join("fn.wasm"), out).ok()?;
+            true
+        }
+        "python" => {
+            if !on_path("python3") {
+                eprintln!("skipping: python3 not on PATH");
+                return None;
+            }
+            if !dir.join(".venv").is_dir()
+                && (!command(&dir, "python3", &["-m", "venv", ".venv"], &[])
+                    || !command(
+                        &dir,
+                        ".venv/bin/pip",
+                        &["install", "--quiet", "-r", "requirements.txt"],
+                        &[],
+                    ))
+            {
+                return Some(Vec::new());
+            }
+            let venv = dir.join(".venv").canonicalize().ok()?;
+            let venv = venv.to_string_lossy().into_owned();
+            if !command(
+                &dir,
+                ".venv/bin/componentize-py",
+                &[
+                    "-d",
+                    "wit",
+                    "-w",
+                    "function",
+                    "componentize",
+                    "app",
+                    "-p",
+                    "src",
+                    "-p",
+                    "src/gen",
+                    "-o",
+                    "fn.wasm",
+                ],
+                &[("VIRTUAL_ENV", venv.as_str())],
+            ) {
+                return Some(Vec::new());
+            }
+            std::fs::copy(dir.join("fn.wasm"), out).ok()?;
+            true
+        }
         "assemblyscript" => {
             if !on_path("npm") {
                 eprintln!("skipping: npm not on PATH");
@@ -538,6 +593,16 @@ fn rust_guest() {
 #[test]
 fn rust_v2_guest() {
     run_guest("rust-v2");
+}
+
+#[test]
+fn ts_guest() {
+    run_guest("ts");
+}
+
+#[test]
+fn python_guest() {
+    run_guest("python");
 }
 
 #[test]

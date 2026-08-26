@@ -1,0 +1,10 @@
+/// This guest's own world: the vendored wasmfn:function contract
+/// (wasmfn-function.wit, kept byte-identical to the runtime's copy) plus the
+/// wasi:http client it fetches greetings with. A component may import more
+/// than the wasmfn world names; the host links wasi:http for every v2 run
+/// and the grant decides what answers it.
+world guest {
+    include function;
+
+    import wasi:http/client@0.3.0;
+}
