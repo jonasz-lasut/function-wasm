@@ -147,6 +147,11 @@ struct ServeArgs {
     /// serves for the Go runtime; empty disables it.
     #[arg(long, default_value = ":8080", env = "METRICS_ADDRESS")]
     metrics_address: String,
+
+    /// Directory to write a Firefox-profiler JSON profile of every run
+    /// into - debug tooling, so it requires --debug.
+    #[arg(long, env = "PROFILE_GUESTS")]
+    profile_guests: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -177,6 +182,19 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             }
         },
     };
+    // Profiling costs symbolication per run and writes a file per request:
+    // debug tooling, refused outside --debug rather than left running in
+    // production by a forgotten flag.
+    if let Some(dir) = &args.profile_guests {
+        if !args.sdk.debug {
+            eprintln!("--profile-guests requires --debug");
+            std::process::exit(1);
+        }
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            eprintln!("cannot create --profile-guests {}: {e}", dir.display());
+            std::process::exit(1);
+        }
+    }
     if args.egress_rate_limit_per_minute < 0.0 || args.egress_rate_limit_burst < 0 {
         eprintln!(
             "--egress-rate-limit-per-minute and --egress-rate-limit-burst must not be negative"
@@ -301,6 +319,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         egress: Arc::clone(&egress),
         step_slots: Arc::clone(&step_slots),
         verifier,
+        profile_dir: args.profile_guests.clone(),
     };
     {
         // The periodic sweep, every ten minutes (and the cache sweep once at

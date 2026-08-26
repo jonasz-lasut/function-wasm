@@ -355,6 +355,7 @@ fn run_guest(guest: &str) {
         egress: Arc::new(function_wasm::egress::Egress::new(rules, 0.0, 0)),
         step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
         verifier: None,
+        profile_dir: None,
     };
 
     let module_digest = digest_of(&wasm);
