@@ -18,6 +18,6 @@ wasmtime = { version = "48", features = ["call-hook"] }
 wasmtime-wasi = "48"
 
 [dev-dependencies]
-function-sdk-rust = "0.2.0"
+function-sdk-rust = "0.3.0"
 prost = "0.14"
 wat = "1"
