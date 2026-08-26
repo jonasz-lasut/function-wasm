@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+function validate: cannot parse testdata/validate/broken.yaml: error converting YAML to JSON: yaml: line 3: did not find expected ',' or ']'

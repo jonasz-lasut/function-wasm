@@ -1,0 +1,4 @@
+exit 1
+--- stdout
+testdata/validate/signature.yaml: Composition/signature pipeline[0] secure: refused: cannot verify module oci ghcr.io/secure/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it
+--- stderr

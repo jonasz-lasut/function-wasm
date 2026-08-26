@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+<DIR>/Signed.yaml: Composition/Signed pipeline[0] Signed: OK (oci <REGISTRY>/example/greeter@sha256:0f49132e921c5eb22d2efacd96b5268d215f3e0c0723e5e6124830034238d74c)
+  module: sha256:0f49132e921c5eb22d2efacd96b5268d215f3e0c0723e5e6124830034238d74c, 85 B, ABI v1
+--- stderr

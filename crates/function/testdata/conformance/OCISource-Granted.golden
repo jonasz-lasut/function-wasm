@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+<DIR>/oci.yaml: Composition/oci pipeline[0] oci: OK (oci <REGISTRY>/example/greeter@sha256:f8f8bdad9ff53581b900fd0bd927c83462f7c08c5714b1c3aad2b82dea65a56d)
+  module: sha256:f8f8bdad9ff53581b900fd0bd927c83462f7c08c5714b1c3aad2b82dea65a56d, 85 B, ABI v1; manifest: greeter 0.1.0, private /tmp
+--- stderr

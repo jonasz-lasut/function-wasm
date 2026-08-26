@@ -1,0 +1,51 @@
+[package]
+name = "function-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A Crossplane composition function that runs WebAssembly modules (Rust runtime)"
+publish = false
+
+[[bin]]
+name = "function"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+bytes = "1"
+flate2 = "1"
+cedar-policy = "4"
+clap = { version = "4", features = ["derive", "env"] }
+function-sdk-rust = "0.2.0"
+function-wasm-engine = { path = "../engine" }
+hex = "0.4"
+http = "1"
+jsonschema = "0.33"
+tempfile = "3"
+pbjson-types = "0.9"
+prost = "0.14"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip"] }
+serde.workspace = true
+serde_json.workspace = true
+pem = "3"
+serde_yaml = "0.9"
+sigstore = { version = "0.14", default-features = false, features = ["cosign", "rustls-tls"] }
+sha2 = "0.11"
+tar = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tonic = { version = "0.14", features = ["tls-aws-lc"] }
+tonic-health = "0.14"
+tonic-reflection = "0.14"
+tracing.workspace = true
+
+[dev-dependencies]
+# The crate's own integration tests use the test registry.
+function-wasm = { path = ".", features = ["testutil"] }
+tracing-subscriber = "0.3"
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+tempfile = "3"
+wat = "1"
+
+[features]
+testutil = []
