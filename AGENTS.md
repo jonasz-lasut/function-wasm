@@ -84,8 +84,8 @@ crates/function/            the runtime crate: a library (everything below) + th
                               (module-dir, max-module-size, module-timeout, module-memory-limit,
                               module-stack-limit, sandbox-policy-file, cosign-key,
                               egress-rate-limit-*, cache and concurrency bounds, max-cache-size,
-                              warm-modules, ttl, health-address, metrics-address, profile-guests
-                              under --debug); opens the three disk stores, compiles the operator
+                              warm-modules, ttl, health-address, metrics-address); opens the three
+                              disk stores, compiles the operator
                               policy and IP rules (malformed → exit), starts the sweeps (10 min:
                               cache LRU to --max-cache-size + cache_bytes gauges, idle step slots,
                               idle rate limiters), the /metrics and /livez//readyz listeners, warm-up
