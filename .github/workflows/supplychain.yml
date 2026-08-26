@@ -25,7 +25,7 @@ env:
   # These environment variables are important to the Crossplane CLI install.sh
   # script. They determine what version it installs.
   XP_CHANNEL: stable
-  XP_VERSION: 'v2.4.1'
+  XP_VERSION: 'v2.5.0'
 
   GHCR_IMAGE: ghcr.io/jonasz-lasut/function-wasm
   MIRROR_IMAGE: xpkg.upbound.io/jonasz-lasut/function-wasm
