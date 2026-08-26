@@ -694,7 +694,6 @@ flags would admit.
 | `--health-address` | `HEALTH_ADDRESS` | `:8081` | plain-HTTP `/livez` (the process is up) and `/readyz` (200 once the caches are open and `--warm-modules` are loaded, 503 while warming) - what a Kubernetes probe can reach, since the function port speaks mTLS; empty disables them |
 | `--metrics-address` | `METRICS_ADDRESS` | `:8080` | plain-HTTP Prometheus `/metrics` endpoint (see [Metrics](#metrics)) - the port function-sdk-go serves for the Go runtime; empty disables it |
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
-| `--profile-guests` | `PROFILE_GUESTS` | unset | directory to write a per-run guest profile into, as [Firefox-profiler](https://profiler.firefox.com) JSON named `<digest>-<millis>.json` - the guest sampled every 10 ms, host imports marked. Debug tooling: it requires `--debug`, costs symbolication per run and writes a file per request, so never leave it set in production |
 
 The usual function-sdk-go flags (`--insecure`, `--debug`, `--tls-certs-dir`,
 `--address`, `--max-recv-message-size`) apply too. The caches live under
@@ -914,31 +913,6 @@ is pre-created at zero on startup, so a scrape sees the full set before
 the first request. There is no `grpc_server_handling_seconds`:
 function-sdk-go never enabled the histogram, and
 `function_wasm_module_run_duration_seconds` covers latency.
-
-### Profiling a module
-
-To see where a module's milliseconds go, start the runtime with `--debug
---profile-guests=<dir>`: every run then writes one profile into that
-directory, named `<digest>-<millis>.json` - load it at
-[profiler.firefox.com](https://profiler.firefox.com). The guest is sampled
-every 10 ms with full wasm stacks (build the module with DWARF, i.e.
-without stripping, for file-and-line frames), and every `wasmfn.log`,
-`wasmfn.http` and WASI call appears as a marker, so time spent in guest
-compute, in the runtime's host imports and waiting on an upstream server
-are distinguishable at a glance.
-
-The natural place to use it is the [local render loop](#render-locally):
-
-```bash
-cargo run --release -p function-wasm -- --insecure --debug --module-dir=. --profile-guests=/tmp/profiles
-```
-
-Profiling is debug tooling: the flag refuses to start without `--debug`,
-each profiled run pays symbol-table setup (noticeable for a large Go
-guest), and every request writes a file. Do not leave it set in
-production - there, the `run_duration_seconds` /
-`hostcall_duration_seconds` split answers the coarse version of the same
-question continuously.
 
 ## Trust model
 
