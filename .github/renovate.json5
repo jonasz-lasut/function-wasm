@@ -34,15 +34,6 @@
       depNameTemplate: 'crossplane/cli',
       datasourceTemplate: 'github-releases',
     },
-    {
-      // up CLI version downloaded from cli.upbound.io in the release workflows.
-      customType: 'regex',
-      description: 'UP_VERSION in .github/workflows',
-      managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/'],
-      matchStrings: ['UP_VERSION: (?<currentValue>v\\S+)'],
-      depNameTemplate: 'upbound/up',
-      datasourceTemplate: 'github-releases',
-    },
   ],
   // Rules are evaluated in order; later rules win.
   packageRules: [
