@@ -577,3 +577,288 @@ fn private_tmp_is_the_only_preopen() {
     let without = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(without.len(), 8, "errno should be EBADF (8) without one");
 }
+
+// --- ABI v2: components implementing the wasmfn:function world -------------
+//
+// The fixtures are hand-written component text, sync-lifted: the canonical
+// ABI accepts a sync implementation of the world's `async` run, which is
+// also what keeps a stable-toolchain guest possible.
+
+/// The core body shared by the component fixtures: a bump realloc and a
+/// memory. `run` is provided per fixture.
+const COMPONENT_CORE_PRELUDE: &str = r#"
+    (memory (export "memory") 4)
+    (global $next (mut i32) (i32.const 131072))
+    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
+      (local $p i32)
+      global.get $next
+      local.set $p
+      global.get $next
+      local.get 3
+      i32.add
+      global.set $next
+      local.get $p)
+"#;
+
+/// A component whose run returns the given bytes.
+fn fixed_component(rsp: &[u8]) -> String {
+    format!(
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func (export "run") (param i32 i32) (result i32)
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72) (i32.const {len}))
+      (i32.const 64))
+    (data (i32.const 1024) "{data}"))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+)"#,
+        len = rsp.len(),
+        data = wat_bytes(rsp),
+    )
+}
+
+#[test]
+fn component_fixed_response_round_trip() {
+    let e = engine();
+    let rsp = response_bytes();
+    let m = e
+        .compile(&wat::parse_str(fixed_component(&rsp)).expect("wat"))
+        .expect("compile");
+    assert_eq!(m.abi_version(), 2);
+    let out = e.run(&m, b"", RunOptions::default()).expect("run");
+    assert_eq!(out, rsp);
+}
+
+/// The guest's Err(string) becomes a run error naming the export - v2's
+/// third error channel, which v1 does not have.
+#[test]
+fn component_guest_error_string() {
+    let e = engine();
+    let wat = format!(
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func (export "run") (param i32 i32) (result i32)
+      (i32.store8 (i32.const 64) (i32.const 1))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72) (i32.const 4))
+      (i32.const 64))
+    (data (i32.const 1024) "boom"))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+)"#
+    );
+    let m = e
+        .compile(&wat::parse_str(&wat).expect("wat"))
+        .expect("compile");
+    let err = e
+        .run(&m, b"", RunOptions::default())
+        .expect_err("guest error");
+    assert_eq!(err.to_string(), "run returned an error: boom");
+}
+
+/// The epoch deadline interrupts a spinning component with the same message
+/// as a v1 guest - the wording the timeout metric outcome matches on.
+#[test]
+fn component_run_deadline() {
+    let e = engine();
+    let wat = format!(
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func (export "run") (param i32 i32) (result i32)
+      (loop $l br $l)
+      i32.const 64))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+)"#
+    );
+    let m = e
+        .compile(&wat::parse_str(&wat).expect("wat"))
+        .expect("compile");
+    let err = e
+        .run(
+            &m,
+            b"",
+            RunOptions {
+                timeout: Some(Duration::from_millis(50)),
+                ..Default::default()
+            },
+        )
+        .expect_err("deadline");
+    assert!(
+        err.to_string()
+            .contains("module exceeded its execution deadline"),
+        "unexpected: {err}"
+    );
+}
+
+/// The run's memory ceiling denies a component's growth exactly as a core
+/// module's: the guest sees memory.grow fail.
+#[test]
+fn component_memory_limit_denies_growth() {
+    let e = engine();
+    let wat = format!(
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func (export "run") (param i32 i32) (result i32)
+      ;; try to grow by 64 MiB; on failure return err("grow denied")
+      (if (i32.eq (memory.grow (i32.const 1024)) (i32.const -1))
+        (then
+          (i32.store8 (i32.const 64) (i32.const 1))
+          (i32.store (i32.const 68) (i32.const 1024))
+          (i32.store (i32.const 72) (i32.const 11))
+          (return (i32.const 64))))
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72) (i32.const 0))
+      (i32.const 64))
+    (data (i32.const 1024) "grow denied"))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+)"#
+    );
+    let m = e
+        .compile(&wat::parse_str(&wat).expect("wat"))
+        .expect("compile");
+    let err = e
+        .run(
+            &m,
+            b"",
+            RunOptions {
+                memory_limit: Some(1 << 20),
+                ..Default::default()
+            },
+        )
+        .expect_err("denied growth surfaces as the guest's error");
+    assert_eq!(err.to_string(), "run returned an error: grow denied");
+}
+
+/// A component that does not implement the world is refused at load with
+/// the world named - v2's checkABI.
+#[test]
+fn component_world_typecheck_refusals() {
+    let e = engine();
+    for (name, wat) in [
+        ("empty", "(component)".to_string()),
+        (
+            "wrong type",
+            format!(
+                r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func (export "run") (param i32) (result i32) i32.const 0))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" u32) (result u32)
+    (canon lift (core func $i "run")))
+)"#
+            ),
+        ),
+    ] {
+        let err = e
+            .compile(&wat::parse_str(&wat).expect("wat"))
+            .expect_err(name);
+        assert!(
+            err.to_string()
+                .starts_with("component does not implement the wasmfn:function@2.0.0-draft world:"),
+            "{name}: unexpected: {err}"
+        );
+    }
+}
+
+/// A component that imports the world's log is linked against the host's
+/// typed import and runs.
+#[test]
+fn component_log_import_is_provided() {
+    let e = engine();
+    let rsp = response_bytes();
+    // The memory lives in its own core module so the lowered import can name
+    // it before the main module (which needs that import) is instantiated;
+    // the enum must reach the import's signature as an eq-bound type import
+    // (a defined type is not importable directly).
+    let wat = format!(
+        r#"(component
+  (type $level_def (enum "debug" "info"))
+  (import "level" (type $level (eq $level_def)))
+  (import "log" (func $log (param "level" $level) (param "msg" string) (param "kv" (list (tuple string string)))))
+  (core module $libc
+    {COMPONENT_CORE_PRELUDE})
+  (core instance $libc_inst (instantiate $libc))
+  (core func $log_lowered (canon lower (func $log) (memory $libc_inst "memory") (realloc (core func $libc_inst "cabi_realloc"))))
+  (core module $m
+    (import "env" "memory" (memory 4))
+    (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
+    (func (export "run") (param i32 i32) (result i32)
+      ;; log(info, "hello from v2", [])
+      (call $log (i32.const 1) (i32.const 2048) (i32.const 13) (i32.const 0) (i32.const 0))
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72) (i32.const {len}))
+      (i32.const 64))
+    (data (i32.const 1024) "{data}")
+    (data (i32.const 2048) "hello from v2"))
+  (core instance $m_inst (instantiate $m
+    (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
+    (with "host" (instance (export "log" (func $log_lowered))))))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $m_inst "run") (memory $libc_inst "memory") (realloc (core func $libc_inst "cabi_realloc"))))
+)"#,
+        len = rsp.len(),
+        data = wat_bytes(&rsp),
+    );
+    let m = e
+        .compile(&wat::parse_str(&wat).expect("wat"))
+        .expect("compile");
+    let out = e.run(&m, b"", RunOptions::default()).expect("run");
+    assert_eq!(out, rsp);
+}
+
+/// A serialized component artifact loads back through the same cache path a
+/// module's does; the artifact itself says which kind it is.
+#[test]
+fn component_serialize_round_trip() {
+    let e = engine();
+    let rsp = response_bytes();
+    let m = e
+        .compile(&wat::parse_str(fixed_component(&rsp)).expect("wat"))
+        .expect("compile");
+    let artifact = e.serialize(&m).expect("serialize");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("c.bin");
+    std::fs::write(&path, &artifact).expect("write");
+    let loaded = e.deserialize_file(&path).expect("deserialize");
+    assert_eq!(loaded.abi_version(), 2);
+    let out = e.run(&loaded, b"", RunOptions::default()).expect("run");
+    assert_eq!(out, rsp);
+}
+
+/// inspect reports a component as ABI v2 with the world verdict, and a
+/// serialized artifact is still refused as a module source.
+#[test]
+fn component_inspection() {
+    let e = engine();
+    let rsp = response_bytes();
+    let shape = e
+        .inspect(&wat::parse_str(fixed_component(&rsp)).expect("wat"))
+        .expect("inspect");
+    assert_eq!(shape.abi_version, 2);
+    assert_eq!(shape.abi_error, None);
+    assert!(
+        shape
+            .exports
+            .iter()
+            .any(|x| x.name == "run" && x.kind == "func")
+    );
+    assert!(shape.memories.is_empty());
+
+    let bad = e.inspect(b"(component)".as_ref());
+    assert!(bad.is_err(), "text is not a module source");
+}

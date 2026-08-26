@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The wasmtime engine of function-wasm: compiles and runs ABI v1 guest modules"
+description = "The wasmtime engine of function-wasm: compiles and runs ABI v1 and v2 guest modules"
 publish = false
 
 [dependencies]
@@ -15,7 +15,7 @@ tempfile = "3"
 thiserror = "2"
 tracing.workspace = true
 wasmtime = { version = "48", features = ["call-hook"] }
-wasmtime-wasi = "48"
+wasmtime-wasi = { version = "48", features = ["p3"] }
 
 [dev-dependencies]
 function-sdk-rust = "0.3.0"
