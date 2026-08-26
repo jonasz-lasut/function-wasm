@@ -186,14 +186,29 @@ impl WasmFunction {
             withheld = name;
         }
 
-        let resolved = match self.resolver.resolve(&source, auth.clone()) {
-            Ok(resolved) => resolved,
-            Err(e) => {
-                return Ok(raw_rsp(self.fatal(
-                    rsp,
-                    OUTCOME_REFUSED,
-                    format!("cannot resolve module: {e}"),
-                )));
+        // resolve hashes a path module's file (up to --max-module-size) on
+        // a stamp miss, so it runs off the async executor like the other
+        // blocking steps.
+        let resolved = {
+            let resolver = Arc::clone(&self.resolver);
+            let source = source.clone();
+            let auth = auth.clone();
+            match tokio::task::spawn_blocking(move || resolver.resolve(&source, auth)).await {
+                Ok(Ok(resolved)) => resolved,
+                Ok(Err(e)) => {
+                    return Ok(raw_rsp(self.fatal(
+                        rsp,
+                        OUTCOME_REFUSED,
+                        format!("cannot resolve module: {e}"),
+                    )));
+                }
+                Err(e) => {
+                    return Ok(raw_rsp(self.fatal(
+                        rsp,
+                        OUTCOME_ERROR,
+                        format!("internal error while running the module: {e}"),
+                    )));
+                }
             }
         };
         // Signature verification gates serving, not fetching: it runs
