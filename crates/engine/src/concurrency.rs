@@ -139,29 +139,16 @@ impl FairScheduler {
     }
 }
 
-/// A counting semaphore over bytes: a run reserves its effective memory
-/// limit before it starts and releases it after; one that cannot fit waits
-/// under its deadline.
+/// A counting semaphore over bytes: a run reserves its module's initial
+/// linear memory before it starts and every growth beyond it as the guest
+/// grows, releasing the whole reservation when its store drops; a
+/// reservation that cannot fit waits under the run's deadline. Callers pair
+/// reserve and release themselves (the engine's RunLimiter owns that).
 #[derive(Debug)]
 pub(crate) struct MemPool {
     total: u64,
     used: Mutex<u64>,
     freed: Condvar,
-}
-
-#[derive(Debug)]
-pub(crate) struct MemGuard<'a> {
-    pool: &'a MemPool,
-    n: u64,
-}
-
-impl Drop for MemGuard<'_> {
-    fn drop(&mut self) {
-        let mut used = self.pool.used.lock().expect("poisoned");
-        *used -= self.n;
-        // One release can admit several runs: every waiter re-checks.
-        self.pool.freed.notify_all();
-    }
 }
 
 impl MemPool {
@@ -173,12 +160,12 @@ impl MemPool {
         }
     }
 
-    pub(crate) fn reserve(&self, n: u64, deadline: Instant) -> Result<MemGuard<'_>, String> {
+    pub(crate) fn reserve(&self, n: u64, deadline: Instant) -> Result<(), String> {
         let mut used = self.used.lock().expect("poisoned");
         loop {
             if *used + n <= self.total {
                 *used += n;
-                return Ok(MemGuard { pool: self, n });
+                return Ok(());
             }
             let timeout = deadline.saturating_duration_since(Instant::now());
             if timeout.is_zero() {
@@ -198,6 +185,13 @@ impl MemPool {
                 ));
             }
         }
+    }
+
+    pub(crate) fn release(&self, n: u64) {
+        let mut used = self.used.lock().expect("poisoned");
+        *used -= n;
+        // One release can admit several runs: every waiter re-checks.
+        self.freed.notify_all();
     }
 }
 
@@ -362,7 +356,7 @@ mod tests {
     #[test]
     fn the_pool_admits_when_memory_frees() {
         let p = Arc::new(MemPool::new(100));
-        let g = p.reserve(80, soon()).expect("fits");
+        p.reserve(80, soon()).expect("fits");
         let err = p
             .reserve(40, Instant::now() + Duration::from_millis(30))
             .expect_err("full");
@@ -373,11 +367,10 @@ mod tests {
         let p2 = Arc::clone(&p);
         let waiter = std::thread::spawn(move || {
             p2.reserve(40, Instant::now() + Duration::from_secs(5))
-                .map(drop)
                 .is_ok()
         });
         std::thread::sleep(Duration::from_millis(30));
-        drop(g);
+        p.release(80);
         assert!(waiter.join().expect("join"));
     }
 

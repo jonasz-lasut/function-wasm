@@ -82,9 +82,10 @@ Crossplane RunFunctionResponse (whatever the module produced)
 crates/function/            the runtime crate: a library (everything below) + the `function` binary
   src/main.rs                 clap CLI: serve (default) + validate subcommand; every ceiling flag
                               (module-dir, max-module-size, module-timeout, module-memory-limit,
-                              sandbox-policy-file, cosign-key, egress-rate-limit-*, cache and
-                              concurrency bounds, max-cache-size, warm-modules, ttl, health-address,
-                              metrics-address); opens the three disk stores, compiles the operator
+                              module-stack-limit, sandbox-policy-file, cosign-key,
+                              egress-rate-limit-*, cache and concurrency bounds, max-cache-size,
+                              warm-modules, ttl, health-address, metrics-address, profile-guests
+                              under --debug); opens the three disk stores, compiles the operator
                               policy and IP rules (malformed → exit), starts the sweeps (10 min:
                               cache LRU to --max-cache-size + cache_bytes gauges, idle step slots,
                               idle rate limiters), the /metrics and /livez//readyz listeners, warm-up
@@ -215,7 +216,7 @@ The host forwards the whole request and returns the whole response — requireme
 
 ### Parity with the Go runtime
 
-The Go implementation was the reference until 2026-08; the contract is **logical compatibility**: the same Inputs admitted, the same requests refused for the same reasons, nothing running wider than the Go runtime would allow. Most admission and policy refusal strings match Go verbatim (the conformance goldens hold them); wording-only divergences are accepted (alpha), the recorded ones being: guest log kv rendered as one JSON field, egress transport-error text (reqwest's words, no 64KiB response-header cap, no HTTP/2 attempt), limits parse-error wording, and a cold module load (fetch + compile) not being cut short by the request's deadline - the compile completes and caches where Go bounded loads with a load timeout; the run that follows still gets only the remaining budget. Anything the runtime does not carry is refused with a message naming it, never silently ignored.
+The Go implementation was the reference until 2026-08; the contract is **logical compatibility**: the same Inputs admitted, the same requests refused for the same reasons, nothing running wider than the Go runtime would allow. Most admission and policy refusal strings match Go verbatim (the conformance goldens hold them); wording-only divergences are accepted (alpha), the recorded ones being: guest log kv rendered as one JSON field, egress transport-error text (reqwest's words, no 64KiB response-header cap, no HTTP/2 attempt), limits parse-error wording, a cold module load (fetch + compile) not being cut short by the request's deadline - the compile completes and caches where Go bounded loads with a load timeout; the run that follows still gets only the remaining budget - and the run deadline metering guest compute: time blocked in `wasmfn.http` is credited back to the epoch deadline (the gRPC deadline stays the hard cap) where Go spent `limits.timeout` on it. Anything the runtime does not carry is refused with a message naming it, never silently ignored.
 
 ### Conformance goldens
 
@@ -239,7 +240,7 @@ Readiness is answered twice — gRPC health on the function port and plain-HTTP 
 
 ### Metrics
 
-`crates/engine/src/metrics.rs` registers the same series as the Go runtime — `function_wasm_module_{compile,fetch,run}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` — on the prometheus default registry, served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port). Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
+`crates/engine/src/metrics.rs` registers the same series as the Go runtime — `function_wasm_module_{compile,fetch,run}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` — plus two additive series the Go runtime did not carry: `hostcall_duration_seconds` (the host-import slice of a run, split by call_hook) and `memory_denials_total{reason}` (guest memory growths denied at the per-run ceiling or the pool) — registered with prometheus-client (the OpenMetrics-native client; the runtime's own registry, prometheus-client has no default), served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port) - OpenMetrics 1.0 as the main format straight from prometheus-client's encoder, the classic text format derived from it (`metrics::classic_from_openmetrics`: counter families renamed with `_total`, `# EOF` dropped) only for an Accept header that asks for `text/plain` without accepting OpenMetrics (`ops.rs::wants_classic_text`); both renderings carry identical series. The `Labeled{Counter,Gauge,Histogram}` adapters in metrics.rs keep the prometheus crate's `with_label_values` call shape, so metric call sites never name prometheus-client; counters register named without their `_total` (the encoder appends it) and helps without their trailing period (prometheus-client appends one). `crates/function/src/grpcmetrics.rs` adds the Go runtime's gRPC server series (`grpc_server_{started,handled,msg_received,msg_sent}_total`, same names/labels/help strings as function-sdk-go's grpc-prometheus interceptor) as a tower layer around the whole router in grpc.rs — unary-only like Go's interceptor, every served method pre-created at zero like its InitializeMetrics, no handling-time histogram (Go never enabled it). Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
 
 ### Signatures
 
@@ -353,7 +354,7 @@ By hand: `cargo run -p function-wasm -- --insecure --debug --module-dir=examples
 - `cedar-policy` — both policy layers.
 - `sigstore` (features `cosign`, `rustls-tls`, no default features) — cosign key verification crypto only; fetching stays on the runtime's own registry client.
 - `reqwest` (blocking, rustls) — the egress client and the registry client.
-- `prometheus` — the metrics registry.
+- `prometheus-client` — the metrics registry and OpenMetrics encoder (the official OpenMetrics-native client; the classic text format is derived from its output in `metrics.rs`).
 - `clap` — both CLIs.
 
 ## Important Design Decisions

@@ -29,10 +29,11 @@ impl Readiness {
     }
 }
 
-/// Serves /livez (always 200) and /readyz (200 once ready, 503 before) on
-/// address; any other path is 404. Runs until the process ends.
-/// Serves Prometheus metrics on address at /metrics - what function-sdk-go
-/// serves on :8080 for the Go runtime.
+/// Serves metrics on address at /metrics - the port function-sdk-go serves
+/// on :8080 for the Go runtime. OpenMetrics 1.0 is the main exposition
+/// format, served unless the scraper's Accept header asks for the classic
+/// Prometheus text format and does not accept OpenMetrics; the two carry
+/// identical series either way.
 pub async fn serve_metrics(address: &str) -> Result<(), std::io::Error> {
     let address = if address.starts_with(':') {
         format!("0.0.0.0{address}")
@@ -51,9 +52,19 @@ pub async fn serve_metrics(address: &str) -> Result<(), std::io::Error> {
             let head = String::from_utf8_lossy(&buf[..n]).into_owned();
             let path = head.split_whitespace().nth(1).unwrap_or_default();
             let response = if path == "/metrics" {
-                let body = function_wasm_engine::metrics::render();
+                let (body, content_type) = if wants_classic_text(&head) {
+                    (
+                        function_wasm_engine::metrics::render(),
+                        "text/plain; version=0.0.4",
+                    )
+                } else {
+                    (
+                        function_wasm_engine::metrics::render_openmetrics(),
+                        function_wasm_engine::metrics::OPENMETRICS_CONTENT_TYPE,
+                    )
+                };
                 format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 )
             } else {
@@ -63,6 +74,22 @@ pub async fn serve_metrics(address: &str) -> Result<(), std::io::Error> {
             let _ = conn.write_all(response.as_bytes()).await;
         });
     }
+}
+
+/// Whether the request's Accept header asks for the classic Prometheus text
+/// format without accepting OpenMetrics. OpenMetrics is the main format:
+/// it is served when the header names it (whatever the q-values - a
+/// scraper that lists it can read it), when there is no Accept header, and
+/// for catch-alls like */*; only an explicit text/plain-and-not-OpenMetrics
+/// preference gets the classic rendering.
+fn wants_classic_text(request_head: &str) -> bool {
+    let Some(accept) = request_head.lines().find_map(|l| {
+        let (name, value) = l.split_once(':')?;
+        name.trim().eq_ignore_ascii_case("accept").then_some(value)
+    }) else {
+        return false;
+    };
+    !accept.contains("application/openmetrics-text") && accept.contains("text/plain")
 }
 
 pub async fn serve_health(address: &str, readiness: Readiness) -> Result<(), std::io::Error> {
@@ -198,6 +225,73 @@ mod tests {
             })
             .await
             .expect("warmed");
+    }
+
+    #[test]
+    fn openmetrics_is_the_main_format() {
+        // No Accept header, or one that names OpenMetrics or anything at
+        // all: OpenMetrics.
+        assert!(!wants_classic_text("GET /metrics HTTP/1.1\r\nHost: x\r\n"));
+        assert!(!wants_classic_text(
+            "GET /metrics HTTP/1.1\r\nAccept: */*\r\n"
+        ));
+        assert!(!wants_classic_text(
+            "GET /metrics HTTP/1.1\r\nAccept: application/openmetrics-text;version=1.0.0;q=0.9,text/plain;version=0.0.4;q=0.5\r\n"
+        ));
+        // Only an explicit classic-and-nothing-OpenMetrics preference gets
+        // the classic format.
+        assert!(wants_classic_text(
+            "GET /metrics HTTP/1.1\r\nAccept: text/plain; version=0.0.4\r\n"
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_metrics_endpoint_negotiates_the_format() {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = probe.local_addr().expect("addr").to_string();
+        drop(probe);
+        let server_addr = addr.clone();
+        tokio::spawn(async move {
+            let _ = serve_metrics(&server_addr).await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let get = |accept: &'static str| {
+            let addr = addr.clone();
+            async move {
+                let mut conn = tokio::net::TcpStream::connect(&addr)
+                    .await
+                    .expect("connect");
+                let header = if accept.is_empty() {
+                    String::new()
+                } else {
+                    format!("Accept: {accept}\r\n")
+                };
+                conn.write_all(
+                    format!("GET /metrics HTTP/1.1\r\nHost: x\r\n{header}\r\n").as_bytes(),
+                )
+                .await
+                .expect("write");
+                let mut out = Vec::new();
+                let _ = conn.read_to_end(&mut out).await;
+                String::from_utf8_lossy(&out).into_owned()
+            }
+        };
+        let main = get("").await;
+        assert!(
+            main.contains("application/openmetrics-text; version=1.0.0; charset=utf-8"),
+            "OpenMetrics is the main format: {main}"
+        );
+        assert!(
+            main.trim_end().ends_with("# EOF"),
+            "OpenMetrics body ends with EOF"
+        );
+        let classic = get("text/plain; version=0.0.4").await;
+        assert!(
+            classic.contains("text/plain; version=0.0.4"),
+            "classic on request: {classic}"
+        );
+        assert!(!classic.contains("# EOF"));
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -103,6 +103,7 @@ async fn the_served_runtime_is_byte_transparent() {
         )),
         step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
         verifier: None,
+        profile_dir: None,
     };
 
     let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -156,6 +157,69 @@ async fn the_served_runtime_is_byte_transparent() {
     // bytes - the unknown field included - came back through the whole
     // stack.
     assert_eq!(rsp, raw);
+
+    // The served call showed up in the Go runtime's gRPC server series -
+    // started when it arrived, handled OK and one message each way when its
+    // trailers went out (the trailers may land a beat after the client saw
+    // the response, so the handled count is polled briefly).
+    let labels = [
+        ("grpc_type", "unary"),
+        (
+            "grpc_service",
+            "apiextensions.fn.proto.v1.FunctionRunnerService",
+        ),
+        ("grpc_method", "RunFunction"),
+    ];
+    let sample = function_wasm_engine::metrics::sample;
+    assert_eq!(
+        sample("grpc_server_started_total", &labels),
+        Some(1.0),
+        "started"
+    );
+    assert_eq!(
+        sample("grpc_server_msg_received_total", &labels),
+        Some(1.0),
+        "msg_received"
+    );
+    let handled_labels = [
+        ("grpc_type", "unary"),
+        (
+            "grpc_service",
+            "apiextensions.fn.proto.v1.FunctionRunnerService",
+        ),
+        ("grpc_method", "RunFunction"),
+        ("grpc_code", "OK"),
+    ];
+    let mut handled = 0.0;
+    for _ in 0..50 {
+        handled = sample("grpc_server_handled_total", &handled_labels).unwrap_or(0.0);
+        if handled >= 1.0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(handled, 1.0, "handled OK");
+    assert_eq!(
+        sample("grpc_server_msg_sent_total", &labels),
+        Some(1.0),
+        "msg_sent"
+    );
+
+    // InitializeMetrics parity: the streaming methods this server carries
+    // exist as zero series from startup, never incremented (the Go
+    // interceptor was unary-only too).
+    assert_eq!(
+        sample(
+            "grpc_server_started_total",
+            &[
+                ("grpc_type", "server_stream"),
+                ("grpc_service", "grpc.health.v1.Health"),
+                ("grpc_method", "Watch"),
+            ]
+        ),
+        Some(0.0),
+        "streaming methods stay zero"
+    );
 }
 
 async fn connect(port: u16) -> tonic::transport::Channel {

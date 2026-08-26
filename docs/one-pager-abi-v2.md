@@ -142,7 +142,7 @@ design.
 |---|---|---|
 | wasmtime-go v47 | `wasmtime` (native) | none: gains components, InstancePre/pooling, parse-only |
 | cedar-go | `cedar-policy` | low: authz's own hierarchy/pattern code ports 1:1 |
-| function-sdk-go server | function-sdk-rust (tonic 0.14 + prost; Go parity reached 2026-08-25) | low but young; metrics still need the prometheus-client tower layer |
+| function-sdk-go server | function-sdk-rust (tonic 0.14 + prost; Go parity reached 2026-08-25) | low but young; metrics still need the prometheus-client tower layer (closed 2026-08-26: the runtime serves the `grpc_server_*` series through its own layer, `crates/function/src/grpcmetrics.rs`) |
 | go-containerregistry | `oci-client` + `oci-spec`, or a hand-rolled remote | **highest**: auth flows (dockerconfigjson, token refresh), artifact push with custom layer media types - spike early |
 | hand-rolled cosign check | the same, over ring/ed25519-dalek (not sigstore-rs: the same dependency-count reasoning) | low |
 | jsonschema/v6 (Go) | `jsonschema` crate (draft 2020-12) | low |
