@@ -126,6 +126,43 @@ fn check_abi_refusals() {
 }
 
 #[test]
+fn the_stack_limit_bounds_recursion() {
+    // 4000 frames fit in the default 512 KiB stack and overflow an 8 KiB
+    // one; the trap carries the Go runtime's wording.
+    let wat = r#"(module (memory (export "memory") 1)
+      (func $rec (param i32) (result i64)
+        local.get 0
+        i32.eqz
+        (if (result i64)
+          (then i64.const 0)
+          (else local.get 0 i32.const 1 i32.sub call $rec)))
+      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+      (func (export "wasmfn_run") (param i32 i32) (result i64)
+        i32.const 4000
+        call $rec))"#;
+    let wasm = wat::parse_str(wat).expect("wat");
+
+    let e = engine();
+    let m = e.compile(&wasm).expect("compile");
+    e.run(&m, b"", RunOptions::default())
+        .expect("fits in the default stack");
+
+    let small = Engine::new(Config {
+        stack_limit: 8 << 10,
+        ..Config::default()
+    })
+    .expect("engine");
+    let m = small.compile(&wasm).expect("compile");
+    let err = small
+        .run(&m, b"", RunOptions::default())
+        .expect_err("should overflow");
+    assert_eq!(
+        err.to_string(),
+        "wasmfn_run failed: trap: call stack exhausted"
+    );
+}
+
+#[test]
 fn a_compiled_artifact_is_refused_by_name() {
     let e = engine();
     let rsp = response_bytes();
