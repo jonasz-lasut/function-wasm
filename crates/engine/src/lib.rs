@@ -20,6 +20,7 @@ mod hostlog;
 pub mod metrics;
 mod run;
 mod sandbox;
+mod wasihttp;
 pub mod wire;
 
 pub use component::ABI_V2_WORLD;

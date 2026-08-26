@@ -4,10 +4,13 @@
 //! typecheck at load is v2's checkABI: the one place the contract is
 //! enforced, whose verdict inspect reports.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use wasmtime::component::Accessor;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 use crate::{
     ARGV0, CallState, Config, EPOCH_TICK, Engine, Error, HostTimer, RunOptions, first_line,
@@ -28,6 +31,8 @@ wasmtime::component::bindgen!({
 pub(crate) struct CtxV2 {
     wasi: WasiCtx,
     table: ResourceTable,
+    http: WasiHttpCtx,
+    hooks: crate::wasihttp::EgressHooks,
     pub(crate) limits: crate::RunLimiter,
     pub(crate) call: CallState,
 }
@@ -37,6 +42,16 @@ impl WasiView for CtxV2 {
         WasiCtxView {
             ctx: &mut self.wasi,
             table: &mut self.table,
+        }
+    }
+}
+
+impl WasiHttpView for CtxV2 {
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.http,
+            table: &mut self.table,
+            hooks: &mut self.hooks,
         }
     }
 }
@@ -118,6 +133,10 @@ pub(crate) fn linker(
         .map_err(|e| Error(format!("cannot define WASI 0.3 imports: {e}")))?;
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(|e| Error(format!("cannot define WASI 0.2 imports: {e}")))?;
+    // The import always exists; the run's grant decides what answers it,
+    // exactly as with v1's wasmfn.http.
+    wasmtime_wasi_http::p3::add_to_linker(&mut linker)
+        .map_err(|e| Error(format!("cannot define wasi:http imports: {e}")))?;
     Function::add_to_linker::<CtxV2, wasmtime::component::HasSelf<CtxV2>>(&mut linker, |c| c)
         .map_err(|e| Error(format!("cannot define the log import: {e}")))?;
     Ok(linker)
@@ -149,15 +168,30 @@ pub(crate) fn execute(
     wasi.inherit_stderr();
     sandbox::configure(&mut wasi, opts, tmp.path())?;
 
+    // Time blocked in wasi:http is written here by the hooks and read by
+    // the deadline callback - shared because wasmtime-wasi-http borrows the
+    // hooks separately from the rest of the store data.
+    let http_host = Arc::new(AtomicU64::new(0));
+    let deadline = Instant::now() + budget;
     let ctx = CtxV2 {
         wasi: wasi.build(),
         table: ResourceTable::new(),
+        http: WasiHttpCtx::new(),
+        hooks: crate::wasihttp::EgressHooks::new(
+            opts.http.clone(),
+            deadline,
+            opts.module.clone(),
+            opts.digest.clone(),
+            Arc::clone(&http_host),
+        ),
         limits: crate::RunLimiter::new(limits.memory_limit, hold, wait_deadline),
         call: CallState {
             module: opts.module.clone(),
             digest: opts.digest.clone(),
-            http: opts.http.clone(),
-            deadline: Instant::now() + budget,
+            // v2 egress goes through the hooks above; the v1 field stays
+            // unused on this path.
+            http: None,
+            deadline,
             no_grant_logged: false,
             timer: HostTimer::new(),
             http_host: Duration::ZERO,
@@ -167,20 +201,21 @@ pub(crate) fn execute(
     store.limiter(|c| &mut c.limits);
 
     // The same deadline model as a v1 run: guest compute is metered in epoch
-    // ticks, time blocked in host HTTP is credited back (http_host stays
-    // zero until the wasi:http import exists), the request's gRPC deadline
-    // is the hard cap.
+    // ticks, time blocked in wasi:http is credited back (the hooks count it
+    // into the shared counter), the request's gRPC deadline is the hard cap.
     let hard = opts.deadline;
     let mut credited = Duration::ZERO;
+    let credit_source = Arc::clone(&http_host);
     store.set_epoch_deadline(ticks);
-    store.epoch_deadline_callback(move |cx| {
+    store.epoch_deadline_callback(move |_cx| {
         let now = Instant::now();
         if let Some(h) = hard
             && now >= h
         {
             return Ok(wasmtime::UpdateDeadline::Interrupt);
         }
-        let credit = cx.data().call.http_host.saturating_sub(credited);
+        let credit =
+            Duration::from_nanos(credit_source.load(Ordering::Relaxed)).saturating_sub(credited);
         let mut extend = (credit.as_nanos() / EPOCH_TICK.as_nanos()) as u64;
         if extend == 0 {
             return Ok(wasmtime::UpdateDeadline::Interrupt);
