@@ -873,7 +873,7 @@ budgets is
 ## Metrics
 
 The runtime serves Prometheus metrics where function-sdk-go puts them
-(`:8080/metrics`), next to the gRPC server metrics:
+(`:8080/metrics`), next to the [gRPC server series](#grpc-server-metrics):
 
 | metric | labels | meaning |
 |---|---|---|
@@ -890,6 +890,23 @@ The runtime serves Prometheus metrics where function-sdk-go puts them
 
 No metric carries a module identity: the set of digests a Function serves is
 unbounded. Logs carry the module reference and digest.
+
+### gRPC server metrics
+
+The transport also serves the gRPC server series the Go runtime got from
+function-sdk-go's grpc-prometheus interceptor, with the same names, labels
+and meanings - dashboards and alerts built on them keep working:
+`grpc_server_started_total`, `grpc_server_handled_total` (with a
+`grpc_code` label carrying the gRPC code name, `OK` … `Unauthenticated`),
+`grpc_server_msg_received_total` and `grpc_server_msg_sent_total`, each
+labelled `grpc_type`/`grpc_service`/`grpc_method`. As under the Go
+runtime - whose interceptor was unary-only - unary calls (`RunFunction`,
+health `Check`) are counted and streaming methods (reflection, health
+`Watch`) exist as permanently zero series; every method the server carries
+is pre-created at zero on startup, so a scrape sees the full set before
+the first request. There is no `grpc_server_handling_seconds`:
+function-sdk-go never enabled the histogram, and
+`function_wasm_module_run_duration_seconds` covers latency.
 
 ### Profiling a module
 

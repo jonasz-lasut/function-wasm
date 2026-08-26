@@ -11,6 +11,7 @@ pub mod egress;
 pub mod egress_rules;
 pub mod from;
 pub mod grpc;
+pub mod grpcmetrics;
 pub mod input;
 pub mod location;
 pub mod manifest;
