@@ -423,6 +423,32 @@ impl Client {
         let mut body = Some(body);
         let mut hops = 0usize;
         loop {
+            // An IP-literal host never reaches the resolver (reqwest dials
+            // a literal directly), so the block list is applied here - on
+            // the first request and on every redirect hop. The guest learns
+            // only that the policy refused; the address and the block-list
+            // entry stay operator-side, exactly as for a resolved name.
+            let bare_host = url.hostname.trim_start_matches('[').trim_end_matches(']');
+            if let Ok(ip) = bare_host.parse::<IpAddr>() {
+                let ip = unmap(ip);
+                let detail = if ip.is_unspecified() {
+                    Some(format!("{} is the unspecified address {ip}", url.hostname))
+                } else {
+                    self.grant
+                        .egress
+                        .blocked_by(ip)
+                        .map(|by| format!("{} is {ip}, blocked by {by}", url.hostname))
+                };
+                if let Some(detail) = detail {
+                    return Err(Refusal::refused(
+                        format!(
+                            "sandbox.egress: {} resolves to an address the egress policy blocks",
+                            url.hostname
+                        ),
+                        detail,
+                    ));
+                }
+            }
             let remaining = overall.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(Refusal::budget(format!(
@@ -840,13 +866,20 @@ mod tests {
     }
 
     fn client_for(egress: &Arc<Egress>, host: &str, methods: &[&str]) -> Client {
-        let rule = HttpRule {
-            host: host.to_string(),
-            methods: methods.iter().map(|m| m.to_string()).collect(),
-            ..Default::default()
-        };
+        client_for_hosts(egress, &[host], methods)
+    }
+
+    fn client_for_hosts(egress: &Arc<Egress>, hosts: &[&str], methods: &[&str]) -> Client {
+        let rules: Vec<HttpRule> = hosts
+            .iter()
+            .map(|host| HttpRule {
+                host: host.to_string(),
+                methods: methods.iter().map(|m| m.to_string()).collect(),
+                ..Default::default()
+            })
+            .collect();
         egress
-            .grant(std::slice::from_ref(&rule))
+            .grant(&rules)
             .expect("grant")
             .client("module file fn.wasm".to_string(), "sha256:m".to_string())
     }
@@ -921,6 +954,48 @@ mod tests {
         assert_eq!(
             rsp.error,
             "sandbox.egress: localhost resolves to an address the egress policy blocks"
+        );
+    }
+
+    #[test]
+    fn judges_an_ip_literal_host_against_the_block_list() {
+        // No loopback hole: a granted IP-literal host never reaches the
+        // resolver, so the hop loop itself must judge it.
+        let egress = Arc::new(Egress::new(IpRules::default(), 0.0, 0));
+        let c = client_for(&egress, "127.0.0.1", &["GET"]);
+        let rsp = c.do_request(&request("http://127.0.0.1/x".to_string()), deadline());
+        assert_eq!(
+            rsp.error,
+            "sandbox.egress: 127.0.0.1 resolves to an address the egress policy blocks"
+        );
+        let c = client_for(&egress, "169.254.169.254", &["GET"]);
+        let rsp = c.do_request(
+            &request("http://169.254.169.254/token".to_string()),
+            deadline(),
+        );
+        assert_eq!(
+            rsp.error,
+            "sandbox.egress: 169.254.169.254 resolves to an address the egress policy blocks"
+        );
+    }
+
+    #[test]
+    fn judges_a_redirect_to_an_ip_literal() {
+        // The first hop is admitted and allowed (loopback hole); the
+        // redirect names a metadata-service literal outside the hole, and
+        // the hop loop refuses it even though the grant admits the host.
+        let redirect = "HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/token\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_string();
+        let addr = serve(vec![redirect]);
+        let egress = loopback_egress();
+        let c = client_for_hosts(&egress, &["127.0.0.1", "169.254.169.254"], &["GET"]);
+        let rsp = c.do_request(
+            &request(format!("http://127.0.0.1:{}/moved", addr.port())),
+            deadline(),
+        );
+        assert_eq!(
+            rsp.error,
+            "sandbox.egress: 169.254.169.254 resolves to an address the egress policy blocks"
         );
     }
 
