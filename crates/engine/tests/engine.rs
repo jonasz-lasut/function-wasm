@@ -126,6 +126,21 @@ fn check_abi_refusals() {
 }
 
 #[test]
+fn a_compiled_artifact_is_refused_by_name() {
+    let e = engine();
+    let rsp = response_bytes();
+    let m = e
+        .compile(&wat::parse_str(fixed(&rsp)).expect("wat"))
+        .expect("compile");
+    let artifact = e.serialize(&m).expect("serialize");
+    let err = e.compile(&artifact).expect_err("should refuse the artifact");
+    assert_eq!(
+        err.to_string(),
+        "module is a wasmtime compiled artifact (.cwasm), not a wasm module"
+    );
+}
+
+#[test]
 fn run_deadline() {
     let e = engine();
     let wat = r#"(module (memory (export "memory") 1)

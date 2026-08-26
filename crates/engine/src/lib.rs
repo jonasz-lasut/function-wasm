@@ -408,8 +408,16 @@ impl Engine {
     }
 
     /// Only the binary format is accepted, as in the Go runtime: a module is
-    /// what a toolchain produced, never text.
+    /// what a toolchain produced, never text. A wasmtime compiled artifact
+    /// (what serialize writes, a .cwasm) is named for what it is rather than
+    /// failing as malformed wasm: artifacts are host- and version-specific
+    /// cache entries, never a module source.
     fn compiled(&self, wasm: &[u8]) -> Result<wasmtime::Module, Error> {
+        if wasmtime::Engine::detect_precompiled(wasm).is_some() {
+            return Err(Error(
+                "module is a wasmtime compiled artifact (.cwasm), not a wasm module".to_string(),
+            ));
+        }
         wasmtime::Module::from_binary(&self.inner, wasm).map_err(|e| {
             Error(format!(
                 "cannot compile module: {}",

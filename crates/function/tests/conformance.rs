@@ -256,6 +256,15 @@ fn validate_resolve_matches_the_goldens() {
     std::fs::write(dir.path().join("fn.wasm"), &ok).expect("write");
     std::fs::write(dir.path().join("bad.wasm"), &bad).expect("write");
     std::fs::write(dir.path().join("notwasm.wasm"), b"hello").expect("write");
+    // A wasmtime compiled artifact (.cwasm) named as a module source: the
+    // runtime refuses it by name rather than as malformed wasm.
+    let artifact = {
+        let e = function_wasm_engine::Engine::new(function_wasm_engine::Config::default())
+            .expect("engine");
+        let m = e.compile(&ok).expect("compile");
+        e.serialize(&m).expect("serialize")
+    };
+    std::fs::write(dir.path().join("precompiled.wasm"), &artifact).expect("write");
     let composition = dir.path().join("composition.yaml");
     let step = |name: &str, path: &str| {
         format!(
@@ -265,11 +274,12 @@ fn validate_resolve_matches_the_goldens() {
     std::fs::write(
         &composition,
         format!(
-            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: resolve\nspec:\n  pipeline:\n{}{}{}{}",
+            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: resolve\nspec:\n  pipeline:\n{}{}{}{}{}",
             step("ok", "fn.wasm"),
             step("bad", "bad.wasm"),
             step("notwasm", "notwasm.wasm"),
             step("missing", "missing.wasm"),
+            step("precompiled", "precompiled.wasm"),
         ),
     )
     .expect("write composition");
