@@ -82,9 +82,10 @@ Crossplane RunFunctionResponse (whatever the module produced)
 crates/function/            the runtime crate: a library (everything below) + the `function` binary
   src/main.rs                 clap CLI: serve (default) + validate subcommand; every ceiling flag
                               (module-dir, max-module-size, module-timeout, module-memory-limit,
-                              sandbox-policy-file, cosign-key, egress-rate-limit-*, cache and
-                              concurrency bounds, max-cache-size, warm-modules, ttl, health-address,
-                              metrics-address); opens the three disk stores, compiles the operator
+                              module-stack-limit, sandbox-policy-file, cosign-key,
+                              egress-rate-limit-*, cache and concurrency bounds, max-cache-size,
+                              warm-modules, ttl, health-address, metrics-address, profile-guests
+                              under --debug); opens the three disk stores, compiles the operator
                               policy and IP rules (malformed → exit), starts the sweeps (10 min:
                               cache LRU to --max-cache-size + cache_bytes gauges, idle step slots,
                               idle rate limiters), the /metrics and /livez//readyz listeners, warm-up
@@ -239,7 +240,7 @@ Readiness is answered twice — gRPC health on the function port and plain-HTTP 
 
 ### Metrics
 
-`crates/engine/src/metrics.rs` registers the same series as the Go runtime — `function_wasm_module_{compile,fetch,run}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` — on the prometheus default registry, served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port). Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
+`crates/engine/src/metrics.rs` registers the same series as the Go runtime — `function_wasm_module_{compile,fetch,run}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` — plus two additive series the Go runtime did not carry: `hostcall_duration_seconds` (the host-import slice of a run, split by call_hook) and `memory_denials_total{reason}` (guest memory growths denied at the per-run ceiling or the pool) — on the prometheus default registry, served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port). Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
 
 ### Signatures
 
