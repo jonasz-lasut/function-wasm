@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.2
+* Status: Draft, revision 0.3
 
 The decision `docs/one-pager-language-support.md` left open ("Is ABI v2 ever
 in scope?", open question 4): yes. ABI v2 - a component-model guest contract -
@@ -213,7 +213,12 @@ design.
    carrying protojson is cheap in WIT and revives the v1 `wasmfn_run_json`
    debate (language-support one-pager) where it matters most. Rev 0.2:
    deferred (Jonasz, 2026-08-26) until the jco JS guest exists and its codec
-   pain is measurable; decided before the world freezes at 2.0.0.
+   pain is measurable. Rev 0.3: **decided against** (Jonasz, 2026-08-26) -
+   the pain did not materialize: the TypeScript guest shipped comfortably on
+   protobuf-es (typed js+dts codec, clean bundling) and the Python guest on
+   the official protobuf package's pure-Python fallback, while a second
+   export would double the conformance surface. Reversible before the world
+   freezes at 2.0.0 if a future toolchain hurts.
 2. Repository layout during the transition: a cargo workspace beside the Go
    modules in this repo (shared fixtures, one CI), or a sibling repo?
    Recommendation: same repo - phases 1-2 lean on the Go tree's testdata
