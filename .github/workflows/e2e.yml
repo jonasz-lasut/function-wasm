@@ -111,7 +111,9 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: examples/hello-assemblyscript/package-lock.json
+          cache-dependency-path: |
+            examples/hello-assemblyscript/package-lock.json
+            examples/hello-ts/package-lock.json
 
       - name: Run the Guest Suite
         run: cargo test --locked -p function-wasm --test guests
@@ -491,10 +493,81 @@ jobs:
       - name: Render the AssemblyScript Guest
         run: make -C examples/hello-assemblyscript render-check
 
+  render-ts:
+    name: render (ts)
+    runs-on: ubuntu-24.04
+    needs: start
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: examples/hello-ts/package-lock.json
+
+      - name: Test the TypeScript Guest
+        run: make -C examples/hello-ts test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the TypeScript Guest
+        run: make -C examples/hello-ts render-check
+
+  render-python:
+    name: render (python)
+    runs-on: ubuntu-24.04
+    needs: start
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Test the Python Guest
+        run: make -C examples/hello-python test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the Python Guest
+        run: make -C examples/hello-python render-check
+
   # One commit status carries the verdict back to the PR.
   report:
     runs-on: ubuntu-24.04
-    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-rust-v2, render-zig, render-c, render-assemblyscript]
+    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-rust-v2, render-zig, render-c, render-assemblyscript, render-ts, render-python]
     if: always() && needs.start.result == 'success'
     env:
       GH_TOKEN: ${{ github.token }}
@@ -507,7 +580,8 @@ jobs:
             "${{ needs.render-tinygo.result }}" "${{ needs.render-rust.result }}" \
             "${{ needs.render-rust-v2.result }}" \
             "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}" \
-            "${{ needs.render-assemblyscript.result }}"; do
+            "${{ needs.render-assemblyscript.result }}" "${{ needs.render-ts.result }}" \
+            "${{ needs.render-python.result }}"; do
             if [ "$result" != "success" ]; then
               state=failure
               description="at least one job did not pass"
