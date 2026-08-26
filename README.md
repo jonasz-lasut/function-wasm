@@ -223,15 +223,17 @@ module once per digest and caches it.
 
 ### Other languages
 
-The [ABI](docs/abi.md) is two exports and protobuf bytes, so any wasip1
-toolchain works, and `guestfn` scaffolds and builds five flavours — the
-same greeting function each time:
+The [ABI v1](docs/abi.md) is two exports and protobuf bytes, so any wasip1
+toolchain works — and [ABI v2](docs/abi-v2.md) opens the component-model
+toolchains beside it. `guestfn` scaffolds and builds five flavours — the
+same greeting function each time; the `rust` flavour scaffolds as an ABI v2
+component, the rest as ABI v1 modules:
 
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
 |---|---|---|---|---|
 | `go` (default) | [`examples/hello-go`](examples/hello-go) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
 | `tinygo` | [`examples/hello-tinygo`](examples/hello-tinygo) | [TinyGo](https://tinygo.org) | protobuf-go message types + [vtprotobuf](https://github.com/planetscale/vtprotobuf)'s reflection-free codecs, generated from the vendored proto (shipped pre-generated; `go generate` + protoc to redo) | ~1.8 MB |
-| `rust` | [`examples/hello-rust`](examples/hello-rust) | Rust, `wasm32-wasip1` (`cargo`, `protoc`) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~250 KB |
+| `rust` | [`examples/hello-rust-v2`](examples/hello-rust-v2) | Rust, `wasm32-wasip2` (`cargo`, `protoc`) — **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~220 KB |
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
 
@@ -240,15 +242,10 @@ An **AssemblyScript** flavour exists as an example only for now
 smallest guest; `npm ci && make build`): it passes the same behaviour tests as
 the scaffolded flavours, but `guestfn init` cannot scaffold it yet.
 
-An **ABI v2** flavour exists as an example only too:
-[`examples/hello-rust-v2`](examples/hello-rust-v2) (~220 KB) is the same
-greeting function as a WebAssembly **component** implementing the
-`wasmfn:function` world ([docs/abi-v2.md](docs/abi-v2.md)) — async Rust on
-the stable toolchain (`wasm32-wasip2` + [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)),
-its greeting fetched by awaiting `wasi:http/client@0.3.0` through the host's
-egress policy. No ABI glue at all: the canonical ABI owns what the other
-flavours carry by hand. It passes the same behaviour tests; `guestfn init`
-cannot scaffold it yet.
+The **ABI v1 Rust** guest remains as an example only
+([`examples/hello-rust`](examples/hello-rust), ~250 KB, `wasm32-wasip1`):
+the scaffold moved to the component, and the v1 example stays as the
+reference for the wasip1 shape (it passes the same behaviour tests).
 
 A **TypeScript** ABI v2 flavour exists as an example only as well:
 [`examples/hello-ts`](examples/hello-ts) (~14 MB, SpiderMonkey embedded;
@@ -258,11 +255,16 @@ generated types, `tsc --noEmit` in the test gate), componentized with
 the platform's own `fetch()`, which the runtime serves over `wasi:http@0.2`
 through the same egress policy as every other guest. Its `run` is
 sync-lifted (componentize-js cannot async-lift a custom world yet - the
-world accepts that); the TypeScript itself awaits freely.
+world accepts that); the TypeScript itself awaits freely. `guestfn build`
+builds it (`package.json` detection, or `--lang ts`); `guestfn init`
+cannot scaffold it yet.
 
-`guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo;
-a `build.zig` → zig, for the zig and c guests alike; a `go.mod` requiring
-vtprotobuf → tinygo; otherwise go) or takes `--lang`. Every flavour carries
+`guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo,
+targeting `wasm32-wasip2` when the project carries a `wit/` directory and
+`wasm32-wasip1` otherwise; a `build.zig` → zig, for the zig and c guests
+alike; a `package.json` without an `asconfig.json` → npm, for the
+TypeScript guest; a `go.mod` requiring vtprotobuf → tinygo; otherwise go)
+or takes `--lang`. Every flavour carries
 its ABI glue in the open — the Go scaffold vendors it under `internal/wasmfn`,
 TinyGo, Rust, Zig and C carry theirs beside the module — with a small HTTP
 helper over `wasmfn.http`; each example

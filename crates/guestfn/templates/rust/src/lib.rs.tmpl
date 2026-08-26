@@ -1,20 +1,21 @@
 //! The [[ .Name ]] guest: a Crossplane composition function compiled to a
-//! wasip1 reactor and run by function-wasm. It composes a ConfigMap greeting
-//! the composite resource in a ~150 KB module.
-//!
-//! `run_function` is ordinary Rust over the protobuf messages prost generated
-//! from the vendored crossplane proto; `abi` implements the function-wasm ABI
-//! (`wasmfn_alloc`, `wasmfn_run`, the `wasmfn.log` import) and only exists on
-//! the wasi target so the crate also builds and tests natively; `http` is
-//! egress through the host (`wasmfn.http`), granted per Composition.
-
-pub mod http;
+//! WebAssembly component implementing ABI v2 (docs/abi-v2.md).
+//! `run_function` is ordinary async Rust over the protobuf messages prost
+//! generated from the vendored crossplane proto; `bindings` holds the
+//! wit-bindgen world (the `run` export, the typed `log` import and the
+//! async `wasi:http/client` fetch) and only exists on the wasm target, so
+//! the crate also builds and tests natively. There is no hand-written ABI
+//! glue: the canonical ABI owns what an ABI v1 guest carries by hand.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 
 use prost::Message;
 use prost_types::value::Kind;
 use prost_types::{Duration, Struct, Value};
+
+#[cfg(target_arch = "wasm32")]
+pub mod bindings;
 
 /// The crossplane `RunFunction` messages.
 pub mod fnv1 {
@@ -33,7 +34,16 @@ use fnv1::{
 const DEFAULT_TTL_SECONDS: i64 = 60;
 
 /// Adds a ConfigMap greeting the composite resource to the desired state.
-pub fn run_function(req: &RunFunctionRequest) -> Result<RunFunctionResponse, String> {
+/// `fetch` resolves config.greetingUrl - the async wasi:http client on the
+/// wasm target, a test double natively.
+pub async fn run_function<F, Fut>(
+    req: &RunFunctionRequest,
+    fetch: F,
+) -> Result<RunFunctionResponse, String>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+{
     let tag = req
         .meta
         .as_ref()
@@ -50,7 +60,9 @@ pub fn run_function(req: &RunFunctionRequest) -> Result<RunFunctionResponse, Str
     // requires.egress grant of the module's manifest decides whether it may.
     match config_string(req, "greetingUrl") {
         Ok(Some(url)) => {
-            greeting = http::get_text(&url).map_err(|e| format!("cannot fetch greeting: {e}"))?;
+            greeting = fetch(url)
+                .await
+                .map_err(|e| format!("cannot fetch greeting: {e}"))?;
         }
         Ok(None) => {}
         Err(e) => return Err(format!("cannot read config: {e}")),
@@ -166,16 +178,22 @@ fn object(entries: Vec<(&str, Value)>) -> Value {
     }
 }
 
-/// The guest half of ABI v1: decode, run, encode. Every failure becomes a
-/// fatal result so the host can always decode the reply.
-pub fn handle(input: &[u8]) -> Vec<u8> {
+/// Decode, run, encode. Every failure becomes a fatal result so the host can
+/// always decode the reply - the world's `err(string)` channel stays for
+/// failures that happen before a response can be built, which this guest
+/// never has.
+pub async fn handle<F, Fut>(input: &[u8], fetch: F) -> Vec<u8>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+{
     let req = match RunFunctionRequest::decode(input) {
         Ok(req) => req,
         Err(e) => {
-            return fatal(None, &format!("cannot decode RunFunctionRequest: {e}")).encode_to_vec()
+            return fatal(None, &format!("cannot decode RunFunctionRequest: {e}")).encode_to_vec();
         }
     };
-    match run_function(&req) {
+    match run_function(&req, fetch).await {
         Ok(rsp) => rsp.encode_to_vec(),
         Err(e) => fatal(Some(&req), &e).encode_to_vec(),
     }
@@ -200,109 +218,53 @@ fn fatal(req: Option<&RunFunctionRequest>, msg: &str) -> RunFunctionResponse {
     }
 }
 
-/// Structured logging through the host (`wasmfn.log`); prints to stderr when
-/// not running under function-wasm.
+/// Structured logging through the host: the world's typed `log` import on
+/// the wasm target, stderr elsewhere.
 pub mod log {
     pub fn info(msg: &str, kv: &[(&str, &str)]) {
-        let mut payload = format!("{{\"msg\":{},\"kv\":[", json_string(msg));
-        for (i, (k, v)) in kv.iter().enumerate() {
-            if i > 0 {
-                payload.push(',');
-            }
-            payload.push_str(&format!("{},{}", json_string(k), json_string(v)));
-        }
-        payload.push_str("]}");
-        emit(0, payload.as_bytes());
+        emit(false, msg, kv);
     }
 
-    fn json_string(s: &str) -> String {
-        let mut out = String::with_capacity(s.len() + 2);
-        out.push('"');
-        for c in s.chars() {
-            match c {
-                '"' => out.push_str("\\\""),
-                '\\' => out.push_str("\\\\"),
-                '\n' => out.push_str("\\n"),
-                '\r' => out.push_str("\\r"),
-                '\t' => out.push_str("\\t"),
-                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-                c => out.push(c),
-            }
-        }
-        out.push('"');
-        out
-    }
-
-    #[cfg(target_os = "wasi")]
-    fn emit(level: u32, payload: &[u8]) {
-        #[link(wasm_import_module = "wasmfn")]
-        extern "C" {
-            fn log(level: u32, ptr: u32, len: u32);
-        }
-        // SAFETY: the host reads len bytes at ptr during the call and never
-        // keeps the pointer.
-        unsafe { log(level, payload.as_ptr() as u32, payload.len() as u32) }
-    }
-
-    #[cfg(not(target_os = "wasi"))]
-    fn emit(_level: u32, payload: &[u8]) {
-        eprintln!("{}", String::from_utf8_lossy(payload));
-    }
-}
-
-/// The function-wasm ABI v1 exports, only on the wasi target.
-#[cfg(target_os = "wasi")]
-pub(crate) mod abi {
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-
-    thread_local! {
-        // Buffers the host reads or writes through raw pointers: inputs handed
-        // out by wasmfn_alloc until wasmfn_run consumes them, responses the
-        // host wrote through wasmfn_alloc inside a wasmfn.http call until the
-        // guest takes them, and the last response until the next call.
-        static BUFFERS: RefCell<HashMap<u32, Vec<u8>>> = RefCell::new(HashMap::new());
-    }
-
-    fn pin(buf: Vec<u8>) -> u32 {
-        let ptr = buf.as_ptr() as u32;
-        BUFFERS.with(|b| b.borrow_mut().insert(ptr, buf));
-        ptr
-    }
-
-    /// Takes a buffer the host filled through wasmfn_alloc (a wasmfn.http
-    /// response) out of the pinned set.
-    pub(crate) fn take(ptr: u32) -> Option<Vec<u8>> {
-        BUFFERS.with(|b| b.borrow_mut().remove(&ptr))
-    }
-
-    #[no_mangle]
-    pub extern "C" fn wasmfn_alloc(size: u32) -> u32 {
-        pin(vec![0u8; size as usize])
-    }
-
-    #[no_mangle]
-    pub extern "C" fn wasmfn_run(ptr: u32, len: u32) -> u64 {
-        let input = BUFFERS.with(|b| b.borrow_mut().remove(&ptr));
-        let out = match input {
-            Some(buf) if buf.len() >= len as usize => super::handle(&buf[..len as usize]),
-            _ => super::fatal(
-                None,
-                "wasmfn_run: input was not allocated with wasmfn_alloc",
-            )
-            .encode_to_vec(),
+    #[cfg(target_arch = "wasm32")]
+    fn emit(debug: bool, msg: &str, kv: &[(&str, &str)]) {
+        let level = if debug {
+            crate::bindings::LogLevel::Debug
+        } else {
+            crate::bindings::LogLevel::Info
         };
-        BUFFERS.with(|b| b.borrow_mut().clear());
-        let n = out.len() as u32;
-        ((pin(out) as u64) << 32) | n as u64
+        let kv: Vec<(String, String)> = kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        crate::bindings::log(level, msg, &kv);
     }
 
-    use prost::Message;
+    #[cfg(not(target_arch = "wasm32"))]
+    fn emit(_debug: bool, msg: &str, kv: &[(&str, &str)]) {
+        eprintln!("{msg} {kv:?}");
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The native fetch double: greetings.example.com answers, anything else
+    /// is refused the way the runtime words a policy refusal.
+    async fn fake_fetch(url: String) -> Result<String, String> {
+        if url == "https://greetings.example.com/en" {
+            Ok("howdy".to_string())
+        } else {
+            Err(format!(
+                "internal-error: sandbox.egress: no rule admits host {:?}",
+                url
+            ))
+        }
+    }
+
+    fn run(req: &RunFunctionRequest) -> Result<RunFunctionResponse, String> {
+        pollster::block_on(run_function(req, fake_fetch))
+    }
 
     fn xr(name: &str) -> fnv1::State {
         fnv1::State {
@@ -348,7 +310,7 @@ mod tests {
             observed: Some(xr("my-xr")),
             ..Default::default()
         };
-        let rsp = run_function(&req).unwrap();
+        let rsp = run(&req).unwrap();
         assert_eq!(greeting_of(&rsp), "hello my-xr");
         assert_eq!(rsp.meta.as_ref().unwrap().tag, "hello");
         assert_eq!(rsp.results[0].message, "greeted my-xr");
@@ -371,7 +333,7 @@ mod tests {
             desired: Some(desired),
             ..Default::default()
         };
-        let rsp = run_function(&req).unwrap();
+        let rsp = run(&req).unwrap();
         assert_eq!(greeting_of(&rsp), "hi my-xr");
         assert!(rsp
             .desired
@@ -394,23 +356,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            run_function(&req).unwrap_err(),
+            run(&req).unwrap_err(),
             "cannot read config: greeting must be a string"
         );
     }
 
     #[test]
-    fn greeting_from_url_through_the_host() {
-        // A fake host for wasmfn.http: greetings.example.com answers, anything
-        // else is refused the way the runtime words it.
-        http::set_host(|payload| {
-            let req: serde_json::Value = serde_json::from_slice(payload).unwrap();
-            let get = req["method"].as_str().is_none_or(|m| m == "GET");
-            if get && req["url"] == "https://greetings.example.com/en" {
-                return Ok(br#"{"status":200,"headers":{"Content-Type":["text/plain"]},"body":"aG93ZHkK"}"#.to_vec());
-            }
-            Ok(br#"{"status":0,"error":"sandbox.egress: no rule admits host \"evil.example.com\""}"#.to_vec())
-        });
+    fn greeting_from_url_through_the_fetcher() {
         let req = |url: &str| RunFunctionRequest {
             meta: Some(RequestMeta {
                 tag: "hello".into(),
@@ -420,34 +372,12 @@ mod tests {
             observed: Some(xr("my-xr")),
             ..Default::default()
         };
-        let rsp = run_function(&req("https://greetings.example.com/en")).unwrap();
+        let rsp = run(&req("https://greetings.example.com/en")).unwrap();
         assert_eq!(greeting_of(&rsp), "howdy my-xr");
         assert_eq!(
-            run_function(&req("https://evil.example.com/en")).unwrap_err(),
-            "cannot fetch greeting: sandbox.egress: no rule admits host \"evil.example.com\""
+            run(&req("https://evil.example.com/en")).unwrap_err(),
+            "cannot fetch greeting: internal-error: sandbox.egress: no rule admits host \"https://evil.example.com/en\""
         );
-    }
-
-    #[test]
-    fn http_codec_round_trip() {
-        http::set_host(|payload| {
-            let req: serde_json::Value = serde_json::from_slice(payload).unwrap();
-            assert_eq!(req["method"], "POST");
-            assert_eq!(req["headers"]["Accept"][0], "application/json");
-            assert_eq!(req["body"], "eyJuYW1lIjoieCJ9"); // {"name":"x"}
-            Ok(br#"{"status":503,"body":"bm8="}"#.to_vec())
-        });
-        let mut headers = std::collections::BTreeMap::new();
-        headers.insert("Accept".to_string(), vec!["application/json".to_string()]);
-        let rsp = http::send(&http::Request {
-            method: "POST".into(),
-            url: "https://api.example.com/v1/items".into(),
-            headers,
-            body: br#"{"name":"x"}"#.to_vec(),
-        })
-        .unwrap();
-        assert_eq!(rsp.status, 503);
-        assert_eq!(rsp.body, b"no");
     }
 
     #[test]
@@ -459,7 +389,10 @@ mod tests {
             }),
             ..Default::default()
         };
-        let rsp = RunFunctionResponse::decode(handle(&req.encode_to_vec()).as_slice()).unwrap();
+        let rsp = RunFunctionResponse::decode(
+            pollster::block_on(handle(&req.encode_to_vec(), fake_fetch)).as_slice(),
+        )
+        .unwrap();
         assert_eq!(rsp.meta.as_ref().unwrap().tag, "t");
         assert_eq!(rsp.results[0].severity, Severity::Fatal as i32);
         assert_eq!(
