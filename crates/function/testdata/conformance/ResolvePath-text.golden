@@ -9,4 +9,6 @@ exit 1
   warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
 <DIR>/composition.yaml: Composition/resolve pipeline[3] missing: refused: cannot resolve module: cannot stat module file: stat <DIR>/missing.wasm: no such file or directory
   warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+<DIR>/composition.yaml: Composition/resolve pipeline[4] precompiled: refused: cannot load module module file precompiled.wasm: module is a wasmtime compiled artifact (.cwasm), not a wasm module
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
 --- stderr
