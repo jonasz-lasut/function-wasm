@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use wasmtime::{Store, StoreLimitsBuilder, Trap};
+use wasmtime::{Store, Trap};
 use wasmtime_wasi::I32Exit;
 use wasmtime_wasi::WasiCtxBuilder;
 
@@ -42,18 +42,23 @@ pub(crate) fn run(
         Some(s) => Some(s.acquire(&opts.digest, wait_deadline).map_err(Error)?),
         None => None,
     };
-    let _mem = match &engine.mem {
-        Some(m) => Some(
-            m.reserve(limits.memory_limit, wait_deadline)
-                .map_err(Error)?,
-        ),
+    // The pre-run reservation covers the module's initial memory - what
+    // instantiation will claim; growth beyond it is reserved as the guest
+    // grows (RunLimiter), so a run's pool footprint is what it actually
+    // uses, not the worst-case ceiling.
+    let hold = match &engine.mem {
+        Some(pool) => {
+            let initial = m.initial_memory_bytes().min(limits.memory_limit);
+            pool.reserve(initial, wait_deadline).map_err(Error)?;
+            Some(crate::PoolHold::new(Arc::clone(pool), initial))
+        }
         None => None,
     };
 
     // The run is timed from here - the slot and memory waits above are not
     // part of run_duration_seconds, and a wait cut short never ran.
     let start = Instant::now();
-    let result = execute(engine, m, request, opts, limits);
+    let result = execute(engine, m, request, opts, limits, hold, wait_deadline);
     crate::metrics::RUN_DURATION
         .with_label_values(&[run_outcome(&result)])
         .observe(start.elapsed().as_secs_f64());
@@ -76,6 +81,8 @@ fn execute(
     request: &[u8],
     opts: RunOptions,
     limits: crate::Config,
+    hold: Option<crate::PoolHold>,
+    wait_deadline: Instant,
 ) -> Result<Vec<u8>, Error> {
     // The private /tmp outlives the store (declared first, so it drops last):
     // the guest's descriptors into it are closed before it is removed.
@@ -97,9 +104,7 @@ fn execute(
 
     let ctx = Ctx {
         wasi: wasi.build_p1(),
-        limits: StoreLimitsBuilder::new()
-            .memory_size(limits.memory_limit as usize)
-            .build(),
+        limits: crate::RunLimiter::new(limits.memory_limit, hold, wait_deadline),
         call: CallState {
             module: opts.module.clone(),
             digest: opts.digest.clone(),

@@ -115,7 +115,8 @@ struct ServeArgs {
     max_concurrent_runs: usize,
 
     /// Total linear-memory budget in MB across all running modules; a run
-    /// reserves its effective limit before it starts. 0 means no bound.
+    /// reserves its module's initial memory before it starts and each
+    /// growth as its guest grows. 0 means no bound.
     #[arg(long, default_value_t = 0, env = "MAX_TOTAL_RUN_MEMORY")]
     max_total_run_memory: u64,
 

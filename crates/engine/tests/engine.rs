@@ -186,7 +186,9 @@ fn a_compiled_artifact_is_refused_by_name() {
         .compile(&wat::parse_str(fixed(&rsp)).expect("wat"))
         .expect("compile");
     let artifact = e.serialize(&m).expect("serialize");
-    let err = e.compile(&artifact).expect_err("should refuse the artifact");
+    let err = e
+        .compile(&artifact)
+        .expect_err("should refuse the artifact");
     assert_eq!(
         err.to_string(),
         "module is a wasmtime compiled artifact (.cwasm), not a wasm module"
@@ -286,6 +288,119 @@ fn http_without_grant_is_refused_in_band() {
         String::from_utf8_lossy(&out),
         r#"{"status":0,"error":"sandbox.egress: HTTP egress is not granted to this module: its manifest requires no egress (requires.egress.http)"}"#
     );
+}
+
+/// A guest that grows toward the exported response: empty means the grow
+/// was denied (memory.grow returned -1), one byte means it succeeded.
+fn grow_guest(pages: u32) -> String {
+    format!(
+        r#"(module (memory (export "memory") 1)
+      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+      (func (export "wasmfn_run") (param i32 i32) (result i64)
+        (i32.eq (memory.grow (i32.const {pages})) (i32.const -1))
+        (if (result i64)
+          (then i64.const {denied})
+          (else i64.const {grown}))))"#,
+        denied = (1024u64 << 32) as i64,
+        grown = ((1024u64 << 32) | 1) as i64,
+    )
+}
+
+/// The per-run memory ceiling denies growth: the guest sees memory.grow
+/// fail rather than the run trapping.
+#[test]
+fn the_memory_limit_denies_growth() {
+    let e = Engine::new(Config {
+        memory_limit: 2 << 16, // two pages
+        ..Config::default()
+    })
+    .expect("engine");
+    let m = e
+        .compile(&wat::parse_str(grow_guest(4)).expect("wat"))
+        .expect("compile");
+    let out = e.run(&m, b"", RunOptions::default()).expect("run");
+    assert_eq!(out.len(), 0, "growth past the ceiling should be denied");
+    let denied = function_wasm_engine::metrics::sample(
+        "function_wasm_module_memory_denials_total",
+        &[("reason", "limit")],
+    )
+    .unwrap_or(0.0);
+    assert!(denied >= 1.0, "the denial should be counted");
+}
+
+/// The shared pool reserves incrementally: a run holding the pool denies
+/// another run's growth (its guest sees memory.grow fail), while the
+/// second run's initial memory still fits and runs.
+#[test]
+fn the_pool_denies_growth_it_cannot_serve() {
+    let e = std::sync::Arc::new(
+        Engine::new(Config {
+            memory_limit: 3 << 16,         // three pages
+            max_total_run_memory: 3 << 16, // the whole pool
+            ..Config::default()
+        })
+        .expect("engine"),
+    );
+    // The blocker: two initial pages held for ~300ms inside wasmfn.http.
+    let request = br#"{"url":"http://example.com/x"}"#;
+    // The bump allocator starts on the second of the two pages, so the
+    // host's re-entrant allocation stays in bounds.
+    let blocker_wat = format!(
+        r#"(module
+  (import "wasmfn" "http" (func $http (param i32 i32) (result i64)))
+  (memory (export "memory") 2)
+  (data (i32.const 1024) "{data}")
+  (global $next (mut i32) (i32.const 65536))
+  (func (export "wasmfn_alloc") (param i32) (result i32)
+    (local $ptr i32)
+    global.get $next
+    local.tee $ptr
+    local.get 0
+    i32.add
+    global.set $next
+    local.get $ptr)
+  (func (export "wasmfn_run") (param i32 i32) (result i64)
+    i32.const 1024
+    i32.const {len}
+    call $http))"#,
+        data = wat_bytes(request),
+        len = request.len(),
+    );
+    let blocker = e
+        .compile(&wat::parse_str(blocker_wat).expect("wat"))
+        .expect("compile");
+    let grower = e
+        .compile(&wat::parse_str(grow_guest(1)).expect("wat"))
+        .expect("compile");
+
+    let eb = std::sync::Arc::clone(&e);
+    let blocking = std::thread::spawn(move || {
+        let opts = RunOptions {
+            http: Some(std::sync::Arc::new(SlowOk(Duration::from_millis(300)))),
+            ..Default::default()
+        };
+        eb.run(&blocker, b"", opts).expect("blocker run");
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    // Pool: blocker holds 2 pages, the grower's initial 1 fits; its growth
+    // to 2 needs a page the pool cannot serve before the short deadline.
+    let opts = RunOptions {
+        timeout: Some(Duration::from_millis(100)),
+        ..Default::default()
+    };
+    let out = e.run(&grower, b"", opts).expect("grower run");
+    assert_eq!(
+        out.len(),
+        0,
+        "growth the pool cannot serve should be denied"
+    );
+    blocking.join().expect("join");
+    let denied = function_wasm_engine::metrics::sample(
+        "function_wasm_module_memory_denials_total",
+        &[("reason", "pool")],
+    )
+    .unwrap_or(0.0);
+    assert!(denied >= 1.0, "the denial should be counted");
 }
 
 /// A profiled run writes one Firefox-profiler JSON document per request
