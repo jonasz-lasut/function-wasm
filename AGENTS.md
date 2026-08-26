@@ -166,7 +166,7 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
                               overwrite refusal; the golden and render-matches-the-examples tests
   src/buildcmd.rs             toolchain detection (Cargo.toml → rust - wasip2 with a wit/ dir,
                               wasip1 without; package.json sans asconfig.json → ts via npm;
-                              build.zig → zig/c; vtprotobuf
+                              requirements.txt → python via componentize-py; build.zig → zig/c; vtprotobuf
                               in go.mod → tinygo, else go), the builds, the ABI verdict, wasmfn.yaml
                               validation, the example-config warning
   src/push.rs                 the CNCF wasm OCI artifact (wasm layer, manifest layer, layerDigests
@@ -200,6 +200,12 @@ examples/hello-ts           the same guest in TypeScript via jco (example only, 
                             wasi:http@0.2 through the same egress hooks; root-world imports
                             arrive as default imports (import log from "log", kept external in
                             the bundle). ~14 MB (SpiderMonkey)
+examples/hello-python       the same guest in Python via componentize-py (example only, no
+                            scaffold): protoc codec checked in, pure-Python protobuf runtime
+                            bundled (the C extension cannot exist in wasm; the fallback engages
+                            by itself), sync-lifted run, greeting fetched over wasi:http@0.2 on
+                            componentize-py's poll loop through the same egress hooks. ~21 MB
+                            (CPython)
 examples/hello-assemblyscript  the same guest, AssemblyScript + as-proto (example only, no
                             scaffold yet): the generated codec is checked in (make gen-proto),
                             four files hand-written where as-proto-gen 1.3.0 gets this proto
@@ -356,7 +362,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ### Changing the scaffold
 
-Edit the example **and** its template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; the examples are the templates rendered for themselves; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the render-matches-the-examples test keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, `Cargo.lock` and the go example's glue tests are extra). The fifteen vendored `run_function.proto` copies (four templates, four goldens, seven examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file**: treat the PR as the signal to re-vendor by hand from the URL in the header, update the copies in the templates **and** examples, regenerate the checked-in codecs (`make -C examples/hello-tinygo generate`, `zig build gen-proto` in hello-zig and hello-c, `make gen-proto` in hello-assemblyscript), and refresh the goldens; the /e2e render jobs fail on codec drift. Per-language identity (template ↔ golden ↔ example) is enforced by the goldens and the render-matches-the-examples test.
+Edit the example **and** its template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; the examples are the templates rendered for themselves; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the render-matches-the-examples test keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, `Cargo.lock` and the go example's glue tests are extra). The sixteen vendored `run_function.proto` copies (four templates, four goldens, eight examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file**: treat the PR as the signal to re-vendor by hand from the URL in the header, update the copies in the templates **and** examples, regenerate the checked-in codecs (`make -C examples/hello-tinygo generate`, `zig build gen-proto` in hello-zig and hello-c, `make gen-proto` in hello-assemblyscript), and refresh the goldens; the /e2e render jobs fail on codec drift. Per-language identity (template ↔ golden ↔ example) is enforced by the goldens and the render-matches-the-examples test.
 
 ### Rendering Locally
 

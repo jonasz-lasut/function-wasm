@@ -9,9 +9,11 @@ use function_wasm::manifest::Manifest;
 
 use crate::scaffold;
 
-/// TypeScript builds through npm (componentize-js); there is no scaffold
-/// template for it yet, so the name lives here, not in scaffold::LANGS.
+/// TypeScript builds through npm (componentize-js) and Python through a
+/// venv (componentize-py); neither has a scaffold template yet, so the
+/// names live here, not in scaffold::LANGS.
 pub(crate) const LANG_TS: &str = "ts";
+pub(crate) const LANG_PYTHON: &str = "python";
 
 #[derive(clap::Args, Debug)]
 pub struct BuildCmd {
@@ -25,9 +27,9 @@ pub struct BuildCmd {
 
     /// Toolchain to use. auto picks rust for a Cargo.toml, zig for a
     /// build.zig (zig and c guests), ts for a package.json (without an
-    /// asconfig.json), tinygo for a go.mod that requires vtprotobuf, go
-    /// otherwise.
-    #[arg(long, default_value = "auto", value_parser = ["auto", "go", "tinygo", "rust", "zig", "c", "ts"])]
+    /// asconfig.json), python for a requirements.txt, tinygo for a go.mod
+    /// that requires vtprotobuf, go otherwise.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "go", "tinygo", "rust", "zig", "c", "ts", "python"])]
     lang: String,
 
     /// Run wasm-opt -Oz on the result (binaryen must be on PATH).
@@ -148,9 +150,12 @@ fn detect_lang(dir: &Path) -> Result<String, String> {
     if dir.join("package.json").exists() && !dir.join("asconfig.json").exists() {
         return Ok(LANG_TS.to_string());
     }
+    if dir.join("requirements.txt").exists() {
+        return Ok(LANG_PYTHON.to_string());
+    }
     let gomod = std::fs::read_to_string(dir.join("go.mod")).map_err(|_| {
         format!(
-            "cannot tell the project's language: no Cargo.toml, build.zig, package.json or go.mod in {} (use --lang)",
+            "cannot tell the project's language: no Cargo.toml, build.zig, package.json, requirements.txt or go.mod in {} (use --lang)",
             dir.display()
         )
     })?;
@@ -246,6 +251,37 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
                 let wasm = std::fs::read(&built)
                     .map_err(|e| format!("npm run build produced no fn.wasm: {e}"))?;
                 std::fs::write(out, wasm).map_err(|e| e.to_string())?;
+            }
+        }
+        LANG_PYTHON => {
+            // The documented layout of a python guest (examples/hello-python):
+            // the app module under src/, the generated codec under src/gen,
+            // the world in wit/, componentize-py pinned in requirements.txt.
+            which("python3", "install Python from https://www.python.org")?;
+            if !dir.join(".venv").is_dir() {
+                crate::run_in(dir, "python3", &["-m", "venv", ".venv"])?;
+                crate::run_in(
+                    dir,
+                    ".venv/bin/pip",
+                    &["install", "--quiet", "-r", "requirements.txt"],
+                )?;
+            }
+            // VIRTUAL_ENV must be absolute (componentize-py resolves
+            // site-packages from it); the program path resolves in the
+            // child's working directory.
+            let venv = dir
+                .join(".venv")
+                .canonicalize()
+                .map_err(|e| format!("cannot resolve .venv: {e}"))?;
+            let status = std::process::Command::new(".venv/bin/componentize-py")
+                .args(["-d", "wit", "-w", "function", "componentize", "app"])
+                .args(["-p", "src", "-p", "src/gen", "-o", &out_s])
+                .current_dir(dir)
+                .env("VIRTUAL_ENV", &venv)
+                .status()
+                .map_err(|e| format!("componentize-py failed: {e}"))?;
+            if !status.success() {
+                return Err(format!("componentize-py failed: {status}"));
             }
         }
         scaffold::LANG_ZIG | scaffold::LANG_C => {

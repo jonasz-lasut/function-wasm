@@ -259,11 +259,22 @@ world accepts that); the TypeScript itself awaits freely. `guestfn build`
 builds it (`package.json` detection, or `--lang ts`); `guestfn init`
 cannot scaffold it yet.
 
+A **Python** ABI v2 flavour exists as an example only as well:
+[`examples/hello-python`](examples/hello-python) (~21 MB, CPython
+embedded; `python3` is the whole toolchain) - componentized with
+[componentize-py](https://github.com/bytecodealliance/componentize-py),
+the pure-Python protobuf runtime bundled in, its greeting fetched over
+`wasi:http@0.2` on componentize-py's poll loop through the same egress
+policy. Sync-lifted like the TypeScript guest. `guestfn build` builds it
+(`requirements.txt` detection, or `--lang python`); `guestfn init` cannot
+scaffold it yet.
+
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo,
 targeting `wasm32-wasip2` when the project carries a `wit/` directory and
 `wasm32-wasip1` otherwise; a `build.zig` → zig, for the zig and c guests
 alike; a `package.json` without an `asconfig.json` → npm, for the
-TypeScript guest; a `go.mod` requiring vtprotobuf → tinygo; otherwise go)
+TypeScript guest; a `requirements.txt` → a venv with componentize-py, for
+the Python guest; a `go.mod` requiring vtprotobuf → tinygo; otherwise go)
 or takes `--lang`. Every flavour carries
 its ABI glue in the open — the Go scaffold vendors it under `internal/wasmfn`,
 TinyGo, Rust, Zig and C carry theirs beside the module — with a small HTTP
