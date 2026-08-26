@@ -66,9 +66,10 @@ impl BuildCmd {
             )
         })?;
         let mut line = format!(
-            "Built {} ({}, ABI v1{}",
+            "Built {} ({}, ABI v{}{}",
             out.display(),
             crate::human_bytes(wasm.len() as u64),
+            shape.abi_version,
             imports_suffix(&shape)
         );
         if let Some(m) = &m {
