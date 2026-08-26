@@ -1,6 +1,6 @@
 module github.com/example/my-fn
 
-go 1.26.6
+go 1.27.0
 
 // The generated code under internal/fnv1 was produced with these versions of
 // protoc-gen-go and protoc-gen-go-vtproto; `go generate ./...` rebuilds the
