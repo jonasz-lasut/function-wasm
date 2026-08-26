@@ -275,11 +275,13 @@ mod tests {
                     ..Default::default()
                 },
             ),
+            // The rust scaffold emits ABI v2; its example pair is
+            // hello-rust-v2 (hello-rust stays as the example-only v1 guest).
             (
-                LANG_RUST,
+                "rust-v2",
                 Options {
                     lang: LANG_RUST.into(),
-                    name: "hello-rust".into(),
+                    name: "hello-rust-v2".into(),
                     ..Default::default()
                 },
             ),

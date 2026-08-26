@@ -1,55 +1,47 @@
 # [[ .Name ]]
 
-A [Crossplane](https://crossplane.io) composition function in Rust, compiled to
-a wasip1 reactor of about 250 KB and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm).
+A [Crossplane](https://crossplane.io) composition function in async Rust,
+compiled to a WebAssembly **component** of about 220 KB implementing
+**ABI v2** and run by
+[function-wasm](https://github.com/jonasz-lasut/function-wasm). Its `run`
+is an `async fn`; `config.greetingUrl` is fetched by awaiting
+`wasi:http/client@0.3.0` through the host's egress policy - real async
+networking, with no hand-written ABI glue (the canonical ABI owns what an
+ABI v1 guest carries by hand).
 
-- `proto/run_function.proto` is crossplane's `RunFunction` contract, vendored;
-  `build.rs` compiles it with `prost-build` (needs `protoc`).
-- `src/lib.rs` — `run_function` over the prost messages (edit this), `handle`
-  (decode, run, encode; errors become fatal results), the `wasmfn.log` import,
-  and the `wasmfn_alloc`/`wasmfn_run` exports of the function-wasm
-  [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md)
-  behind `#[cfg(target_os = "wasi")]`, so `cargo test` runs natively.
-- `src/http.rs` — `http::get`/`http::send` over the `wasmfn.http` import:
-  HTTP through the host, within the egress grant of the module's
-  manifest (`config.greetingUrl` uses it). Natively the host is a closure installed
-  with `http::set_host`, so the tests fake it.
+The toolchain is **stable Rust**: `rustup target add wasm32-wasip2`, plus
+`protoc` for prost-build. (The `wasm32-wasip3` target is the eventual home
+once its wasi-libc ships; the component the wasip2 target produces
+implements the same world - the runtime links WASI 0.2 and 0.3 both.)
+
+- `proto/run_function.proto` is crossplane's `RunFunction` contract,
+  vendored; `build.rs` compiles it with `prost-build` (needs `protoc`).
+- `wit/wasmfn-function.wit` is the
+  [ABI v2 world](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md),
+  vendored byte-identical to the runtime's copy; `wit/guest.wit` is this
+  guest's own world - the contract plus the `wasi:http` client it fetches
+  with; `wit/deps/` carries the wasi WIT that client needs.
+- `src/lib.rs` — `run_function` over the prost messages (edit this),
+  ordinary async Rust, natively testable (`cargo test`) with a fetch
+  double.
+- `src/bindings.rs` (wasm only) — the wit-bindgen world: the async `run`
+  export and the `wasi:http` fetch. One subtlety worth keeping: the writer
+  half of a body's trailers future must be **dropped** once the request is
+  built - holding it keeps the body incomplete and hangs the send.
 
 ```shell
-rustup target add wasm32-wasip1
+rustup target add wasm32-wasip2
 
 # Unit tests run natively.
 cargo test
 
-# Compile to a wasip1 module.
-guestfn build                       # cargo build --release --target wasm32-wasip1 → fn.wasm
+# Compile to a component.
+guestfn build                       # cargo build --release --target wasm32-wasip2 → fn.wasm
 
 # Publish it as an OCI artifact; it prints the module block for the Composition.
 guestfn push ghcr.io/example/[[ .Name ]]:v0.1.0
 ```
 
-Reference the module from a Composition step of function-wasm:
-
-```yaml
-- step: [[ .Name ]]
-  functionRef:
-    name: function-wasm
-  input:
-    apiVersion: wasm.fn.crossplane.io/v1beta1
-    kind: Input
-    module:
-      type: OCI
-      oci:                     # printed by guestfn push
-        ref: ghcr.io/example/[[ .Name ]]:v0.1.0@sha256:<manifest digest>
-    config:
-      greeting: hi
-```
-
-`example/` renders locally with the function-wasm runtime serving this
-directory (`--module-dir`) and `crossplane render`:
-
-```shell
-guestfn build
-crossplane render example/xr.yaml example/composition.yaml example/functions.yaml
-```
+Render it locally against a checkout of function-wasm serving this
+directory (see `example/`), or reference the pushed digest from a
+Composition.

@@ -9,6 +9,10 @@ use function_wasm::manifest::Manifest;
 
 use crate::scaffold;
 
+/// TypeScript builds through npm (componentize-js); there is no scaffold
+/// template for it yet, so the name lives here, not in scaffold::LANGS.
+pub(crate) const LANG_TS: &str = "ts";
+
 #[derive(clap::Args, Debug)]
 pub struct BuildCmd {
     /// Project directory.
@@ -20,9 +24,10 @@ pub struct BuildCmd {
     output: PathBuf,
 
     /// Toolchain to use. auto picks rust for a Cargo.toml, zig for a
-    /// build.zig (zig and c guests), tinygo for a go.mod that requires
-    /// vtprotobuf, go otherwise.
-    #[arg(long, default_value = "auto", value_parser = ["auto", "go", "tinygo", "rust", "zig", "c"])]
+    /// build.zig (zig and c guests), ts for a package.json (without an
+    /// asconfig.json), tinygo for a go.mod that requires vtprotobuf, go
+    /// otherwise.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "go", "tinygo", "rust", "zig", "c", "ts"])]
     lang: String,
 
     /// Run wasm-opt -Oz on the result (binaryen must be on PATH).
@@ -129,8 +134,10 @@ fn example_config(path: &Path) -> Result<Option<Option<serde_json::Value>>, Stri
 }
 
 /// Tells the language of a project from its files: a Cargo.toml is Rust; a
-/// build.zig builds with zig (zig and c guests); a go.mod that requires
-/// vtprotobuf is the TinyGo flavour; any other go.mod is Go.
+/// build.zig builds with zig (zig and c guests); a package.json without an
+/// asconfig.json builds with npm (the TypeScript flavour; AssemblyScript
+/// projects build with npm directly); a go.mod that requires vtprotobuf is
+/// the TinyGo flavour; any other go.mod is Go.
 fn detect_lang(dir: &Path) -> Result<String, String> {
     if dir.join("Cargo.toml").exists() {
         return Ok(scaffold::LANG_RUST.to_string());
@@ -138,9 +145,12 @@ fn detect_lang(dir: &Path) -> Result<String, String> {
     if dir.join("build.zig").exists() {
         return Ok(scaffold::LANG_ZIG.to_string());
     }
+    if dir.join("package.json").exists() && !dir.join("asconfig.json").exists() {
+        return Ok(LANG_TS.to_string());
+    }
     let gomod = std::fs::read_to_string(dir.join("go.mod")).map_err(|_| {
         format!(
-            "cannot tell the project's language: no Cargo.toml, build.zig or go.mod in {} (use --lang)",
+            "cannot tell the project's language: no Cargo.toml, build.zig, package.json or go.mod in {} (use --lang)",
             dir.display()
         )
     })?;
@@ -194,16 +204,20 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
             )?;
         }
         scaffold::LANG_RUST => {
+            // The scaffold emits an ABI v2 component (wasm32-wasip2, the
+            // wit/ directory carries its world); a project without wit/ is
+            // an ABI v1 wasip1 guest and keeps building as one.
+            let target = if dir.join("wit").is_dir() {
+                "wasm32-wasip2"
+            } else {
+                "wasm32-wasip1"
+            };
             which(
                 "cargo",
-                "install Rust from https://rustup.rs and run rustup target add wasm32-wasip1",
+                &format!("install Rust from https://rustup.rs and run rustup target add {target}"),
             )?;
-            crate::run_in(
-                dir,
-                "cargo",
-                &["build", "--release", "--target", "wasm32-wasip1"],
-            )?;
-            let release = dir.join("target/wasm32-wasip1/release");
+            crate::run_in(dir, "cargo", &["build", "--release", "--target", target])?;
+            let release = dir.join(format!("target/{target}/release"));
             let mut matches: Vec<PathBuf> = std::fs::read_dir(&release)
                 .map_err(|e| format!("cannot read {}: {e}", release.display()))?
                 .filter_map(|e| e.ok())
@@ -212,12 +226,27 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
                 .collect();
             if matches.len() != 1 {
                 return Err(format!(
-                    "expected one .wasm under target/wasm32-wasip1/release, found {}",
+                    "expected one .wasm under target/{target}/release, found {}",
                     matches.len()
                 ));
             }
             let wasm = std::fs::read(matches.remove(0)).map_err(|e| e.to_string())?;
             std::fs::write(out, wasm).map_err(|e| e.to_string())?;
+        }
+        LANG_TS => {
+            which("npm", "install node from https://nodejs.org")?;
+            if !dir.join("node_modules").is_dir() {
+                crate::run_in(dir, "npm", &["ci", "--no-audit", "--no-fund"])?;
+            }
+            crate::run_in(dir, "npm", &["run", "build"])?;
+            // The package's build script componentizes to fn.wasm in the
+            // project directory (the jco invocation names it).
+            let built = dir.join("fn.wasm");
+            if built != out {
+                let wasm = std::fs::read(&built)
+                    .map_err(|e| format!("npm run build produced no fn.wasm: {e}"))?;
+                std::fs::write(out, wasm).map_err(|e| e.to_string())?;
+            }
         }
         scaffold::LANG_ZIG | scaffold::LANG_C => {
             which(
