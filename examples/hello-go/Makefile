@@ -1,12 +1,13 @@
 # Targets for the hello guest. `guestfn` and the runtime come from this
-# repository (go run), so nothing needs to be installed except Go and, for
-# render, the crossplane CLI and Docker (the render engine runs in a container).
+# repository (cargo run), so nothing needs to be installed except Go, Rust
+# and, for render, the crossplane CLI and Docker (the render engine runs in
+# a container).
 ROOT := $(abspath ../..)
 
 .PHONY: build test render render-check clean
 
 build: ## Compile the guest to fn.wasm
-	cd $(ROOT) && go run ./cmd/guestfn build --dir $(CURDIR)
+	cd $(ROOT) && cargo run --release -p guestfn -- build --dir $(CURDIR)
 
 test: ## Run the guest's unit tests natively
 	go test ./...

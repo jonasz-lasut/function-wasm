@@ -20,7 +20,7 @@ publish → sign. What ships is decided by the completeness gate in step 4.
   code-scanning findings tied to a release of this function.
 - **Not** for routine dependency bumps with no security alert behind them
   (that's ordinary `chore(deps)` / Renovate work).
-- Bumping `github.com/bytecodealliance/wasmtime-go` **is** in scope — see step 3;
+- Bumping the `wasmtime` crate **is** in scope — see step 3;
   an wasm bump is a minor release from `main` (`/cut-release`), never a patch.
 
 ## Procedure
@@ -58,24 +58,25 @@ what actually got fixed.
 
 ### 3. Remediate on the release branch
 
-**wasmtime-go.** A wasmtime advisory is fixed by bumping
-`github.com/bytecodealliance/wasmtime-go` — that is the sandbox's own security
+**wasmtime.** A wasmtime advisory is fixed by bumping the `wasmtime` and
+`wasmtime-wasi` crates — that is the sandbox's own security
 patch and belongs in this flow. Every wasmtime release is a new Go major with
-a new import path (`/v47` → `/v48`): `go get` the new major and update the
+a new crate major: `cargo update` (or bump the version in
+`crates/engine/Cargo.toml`) and update the
 single import in `internal/engine`. Then run the full root test suite without
 `-short` — it builds `examples/hello-go` to wasm and runs it through the new
-runtime — plus `go test ./...` in `wasmfn` and `examples/hello-go`. Note that
+runtime — plus `go test ./...` in `examples/hello-go`. Note that
 syft/grype cannot see the Rust code inside the prebuilt libwasmtime; watch
 wasmtime's own advisories, not only the scan.
 
 A vulnerable module that wasm merely *depends on* is not covered by the
-exception: `go get` it directly at the fixed version — Go's MVS takes the
+exception: `cargo update <crate> --precise <fixed-version>` — the resolver takes the
 higher requirement while wasm itself stays where it is.
 
 For everything else, Grype scans the built ghcr image, so the fix is one of:
 
 - **Go module CVE** (any module other than wasm) →
-  `go get <module>@<fixed-version> && go mod tidy`.
+  `cargo update <crate> --precise <fixed-version>`.
 - **Go stdlib/toolchain CVE** → bump the `go` directive in `go.mod`. It is
   the single source of truth: `ci.yml` sets up Go from it and
   `publish-pkg.yml` reads it to pick the `golang:<version>` image the runtime
@@ -89,8 +90,8 @@ For everything else, Grype scans the built ghcr image, so the fix is one of:
 Then run what CI runs, in this order:
 
 ```bash
-go mod tidy && go generate ./...        # what check-diff runs; must leave the tree unchanged
-go build ./... && go vet ./... && go test ./... && golangci-lint run ./...
+cargo build --workspace --locked && cargo test --workspace
+cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 git status --porcelain                  # only go.mod/go.sum/Dockerfile should have moved
 ```
 
@@ -208,7 +209,7 @@ its warning block.
 
 ## Common mistakes
 
-- Bumping wasmtime-go without updating the `/vNN` import in
+- Bumping wasmtime without checking the engine's API usage in
   `internal/engine` — the old major stays in go.mod and nothing changed.
 - Running the tests with `-short` after a wasmtime bump — that skips the only
   test that runs a real Go guest through the new runtime.

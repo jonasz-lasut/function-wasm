@@ -131,9 +131,9 @@ Also mirrored to `xpkg.upbound.io/jonasz-lasut/function-wasm`.
 Install the CLI and scaffold a project:
 
 ```shell
-go install github.com/jonasz-lasut/function-wasm/cmd/guestfn@latest
+cargo install --git https://github.com/jonasz-lasut/function-wasm guestfn
 
-guestfn init greeter --module github.com/example/greeter   # --lang go (default), tinygo or rust
+guestfn init greeter --module github.com/example/greeter   # --lang go (default), tinygo, rust, zig or c
 cd greeter
 ```
 
@@ -168,8 +168,7 @@ module — `Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http wasmfn.log)`
 (`module does not export "wasmfn_run"`); `guestfn push` refuses to publish
 such a module for the same reason. The check is the runtime's own: `guestfn`
 compiles the module with the same wasmtime engine (a couple of seconds for a
-large Go module), so what it prints is what a load says — which also makes
-`guestfn` a CGo binary like the runtime (`go install` needs a C compiler).
+large Go module), so what it prints is what a load says.
 `guestfn inspect fn.wasm` shows what the runtime sees — size, verdict,
 exports, imports with their types, memory limits — and `guestfn inspect
 ghcr.io/example/greeter:v0.1.0` describes an artifact from its manifest
@@ -253,7 +252,7 @@ directory, and render with the Development runtime the scaffold's
 
 ```shell
 guestfn build
-go run github.com/jonasz-lasut/function-wasm/cmd/function@latest --insecure --debug --module-dir=.
+cargo run --release -p function-wasm -- --insecure --debug --module-dir=.   # from a checkout
 crossplane render example/xr.yaml example/composition.yaml example/functions.yaml
 ```
 
@@ -274,7 +273,7 @@ to every function-wasm step of the Compositions (or bare `Input`
 documents) you give it, printing the runtime's own words:
 
 ```shell
-go run github.com/jonasz-lasut/function-wasm/cmd/function@latest validate \
+cargo run --release -p function-wasm -- validate \
   example/composition.yaml --module-dir=. --resolve
 # or, with the released image (its entrypoint is the runtime):
 docker run --rm -v "$PWD:/w" ghcr.io/jonasz-lasut/function-wasm:<version> validate /w/composition.yaml \
@@ -964,16 +963,16 @@ fail-closed.
 ## Development
 
 ```shell
-go build ./... && go vet ./... && go test -race ./...    # host, CLI, engine (needs a C compiler: wasmtime-go is CGo)
-(cd examples/hello-go && go test ./...)                  # the example guest and its vendored internal/wasmfn glue
-golangci-lint run ./...
-go generate ./...                                        # Input CRD, guestfn scaffold golden
-make -C examples/hello-go render-check                      # function validate + crossplane render through the real runtime
+cargo build --workspace && cargo test --workspace   # engine, runtime, guestfn - conformance goldens and scaffold goldens included
+cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
+(cd examples/hello-go && go test ./...)             # the example guest and its vendored internal/wasmfn glue
+make -C examples/hello-go render-check              # function validate + crossplane render through the real runtime
 ```
 
-The root tests build `examples/hello-go` to WebAssembly and run it through the
-host; `go test -short` skips that. See [AGENTS.md](AGENTS.md) for the layout
-and conventions.
+The workspace tests build the example guests to WebAssembly and run all five
+through the host when their toolchains (go, tinygo, cargo + wasm32-wasip1,
+zig) are on PATH, and skip the ones that are not. See
+[AGENTS.md](AGENTS.md) for the layout and conventions.
 
 Design documents live under `docs/` as one-pagers: the implemented ones
 (cache, module source schema, trust model, resource governance, sandbox,

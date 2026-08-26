@@ -1,0 +1,5 @@
+exit 1
+--- stdout
+<DIR>/http-1.yaml: Composition/with-manifest pipeline[0] with-manifest: refused: module http http://<SERVER>/fn.wasm requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities
+  module: sha256:d8f9c70dd9bca2be5b598bc81ac9dbbd4f49531eb8174e8bcdd1aa895c230ba3, 85 B, ABI v1; manifest: greeter 0.1.0, private /tmp
+--- stderr

@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+--- stderr
+testdata/validate/function.yaml: no function-wasm Input found

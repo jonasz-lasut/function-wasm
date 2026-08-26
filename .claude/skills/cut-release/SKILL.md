@@ -64,8 +64,8 @@ There is no remediation step here — whatever is merged to `main` is what
 ships, and unlike CVE remediation there is no fix step or completeness gate
 downstream to catch a bad `main` later. If the latest run's conclusion isn't
 `success`, **stop and report** — do not cut the branch until `main` is green.
-CI on `main` already covers lint, build, tests and `check-diff` (`go mod tidy`
-plus `go generate ./...` must leave the tree unchanged), so a green run is a
+CI on `main` already covers lint (cargo fmt + clippy), the workspace tests
+(conformance and scaffold goldens included) and the render jobs, so a green run is a
 legitimate signal.
 
 **Bump the runtime-version references in docs to `$NEW_VERSION` before cutting**

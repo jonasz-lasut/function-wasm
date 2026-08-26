@@ -22,10 +22,6 @@ on:
   pull_request: {}
   workflow_dispatch: {}
 
-env:
-  # Common versions
-  GOLANGCI_VERSION: 'v2.12.2'
-
 jobs:
   detect-noop:
     runs-on: ubuntu-24.04
@@ -40,64 +36,39 @@ jobs:
           paths_ignore: '["**.md", "**.json", "**.svg"]'
           do_not_skip: '["workflow_dispatch", "schedule", "push"]'
 
-  check-diff:
-    runs-on: ubuntu-24.04
-    needs: detect-noop
-    if: needs.detect-noop.outputs.noop != 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-
-      # Tidies every Go module (root, the Go example guests, the httpguest test
-      # fixture), regenerates the Input CRD (package/input) and the guestfn
-      # scaffold goldens; all of it must be committed. The TinyGo example's
-      # generated protobuf code is checked by the render-tinygo job.
-      - name: Check Diff
-        run: |
-          go mod tidy
-          (cd examples/hello-go && go mod tidy)
-          (cd examples/hello-tinygo && go mod tidy)
-          (cd internal/testwasm/testdata/httpguest && go mod tidy)
-          go generate ./...
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "There are uncommitted changes after running go mod tidy and go generate ./...; commit all generated files:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
-          echo "Branch is clean"
-
   lint:
     runs-on: ubuntu-24.04
     needs: detect-noop
     if: needs.detect-noop.outputs.noop != 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - .
-          - examples/hello-go
-          - examples/hello-tinygo
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          go-version-file: go.mod
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: ${{ env.GOLANGCI_VERSION }}
-          working-directory: ${{ matrix.module }}
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
 
+  # cargo test covers the whole workspace: the engine's WAT-fixture tests,
+  # the runtime's unit and integration tests (the raw-client transparency
+  # proof included), the conformance goldens - recorded the day the output
+  # last diffed byte-identical against the Go runtime - and guestfn's
+  # scaffold goldens, the render-matches-the-examples lockstep and its
+  # CLI tests against an in-memory registry. The job is deliberately
+  # toolchain-free: SKIP_GUEST_BUILDS turns the five-guest suite off (the
+  # runner's preinstalled Go would otherwise build the go guest with an
+  # unpinned toolchain) - each guest is proven end to end by its render
+  # job, and the full behavioural matrix runs locally where the toolchains
+  # live.
   unit-test:
     runs-on: ubuntu-24.04
     needs: detect-noop
@@ -106,25 +77,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          go-version-file: go.mod
+          toolchain: stable
 
-      # wasmtime-go is CGo: the runner's gcc links the bundled libwasmtime.
-      - name: Build
-        run: go build ./... && go vet ./...
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      # The root tests also build examples/hello-go to wasip1 and run it through
-      # the host, so the Go toolchain doubles as the guest compiler here.
-      - name: Run Unit Tests
-        run: go test -race ./... -covermode=atomic -coverprofile=./coverage.txt
-
-      - name: Publish Unit Test Coverage
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
-        with:
-          flags: unittests
-          files: coverage.txt
+      - name: Run Tests
+        env:
+          SKIP_GUEST_BUILDS: '1'
+        run: cargo test --workspace --locked
 
   # The example guest is the scaffold rendered for itself. Rendering it with
   # crossplane render against the runtime built from this tree proves the
@@ -144,19 +108,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The runtime the render runs against, and guestfn, are built from
+      # this tree.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: examples/hello-go/go.mod
 
       - name: Setup the Crossplane CLI
         run: |
           curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
           sudo mv crossplane /usr/local/bin/crossplane
 
-      - name: Test the Example Guest
+      - name: Vet and Test the Example Guest
         working-directory: examples/hello-go
-        run: go test -race ./...
+        run: |
+          go vet ./...
+          go test -race ./...
 
       - name: Render the Example
         run: make -C examples/hello-go render-check
@@ -177,10 +153,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: examples/hello-tinygo/go.mod
 
       - name: Setup TinyGo
         uses: acifani/setup-tinygo@f51bf108c9895381060398804ce6cf6f62692106 # v3.0.1
@@ -231,18 +215,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The runtime the render runs against is built from this tree.
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
           targets: wasm32-wasip1
           components: rustfmt, clippy
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            .
+            examples/hello-rust
 
       - name: Setup protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -280,11 +265,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The runtime the render runs against is built from this tree.
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          go-version-file: go.mod
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
@@ -332,11 +319,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The runtime the render runs against is built from this tree.
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          go-version-file: go.mod
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1

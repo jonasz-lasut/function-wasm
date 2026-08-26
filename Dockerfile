@@ -1,58 +1,54 @@
 # syntax=docker/dockerfile:1
 
-# go.mod is the source of truth for the Go version: CI passes the version it
-# declares as GO_VERSION. A local build defaults to the latest Go 1.x image, and
-# Go's toolchain selection still guarantees at least the version go.mod requires.
-ARG GO_VERSION=1
+# The Rust toolchain builds on the build platform and cross-compiles to the
+# target: wasmtime (Cranelift) is pure Rust, and the only C in the graph
+# (aws-lc, via sigstore's cosign support) builds with the cross gcc below.
+ARG RUST_VERSION=1
 
-# Setup the base environment. wasmtime-go is a CGo binding to a prebuilt static
-# libwasmtime, so the build needs a C toolchain — a cross one when the build
-# and target architectures differ (docker buildx on a laptop, or CI building
-# arm64 on amd64).
-FROM --platform=${BUILDPLATFORM} golang:${GO_VERSION} AS base
+FROM --platform=${BUILDPLATFORM} rust:${RUST_VERSION} AS build
 ARG BUILDARCH
 ARG TARGETARCH
+
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends cmake && \
     if [ "${BUILDARCH}" != "${TARGETARCH}" ]; then \
       case "${TARGETARCH}" in \
         arm64) pkgs="gcc-aarch64-linux-gnu libc6-dev-arm64-cross" ;; \
         amd64) pkgs="gcc-x86-64-linux-gnu libc6-dev-amd64-cross" ;; \
         *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
       esac; \
-      apt-get update && apt-get install -y --no-install-recommends ${pkgs}; \
+      apt-get install -y --no-install-recommends ${pkgs}; \
     fi
 
 WORKDIR /fn
-ENV CGO_ENABLED=1
 
-COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+# The runtime's release version, stamped into the binary for minRuntime
+# checks; a local build stays a development build (empty).
+ARG FUNCTION_WASM_VERSION=
+ENV FUNCTION_WASM_VERSION=${FUNCTION_WASM_VERSION}
 
-# Build the Function.
-FROM base AS build
-ARG TARGETOS
-ARG TARGETARCH
-ARG BUILDARCH
-RUN --mount=target=. \
-    --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    if [ "${BUILDARCH}" != "${TARGETARCH}" ]; then \
-      case "${TARGETARCH}" in \
-        arm64) export CC=aarch64-linux-gnu-gcc ;; \
-        amd64) export CC=x86_64-linux-gnu-gcc ;; \
-      esac; \
-    fi; \
-    GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w" -o /function ./cmd/function
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc
 
-# Produce the Function image. The binary links glibc dynamically (wasmtime's
-# static library needs libm, libdl, libpthread and libgcc_s), so the base
-# must ship glibc, libgcc_s and libstdc++: Chainguard's glibc-dynamic does
-# (Wolfi glibc, rebuilt daily — it scanned clean where distroless/cc-debian13
-# carried a dozen won't-fix libc6 CVEs) with a nonroot user (65532), CA
-# certificates and a writable /tmp for the caches. Its glibc must not be older
-# than the one golang:${GO_VERSION} builds against (Debian trixie, 2.41);
-# Wolfi tracks upstream closely, and Renovate pins and bumps the digest.
+RUN --mount=target=.,rw \
+    --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/fn/target \
+    case "${TARGETARCH}" in \
+      arm64) target="aarch64-unknown-linux-gnu"; export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc ;; \
+      amd64) target="x86_64-unknown-linux-gnu"; export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc ;; \
+      *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    if [ "${BUILDARCH}" != "${TARGETARCH}" ]; then rustup target add "${target}"; fi; \
+    cargo build --release --locked -p function-wasm --target "${target}" && \
+    cp "target/${target}/release/function" /function
+
+# Produce the Function image. The binary links glibc dynamically, so the
+# base must ship glibc, libgcc_s and libstdc++: Chainguard's glibc-dynamic
+# does (Wolfi glibc, rebuilt daily - it scanned clean where
+# distroless/cc-debian13 carried a dozen won't-fix libc6 CVEs) with a
+# nonroot user (65532), CA certificates and a writable /tmp for the caches.
+# Renovate pins and bumps the digest.
 FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:df4e22a4b5dcd8e15a51fe9b04e16717d411dd9f4fe4b3844c1bf425b14be303 AS image
 WORKDIR /
 COPY --from=build /function /function
