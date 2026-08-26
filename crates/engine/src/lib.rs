@@ -80,6 +80,9 @@ pub struct Config {
     /// The cap on a guest's call stack in bytes; engine-wide, there is no
     /// Input field to narrow it per run.
     pub stack_limit: u64,
+    /// Resolve trap backtraces to file and line through the module's DWARF
+    /// (the runtime's --debug); costs DWARF parsing at compile time.
+    pub backtrace_details: bool,
     /// Bounds how many runs execute at once on the whole engine, served
     /// round-robin by module key; 0 leaves concurrency to the caller.
     pub max_concurrent_runs: usize,
@@ -95,6 +98,7 @@ impl Default for Config {
             timeout: DEFAULT_TIMEOUT,
             memory_limit: DEFAULT_MEMORY_LIMIT,
             stack_limit: DEFAULT_STACK_LIMIT,
+            backtrace_details: false,
             max_concurrent_runs: 0,
             max_total_run_memory: 0,
         }
@@ -260,6 +264,14 @@ impl Engine {
         // unwinder produces wasm traps and backtraces without it.
         wc.native_unwind_info(false);
         wc.max_wasm_stack(config.stack_limit as usize);
+        // Explicit in both directions: the decision is the runtime's --debug,
+        // never the WASMTIME_BACKTRACE_DETAILS environment wasmtime would
+        // otherwise read.
+        wc.wasm_backtrace_details(if config.backtrace_details {
+            wasmtime::WasmBacktraceDetails::Enable
+        } else {
+            wasmtime::WasmBacktraceDetails::Disable
+        });
         let inner =
             wasmtime::Engine::new(&wc).map_err(|e| Error(format!("cannot create engine: {e}")))?;
 
