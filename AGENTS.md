@@ -172,7 +172,7 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
   templates/<lang>            the five template sets (each is its example rendered for itself)
   testdata/<lang>             the golden scaffolds (UPDATE_GOLDENS=1 cargo test regenerates)
 examples/hello-go           the Go example guest — separate go.mod; vendors its ABI glue under
-                            internal/wasmfn (no external SDK); built by tests, CI's render job and
+                            internal/wasmfn (no external SDK); built by tests, the /e2e render job and
                             local rendering, never published
 examples/hello-tinygo       the same guest, TinyGo + vtprotobuf — separate go.mod, `make generate`
 examples/hello-rust         the same guest, Rust + prost — Cargo crate (excluded from the workspace:
@@ -281,6 +281,8 @@ cargo test -p guestfn                     # scaffold goldens, render-matches-the
 
 Goldens: `UPDATE_CONFORMANCE=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
 
+CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml`, hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push.
+
 ### Test Patterns
 
 Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration suites under `tests/`. Guest modules for tests are WAT fixtures assembled with the `wat` crate implementing ABI v1 (the engine's tests carry fixtures that misbehave in one way each; the sandbox is tested through raw WASI — a path escape is `module exited with status 63` (EPERM), a missing file 44 (ENOENT), no pre-open 8 (EBADF)). Registry-backed tests use `oci::testregistry` (feature `testutil`): an in-memory distribution registry that serves and accepts artifacts, optionally behind the Bearer token flow. Expected `RunFunctionResponse`s are constructed whole and compared with `assert_eq!` on the prost types — including fatal cases, whose per-guest message wording is blanked before the comparison.
@@ -324,13 +326,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ### Changing the scaffold
 
-Edit the example **and** its template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; the examples are the templates rendered for themselves; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the render-matches-the-examples test keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, `Cargo.lock` and the go example's glue tests are extra). The four vendored `run_function.proto` copies must stay identical below their per-language header (a scaffold test enforces it); after a proto bump, update the copies in the templates **and** examples, regenerate the checked-in codecs (`make -C examples/hello-tinygo generate`, `zig build gen-proto` in hello-zig and hello-c), and refresh the goldens; CI's render jobs fail on drift.
+Edit the example **and** its template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; the examples are the templates rendered for themselves; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the render-matches-the-examples test keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, `Cargo.lock` and the go example's glue tests are extra). The four vendored `run_function.proto` copies must stay identical below their per-language header (a scaffold test enforces it); after a proto bump, update the copies in the templates **and** examples, regenerate the checked-in codecs (`make -C examples/hello-tinygo generate`, `zig build gen-proto` in hello-zig and hello-c), and refresh the goldens; the /e2e render jobs fail on drift.
 
 ### Rendering Locally
 
 ```bash
 make -C examples/hello-go render          # build fn.wasm (guestfn via cargo), serve it, crossplane render example/
-make -C examples/hello-go render-check    # same, asserting the output — what CI's render job runs
+make -C examples/hello-go render-check    # same, asserting the output — what the /e2e render job runs
 make -C examples/hello-tinygo render      # the TinyGo guest (tinygo on PATH)
 make -C examples/hello-rust render        # the Rust guest (cargo + wasm32-wasip1 + protoc)
 make -C examples/hello-zig render         # the Zig guest (zig on PATH)
