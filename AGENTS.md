@@ -152,6 +152,10 @@ crates/engine/              the wasmtime engine - the only crate that imports wa
                               the compiled cache (build.rs reads wasmtime's version from Cargo.lock)
   src/run.rs                  one run: slots and memory first (waits capped by the deadline), fresh
                               store, WASI config, epoch deadline, ABI calls, run_duration by outcome
+  src/component.rs            the ABI v2 host: the wasmfn:function world bindgen, binary-format
+                              detection, the world typecheck (v2's checkABI), the typed log import,
+                              the async run path (driven on the tokio runtime), the v2 store data
+                              (WASI 0.3+0.2 + the same limiter/deadline/call-hook as v1)
   src/abi.rs, sandbox.rs,     checkABI (exports and both imports' exact types), the private /tmp and
   hostlog.rs, hosthttp.rs,    env wiring, the wasmfn.log and wasmfn.http host imports, the JSON
   wire.rs, duration.rs,       payload shapes, Go-style duration parse/format, per-digest step slots
@@ -180,6 +184,11 @@ examples/hello-rust         the same guest, Rust + prost — Cargo crate (exclud
                             guests depend on nothing in this repository)
 examples/hello-zig          the same guest, Zig + zig-protobuf — build.zig
 examples/hello-c            the same guest, C + nanopb + cJSON, compiled by zig cc — build.zig
+examples/hello-rust-v2      the same guest as an ABI v2 component (example only, no scaffold):
+                            async Rust on stable (wasm32-wasip2 + wit-bindgen), run is an async fn
+                            awaiting wasi:http/client for greetingUrl; vendors the world WIT
+                            byte-identical plus its own guest world and the wasi:http deps; no ABI
+                            glue - the canonical ABI owns it. ~220 KB
 examples/hello-assemblyscript  the same guest, AssemblyScript + as-proto (example only, no
                             scaffold yet): the generated codec is checked in (make gen-proto),
                             four files hand-written where as-proto-gen 1.3.0 gets this proto
@@ -208,7 +217,11 @@ There is no `sandbox` field: what a module gets beyond the default sandbox is de
 
 ### ABI v1
 
-Guest exports `memory`, `wasmfn_alloc(u32)->u32`, `wasmfn_run(u32,u32)->u64`, optional `_initialize`; host imports `wasmfn.log(u32,u32,u32)` with a JSON `{"msg","kv"}` payload and `wasmfn.http(u32,u32)->u64` with a JSON request answered through the guest's `wasmfn_alloc` **re-entrantly** and returned as `ptr<<32|len`; protobuf `RunFunctionRequest`/`RunFunctionResponse` on the wire. `docs/abi.md` is authoritative; `engine::abi::check_abi` enforces it at load, over wasmtime's decoded types — the one ABI check, whose verdict `engine.inspect` reports to `guestfn build`/`push`/`inspect` and `function validate --resolve`. Payload evolution is protobuf's (and, for imports, JSON's) job; a mechanics change is a new set of export names. ABI v2 (the component model) is the plan in `docs/one-pager-abi-v2.md` — this Rust host is its phase 1.
+Guest exports `memory`, `wasmfn_alloc(u32)->u32`, `wasmfn_run(u32,u32)->u64`, optional `_initialize`; host imports `wasmfn.log(u32,u32,u32)` with a JSON `{"msg","kv"}` payload and `wasmfn.http(u32,u32)->u64` with a JSON request answered through the guest's `wasmfn_alloc` **re-entrantly** and returned as `ptr<<32|len`; protobuf `RunFunctionRequest`/`RunFunctionResponse` on the wire. `docs/abi.md` is authoritative; `engine::abi::check_abi` enforces it at load, over wasmtime's decoded types — the one ABI check, whose verdict `engine.inspect` reports to `guestfn build`/`push`/`inspect` and `function validate --resolve`. Payload evolution is protobuf's (and, for imports, JSON's) job; a mechanics change is a new set of export names.
+
+### ABI v2
+
+The component-model contract, served by the same runtime (`docs/abi-v2.md`, design in `docs/one-pager-abi-v2.md`, tracking issue #65): a guest is a WebAssembly **component** targeting the WIT world `wasmfn:function@2.0.0-draft` (`wit/wasmfn-function.wit`) — export `run: async func(list<u8>) -> result<list<u8>, string>` (v1's protobuf payload), a typed `log` import, WASI 0.3+0.2 linked under the same sandbox. Detection is the binary format (the layer bytes): a component is v2, a core module is v1; the manifest's `abi:` is cross-checked against it. v2's checkABI is the world typecheck at load (`engine/src/component.rs`, the bindgen `FunctionPre`); a sync-lifted `run` satisfies the async world (what the WAT fixtures use). v2 egress is `wasi:http/client@0.3.0` bridged onto the same `HttpRequester` grant (`engine/src/wasihttp.rs`, the `WasiHttpHooks::send_request` seam with wasmtime-wasi-http's default client compiled out); host-reported failures reach the guest as `internal-error` carrying v1's exact wire error string, and send waits are credited back to the compute deadline. One wasmtime engine serves both ABIs (async-ness is per-store), and both artifact kinds share `compiled/<version()>` (they self-describe). The v1 `i32::MAX` request cap does not apply to v2; a component reserves nothing from the memory pool up front (no top-level memory) — growth is charged incrementally. A guest `err(string)` from `run` becomes `module <desc> failed: run returned an error: <s>`. The example guests land with the rest of issue #65.
 
 ### The transparent proxy is wire-level
 
@@ -424,7 +437,8 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 
 - `README.md` — user-facing behaviour, the Input reference, runtime flags, trust model
 - `docs/abi.md` — the host/guest contract
-- `docs/one-pager-abi-v2.md` — ABI v2 on the component model and this Rust host (phase 1 delivered by the port)
+- `docs/abi-v2.md` — the ABI v2 (component) host/guest contract
+- `docs/one-pager-abi-v2.md` — ABI v2 on the component model and this Rust host (the port delivered its phases 1-4; the v2 spike is issue #65)
 - `docs/one-pager-three-layer-authz.md`, `docs/one-pager-trust-model.md`, `docs/one-pager-sandbox.md` — the authorization and sandbox model
 - `docs/one-pager-cache.md`, `docs/one-pager-resource-governance.md`, `docs/one-pager-governance-perf.md` — caches, bounds, fairness
 - `docs/one-pager-module-source-schema.md`, `docs/one-pager-module-manifest.md`, `docs/one-pager-manifest-less-sources.md` — the Input and the manifest

@@ -11,7 +11,7 @@ use wasmtime_wasi::WasiCtxBuilder;
 
 use crate::{
     ARGV0, CallState, Ctx, EPOCH_TICK, EXPORT_ALLOC, EXPORT_INITIALIZE, EXPORT_MEMORY, EXPORT_RUN,
-    Engine, Error, HostTimer, Module, RunOptions, duration, first_line, sandbox,
+    Engine, Error, HostTimer, Module, Repr, RunOptions, duration, first_line, sandbox,
 };
 
 pub(crate) fn run(
@@ -20,7 +20,9 @@ pub(crate) fn run(
     request: &[u8],
     opts: RunOptions,
 ) -> Result<Vec<u8>, Error> {
-    if request.len() > i32::MAX as usize {
+    // A v1 guest addresses its memory with 32-bit pointers; the canonical
+    // ABI owns memory movement for a component, so v2 carries no such cap.
+    if matches!(&m.repr, Repr::Core { .. }) && request.len() > i32::MAX as usize {
         return Err(Error(format!(
             "request of {} bytes exceeds what a 32-bit guest can address",
             request.len()
@@ -58,7 +60,12 @@ pub(crate) fn run(
     // The run is timed from here - the slot and memory waits above are not
     // part of run_duration_seconds, and a wait cut short never ran.
     let start = Instant::now();
-    let result = execute(engine, m, request, opts, limits, hold, wait_deadline);
+    let result = match &m.repr {
+        Repr::Core { .. } => execute(engine, m, request, opts, limits, hold, wait_deadline),
+        Repr::Component(c) => {
+            crate::component::execute(engine, c, request, &opts, &limits, hold, wait_deadline)
+        }
+    };
     crate::metrics::RUN_DURATION
         .with_label_values(&[run_outcome(&result)])
         .observe(start.elapsed().as_secs_f64());
@@ -171,8 +178,12 @@ fn drive(
     request: &[u8],
     budget: Duration,
 ) -> Result<Vec<u8>, Error> {
-    let instance = m
-        .pre
+    let Repr::Core { pre, .. } = &m.repr else {
+        return Err(Error(
+            "internal: a component on the core run path".to_string(),
+        ));
+    };
+    let instance = pre
         .instantiate(&mut *store)
         .map_err(|e| guest_error("cannot instantiate module", e, budget))?;
     if let Some(init) = instance.get_func(&mut *store, EXPORT_INITIALIZE) {
@@ -223,7 +234,7 @@ fn drive(
 }
 
 /// Converts a run's budget into epoch ticks, at least one.
-fn deadline_ticks(timeout: Duration) -> (u64, Duration) {
+pub(crate) fn deadline_ticks(timeout: Duration) -> (u64, Duration) {
     let ticks = timeout.as_nanos().div_ceil(EPOCH_TICK.as_nanos()).max(1);
     (ticks as u64, timeout)
 }
@@ -242,7 +253,7 @@ pub(crate) fn check_bounds(size: usize, ptr: u32, n: u32) -> Result<(), String> 
 /// condition: a deadline interrupt becomes the timeout message, a WASI exit
 /// reports its status and a trap is named by its code. wasmtime's backtrace
 /// only helps next to the guest's own stderr, so it goes to the debug log.
-fn guest_error(what: &str, err: wasmtime::Error, budget: Duration) -> Error {
+pub(crate) fn guest_error(what: &str, err: wasmtime::Error, budget: Duration) -> Error {
     if let Some(exit) = err.downcast_ref::<I32Exit>() {
         return Error(format!("{what}: module exited with status {}", exit.0));
     }

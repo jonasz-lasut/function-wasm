@@ -265,6 +265,27 @@ fn validate_resolve_matches_the_goldens() {
         e.serialize(&m).expect("serialize")
     };
     std::fs::write(dir.path().join("precompiled.wasm"), &artifact).expect("write");
+    // ABI v2: a component implementing the wasmfn:function world, and one
+    // that does not (the world typecheck is v2's load refusal).
+    let component = wat::parse_str(
+        r#"(component
+          (core module $m
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+            (func (export "run") (param i32 i32) (result i32)
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (i32.const 1024))
+              (i32.store (i32.const 72) (i32.const 0))
+              (i32.const 64)))
+          (core instance $i (instantiate $m))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+        )"#,
+    )
+    .expect("wat");
+    std::fs::write(dir.path().join("component.wasm"), &component).expect("write");
+    let empty_component = wat::parse_str("(component)").expect("wat");
+    std::fs::write(dir.path().join("emptycomponent.wasm"), &empty_component).expect("write");
     let composition = dir.path().join("composition.yaml");
     let step = |name: &str, path: &str| {
         format!(
@@ -280,7 +301,8 @@ fn validate_resolve_matches_the_goldens() {
             step("notwasm", "notwasm.wasm"),
             step("missing", "missing.wasm"),
             step("precompiled", "precompiled.wasm"),
-        ),
+        ) + &step("component", "component.wasm")
+            + &step("emptycomponent", "emptycomponent.wasm"),
     )
     .expect("write composition");
 
@@ -334,6 +356,11 @@ fn validate_resolve_manifest_matches_the_goldens() {
             "env",
             "abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n",
         ),
+        // A v2 declaration over a v1 binary: the manifest's abi must match
+        // the module's binary format.
+        ("abimismatch", "abi: 2\nname: greeter\nversion: 0.1.0\n"),
+        // An ABI this runtime does not implement at all.
+        ("abiunknown", "abi: 3\nname: greeter\nversion: 0.1.0\n"),
     ];
     let mut compositions = Vec::new();
     for (name, manifest) in manifests {

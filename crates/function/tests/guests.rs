@@ -1,9 +1,10 @@
-//! The six example guests - the same greeting function written with
+//! The example guests - the same greeting function written with
 //! function-sdk-go (Go), with TinyGo and vtprotobuf, in Rust with prost, in
-//! Zig with zig-protobuf, in C with nanopb and in AssemblyScript with
-//! as-proto - through the whole host:
-//! path and OCI sources, compile, per-request instance, egress through
-//! wasmfn.http, guest logging. Every guest must produce the same response.
+//! Zig with zig-protobuf, in C with nanopb, in AssemblyScript with as-proto,
+//! and as an ABI v2 component in async Rust with wit-bindgen - through the
+//! whole host: path and OCI sources, compile, per-request instance, egress
+//! through wasmfn.http or wasi:http, guest logging. Every guest must produce
+//! the same response.
 //! A guest whose toolchain is not on PATH is skipped, like the Go tree's
 //! guest tests skip without theirs.
 
@@ -141,6 +142,36 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 return Some(Vec::new());
             }
             let release = dir.join("target/wasm32-wasip1/release");
+            let wasm = std::fs::read_dir(&release)
+                .ok()?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .find(|p| p.extension().is_some_and(|e| e == "wasm"))?;
+            std::fs::copy(&wasm, out).ok()?;
+            true
+        }
+        "rust-v2" => {
+            if !on_path("cargo") || !on_path("rustup") {
+                eprintln!("skipping: cargo/rustup not on PATH");
+                return None;
+            }
+            let targets = std::process::Command::new("rustup")
+                .args(["target", "list", "--installed"])
+                .output()
+                .ok()?;
+            if !String::from_utf8_lossy(&targets.stdout).contains("wasm32-wasip2") {
+                eprintln!("skipping: wasm32-wasip2 target not installed");
+                return None;
+            }
+            if !command(
+                &dir,
+                "cargo",
+                &["build", "--release", "--target", "wasm32-wasip2"],
+                &[],
+            ) {
+                return Some(Vec::new());
+            }
+            let release = dir.join("target/wasm32-wasip2/release");
             let wasm = std::fs::read_dir(&release)
                 .ok()?
                 .filter_map(|e| e.ok())
@@ -306,23 +337,33 @@ fn run_guest(guest: &str) {
     };
     assert!(!wasm.is_empty(), "building the {guest} guest failed");
 
-    // What guestfn inspect and validate --resolve report: every guest is
-    // ABI v1 and imports both host functions.
+    // What guestfn inspect and validate --resolve report: a core-module
+    // guest is ABI v1 and imports both wasmfn host functions; a component
+    // guest is ABI v2 and exports the world's run.
     let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
     let shape = engine.inspect(&wasm).expect("inspect");
     assert!(shape.abi_error.is_none(), "{:?}", shape.abi_error);
-    for import in ["wasmfn.log", "wasmfn.http"] {
+    let abi = shape.abi_version;
+    if abi == 1 {
+        for import in ["wasmfn.log", "wasmfn.http"] {
+            assert!(
+                shape.host_imports.iter().any(|i| i == import),
+                "guest imports {:?}, want {import}",
+                shape.host_imports
+            );
+        }
+    } else {
         assert!(
-            shape.host_imports.iter().any(|i| i == import),
-            "guest imports {:?}, want {import}",
-            shape.host_imports
+            shape.exports.iter().any(|x| x.name == "run"),
+            "guest exports {:?}, want run",
+            shape.exports
         );
     }
 
     let greetings = greeting_server();
     let greetings_host = greetings.split(':').next().expect("host").to_string();
     let egress_manifest = format!(
-        r#"{{"abi":1,"requires":{{"egress":{{"http":[{{"host":"{greetings_host}","methods":["GET"]}}]}}}}}}"#
+        r#"{{"abi":{abi},"requires":{{"egress":{{"http":[{{"host":"{greetings_host}","methods":["GET"]}}]}}}}}}"#
     );
     // The guest with an egress request, two ways: an OCI artifact's manifest
     // layer, and a manifest a path module names by reference
@@ -492,6 +533,11 @@ fn tinygo_guest() {
 #[test]
 fn rust_guest() {
     run_guest("rust");
+}
+
+#[test]
+fn rust_v2_guest() {
+    run_guest("rust-v2");
 }
 
 #[test]

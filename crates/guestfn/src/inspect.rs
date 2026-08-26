@@ -77,8 +77,12 @@ struct DescriptorInfo {
 #[derive(Serialize)]
 struct ModuleInfo {
     size: usize,
-    /// "v1" when the module passes the runtime's check; otherwise empty,
-    /// with abiError saying what the runtime says at load.
+    /// The ABI the binary format names: 1 for a core module, 2 for a
+    /// component - stated even when the module fails its ABI's check.
+    #[serde(rename = "abiVersion")]
+    abi_version: u8,
+    /// "v1" or "v2" when the module passes the runtime's check; otherwise
+    /// empty, with abiError saying what the runtime says at load.
     #[serde(skip_serializing_if = "String::is_empty")]
     abi: String,
     #[serde(rename = "abiError", skip_serializing_if = "String::is_empty")]
@@ -231,7 +235,7 @@ impl InspectCmd {
         }
         if let Some(m) = &out.module {
             let verdict = if m.abi.is_empty() {
-                format!("not ABI v1: {}", m.abi_error)
+                format!("not ABI v{}: {}", m.abi_version, m.abi_error)
             } else {
                 format!("ABI {}", m.abi)
             };
@@ -327,11 +331,12 @@ fn descriptor(d: &Descriptor) -> DescriptorInfo {
 fn describe_module(wasm: &[u8]) -> Result<ModuleInfo, String> {
     let shape: Inspection = crate::inspect_module(wasm)?;
     let (abi, abi_error) = match &shape.abi_error {
-        None => ("v1".to_string(), String::new()),
+        None => (format!("v{}", shape.abi_version), String::new()),
         Some(e) => (String::new(), e.clone()),
     };
     Ok(ModuleInfo {
         size: wasm.len(),
+        abi_version: shape.abi_version,
         abi,
         abi_error,
         exports: shape

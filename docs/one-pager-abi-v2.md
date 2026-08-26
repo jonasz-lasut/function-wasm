@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.1
+* Status: Draft, revision 0.2
 
 The decision `docs/one-pager-language-support.md` left open ("Is ABI v2 ever
 in scope?", open question 4): yes. ABI v2 - a component-model guest contract -
@@ -55,10 +55,13 @@ A WIT world (working name `wasmfn:function@2.0.0`), targeted at WASI 0.3:
   the re-entrant allocator: the canonical ABI owns memory movement.
 - **import** `log: func(level: log-level, msg: string, kv: list<tuple<string,
   string>>)` - typed, replacing v1's JSON payload.
-- **import** `wasi:http@0.3/outgoing-handler` rather than a custom HTTP
-  interface, implemented by the host over `internal/egress`'s policy
-  (wasmtime's overridable outgoing-handler seam; bodies are native
-  `stream<u8>`), so guests use their language's native clients (Rust
+- **import** `wasi:http/client@0.3.0` (`send: async func(request) ->
+  result<response, error-code>`) rather than a custom HTTP interface -
+  wasi:http 0.3 replaced 0.2's `outgoing-handler` with `client`, corrected
+  here in rev 0.2 - implemented by the host over the egress policy through
+  wasmtime-wasi-http's `WasiHttpHooks::send_request` seam (built with
+  `default-send-request` off, so supplying it is compulsory; bodies are
+  native `stream<u8>`), so guests use their language's native clients (Rust
   reqwest, JS fetch under jco, Python under componentize-py). Admission is
   unchanged: `requires.egress.http` under the
   three layers decides whether the import is backed by the policy client or
@@ -121,6 +124,18 @@ end. The Go tree's fixtures are the Rust host's acceptance suite before it
 has unit tests of its own.
 
 ## Order of work
+
+Rev 0.2 status (2026-08-26): phases 1-4 were delivered by the Rust port
+(released as v0.3.0); phase 0 - deliberately the contract-shaping work - runs
+now as issue #65, three stacked PRs (world + engine path, wasi:http egress,
+example guests). Two findings from its first PR: wasmtime 48 needs **no
+engine split** for the two ABIs (async-ness is per-store since wasmtime 42,
+so the sync v1 path and async v2 components share one engine and one
+compiled-artifact namespace - the artifacts self-describe their kind), and
+the canonical ABI accepts a **sync-lifted** implementation of the world's
+async `run`, which keeps WAT fixtures simple and pre-wasip3 toolchains
+usable (the example guests still commit to real async: the Rust p3 guest
+awaits `wasi:http/client.send`).
 
 | phase | work | proves |
 |---|---|---|
@@ -196,8 +211,9 @@ design.
 1. A `run-json` export in the v2 world: JS/Python authors - v2's whole
    audience - would rather not carry a protobuf codec. A second func
    carrying protojson is cheap in WIT and revives the v1 `wasmfn_run_json`
-   debate (language-support one-pager) where it matters most. Decide in
-   phase 0.
+   debate (language-support one-pager) where it matters most. Rev 0.2:
+   deferred (Jonasz, 2026-08-26) until the jco JS guest exists and its codec
+   pain is measurable; decided before the world freezes at 2.0.0.
 2. Repository layout during the transition: a cargo workspace beside the Go
    modules in this repo (shared fixtures, one CI), or a sibling repo?
    Recommendation: same repo - phases 1-2 lean on the Go tree's testdata
