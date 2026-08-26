@@ -678,6 +678,7 @@ flags would admit.
 | `--max-module-size` | | `128` MB | largest module accepted |
 | `--module-timeout` | | `30s` | wall-clock budget of one run; the ceiling for `limits.timeout` |
 | `--module-memory-limit` | | `512` MB | linear memory a run may use; the ceiling for `limits.memory` |
+| `--module-stack-limit` | `MODULE_STACK_LIMIT` | `512` KB | call stack a run may use (wasmtime's own default); past it the run fails with `trap: call stack exhausted`. Engine-wide - no Input field narrows it |
 | `--enable-memory-cache` | `ENABLE_MEMORY_CACHE` | `true` | keep compiled modules in memory between requests. With `--enable-memory-cache=false` (or `--no-enable-memory-cache`) each request maps the module's compiled artifact from disk (6–8 ms for a large Go module) and releases it afterwards |
 | `--max-cached-modules` | `MAX_CACHED_MODULES` | `0` (unbounded) | most compiled modules resident at once; the least recently used is dropped beyond it (freed once its last run ends). Artifacts are mapped from disk, so a resident Go module costs ~90 MB of file-backed memory |
 | `--max-concurrent-compiles` | `MAX_CONCURRENT_COMPILES` | `1` | modules compiled at once. One compile already uses every core (~25 CPU-seconds and ~1 GB for a large Go module); further first requests wait their turn instead of multiplying that |

@@ -58,6 +58,10 @@ struct ServeArgs {
     #[arg(long, default_value_t = 512)]
     module_memory_limit: u64,
 
+    /// Maximum call stack of a running module in KB.
+    #[arg(long, default_value_t = 512, env = "MODULE_STACK_LIMIT")]
+    module_stack_limit: u64,
+
     /// Cedar document with the operator's grant policy - the sole authority
     /// that enables a sandbox capability, evaluated default-deny. Unset, no
     /// sandbox capability is grantable and the runtime offers only the
@@ -237,6 +241,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     let engine = match Engine::new(Config {
         timeout: args.module_timeout,
         memory_limit: args.module_memory_limit << 20,
+        stack_limit: args.module_stack_limit << 10,
         max_concurrent_runs: args.max_concurrent_runs,
         max_total_run_memory: args.max_total_run_memory << 20,
     }) {

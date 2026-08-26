@@ -60,6 +60,8 @@ const EPOCH_TICK: Duration = Duration::from_millis(10);
 /// Defaults applied for unset Config fields.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_MEMORY_LIMIT: u64 = 512 << 20;
+/// wasmtime's own default wasm stack ceiling, kept as ours.
+pub const DEFAULT_STACK_LIMIT: u64 = 512 << 10;
 
 /// An engine failure, formatted exactly as the Go runtime formats it: the
 /// message is the contract (it ends up in an XR condition), not a type.
@@ -75,6 +77,9 @@ pub struct Config {
     pub timeout: Duration,
     /// The cap on a guest's linear memory in bytes.
     pub memory_limit: u64,
+    /// The cap on a guest's call stack in bytes; engine-wide, there is no
+    /// Input field to narrow it per run.
+    pub stack_limit: u64,
     /// Bounds how many runs execute at once on the whole engine, served
     /// round-robin by module key; 0 leaves concurrency to the caller.
     pub max_concurrent_runs: usize,
@@ -89,6 +94,7 @@ impl Default for Config {
         Config {
             timeout: DEFAULT_TIMEOUT,
             memory_limit: DEFAULT_MEMORY_LIMIT,
+            stack_limit: DEFAULT_STACK_LIMIT,
             max_concurrent_runs: 0,
             max_total_run_memory: 0,
         }
@@ -242,11 +248,18 @@ impl Engine {
                 concurrency::format_bytes(config.memory_limit)
             )));
         }
+        if config.stack_limit == 0 {
+            return Err(Error(
+                "--module-stack-limit must be positive: a guest cannot run on an empty stack"
+                    .to_string(),
+            ));
+        }
         let mut wc = wasmtime::Config::new();
         wc.epoch_interruption(true);
         // Native unwind info only serves host-side profilers; wasmtime's own
         // unwinder produces wasm traps and backtraces without it.
         wc.native_unwind_info(false);
+        wc.max_wasm_stack(config.stack_limit as usize);
         let inner =
             wasmtime::Engine::new(&wc).map_err(|e| Error(format!("cannot create engine: {e}")))?;
 
