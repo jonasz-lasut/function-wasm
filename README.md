@@ -240,6 +240,16 @@ An **AssemblyScript** flavour exists as an example only for now
 smallest guest; `npm ci && make build`): it passes the same behaviour tests as
 the scaffolded flavours, but `guestfn init` cannot scaffold it yet.
 
+An **ABI v2** flavour exists as an example only too:
+[`examples/hello-rust-v2`](examples/hello-rust-v2) (~220 KB) is the same
+greeting function as a WebAssembly **component** implementing the
+`wasmfn:function` world ([docs/abi-v2.md](docs/abi-v2.md)) — async Rust on
+the stable toolchain (`wasm32-wasip2` + [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)),
+its greeting fetched by awaiting `wasi:http/client@0.3.0` through the host's
+egress policy. No ABI glue at all: the canonical ABI owns what the other
+flavours carry by hand. It passes the same behaviour tests; `guestfn init`
+cannot scaffold it yet.
+
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo;
 a `build.zig` → zig, for the zig and c guests alike; a `go.mod` requiring
 vtprotobuf → tinygo; otherwise go) or takes `--lang`. Every flavour carries
@@ -1003,7 +1013,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 make -C examples/hello-go render-check              # function validate + crossplane render through the real runtime
 ```
 
-The workspace tests build the example guests to WebAssembly and run all five
+The workspace tests build the example guests to WebAssembly and run them all
 through the host when their toolchains (go, tinygo, cargo + wasm32-wasip1,
 zig) are on PATH, and skip the ones that are not. See
 [AGENTS.md](AGENTS.md) for the layout and conventions.

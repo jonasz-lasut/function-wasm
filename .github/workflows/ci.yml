@@ -64,7 +64,7 @@ jobs:
   # last diffed byte-identical against the Go runtime - and guestfn's
   # scaffold goldens, the render-matches-the-examples lockstep and its
   # CLI tests against an in-memory registry. The job is deliberately
-  # toolchain-free: SKIP_GUEST_BUILDS turns the five-guest suite off (the
+  # toolchain-free: SKIP_GUEST_BUILDS turns the guest suite off (the
   # runner's preinstalled Go would otherwise build the go guest with an
   # unpinned toolchain) - each guest is proven end to end by its render job
   # and the full behavioural matrix by the guest-suite job, both in the

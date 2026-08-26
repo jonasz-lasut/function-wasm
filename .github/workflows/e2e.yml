@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # The end-to-end suite, hand-triggered by commenting /e2e on a pull request
-# (the pattern upjet providers use for uptest): the five render jobs - each
+# (the pattern upjet providers use for uptest): the per-guest render jobs - each
 # guest built with its own toolchain, served by the runtime built from the
 # PR, rendered by crossplane render - and the full guest behavioural suite,
 # which the always-on CI keeps toolchain-free. The result is reported as a
@@ -81,7 +81,7 @@ jobs:
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-          targets: wasm32-wasip1
+          targets: wasm32-wasip1, wasm32-wasip2
 
       - name: Cache Rust Builds
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -279,6 +279,54 @@ jobs:
       - name: Render the Rust Guest
         run: make -C examples/hello-rust render-check
 
+  render-rust-v2:
+    name: render (rust-v2)
+    runs-on: ubuntu-24.04
+    needs: start
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          targets: wasm32-wasip2
+          components: rustfmt, clippy
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            .
+            examples/hello-rust-v2
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint and Test the ABI v2 Rust Guest
+        working-directory: examples/hello-rust-v2
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --target wasm32-wasip2 -- -D warnings
+          cargo test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the ABI v2 Rust Guest
+        run: make -C examples/hello-rust-v2 render-check
+
   # The same guest in Zig (zig-protobuf over the vendored proto), rendered
   # through the runtime. One zig binary builds it; protoc is only needed to
   # regenerate the checked-in codec, which zig build gen-proto downloads.
@@ -446,7 +494,7 @@ jobs:
   # One commit status carries the verdict back to the PR.
   report:
     runs-on: ubuntu-24.04
-    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-zig, render-c, render-assemblyscript]
+    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-rust-v2, render-zig, render-c, render-assemblyscript]
     if: always() && needs.start.result == 'success'
     env:
       GH_TOKEN: ${{ github.token }}
@@ -457,6 +505,7 @@ jobs:
           description="all jobs passed"
           for result in "${{ needs.guest-suite.result }}" "${{ needs.render-go.result }}" \
             "${{ needs.render-tinygo.result }}" "${{ needs.render-rust.result }}" \
+            "${{ needs.render-rust-v2.result }}" \
             "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}" \
             "${{ needs.render-assemblyscript.result }}"; do
             if [ "$result" != "success" ]; then
