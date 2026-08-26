@@ -339,7 +339,7 @@ impl Manifest {
         let empty = Value::Object(serde_json::Map::new());
         let instance = config.unwrap_or(&empty);
         if let Some(err) = validator.iter_errors(instance).next() {
-            let pointer = err.instance_path.to_string();
+            let pointer = err.instance_path().to_string();
             let pointer = if pointer.is_empty() {
                 "/".to_string()
             } else {
