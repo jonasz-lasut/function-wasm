@@ -1,0 +1,415 @@
+# Copyright 2026 The function-wasm Authors.
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The end-to-end suite, hand-triggered by commenting /e2e on a pull request
+# (the pattern upjet providers use for uptest): the five render jobs - each
+# guest built with its own toolchain, served by the runtime built from the
+# PR, rendered by crossplane render - and the full guest behavioural suite,
+# which the always-on CI keeps toolchain-free. The result is reported as a
+# commit status on the PR's head, since an issue_comment run does not show
+# up as a check by itself.
+name: E2E
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  statuses: write
+
+jobs:
+  # Gates the whole run on a /e2e comment on a pull request, acknowledges
+  # the comment with a reaction, resolves the PR's head SHA and marks its
+  # e2e status pending.
+  start:
+    runs-on: ubuntu-24.04
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/e2e')
+    outputs:
+      sha: ${{ steps.pr.outputs.sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Acknowledge the Comment
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=rocket
+
+      - name: Resolve the PR Head
+        id: pr
+        run: |
+          sha=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" -q .head.sha)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Mark the Status Pending
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state=pending -f context=e2e -f description="running" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # The guest behavioural suite with every toolchain installed - what the
+  # always-on unit-test job skips (SKIP_GUEST_BUILDS): all guests through
+  # the whole host, greetings, granted and refused egress, manifestPath,
+  # guest-side fatals and logs.
+  guest-suite:
+    runs-on: ubuntu-24.04
+    needs: start
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          targets: wasm32-wasip1
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: examples/hello-go/go.mod
+
+      - name: Setup TinyGo
+        uses: acifani/setup-tinygo@f51bf108c9895381060398804ce6cf6f62692106 # v3.0.1
+        with:
+          tinygo-version: '0.41.1'
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run the Guest Suite
+        run: cargo test --locked -p function-wasm --test guests
+
+  # The example guest is the scaffold rendered for itself. Rendering it with
+  # crossplane render against the runtime built from this tree proves the
+  # whole chain: guest compiles to wasm, the runtime serves it over gRPC,
+  # Crossplane accepts the response.
+  render-go:
+    name: render (go)
+    runs-on: ubuntu-24.04
+    needs: start
+    env:
+      # These environment variables are important to the Crossplane CLI
+      # install.sh script. They determine what version it installs.
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      # The runtime the render runs against, and guestfn, are built from
+      # this tree.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: examples/hello-go/go.mod
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Vet and Test the Example Guest
+        working-directory: examples/hello-go
+        run: |
+          go vet ./...
+          go test -race ./...
+
+      - name: Render the Example
+        run: make -C examples/hello-go render-check
+
+  # The same guest without function-sdk-go, built with TinyGo: protobuf-go
+  # message types plus vtprotobuf's reflection-free codecs, generated from the
+  # vendored proto and committed (regenerated here to catch drift), then
+  # rendered through the runtime.
+  render-tinygo:
+    name: render (tinygo)
+    runs-on: ubuntu-24.04
+    needs: start
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: examples/hello-tinygo/go.mod
+
+      - name: Setup TinyGo
+        uses: acifani/setup-tinygo@f51bf108c9895381060398804ce6cf6f62692106 # v3.0.1
+        with:
+          tinygo-version: '0.41.1'
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # make generate builds the protoc plugins from go.mod's tool directives.
+      - name: Check Generated Code
+        working-directory: examples/hello-tinygo
+        run: |
+          go mod tidy
+          make generate
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/hello-tinygo is not up to date with its proto or go.mod; commit the result of make generate:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Test the TinyGo Guest
+        working-directory: examples/hello-tinygo
+        run: go test -race ./...
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the TinyGo Guest
+        run: make -C examples/hello-tinygo render-check
+
+  # The same guest in Rust (prost over the vendored proto, cdylib for
+  # wasm32-wasip1), rendered through the runtime.
+  render-rust:
+    name: render (rust)
+    runs-on: ubuntu-24.04
+    needs: start
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          targets: wasm32-wasip1
+          components: rustfmt, clippy
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            .
+            examples/hello-rust
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint and Test the Rust Guest
+        working-directory: examples/hello-rust
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --target wasm32-wasip1 -- -D warnings
+          cargo test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the Rust Guest
+        run: make -C examples/hello-rust render-check
+
+  # The same guest in Zig (zig-protobuf over the vendored proto), rendered
+  # through the runtime. One zig binary builds it; protoc is only needed to
+  # regenerate the checked-in codec, which zig build gen-proto downloads.
+  render-zig:
+    name: render (zig)
+    runs-on: ubuntu-24.04
+    needs: start
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Check Generated Codec
+        working-directory: examples/hello-zig
+        run: |
+          zig build gen-proto
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/hello-zig/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Lint and Test the Zig Guest
+        working-directory: examples/hello-zig
+        run: |
+          zig fmt --check build.zig src/main.zig
+          zig build test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the Zig Guest
+        run: make -C examples/hello-zig render-check
+
+  # The same guest in C (nanopb over the vendored proto), compiled by zig cc
+  # behind its build.zig, rendered through the runtime. The same zig binary
+  # builds it; nanopb_generator (and protoc) are only needed to regenerate the
+  # checked-in codec.
+  render-c:
+    name: render (c)
+    runs-on: ubuntu-24.04
+    needs: start
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The nanopb version must match the one the checked-in codec was
+      # generated with (its header names it) and the one build.zig fetches.
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Setup nanopb_generator
+        run: pip install nanopb==0.4.9.1
+
+      - name: Check Generated Codec
+        working-directory: examples/hello-c
+        run: |
+          zig build gen-proto
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/hello-c/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Lint and Test the C Guest
+        working-directory: examples/hello-c
+        run: |
+          zig fmt --check build.zig
+          zig build test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the C Guest
+        run: make -C examples/hello-c render-check
+
+  # One commit status carries the verdict back to the PR.
+  report:
+    runs-on: ubuntu-24.04
+    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-zig, render-c]
+    if: always() && needs.start.result == 'success'
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Report the Result
+        run: |
+          state=success
+          description="all jobs passed"
+          for result in "${{ needs.guest-suite.result }}" "${{ needs.render-go.result }}" \
+            "${{ needs.render-tinygo.result }}" "${{ needs.render-rust.result }}" \
+            "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}"; do
+            if [ "$result" != "success" ]; then
+              state=failure
+              description="at least one job did not pass"
+            fi
+          done
+          gh api "repos/${{ github.repository }}/statuses/${{ needs.start.outputs.sha }}" \
+            -f state="$state" -f context=e2e -f description="$description" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
