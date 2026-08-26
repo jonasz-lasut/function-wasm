@@ -1,0 +1,6 @@
+exit 1
+--- stdout
+<DIR>/abiunknown.yaml: Composition/abiunknown pipeline[0] abiunknown: refused: module module file fn.wasm has an invalid manifest: abi must be 1 or 2 (this runtime implements ABI v1 and v2), got 3
+  module: sha256:d8f9c70dd9bca2be5b598bc81ac9dbbd4f49531eb8174e8bcdd1aa895c230ba3, 85 B, ABI v1
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+--- stderr

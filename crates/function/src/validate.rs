@@ -566,10 +566,11 @@ impl Validator {
                 resolved.description
             ));
         }
+        let module_abi = inspection.abi_version;
         r.resolved = Some(Resolved {
             digest: resolved.digest.clone(),
             size: wasm.len(),
-            abi: "v1".to_string(),
+            abi: format!("v{module_abi}"),
             imports: inspection.host_imports,
             manifest: None,
         });
@@ -628,6 +629,7 @@ impl Validator {
             &caps.grants(),
             input.config.as_ref(),
             crate::manifest::runtime_version(),
+            module_abi,
         ) {
             refuse!(format!("module {} {e}", resolved.description));
         }

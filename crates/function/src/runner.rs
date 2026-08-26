@@ -345,6 +345,7 @@ impl WasmFunction {
                 &caps.grants(),
                 input.config.as_ref(),
                 crate::manifest::runtime_version(),
+                module.abi_version(),
             )
         {
             return Ok(raw_rsp(self.fatal(
