@@ -277,6 +277,13 @@ fn fatal_response() -> RunFunctionResponse {
 }
 
 fn run_guest(guest: &str) {
+    // CI's unit-test job is deliberately toolchain-free: the render jobs
+    // prove each guest end to end, and the runner's preinstalled Go would
+    // otherwise build the go guest with an unpinned toolchain.
+    if std::env::var_os("SKIP_GUEST_BUILDS").is_some() {
+        eprintln!("skipping: SKIP_GUEST_BUILDS is set");
+        return;
+    }
     let logs = LOGS.clone();
     let dir = tempfile::tempdir().expect("tempdir");
     let file = format!("{guest}.wasm");

@@ -60,9 +60,12 @@ jobs:
   # proof included), the conformance goldens - recorded the day the output
   # last diffed byte-identical against the Go runtime - and guestfn's
   # scaffold goldens, the render-matches-the-examples lockstep and its
-  # CLI tests against an in-memory registry. The five-guest suite runs the
-  # guests whose toolchains are on the runner (Go is preinstalled; the rest
-  # are proven end to end by the render jobs) and skips the others.
+  # CLI tests against an in-memory registry. The job is deliberately
+  # toolchain-free: SKIP_GUEST_BUILDS turns the five-guest suite off (the
+  # runner's preinstalled Go would otherwise build the go guest with an
+  # unpinned toolchain) - each guest is proven end to end by its render
+  # job, and the full behavioural matrix runs locally where the toolchains
+  # live.
   unit-test:
     runs-on: ubuntu-24.04
     needs: detect-noop
@@ -76,12 +79,9 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: examples/hello-go/go.mod
-
       - name: Run Tests
+        env:
+          SKIP_GUEST_BUILDS: '1'
         run: cargo test --workspace --locked
 
   # The example guest is the scaffold rendered for itself. Rendering it with
