@@ -12,7 +12,7 @@ name = "function"
 path = "src/main.rs"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 flate2 = "1"
 cedar-policy = "4"
@@ -21,11 +21,11 @@ function-sdk-rust = "0.2.0"
 function-wasm-engine = { path = "../engine" }
 hex = "0.4"
 http = "1"
-jsonschema = "0.33"
+jsonschema = "0.51"
 tempfile = "3"
 pbjson-types = "0.9"
 prost = "0.14"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "gzip"] }
 serde.workspace = true
 serde_json.workspace = true
 pem = "4"
@@ -43,7 +43,7 @@ tracing.workspace = true
 # The crate's own integration tests use the test registry.
 function-wasm = { path = ".", features = ["testutil"] }
 tracing-subscriber = "0.3"
-p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+p256 = { version = "0.14", features = ["ecdsa", "pem"] }
 tempfile = "3"
 wat = "1"
 
