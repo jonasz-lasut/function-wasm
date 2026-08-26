@@ -117,6 +117,7 @@ async fn the_served_runtime_is_byte_transparent() {
         tls_certs_dir: None,
         insecure: true,
         max_recv_message_size: None,
+        metrics_address: String::new(),
     };
     let (_health, server) = grpc::serve(Arc::new(function), &args).await.expect("serve");
     tokio::spawn(server);
