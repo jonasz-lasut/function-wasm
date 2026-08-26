@@ -195,7 +195,9 @@ fn guest_error(what: &str, err: wasmtime::Error, budget: Duration) -> Error {
                 duration::format(budget)
             ));
         }
-        tracing::debug!(trap = %err, "Guest trapped");
+        // The Debug format carries the wasm backtrace - file and line frames
+        // when the engine's backtrace_details resolved the module's DWARF.
+        tracing::debug!(trap = ?err, "Guest trapped");
         return Error(format!("{what}: {}", trap_text(*trap)));
     }
     Error(format!("{what}: {}", first_line(&err.to_string())))

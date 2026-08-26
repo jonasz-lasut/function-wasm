@@ -242,6 +242,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         timeout: args.module_timeout,
         memory_limit: args.module_memory_limit << 20,
         stack_limit: args.module_stack_limit << 10,
+        backtrace_details: args.sdk.debug,
         max_concurrent_runs: args.max_concurrent_runs,
         max_total_run_memory: args.max_total_run_memory << 20,
     }) {
