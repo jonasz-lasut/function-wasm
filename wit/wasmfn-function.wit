@@ -1,0 +1,28 @@
+/// The function-wasm guest contract, ABI v2 (docs/abi-v2.md).
+///
+/// A guest is a WebAssembly component targeting this world; the binary format
+/// is the ABI version (a component is ABI v2, a core module is ABI v1). The
+/// payload contract is v1's, unchanged: protobuf RunFunctionRequest bytes in,
+/// RunFunctionResponse bytes out - payload evolution stays protobuf's job.
+/// The world is a draft: it freezes at 2.0.0 no earlier than wasm32-wasip3's
+/// tier-2 promotion (docs/one-pager-abi-v2.md).
+package wasmfn:function@2.0.0-draft;
+
+world function {
+    /// The level of a guest log line; the host renders debug lines only when
+    /// it runs under --debug.
+    enum log-level {
+        debug,
+        info,
+    }
+
+    /// Structured logging through the host: one line, message plus key-value
+    /// pairs, attached to the module's identity in the runtime's log.
+    import log: func(level: log-level, msg: string, kv: list<tuple<string, string>>);
+
+    /// One request: RunFunctionRequest bytes in, RunFunctionResponse bytes
+    /// out. A returned error string becomes the request's fatal result; a
+    /// guest that can produce a response encodes failures into the response
+    /// (a fatal Result) instead.
+    export run: async func(request: list<u8>) -> result<list<u8>, string>;
+}
