@@ -1,5 +1,7 @@
-// Vendored from github.com/crossplane/function-sdk-go v0.7.1 (proto/v1/run_function.proto), Apache-2.0,
-// kept in lockstep by guestfn's scaffold tests. Regenerate the Go code with `go generate ./...` in the project (see generate.go).
+// Vendored from crossplane/crossplane v2.4.0. Apache-2.0. Renovate tracks that
+// version; on a bump re-download
+// https://github.com/crossplane/crossplane/blob/main/proto/fn/v1/run_function.proto
+// into every copy, then regenerate the Go code with `go generate ./...` (see generate.go).
 
 //
 //Copyright 2022 The Crossplane Authors.
