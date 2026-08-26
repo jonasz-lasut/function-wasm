@@ -155,6 +155,12 @@ pub(crate) struct CallState {
     // grant to one info line per run.
     no_grant_logged: bool,
     timer: HostTimer,
+    /// Time this run spent waiting on wasmfn.http answers - credited back to
+    /// the epoch deadline so limits.timeout means guest compute. Only http
+    /// time is creditable: each request is capped by the run's deadline, so
+    /// the credit is self-limiting where crediting arbitrary host time
+    /// (a wasmfn.log loop) would not be.
+    http_host: Duration,
 }
 
 /// Splits a run's wall clock between guest code and host imports: every

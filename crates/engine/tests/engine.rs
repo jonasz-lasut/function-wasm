@@ -288,6 +288,90 @@ fn http_without_grant_is_refused_in_band() {
     );
 }
 
+struct SlowOk(Duration);
+
+impl function_wasm_engine::HttpRequester for SlowOk {
+    fn do_request(
+        &self,
+        _req: &function_wasm_engine::wire::Request,
+        _deadline: std::time::Instant,
+    ) -> function_wasm_engine::wire::Response {
+        std::thread::sleep(self.0);
+        function_wasm_engine::wire::Response {
+            status: 200,
+            ..Default::default()
+        }
+    }
+}
+
+/// A guest blocked in wasmfn.http three times longer than its whole budget
+/// still finishes: the wait is credited back to the epoch deadline, so
+/// limits.timeout meters guest compute.
+#[test]
+fn http_wait_does_not_consume_the_deadline() {
+    let e = engine();
+    let rsp = response_bytes();
+    let request = br#"{"url":"http://example.com/x"}"#;
+    let packed = (4096u64 << 32) | rsp.len() as u64;
+    let wat = format!(
+        r#"(module
+  (import "wasmfn" "http" (func $http (param i32 i32) (result i64)))
+  (memory (export "memory") 4)
+  (data (i32.const 1024) "{req}")
+  (data (i32.const 4096) "{data}")
+  {BUMP_ALLOC}
+  (func (export "wasmfn_run") (param i32 i32) (result i64)
+    i32.const 1024
+    i32.const {len}
+    call $http
+    drop
+    i64.const {packed}))"#,
+        req = wat_bytes(request),
+        data = wat_bytes(&rsp),
+        len = request.len(),
+        packed = packed as i64,
+    );
+    let m = e
+        .compile(&wat::parse_str(wat).expect("wat"))
+        .expect("compile");
+    let opts = RunOptions {
+        timeout: Some(Duration::from_millis(100)),
+        http: Some(std::sync::Arc::new(SlowOk(Duration::from_millis(300)))),
+        ..Default::default()
+    };
+    let out = e.run(&m, b"", opts).expect("run should outlive the wait");
+    assert_eq!(out, rsp);
+}
+
+/// The request's own deadline is the hard wall-clock cap whatever the
+/// credit: a guest that never returns is interrupted there.
+#[test]
+fn the_request_deadline_caps_the_run() {
+    let e = engine();
+    let wat = r#"(module (memory (export "memory") 1)
+      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+      (func (export "wasmfn_run") (param i32 i32) (result i64)
+        (loop $l br $l)
+        i64.const 0))"#;
+    let m = e
+        .compile(&wat::parse_str(wat).expect("wat"))
+        .expect("compile");
+    let opts = RunOptions {
+        deadline: Some(std::time::Instant::now() + Duration::from_millis(80)),
+        ..Default::default()
+    };
+    let started = std::time::Instant::now();
+    let err = e.run(&m, b"", opts).expect_err("should be cut short");
+    assert!(
+        err.to_string().contains("exceeded its execution deadline"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the hard deadline did not cap the run"
+    );
+}
+
 /// Runs the repository's real Rust example guest when its built module is
 /// present (make -C examples/hello-rust build), the way the Go runtime's
 /// guest tests skip without a toolchain. Whatever the guest thinks of an
