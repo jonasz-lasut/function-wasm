@@ -22,7 +22,7 @@ function-wasm-engine = { path = "../engine" }
 hex = "0.4"
 http = "1"
 http-body = "1"
-jsonschema = "0.51"
+jsonschema = "0.52"
 tempfile = "3"
 pbjson-types = "0.9"
 prost = "0.14"
