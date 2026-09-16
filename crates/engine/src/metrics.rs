@@ -225,7 +225,7 @@ pub static MEMORY_DENIALS: LazyLock<LabeledCounter> = LazyLock::new(|| {
 pub static REQUESTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
         "function_wasm_module_requests",
-        "Requests by outcome: ok, refused (declined before the module ran), error (load or run failed).",
+        "Requests by outcome: ok, refused (declined before the module ran), error (load or run failed), skipped (the composite resource chose no module and module.allowEmpty allowed it; nothing ran).",
         &["outcome"],
     )
 });

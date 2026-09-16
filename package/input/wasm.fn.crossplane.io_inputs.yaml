@@ -110,6 +110,17 @@ spec:
           module:
             description: Module locates the WebAssembly module to run.
             properties:
+              allowEmpty:
+                description: |-
+                  AllowEmpty, with From, lets the composite resource leave the field
+                  unset (absent or null): the step then runs no module and returns the
+                  request's desired state and context unchanged - a no-op the pipeline
+                  continues past - instead of a fatal result naming the field. A field
+                  that is set is read, fenced and run exactly as without it. Read from
+                  the Input only, so a composite resource may leave a step empty only
+                  where the Composition allows it. Refused without From: a static
+                  source always resolves.
+                type: boolean
               from:
                 description: |-
                   From names a field of the observed composite resource, under spec or
@@ -238,6 +249,8 @@ spec:
                 !has(self.path)'
             - message: manifestPath is only allowed with type Path
               rule: '!has(self.manifestPath) || self.type == ''Path'''
+            - message: allowEmpty is only allowed with from
+              rule: '!has(self.allowEmpty) || !self.allowEmpty || has(self.from)'
         required:
         - module
         type: object

@@ -1,0 +1,65 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: allow-empty
+spec:
+  compositeTypeRef:
+    apiVersion: example.crossplane.io/v1
+    kind: XR
+  mode: Pipeline
+  pipeline:
+  - step: chosen
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        type: OCI
+        from: status.module
+        allowEmpty: true
+      compositionPolicy: |
+        permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/example");
+  - step: unset
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        type: OCI
+        from: status.hook
+        allowEmpty: true
+      compositionPolicy: |
+        permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/example");
+  - step: null-value
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        type: Path
+        from: status.empty
+        allowEmpty: true
+  - step: unset-refused
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        type: OCI
+        from: status.hook
+      compositionPolicy: |
+        permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/example");
+  - step: static
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+        allowEmpty: true

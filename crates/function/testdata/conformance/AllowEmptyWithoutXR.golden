@@ -1,0 +1,9 @@
+exit 1
+--- stdout
+testdata/validate/allow-empty.yaml: Composition/allow-empty pipeline[0] chosen: OK (chosen by the composite resource from status.module (allowEmpty), compositionPolicy)
+testdata/validate/allow-empty.yaml: Composition/allow-empty pipeline[1] unset: OK (chosen by the composite resource from status.hook (allowEmpty), compositionPolicy)
+testdata/validate/allow-empty.yaml: Composition/allow-empty pipeline[2] null-value: OK (chosen by the composite resource from status.empty (allowEmpty))
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+testdata/validate/allow-empty.yaml: Composition/allow-empty pipeline[3] unset-refused: OK (chosen by the composite resource from status.hook, compositionPolicy)
+testdata/validate/allow-empty.yaml: Composition/allow-empty pipeline[4] static: refused: cannot resolve module: module.allowEmpty is set but module.from is not: only a module the composite resource chooses can be left unset
+--- stderr

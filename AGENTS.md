@@ -32,7 +32,10 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │  2. from::from_composite(input.module, compositionPolicy, observed XR)       │
 │       type + from → the XR field decoded into the type's object → concrete;  │
 │       the composition layer fences it (pullModule for the location,          │
-│       spendCredential for a named credential - default-deny) or refuses      │
+│       spendCredential for a named credential - default-deny) or refuses;     │
+│       an unset field under module.allowEmpty ends the request here: the      │
+│       caller's desired state and context echoed at the wire level            │
+│       (protowire::noop_response), requests_total{outcome="skipped"}          │
 │  3. oci::auth_for(req, module) → registry auth        (step credential)      │
 │  4. resolver.resolve(module) → Resolved{digest, source}     resolver.rs      │
 │       no I/O: oci manifest digest from the ref, http.digest from the Input,  │
@@ -99,8 +102,9 @@ crates/function/            the runtime crate: a library (everything below) + th
                               for warm-up to flip; ~50 lines of transport built from public pieces
                               (a deliberate copy - see the function-sdk-rust decision below)
   src/protowire.rs            wire-level protobuf surgery: strip_credential (drops one field-7 map
-                              entry), append_meta (field 1) - how the transparent proxy edits raw
-                              bytes without decoding them
+                              entry), append_meta (field 1), noop_response (the skipped step's reply:
+                              the request's desired and context re-tagged under a meta) - how the
+                              transparent proxy edits raw bytes without decoding them
   src/validate.rs             function validate: multi-doc YAML/JSON (- stdin) → per step: strict
                               decode (unknown fields → warnings), admit, --xr → from_composite,
                               --resolve → resolve + verify + fetch + engine.inspect + admit_requires;
@@ -225,7 +229,7 @@ docs/abi.md                 the language-agnostic host/guest contract
 
 The function receives an `Input` (`wasm.fn.crossplane.io/v1beta1`) — a KRM-like object (`crates/function/src/input.rs`):
 
-- `module` — `type: OCI|HTTP|Path` (required) + exactly one of `oci{ref, credentials}`, `http{url, digest, manifestURL, manifestDigest}`, `path` (+ `manifestPath`), or `from` (the XR field holding that object)
+- `module` — `type: OCI|HTTP|Path` (required) + exactly one of `oci{ref, credentials}`, `http{url, digest, manifestURL, manifestDigest}`, `path` (+ `manifestPath`), or `from` (the XR field holding that object; with `allowEmpty: true` a field the XR leaves unset - absent or null - skips the step: no module runs and the desired state goes back unchanged; refused without `from`)
 - `compositionPolicy` — raw Cedar, the composition author's layer: fences `from` sources (`pullModule`/`spendCredential`, default-deny) and may narrow sandbox capabilities (scoped default-permit); read from the Input only, never from the XR
 - `limits` — `timeout`, `memory`, `concurrency`, each ≤ the runtime's ceiling flag (concurrency silently capped)
 - `config` — opaque; the guest reads it via `GetConfig` - non-secret module configuration lives here
@@ -270,7 +274,7 @@ Readiness is answered twice — gRPC health on the function port and plain-HTTP 
 
 ### Metrics
 
-`crates/engine/src/metrics.rs` registers the same series as the Go runtime — `function_wasm_module_{compile,fetch,run}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` — plus two additive series the Go runtime did not carry: `hostcall_duration_seconds` (the host-import slice of a run, split by call_hook) and `memory_denials_total{reason}` (guest memory growths denied at the per-run ceiling or the pool) — registered with prometheus-client (the OpenMetrics-native client; the runtime's own registry, prometheus-client has no default), served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port) - OpenMetrics 1.0 as the main format straight from prometheus-client's encoder, the classic text format derived from it (`metrics::classic_from_openmetrics`: counter families renamed with `_total`, `# EOF` dropped) only for an Accept header that asks for `text/plain` without accepting OpenMetrics (`ops.rs::wants_classic_text`); both renderings carry identical series. The `Labeled{Counter,Gauge,Histogram}` adapters in metrics.rs keep the prometheus crate's `with_label_values` call shape, so metric call sites never name prometheus-client; counters register named without their `_total` (the encoder appends it) and helps without their trailing period (prometheus-client appends one). `crates/function/src/grpcmetrics.rs` adds the Go runtime's gRPC server series (`grpc_server_{started,handled,msg_received,msg_sent}_total`, same names/labels/help strings as function-sdk-go's grpc-prometheus interceptor) as a tower layer around the whole router in grpc.rs — unary-only like Go's interceptor, every served method pre-created at zero like its InitializeMetrics, no handling-time histogram (Go never enabled it). Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
+`crates/engine/src/metrics.rs` registers the same series as the Go runtime — `function_wasm_module_{compile,fetch,run}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` (its `skipped` outcome, a step with no module to run under `module.allowEmpty`, is this runtime's addition) — plus two additive series the Go runtime did not carry: `hostcall_duration_seconds` (the host-import slice of a run, split by call_hook) and `memory_denials_total{reason}` (guest memory growths denied at the per-run ceiling or the pool) — registered with prometheus-client (the OpenMetrics-native client; the runtime's own registry, prometheus-client has no default), served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port) - OpenMetrics 1.0 as the main format straight from prometheus-client's encoder, the classic text format derived from it (`metrics::classic_from_openmetrics`: counter families renamed with `_total`, `# EOF` dropped) only for an Accept header that asks for `text/plain` without accepting OpenMetrics (`ops.rs::wants_classic_text`); both renderings carry identical series. The `Labeled{Counter,Gauge,Histogram}` adapters in metrics.rs keep the prometheus crate's `with_label_values` call shape, so metric call sites never name prometheus-client; counters register named without their `_total` (the encoder appends it) and helps without their trailing period (prometheus-client appends one). `crates/function/src/grpcmetrics.rs` adds the Go runtime's gRPC server series (`grpc_server_{started,handled,msg_received,msg_sent}_total`, same names/labels/help strings as function-sdk-go's grpc-prometheus interceptor) as a tower layer around the whole router in grpc.rs — unary-only like Go's interceptor, every served method pre-created at zero like its InitializeMetrics, no handling-time histogram (Go never enabled it). Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
 
 ### Signatures
 
@@ -435,6 +439,8 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 - **`function validate` exits 1**: at least one step is refused - the line names the runtime's reason; exit 2 is the tool's own failure. Run it with the flags the runtime is started with.
 - **`module.path is refused`**: the runtime was started without `--module-dir`.
 - **`module.from: … names a OCI source, but the Input has no compositionPolicy`**: a `module.from` OCI/HTTP source requires a `compositionPolicy` whose `pullModule` permits its repository; add the policy, or name the source statically.
+- **`module.from: cannot read status.module from the composite resource: module: no such field`**: the XR has not set the field the step reads. Set it, or add `module.allowEmpty: true` to let the step run nothing until it is set (the pod then logs `No module chosen by the composite resource` and counts `requests_total{outcome="skipped"}`).
+- **`module.allowEmpty is set but module.from is not`**: `allowEmpty` only makes sense for a field the composite resource may leave unset; a static source always resolves. Remove it, or switch the step to `module.from`.
 - **`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`** (or `limits.timeout … --module-timeout`): lower the limit or raise the flag.
 - **`module … requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities`** (and the env/egress forms): mount a Cedar `--sandbox-policy-file` with a matching permit or use a module that requires nothing.
 - **`the operator policy grants a private /tmp (usePrivateTmp), but the runtime cannot create one under …`** at startup: point `TMPDIR` at a writable directory (an `emptyDir`; tmpfs with `sizeLimit` bounds what a module may write).

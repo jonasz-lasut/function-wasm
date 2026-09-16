@@ -61,10 +61,12 @@ Composition.
 - **A customization hook at the end of a pipeline.** The platform team ships
   the Composition and reserves its last step for a module the consuming team
   provides — chosen per Composition, or per composite resource with
-  `module.from: spec.hooks.module`. The team adjusts labels, annotations, sizing
-  or values, adds a sidecar resource, or reshapes the desired state to its
-  conventions, in the language it prefers, without a change request against
-  the Composition. The platform team keeps the guardrails: digest pinning,
+  `module.from: spec.hooks.module` (with `allowEmpty: true` the step does
+  nothing until a team fills the field in). The team adjusts labels,
+  annotations, sizing or values, adds a sidecar resource, or reshapes the
+  desired state to its conventions, in the language it prefers, without a
+  change request against the Composition. The platform team keeps the
+  guardrails: digest pinning,
   a `compositionPolicy` (Cedar) fencing which registries the team may pick
   from, `--cosign-key` so only modules signed with the organisation's key
   run, and the resource caps of the sandbox (`limits` per step, the
@@ -326,7 +328,8 @@ composition.yaml: Composition/hello pipeline[1] labeler: refused: module oci ghc
 `--xr xr.yaml` materialises `module.from` sources against that composite
 resource, as the observed XR would (without it a `from` source is checked
 for the `compositionPolicy` it requires and reported as the XR's
-choice); `--resolve` goes on to resolve, verify (`--cosign-key`) and fetch
+choice; a field the XR leaves unset under `module.allowEmpty` is reported
+as no module, the step's no-op); `--resolve` goes on to resolve, verify (`--cosign-key`) and fetch
 each module — OCI pulls use the local Docker config, never a step
 credential — and compiles it with wasmtime for the runtime's own verdict
 (size, ABI, host imports; a compile is seconds and about a gigabyte for a
@@ -350,6 +353,7 @@ module:                        # required
   http: {url, digest}
   path: fn.wasm
   from: status.module          # … or the observed XR field holding it
+  allowEmpty: true             # optional, with from: an unset field runs nothing
 compositionPolicy: |           # optional; the composition author's own Cedar layer
   permit (principal, action == Action::"pullModule",
           resource in Repository::"ghcr.io/example-org");
@@ -379,7 +383,8 @@ operator's Cedar `--sandbox-policy-file` both permit it
 | `module.http.manifestDigest` | string | `sha256:<hex>` of the manifest, verified against it; **required with** `module.http.manifestURL`, refused without it |
 | `module.path` | string | a file relative to the runtime's `--module-dir`; refused unless that flag is set — local rendering and volume-mounted modules; carries no digest |
 | `module.manifestPath` | string | *optional*, `type: Path` only — a `wasmfn.yaml` under `--module-dir`, the request layer for a Path module, so a local or volume-mounted module can declare the capabilities it needs. Read from the Input only (never through `module.from`) and re-read each request, so a local edit takes effect without a restart |
-| `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names — an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` — e.g. `status.module`; read on every request and decoded strictly (a typo or a wrong shape is a fatal result naming the field), so each XR can choose its module. What it may choose is fenced by `compositionPolicy` (`pullModule`, default-deny) |
+| `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names — an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` — e.g. `status.module`; read on every request and decoded strictly (a typo or a wrong shape is a fatal result naming the field), so each XR can choose its module. What it may choose is fenced by `compositionPolicy` (`pullModule`, default-deny). A field the XR leaves unset is a fatal result naming it, unless `module.allowEmpty` says otherwise |
+| `module.allowEmpty` | bool | *optional*, with `module.from` only - `true` lets the composite resource leave the field unset (absent, or `null`): the step then runs no module and returns the request's desired state and context unchanged, a no-op the pipeline continues past, instead of a fatal result. This is the reserved hook a platform team ships before any tenant fills it in, and the smoke test of a runtime with no module published yet. A field that is set is read, fenced and run exactly as without it. Read from the Input only, so an XR may leave a step empty only where the Composition allows it; refused without `module.from`. A skipped step is logged and counted as `requests_total{outcome="skipped"}` |
 | `compositionPolicy` | string | the composition author's own Cedar policy layer, over the same schema as the operator's `--sandbox-policy-file` (actions `pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv`; a `Request` principal carrying `namespace` and `xrKind`; `Repository`, `HostPattern`, `Capability` and `Credential` entities). AND-combined with the module's manifest and the operator's policy, so it can only narrow. Two regimes: a sandbox action it scopes no rule for is not narrowed (the operator and the manifest decide alone), while a module chosen through `module.from` is refused unless a `pullModule` permit matches its normalized location - matched over a boundary-correct `Repository` hierarchy, so `Repository::"ghcr.io/example-org"` admits `ghcr.io/example-org/mod` but never the sibling namespace `ghcr.io/example-org-other/...` - and may spend a step credential only where a `spendCredential` permit matches (`context.repository` carries the ref's location). **Required whenever `module.from` names an `OCI` or `HTTP` source** — an unfenced XR author could point the runtime at any host and read what its answer says. Read from the Input only; malformed Cedar is a fatal result at admission |
 | `limits.timeout` | duration | compute budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). Time the run spends waiting on `wasmfn.http` answers is credited back, so a slow upstream does not spend the budget; the request's own gRPC deadline is the hard wall-clock cap and still applies if shorter |
 | `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`; at most `--module-memory-limit`, else a fatal result naming both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
@@ -408,6 +413,11 @@ the type and the XR field, the field holds the source, the
         permit (principal, action == Action::"pullModule",
                 resource in Repository::"ghcr.io/example-org");
 ```
+
+Add `allowEmpty: true` under `module` to let a composite resource leave
+the field unset: the step then runs nothing and returns the desired state
+unchanged, so a Composition can reserve a hook before any module exists to
+fill it. Without it, an unset field is a fatal result naming it.
 
 Credentials for a step are declared on the pipeline step:
 
@@ -918,7 +928,7 @@ format never changes what a dashboard sees:
 |---|---|---|
 | `function_wasm_module_compile_duration_seconds` | | histogram of wasmtime compile time (compiled-cache misses) |
 | `function_wasm_module_fetch_duration_seconds` | `source` = oci, http, path | histogram of fetch + verify time (blob-cache hits and served-file reads included) |
-| `function_wasm_module_requests_total` | `outcome` = ok, refused, error | requests by outcome: refused = declined before the module ran (input, policy, grants, limits, resolution, verification — each also logged as `Request ended with a fatal result` with the reason), error = the load or the run failed |
+| `function_wasm_module_requests_total` | `outcome` = ok, refused, error, skipped | requests by outcome: refused = declined before the module ran (input, policy, grants, limits, resolution, verification — each also logged as `Request ended with a fatal result` with the reason), error = the load or the run failed, skipped = the composite resource chose no module and `module.allowEmpty` allowed it, so nothing ran (logged as `No module chosen by the composite resource`) |
 | `function_wasm_module_run_duration_seconds` | `outcome` = ok, error, timeout | histogram of one guest run, instantiate to response (a wait for a run slot is not part of it, and a request that never got one is not counted) |
 | `function_wasm_module_runs_in_flight` | | gauge of guest runs executing right now; pinned at `--max-concurrent-runs`, the bound is what requests wait on |
 | `function_wasm_module_cache_events_total` | `cache` = compiled (memory), compiled-disk, blob; `event` = hit, miss, stale (compiled-disk only: an artifact wasmtime refused) | cache lookups |

@@ -24,9 +24,12 @@ use crate::sandboxenv;
 
 /// Request outcomes, as the Go runtime's metrics label them: refused is the
 /// runtime declining before running the module, error is the load or the run
-/// failing.
+/// failing. Skipped is this runtime's own: the composite resource chose no
+/// module and the Input allowed it, so the step ran nothing and returned the
+/// desired state unchanged.
 const OUTCOME_REFUSED: &str = "refused";
 const OUTCOME_ERROR: &str = "error";
+const OUTCOME_SKIPPED: &str = "skipped";
 
 pub struct WasmFunction {
     pub engine: Arc<Engine>,
@@ -66,6 +69,35 @@ impl WasmFunction {
             .inc();
         response::fatal(&mut rsp, reason);
         rsp
+    }
+
+    /// The no-op of a step whose composite resource chose no module
+    /// (module.from names an unset field, module.allowEmpty allows it): the
+    /// caller's desired state and context go back byte for byte under a
+    /// fresh meta, as a guest that changed nothing would return them. Logged
+    /// and counted as skipped, so the operator of a shared runtime can tell a
+    /// step that ran nothing from one that ran.
+    fn skip(&self, raw: &[u8], from: &str, tag: String) -> Vec<u8> {
+        tracing::info!(
+            from,
+            "No module chosen by the composite resource, returning the desired state unchanged (module.allowEmpty)"
+        );
+        function_wasm_engine::metrics::REQUESTS
+            .with_label_values(&[OUTCOME_SKIPPED])
+            .inc();
+        crate::protowire::noop_response(raw, &self.response_meta(tag).encode_to_vec())
+    }
+
+    /// The meta of a response the runtime completes itself: the request's
+    /// tag and the runtime's TTL, response::to's shape.
+    fn response_meta(&self, tag: String) -> ResponseMeta {
+        ResponseMeta {
+            tag,
+            ttl: Some(pbjson_types::Duration {
+                seconds: self.ttl.as_secs() as i64,
+                nanos: self.ttl.subsec_nanos() as i32,
+            }),
+        }
     }
 }
 
@@ -120,7 +152,11 @@ impl WasmFunction {
             admitted.composition.as_deref(),
             composite.as_ref(),
         ) {
-            Ok(source) => source,
+            Ok(Some(source)) => source,
+            // Nothing to run: the composite resource left the field unset
+            // and the Input allows it. Everything past this point needs a
+            // module; the step is done here.
+            Ok(None) => return Ok(self.skip(&raw, &input.module.from, tag)),
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
                     rsp,
@@ -467,14 +503,10 @@ impl WasmFunction {
         if got.meta.is_some() {
             return Ok(out);
         }
-        let meta = ResponseMeta {
-            tag,
-            ttl: Some(pbjson_types::Duration {
-                seconds: self.ttl.as_secs() as i64,
-                nanos: self.ttl.subsec_nanos() as i32,
-            }),
-        };
-        Ok(crate::protowire::append_meta(out, &meta.encode_to_vec()))
+        Ok(crate::protowire::append_meta(
+            out,
+            &self.response_meta(tag).encode_to_vec(),
+        ))
     }
 }
 
@@ -672,6 +704,97 @@ mod tests {
         assert_eq!(rsp.meta.expect("meta").tag, "t");
     }
 
+    /// A request whose composite resource is observed as given, with a
+    /// desired state and context to echo.
+    fn request_with_composite(
+        input: serde_json::Value,
+        composite: serde_json::Value,
+    ) -> RunFunctionRequest {
+        use function_sdk_rust::proto::v1::{Resource, State};
+        let resource = |v: serde_json::Value| Resource {
+            resource: Some(resource::json_to_struct(v.as_object().expect("object"))),
+            ..Default::default()
+        };
+        RunFunctionRequest {
+            meta: Some(RequestMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            observed: Some(State {
+                composite: Some(resource(composite)),
+                ..Default::default()
+            }),
+            desired: Some(State {
+                composite: Some(resource(serde_json::json!({"status": {"ready": true}}))),
+                resources: std::collections::HashMap::from([(
+                    "bucket".to_string(),
+                    resource(serde_json::json!({"kind": "Bucket"})),
+                )]),
+            }),
+            input: Some(resource::json_to_struct(input.as_object().expect("object"))),
+            context: Some(resource::json_to_struct(
+                serde_json::json!({"region": "eu"})
+                    .as_object()
+                    .expect("object"),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unset_from_field_skips_the_step_when_allowed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat"),
+        )
+        .expect("write");
+        let f = function(Some(dir.path().to_owned()));
+        let allow = input(serde_json::json!({
+            "type": "Path",
+            "from": "status.module",
+            "allowEmpty": true,
+        }));
+
+        // Unset: the step is a no-op - the desired state and context come
+        // back as sent, with the runtime's meta and no result.
+        let req = request_with_composite(allow.clone(), serde_json::json!({"kind": "XR"}));
+        let rsp = f
+            .run_function(Request::new(req.clone()))
+            .await
+            .expect("never a gRPC error")
+            .into_inner();
+        assert!(rsp.results.is_empty(), "{:?}", rsp.results);
+        assert_eq!(rsp.desired, req.desired);
+        assert_eq!(rsp.context, req.context);
+        let meta = rsp.meta.expect("meta");
+        assert_eq!(meta.tag, "t");
+        assert_eq!(meta.ttl.expect("ttl").seconds, 60);
+        assert!(
+            function_wasm_engine::metrics::sample(
+                "function_wasm_module_requests_total",
+                &[("outcome", "skipped")]
+            )
+            .unwrap_or(0.0)
+                >= 1.0
+        );
+
+        // Set: the chosen module runs as it would without allowEmpty. (The
+        // empty-response guest returns no desired state at all.)
+        let req = request_with_composite(
+            allow,
+            serde_json::json!({"kind": "XR", "status": {"module": "fn.wasm"}}),
+        );
+        let rsp = f
+            .run_function(Request::new(req))
+            .await
+            .expect("never a gRPC error")
+            .into_inner();
+        assert!(rsp.results.is_empty(), "{:?}", rsp.results);
+        assert_eq!(rsp.desired, None);
+        assert_eq!(rsp.meta.expect("meta").tag, "t");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn metrics_record_the_request_and_run() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -838,6 +961,18 @@ mod tests {
                 Some(dir.path().to_owned()),
                 input(serde_json::json!({"type": "Path", "path": "other.wasm"})),
                 "cannot resolve module: cannot stat module file",
+            ),
+            (
+                "UnsetFromField",
+                Some(dir.path().to_owned()),
+                input(serde_json::json!({"type": "Path", "from": "status.module"})),
+                "cannot resolve module: module.from status.module: no observed composite resource to read it from",
+            ),
+            (
+                "AllowEmptyWithoutFrom",
+                Some(dir.path().to_owned()),
+                input(serde_json::json!({"type": "Path", "path": "fn.wasm", "allowEmpty": true})),
+                "cannot resolve module: module.allowEmpty is set but module.from is not: only a module the composite resource chooses can be left unset",
             ),
         ];
         for (name, dir, in_value, want_prefix) in cases {
