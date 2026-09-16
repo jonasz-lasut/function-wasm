@@ -65,6 +65,20 @@ fn cases() -> Vec<Case> {
             stdin: "",
         },
         Case {
+            name: "AllowEmptyWithoutXR",
+            args: &["testdata/validate/allow-empty.yaml"],
+            stdin: "",
+        },
+        Case {
+            name: "AllowEmptyWithXR",
+            args: &[
+                "testdata/validate/allow-empty.yaml",
+                "--xr",
+                "testdata/validate/xr.yaml",
+            ],
+            stdin: "",
+        },
+        Case {
             name: "UnknownFields",
             args: &["testdata/validate/unknown.yaml"],
             stdin: "",

@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 2.1
+* Status: Implemented, revision 2.2
 
 The shape of the Input before `v0.1.0` freezes it: a discriminated `module`
 instead of six sibling fields, with top-level siblings owned by the
@@ -13,7 +13,9 @@ revision 2.0 records the three-layer authorization change
 Input, replaced by `compositionPolicy` (raw Cedar) and the module
 manifest's `requires`; revision 2.1 adds a manifest by reference for
 manifest-less sources (`http.manifestURL`/`manifestDigest`,
-`manifestPath`; docs/one-pager-manifest-less-sources.md). This document is the authoritative shape and holds
+`manifestPath`; docs/one-pager-manifest-less-sources.md); revision 2.2 adds
+`module.allowEmpty` (issue #82): a `from` field the composite resource
+leaves unset makes the step a no-op instead of a fatal result. This document is the authoritative shape and holds
 every Input field: the trust-model one-pager describes what the
 `compositionPolicy` fence means, the resource-governance one-pager
 `limits`, the sandbox one-pager the capabilities a manifest may request.
@@ -31,6 +33,7 @@ module:                                   # what runs — required
   # http: {url, digest, manifestURL?, manifestDigest?}   # a manifest-less source may name its wasmfn.yaml
   # path: fn.wasm                          # with, optionally, manifestPath: fn-manifest.yaml (under --module-dir)
   # from: status.module                   # … or the XR field holding it (an object of `type`)
+  # allowEmpty: true                      # with from: an unset field runs nothing (desired state unchanged)
 compositionPolicy: |                      # the composition author's Cedar layer (three-layer-authz one-pager)
   permit (principal, action == Action::"pullModule",
           resource in Repository::"ghcr.io/example-org");
@@ -74,7 +77,18 @@ The shape above is implemented in `input/v1beta1/input.go`, enforced by
   `{ref, credentials}` object for `OCI`, `{url, digest}` for `HTTP`, a
   string for `Path` — then validated like a static source. Errors name the
   field: `module.from: status.module of the composite resource is not a
-  {ref, credentials} object: …`.
+  {ref, credentials} object: …`. A field the composite resource has not set
+  is an error naming it (`cannot read status.module from the composite
+  resource: module: no such field`) - unless `module.allowEmpty: true`, in
+  which case the step runs no module and returns the request's desired
+  state and context unchanged (the SDK's `response.To` shape, built at the
+  wire level from the caller's own bytes), logged and counted as
+  `requests_total{outcome="skipped"}`. `allowEmpty` is read from the Input
+  only and refused without `from`: the Composition decides whether a step
+  may be left empty, the composite resource only whether it is. A field
+  that is set is read, fenced and run exactly as without it. This is the
+  reserved hook of the README's first use case before any tenant fills it
+  in, and a smoke test of a deployed runtime that needs no module built.
 - `compositionPolicy` is raw Cedar over the same schema as the operator's
   policy, compiled at admission (content-hash cached; malformed Cedar is a
   fatal result). For an XR-chosen source it is a required fence,

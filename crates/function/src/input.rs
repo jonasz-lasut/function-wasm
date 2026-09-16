@@ -25,6 +25,10 @@ pub struct ModuleSource {
     pub path: String,
     pub manifest_path: String,
     pub from: String,
+    /// With from: a composite resource that leaves the field unset chooses
+    /// no module, and the step returns the request's desired state unchanged
+    /// instead of a fatal result. Read from the Input only.
+    pub allow_empty: bool,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]

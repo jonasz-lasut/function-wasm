@@ -18,24 +18,47 @@ use crate::location::{http_location, oci_location};
 /// by a pullModule rule, and an XR-chosen OCI object may name a
 /// pipeline-step credential only where a spendCredential rule permits it for
 /// that repository. A static source is not subject to the fence.
+///
+/// None is the one non-error way out: the field is unset (absent, or null)
+/// and src.allowEmpty says the composite resource may choose no module, so
+/// the step has nothing to run. Without allowEmpty an unset field is the
+/// error it always was.
 pub fn from_composite(
     src: &ModuleSource,
     comp: Option<&CompositionPolicy>,
     composite: Option<&serde_json::Value>,
-) -> Result<ModuleSource, String> {
+) -> Result<Option<ModuleSource>, String> {
     admission::validate_source(src)?;
     let mut src = src.clone();
     if src.from.is_empty() {
-        return Ok(src);
+        return Ok(Some(src));
     }
     let from = std::mem::take(&mut src.from);
+    // The concrete source is static from here on: allowEmpty was the
+    // choice about the field, and the field has been read.
+    let allow_empty = std::mem::take(&mut src.allow_empty);
     let Some(composite) = composite else {
+        if allow_empty {
+            return Ok(None);
+        }
         return Err(format!(
             "module.from {from}: no observed composite resource to read it from"
         ));
     };
-    let value = field_value(composite, &from)
-        .map_err(|e| format!("module.from: cannot read {from} from the composite resource: {e}"))?;
+    let value = match field_value(composite, &from) {
+        Ok(value) => value,
+        Err(e) => {
+            if allow_empty {
+                return Ok(None);
+            }
+            return Err(format!(
+                "module.from: cannot read {from} from the composite resource: {e}"
+            ));
+        }
+    };
+    if allow_empty && value.is_null() {
+        return Ok(None);
+    }
     decode_from_value(&mut src, value).map_err(|e| {
         format!(
             "module.from: {from} of the composite resource is not a {}: {e}",
@@ -45,7 +68,7 @@ pub fn from_composite(
     admission::validate_source(&src)
         .map_err(|e| format!("module.from: {from} of the composite resource: {e}"))?;
     admit(&from, &src, comp, &principal_from_composite(composite))?;
-    Ok(src)
+    Ok(Some(src))
 }
 
 /// Checks what can be known of a from source without the composite
@@ -306,8 +329,9 @@ mod tests {
         let comp = compile_composition_policy(POLICY)
             .expect("compile")
             .expect("some");
-        let src =
-            from_composite(&from_src("status.module"), Some(&comp), Some(&xr())).expect("admit");
+        let src = from_composite(&from_src("status.module"), Some(&comp), Some(&xr()))
+            .expect("admit")
+            .expect("a module was chosen");
         assert!(src.from.is_empty());
         assert!(
             src.oci
@@ -337,5 +361,54 @@ mod tests {
             err.contains("but the Input has no compositionPolicy"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn an_unset_field_is_an_error_unless_allow_empty() {
+        let comp = compile_composition_policy(POLICY)
+            .expect("compile")
+            .expect("some");
+        let mut xr = xr();
+        xr["status"]["empty"] = serde_json::Value::Null;
+
+        let err = from_composite(&from_src("status.hook"), Some(&comp), Some(&xr))
+            .expect_err("an unset field");
+        assert_eq!(
+            err,
+            "module.from: cannot read status.hook from the composite resource: hook: no such field"
+        );
+        let err = from_composite(&from_src("status.hook"), Some(&comp), None)
+            .expect_err("no composite resource");
+        assert_eq!(
+            err,
+            "module.from status.hook: no observed composite resource to read it from"
+        );
+
+        let allow = |from: &str| ModuleSource {
+            allow_empty: true,
+            ..from_src(from)
+        };
+        // Absent, null, and no composite resource at all: nothing chosen.
+        for (name, composite) in [
+            ("absent", Some(&xr)),
+            ("null", Some(&xr)),
+            ("no composite", None),
+        ] {
+            let from = if name == "null" {
+                "status.empty"
+            } else {
+                "status.hook"
+            };
+            let got = from_composite(&allow(from), Some(&comp), composite).expect(name);
+            assert!(got.is_none(), "{name}: {got:?}");
+        }
+        // A chosen module is still fenced and still concrete.
+        let got = from_composite(&allow("status.module"), Some(&comp), Some(&xr))
+            .expect("admit")
+            .expect("chosen");
+        assert!(!got.allow_empty && got.from.is_empty());
+        let err =
+            from_composite(&allow("status.other"), Some(&comp), Some(&xr)).expect_err("fenced");
+        assert!(err.contains("(pullModule)"), "{err}");
     }
 }

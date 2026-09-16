@@ -474,7 +474,18 @@ impl Validator {
         let src = match (&input.module.from.is_empty(), &self.xr) {
             (false, Some(xr)) => {
                 let concrete = match crate::from::from_composite(&input.module, comp, Some(xr)) {
-                    Ok(concrete) => concrete,
+                    Ok(Some(concrete)) => concrete,
+                    // The composite resource left the field unset and the
+                    // Input allows it: the step runs nothing, so there is
+                    // nothing to resolve.
+                    Ok(None) => {
+                        r.module = format!(
+                            "no module: {} of the composite resource is unset (allowEmpty)",
+                            input.module.from
+                        );
+                        r.warnings.extend(self.warnings(&input));
+                        return r;
+                    }
                     Err(e) => refuse!(format!("cannot resolve module: {e}")),
                 };
                 r.module = format!(
@@ -708,7 +719,15 @@ fn unknown_fields(
             "limits",
             "config",
         ],
-        "module" => &["type", "oci", "http", "path", "manifestPath", "from"],
+        "module" => &[
+            "type",
+            "oci",
+            "http",
+            "path",
+            "manifestPath",
+            "from",
+            "allowEmpty",
+        ],
         "module.oci" => &["ref", "credentials"],
         "module.http" => &["url", "digest", "manifestURL", "manifestDigest"],
         "limits" => &["timeout", "memory", "concurrency"],
@@ -738,7 +757,11 @@ fn unknown_fields(
 /// Names a source the way the runtime's messages do.
 fn describe_source(src: &ModuleSource) -> String {
     if !src.from.is_empty() {
-        return format!("chosen by the composite resource from {}", src.from);
+        let or_none = if src.allow_empty { " (allowEmpty)" } else { "" };
+        return format!(
+            "chosen by the composite resource from {}{or_none}",
+            src.from
+        );
     }
     if let Some(oci) = &src.oci {
         return format!("oci {}", oci.r#ref);

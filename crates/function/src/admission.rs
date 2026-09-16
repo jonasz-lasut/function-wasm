@@ -329,6 +329,12 @@ pub(crate) fn validate_source(src: &ModuleSource) -> Result<(), String> {
             src.from
         ));
     }
+    if src.allow_empty && !has_from {
+        return Err(
+            "module.allowEmpty is set but module.from is not: only a module the composite resource chooses can be left unset"
+                .to_string(),
+        );
+    }
     if !src.manifest_path.is_empty() && src.r#type != "Path" {
         return Err(format!(
             "module.manifestPath is set but module.type is {}: it names a manifest file under --module-dir and is only allowed with type Path",
@@ -497,5 +503,27 @@ mod tests {
             let err = admit(input, &ceilings()).expect_err(name);
             assert_eq!(&err, want, "{name}");
         }
+    }
+
+    #[test]
+    fn allow_empty_needs_a_from_source() {
+        let mut input = path_input("fn.wasm");
+        input.module.allow_empty = true;
+        let err = admit(&input, &ceilings()).expect_err("refused");
+        assert_eq!(
+            err,
+            "cannot resolve module: module.allowEmpty is set but module.from is not: only a module the composite resource chooses can be left unset"
+        );
+
+        let input = Input {
+            module: ModuleSource {
+                r#type: "Path".to_string(),
+                from: "status.module".to_string(),
+                allow_empty: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        admit(&input, &ceilings()).expect("admitted");
     }
 }
