@@ -123,7 +123,7 @@ kind: Function
 metadata:
   name: function-wasm
 spec:
-  package: ghcr.io/jonasz-lasut/function-wasm:v0.4.0
+  package: ghcr.io/jonasz-lasut/function-wasm:v0.5.0
 ```
 
 Also mirrored to `xpkg.upbound.io/jonasz-lasut/function-wasm`.
