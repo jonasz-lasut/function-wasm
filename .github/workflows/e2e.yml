@@ -111,9 +111,11 @@ jobs:
           retention-days: 1
 
   # The guest behavioural suite with every toolchain installed - what the
-  # always-on unit-test job skips (SKIP_GUEST_BUILDS): all guests through
-  # the whole host, greetings, granted and refused egress, manifestPath,
-  # guest-side fatals and logs.
+  # always-on unit-test job skips (SKIP_GUEST_BUILDS): every language's
+  # scaffold, built from what guestfn init writes, through the whole host -
+  # greetings, granted and refused egress, manifestPath, guest-side fatals
+  # and logs. A scaffold has no lockfile, so this resolves dependencies the
+  # way a user's first build does.
   #
   # Built in release: a debug wasmtime compiles the large guests (the Go
   # module, the TypeScript and Python components) many times slower, and
@@ -174,10 +176,9 @@ jobs:
       - name: Run the Guest Suite
         run: cargo test --locked --release -p function-wasm --test guests
 
-  # The example guest is the scaffold rendered for itself. Rendering it with
-  # crossplane render against the runtime built from this tree proves the
-  # whole chain: guest compiles to wasm, the runtime serves it over gRPC,
-  # Crossplane accepts the response.
+  # Each example guest, rendered with crossplane against the runtime built
+  # from this tree, proves the whole chain: guest compiles to wasm, the
+  # runtime serves it over gRPC, Crossplane accepts the response.
   render-go:
     name: render (go)
     runs-on: ubuntu-26.04

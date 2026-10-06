@@ -284,7 +284,8 @@ its ABI glue in the open — the Go scaffold vendors it under `internal/wasmfn`,
 TinyGo, Rust, Zig and C carry theirs beside the module — with a small HTTP
 helper over `wasmfn.http`; each example
 has a `make render-check` that runs it through the runtime, and the root tests
-run them all through the host as well — with and without an egress grant.
+build every scaffold and run it through the host as well - with and without an
+egress grant.
 
 ### Render locally
 
@@ -1079,9 +1080,10 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 make -C examples/hello-go render-check              # function validate + crossplane render through the real runtime
 ```
 
-The workspace tests build the example guests to WebAssembly and run them all
-through the host when their toolchains (go, tinygo, cargo + wasm32-wasip1 and
-wasm32-wasip3, zig) are on PATH, and skip the ones that are not. See
+The workspace tests build every scaffold (what `guestfn init` writes) and the
+AssemblyScript example to WebAssembly and run them all through the host when
+their toolchains (go, tinygo, cargo with the rust scaffold's pinned
+toolchain, zig, npm, python3) are on PATH, and skip the ones that are not. See
 [AGENTS.md](AGENTS.md) for the layout and conventions.
 
 Design documents live under `docs/` as one-pagers: the implemented ones

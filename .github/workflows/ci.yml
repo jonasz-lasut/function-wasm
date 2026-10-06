@@ -62,7 +62,7 @@ jobs:
   # the runtime's unit and integration tests (the raw-client transparency
   # proof included), the conformance goldens - recorded the day the output
   # last diffed byte-identical against the Go runtime - and guestfn's
-  # scaffold goldens, the render-matches-the-examples lockstep and its
+  # scaffold goldens, the plumbing the examples share with them and its
   # CLI tests against an in-memory registry. The job is deliberately
   # toolchain-free: SKIP_GUEST_BUILDS turns the guest suite off (the
   # runner's preinstalled Go would otherwise build the go guest with an

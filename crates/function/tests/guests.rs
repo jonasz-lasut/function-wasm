@@ -1,11 +1,18 @@
-//! The example guests - the same greeting function written with
-//! function-sdk-go (Go), with TinyGo and vtprotobuf, in Zig with
-//! zig-protobuf, in C with nanopb, in AssemblyScript with as-proto,
-//! and as ABI v2 components in async Rust with wit-bindgen and in C# with
-//! componentize-dotnet - through the
-//! whole host: path and OCI sources, compile, per-request instance, egress
-//! through wasmfn.http or wasi:http, guest logging. Every guest must produce
-//! the same response.
+//! The guests - the same greeting function written with function-sdk-go
+//! (Go), with TinyGo and vtprotobuf, in Zig with zig-protobuf, in C with
+//! nanopb, in AssemblyScript with as-proto, as an ABI v2 component in async
+//! Rust with wit-bindgen, and as components in TypeScript, Python and C#
+//! (componentize-dotnet) - through the whole host: path and OCI sources,
+//! compile, per-request instance, egress through wasmfn.http or wasi:http,
+//! guest logging. Every guest must produce the same response.
+//!
+//! A language with a scaffold is built from what `guestfn init` writes (its
+//! golden under crates/guestfn/testdata, which the scaffold tests keep
+//! byte-identical to the templates), so this suite proves the projects users
+//! start from; the examples under examples/ solve their own use cases and are
+//! checked by their render jobs. A guest without a scaffold (AssemblyScript,
+//! C#) is built from its example.
+//!
 //! A guest whose toolchain is not on PATH is skipped, like the Go tree's
 //! guest tests skip without theirs.
 
@@ -56,6 +63,54 @@ fn examples() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
 }
 
+/// Where a guest is built: a fresh copy of its scaffold's golden, or its
+/// example when the language has no scaffold.
+fn guest_dir(guest: &str) -> PathBuf {
+    let golden = match guest {
+        "assemblyscript" | "dotnet" => return examples().join(format!("hello-{guest}")),
+        "rust-v2" => "rust",
+        other => other,
+    };
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../guestfn/testdata")
+        .join(golden);
+    // Outside the repository: a scaffold is a standalone project, and under
+    // this checkout cargo would take it for a member of the workspace.
+    let dir = std::env::temp_dir()
+        .join("function-wasm-guest-scaffolds")
+        .join(guest);
+    // Build caches survive between runs; every other file is the golden's,
+    // so a file the scaffold no longer writes cannot linger.
+    const CACHES: [&str; 5] = [".venv", "node_modules", "target", ".zig-cache", "zig-out"];
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if CACHES.iter().any(|c| entry.file_name() == *c) {
+                continue;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path).expect("clear scaffold dir");
+            } else {
+                std::fs::remove_file(&path).expect("clear scaffold file");
+            }
+        }
+    }
+    copy_tree(&src, &dir);
+    dir
+}
+
+fn copy_tree(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).expect("create dir");
+    for entry in std::fs::read_dir(src).expect("read golden").flatten() {
+        let to = dst.join(entry.file_name());
+        if entry.file_type().expect("file type").is_dir() {
+            copy_tree(&entry.path(), &to);
+        } else {
+            std::fs::copy(entry.path(), &to).expect("copy golden file");
+        }
+    }
+}
+
 fn on_path(name: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|paths| std::env::split_paths(&paths).any(|p| p.join(name).is_file()))
@@ -96,9 +151,9 @@ fn docker_running() -> bool {
             .is_ok_and(|out| out.status.success())
 }
 
-/// Builds one example guest with its toolchain; None skips the guest.
+/// Builds one guest with its toolchain; None skips the guest.
 fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
-    let dir = examples().join(format!("hello-{guest}"));
+    let dir = guest_dir(guest);
     let out_s = out.to_string_lossy().into_owned();
     let built = match guest {
         "go" => {
@@ -106,32 +161,35 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 eprintln!("skipping: go not on PATH");
                 return None;
             }
-            command(
-                &dir,
-                "go",
-                &["build", "-buildmode=c-shared", "-o", &out_s, "."],
-                &[("GOOS", "wasip1"), ("GOARCH", "wasm")],
-            )
+            // A scaffold's go.mod has no go.sum yet; guestfn init tidies it.
+            command(&dir, "go", &["mod", "tidy"], &[])
+                && command(
+                    &dir,
+                    "go",
+                    &["build", "-buildmode=c-shared", "-o", &out_s, "."],
+                    &[("GOOS", "wasip1"), ("GOARCH", "wasm")],
+                )
         }
         "tinygo" => {
             if !on_path("tinygo") {
                 eprintln!("skipping: tinygo not on PATH");
                 return None;
             }
-            command(
-                &dir,
-                "tinygo",
-                &[
-                    "build",
-                    "-target=wasip1",
-                    "-buildmode=c-shared",
-                    "-no-debug",
-                    "-o",
-                    &out_s,
-                    ".",
-                ],
-                &[],
-            )
+            command(&dir, "go", &["mod", "tidy"], &[])
+                && command(
+                    &dir,
+                    "tinygo",
+                    &[
+                        "build",
+                        "-target=wasip1",
+                        "-buildmode=c-shared",
+                        "-no-debug",
+                        "-o",
+                        &out_s,
+                        ".",
+                    ],
+                    &[],
+                )
         }
         "rust-v2" => {
             if !on_path("cargo") || !on_path("rustup") {
@@ -173,7 +231,9 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 eprintln!("skipping: npm not on PATH");
                 return None;
             }
-            if !command(&dir, "npm", &["ci", "--no-audit", "--no-fund"], &[])
+            // A scaffold has no lockfile: npm install resolves it the way a
+            // user's first build does.
+            if !command(&dir, "npm", &["install", "--no-audit", "--no-fund"], &[])
                 || !command(&dir, "npm", &["run", "build"], &[])
             {
                 return Some(Vec::new());
@@ -186,14 +246,16 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 eprintln!("skipping: python3 not on PATH");
                 return None;
             }
-            if !dir.join(".venv").is_dir()
-                && (!command(&dir, "python3", &["-m", "venv", ".venv"], &[])
-                    || !command(
-                        &dir,
-                        ".venv/bin/pip",
-                        &["install", "--quiet", "-r", "requirements.txt"],
-                        &[],
-                    ))
+            // The venv is a kept cache; the requirements are installed every
+            // run, which is cheap once they are satisfied.
+            if (!dir.join(".venv").is_dir()
+                && !command(&dir, "python3", &["-m", "venv", ".venv"], &[]))
+                || !command(
+                    &dir,
+                    ".venv/bin/pip",
+                    &["install", "--quiet", "-r", "requirements.txt"],
+                    &[],
+                )
             {
                 return Some(Vec::new());
             }
