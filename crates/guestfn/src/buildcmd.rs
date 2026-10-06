@@ -241,7 +241,14 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
         LANG_TS => {
             which("npm", "install node from https://nodejs.org")?;
             if !dir.join("node_modules").is_dir() {
-                crate::run_in(dir, "npm", &["ci", "--no-audit", "--no-fund"])?;
+                // A lockfile pins the install; a fresh project has none, so
+                // npm install resolves the package.json ranges and writes it.
+                let install = if dir.join("package-lock.json").is_file() {
+                    "ci"
+                } else {
+                    "install"
+                };
+                crate::run_in(dir, "npm", &[install, "--no-audit", "--no-fund"])?;
             }
             crate::run_in(dir, "npm", &["run", "build"])?;
             // The package's build script componentizes to fn.wasm in the
