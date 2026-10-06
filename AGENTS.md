@@ -232,8 +232,11 @@ examples/hello-assemblyscript  the same guest, AssemblyScript + as-proto (exampl
                             four files hand-written where as-proto-gen 1.3.0 gets this proto
                             wrong (the Value oneof, proto3 optional presence, packed repeated
                             enums), stub runtime with a bump allocator, ~30 KB - the smallest guest
-examples/render.sh          shared: cargo-build the runtime serving an example dir, crossplane
-                            render its example/, optionally --check
+examples/render.sh          shared: cargo-build the runtime, function validate every example/xr*.yaml,
+                            serve the example dir (example/policy.cedar as the operator policy,
+                            example/fixtures/ on a local HTTP server for egress), then crossplane
+                            render example/xr.yaml - or, with --check, run example/xprin.yaml
+                            (xprin, crossplane-contrib's render test framework) against it
 package/                    crossplane.yaml + the checked-in Input CRD (documentation for tooling;
                             Crossplane never installs a function's Input CRD - the CRD is maintained
                             by hand now that the Go types that generated it are gone)
@@ -338,7 +341,7 @@ make -C examples/hello-dotnet test        # dotnet test (in the .NET SDK contain
 
 Goldens: `UPDATE_CONFORMANCE=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
 
-CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml` (its `build-tools` job compiles the release runtime and `guestfn` once per run and hands them to every render job as an artifact, which `examples/render.sh` and hello-go's Makefile pick up from `FUNCTION_BIN` and `GUESTFN`; without them they build from the tree), hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push.
+CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml` (its `build-tools` job compiles the release runtime and `guestfn` once per run, fetches xprin pinned by checksum, and hands all three to every render job as an artifact, which `examples/render.sh` and hello-go's Makefile pick up from `FUNCTION_BIN`, `GUESTFN` and `XPRIN`; without them they build from the tree and take xprin from PATH), hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push.
 
 ### Test Patterns
 
@@ -386,9 +389,11 @@ Edit the template set under `crates/guestfn/templates/<lang>` (templates use `[[
 
 ### Rendering Locally
 
+Each example's `example/xprin.yaml` is its render test: [xprin](https://github.com/crossplane-contrib/xprin) cases (an XR plus any required resources, observed resources or function credentials) with declarative assertions on what the module composes - `Count`, `Exists`/`NotExists`, `FieldValue` - never string matching over the render output. A suite asserts outcomes as composed resources or XR status, never function results (they carry no name, so xprin collapses them onto one `Result/` key); a fatal path is tested in the guest's own unit tests, because a fatal result fails the render. `render.sh` owns the runtime's side: `function validate` over every `example/xr*.yaml`, the operator policy and the fixture server.
+
 ```bash
 make -C examples/hello-go render          # build fn.wasm (guestfn via cargo), serve it, crossplane render example/
-make -C examples/hello-go render-check    # same, asserting the output — what the /e2e render job runs
+make -C examples/hello-go render-check    # same, running example/xprin.yaml (xprin on PATH, or XPRIN) - what the /e2e render job runs
 make -C examples/hello-tinygo render      # the TinyGo guest (tinygo on PATH)
 make -C examples/hello-zig render         # the Zig guest (zig on PATH)
 make -C examples/hello-c render           # the C guest (zig on PATH: zig cc builds it)
