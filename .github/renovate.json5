@@ -57,10 +57,12 @@
       // The crossplane/crossplane release every vendored run_function.proto
       // was copied from - the same tripwire function-sdk-rust carries. A bump
       // PR moves the version in the header comment of all copies at once; it
-      // does NOT re-download the file, so treat the PR as the signal to
-      // re-vendor by hand (the header says how) and regenerate each guest's
-      // checked-in codec. Merging it without re-vendoring would claim a
-      // version the file is not.
+      // does NOT re-download the file or regenerate the guests' codecs, so
+      // treat the PR as the signal to run `make vendor-proto` on its branch
+      // (the root Makefile re-vendors every copy at the new version,
+      // regenerates the codecs and refreshes the goldens) and push the
+      // result. Merging it without that would claim a version the file is
+      // not.
       customType: 'regex',
       description: 'crossplane/crossplane release the vendored run_function.proto came from',
       managerFilePatterns: ['/(^|/)proto/run_function\\.proto$/'],
