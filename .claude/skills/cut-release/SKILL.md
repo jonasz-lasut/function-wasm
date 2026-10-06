@@ -79,6 +79,19 @@ carries it. Not this: illustrative `ghcr.io/example/...` module tags
 (arbitrary). Guests vendor their ABI glue under `internal/wasmfn`, so there is
 no separate SDK version to bump.
 
+**Refresh the scaffold templates' dependency pins, also before cutting**
+(`SECURITY.md`: users ship what `guestfn init` writes; Renovate cannot read
+`.tmpl`). Move each to its latest release: function-sdk-go
+(`FALLBACK_SDK_VERSION` in `crates/guestfn/src/main.rs`, plus the
+`sdk_version` in `scaffold.rs`'s tests), the go and tinygo `go.mod.tmpl`
+(after a protobuf or vtprotobuf move, regenerate the tinygo codec with
+`make -C examples/hello-tinygo generate` and copy it into the templates),
+the rust `Cargo.toml.tmpl`, and the zig and c `build.zig.zon.tmpl`
+(`zig fetch --save <url>` writes url and hash). Mirror each change into its
+example (`render_matches_the_examples` fails on drift), run
+`UPDATE_GOLDENS=1 cargo test -p guestfn`, and merge the PR to `main` once CI
+and `/e2e` (comment it on the PR) are green.
+
 ### 3. Cut the new release branch from `main` HEAD
 
 ```bash
