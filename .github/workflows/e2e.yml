@@ -19,20 +19,21 @@
 # which the always-on CI keeps toolchain-free. The result is reported as a
 # commit status on the PR's head, since an issue_comment run does not show
 # up as a check by itself.
+#
+# An issue_comment run uses this file from the default branch but builds the
+# pull request's code, so only the repository's owner, members and
+# collaborators can start it, the jobs that run that code get a read-only
+# token, and no checkout leaves the token behind for the code to read.
 name: E2E
 
 on:
   issue_comment:
     types: [created]
 
-# Reactions and the head lookup on a pull request's comment go through the
-# pull-requests permission (an explicit permissions block zeroes everything
-# unlisted); issues: write stays for comments on plain issues.
+# Read-only by default; start and report, which run none of the pull
+# request's code, take the write scopes they need.
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
-  statuses: write
 
 jobs:
   # Gates the whole run on a /e2e comment on a pull request, acknowledges
@@ -40,7 +41,17 @@ jobs:
   # e2e status pending.
   start:
     runs-on: ubuntu-26.04
-    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/e2e')
+    if: >-
+      github.event.issue.pull_request
+      && startsWith(github.event.comment.body, '/e2e')
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    # Reactions and the head lookup on a pull request's comment go through
+    # the pull-requests permission; issues: write stays for comments on
+    # plain issues.
+    permissions:
+      issues: write
+      pull-requests: write
+      statuses: write
     outputs:
       sha: ${{ steps.pr.outputs.sha }}
     env:
@@ -76,6 +87,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -136,6 +148,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       # The runtime the render runs against, and guestfn, are built from
       # this tree.
@@ -182,6 +195,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -245,6 +259,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -293,6 +308,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -344,6 +360,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -399,6 +416,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -469,6 +487,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -505,6 +524,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -544,6 +564,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -569,6 +590,8 @@ jobs:
     runs-on: ubuntu-26.04
     needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-rust-v2, render-zig, render-c, render-assemblyscript, render-ts, render-python]
     if: always() && needs.start.result == 'success'
+    permissions:
+      statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
