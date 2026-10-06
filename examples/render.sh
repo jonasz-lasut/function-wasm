@@ -7,6 +7,9 @@
 # proves the runtime loads the module, runs it over gRPC, and Crossplane
 # accepts the response.
 #
+# The runtime is built from this repository unless FUNCTION_BIN names a
+# prebuilt one (CI builds it once per run and hands it to every render job).
+#
 # Usage: render.sh <example dir> [--check]
 set -euo pipefail
 
@@ -27,9 +30,14 @@ fi
 work=$(mktemp -d)
 trap 'kill "${fn_pid:-}" 2>/dev/null || true; rm -rf "$work"' EXIT
 
-echo "==> building the runtime" >&2
-(cd "$root" && cargo build --release -p function-wasm >&2)
-cp "$root/target/release/function" "$work/function"
+if [[ -n "${FUNCTION_BIN:-}" ]]; then
+  echo "==> using the runtime at $FUNCTION_BIN" >&2
+  cp "$FUNCTION_BIN" "$work/function"
+else
+  echo "==> building the runtime" >&2
+  (cd "$root" && cargo build --release -p function-wasm >&2)
+  cp "$root/target/release/function" "$work/function"
+fi
 
 # The runtime's own admission over the example Composition, offline, before
 # anything is served: the same flags the runtime is started with below, and
