@@ -24,7 +24,9 @@ the guest's own world, `wit/world.wit` in a `local:guest` package, includes
 it beside whatever the guest imports (the rust scaffold adds the
 `wasi:http` client). Keep the contract's file unmodified: a WIT package
 that appears twice must have the same contents, so a guest's additions
-belong in its own world.
+belong in its own world. The `ts` and `python` scaffolds restate the world
+in their `wit/world.wit` instead, with `run` declared sync - the shape
+jco and componentize-py lift today, which satisfies the world (below).
 
 From `2.0.0` on, a release that brings a new world version also publishes
 it, signed and attested:

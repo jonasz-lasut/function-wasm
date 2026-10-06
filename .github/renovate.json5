@@ -166,7 +166,7 @@
     },
 
     // The one exception, and the reason it is safe: the vendored proto's
-    // version header is the same dep in all sixteen copies, so Renovate
+    // version header is the same dep in all twenty copies, so Renovate
     // moves templates, goldens and examples in a single PR - the examples
     // only because ignorePaths above no longer skips them. Left disabled
     // under those paths it would update the templates alone - desyncing the

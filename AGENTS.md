@@ -169,10 +169,11 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
   src/scaffold.rs             template rendering ([[ ]] delimiters, zigid/zigfp helpers), write with
                               overwrite refusal; the golden and render-matches-the-examples tests
   src/buildcmd.rs             toolchain detection (Cargo.toml → rust - wasip3 with a wit/ dir,
-                              wasip1 without; package.json sans asconfig.json → ts via npm;
-                              requirements.txt → python via componentize-py; build.zig → zig/c; vtprotobuf
-                              in go.mod → tinygo, else go), the builds, the ABI verdict, wasmfn.yaml
-                              validation, the example-config warning
+                              wasip1 without; package.json sans asconfig.json → ts via npm - npm ci
+                              with a package-lock.json, npm install without; requirements.txt →
+                              python via componentize-py; build.zig → zig/c; vtprotobuf in go.mod →
+                              tinygo, else go), the builds, the ABI verdict, wasmfn.yaml validation,
+                              the example-config warning
   src/push.rs                 the CNCF wasm OCI artifact (wasm layer, manifest layer, layerDigests
                               config, OCI annotations, SOURCE_DATE_EPOCH-reproducible), upload
   src/inspect.rs              file → engine.inspect; reference → manifest, layers, annotations, the
@@ -180,7 +181,7 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
   src/manifestcmd.rs          manifest validate <file> / manifest show <ref>
   src/composition.rs          scaffold composition: the step, a config skeleton from the schema, the
                               commented compositionPolicy skeleton from the manifest's requires
-  templates/<lang>            the five template sets (each is its example rendered for itself)
+  templates/<lang>            the seven template sets (each is its example rendered for itself)
   testdata/<lang>             the golden scaffolds (UPDATE_GOLDENS=1 cargo test regenerates)
 examples/hello-go           the Go example guest — separate go.mod; vendors its ABI glue under
                             internal/wasmfn (no external SDK); built by tests, the /e2e render job and
@@ -199,15 +200,17 @@ examples/hello-rust-v2      the same guest as an ABI v2 component - the rust sca
                             (wit/world.wit, package local:guest) includes the contract vendored
                             byte-identical under wit/deps/ beside the wasi:http deps; no ABI
                             glue - the canonical ABI owns it; imports WASI 0.3 only. ~240 KB
-examples/hello-ts           the same guest in TypeScript via jco (example only, no scaffold):
+examples/hello-ts           the same guest in TypeScript via jco - the ts scaffold's example pair
+                            (its Makefile and package-lock.json example-only):
                             protobuf-es codec (js+dts, checked in), tsc --noEmit gate, esbuild
                             bundle, componentize-js; sync-lifted run (jco cannot async-lift a
                             custom world yet - the world accepts sync), fetch() over
                             wasi:http@0.2 through the same egress hooks; root-world imports
                             arrive as default imports (import log from "log", kept external in
                             the bundle). ~14 MB (SpiderMonkey)
-examples/hello-python       the same guest in Python via componentize-py (example only, no
-                            scaffold): protoc codec checked in, pure-Python protobuf runtime
+examples/hello-python       the same guest in Python via componentize-py - the python scaffold's
+                            example pair (its Makefile example-only; requirements.txt is a
+                            template pin): protoc codec checked in, pure-Python protobuf runtime
                             bundled (the C extension cannot exist in wasm; the fallback engages
                             by itself), sync-lifted run, greeting fetched over wasi:http@0.2 on
                             componentize-py's poll loop through the same egress hooks. ~21 MB
@@ -368,7 +371,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ### Changing the scaffold
 
-Edit the example **and** its template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; the examples are the templates rendered for themselves; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the render-matches-the-examples test keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, `Cargo.lock` and the go example's glue tests are extra). The sixteen vendored `run_function.proto` copies (four templates, four goldens, eight examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file** or regenerate the codecs checked in beside it: treat the PR as the signal to run `make vendor-proto` on its branch (`VERSION=vX.Y.Z` vendors ahead of Renovate), which fetches the upstream file at that release into every copy under its own header, regenerates every guest's codec with the protoc and nanopb_generator the root `Makefile` pins (it needs Go, Zig, npm, python3 and cargo), mirrors them into the templates and refreshes the goldens; then comment /e2e, whose render jobs fail on codec drift. Per-language identity (template ↔ golden ↔ example) is enforced by the goldens and the render-matches-the-examples test. The rust scaffold's `wit/deps/wasmfn-function.wit` is the root `wit/wasmfn-function.wit` (the world the engine compiles) byte for byte, enforced by the render-matches-the-runtime-world test: change the world at the root, copy it into `templates/rust/wit/deps/` and `examples/hello-rust-v2/wit/deps/` (and move the version in `wit/world.wit`'s `include` if the package version changed), then refresh the goldens; the guest's own world, `wit/world.wit`, is a `local:guest` package, so a scaffold never redefines the contract's package (hello-ts and hello-python restate the world with a sync `run` in a `local:guest` package of their own, so only the contract's copies carry its name). The vendored WASI WIT under `wit/deps/` (wasi:*@0.3 from wasmtime-wasi-http's `src/p3/wit/deps` in the rust template, its golden and hello-rust-v2, the p3 `http.wit` trimmed of its service/middleware worlds; wasi:*@0.2 from its `wit/deps` in hello-python) carries a `Vendored from wasmtime-wasi-http X.Y.Z` header under the same tripwire, grouped into Renovate's wasmtime PR: that PR moves the headers with the crates, and is the signal to re-vendor the files by hand from the new crate (keeping the trim).
+Edit the example **and** its template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; the examples are the templates rendered for themselves; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the render-matches-the-examples test keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, lockfiles (`Cargo.lock`, `package-lock.json`) and the go example's glue tests are extra). The twenty vendored `run_function.proto` copies (six templates, six goldens, eight examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file** or regenerate the codecs checked in beside it: treat the PR as the signal to run `make vendor-proto` on its branch (`VERSION=vX.Y.Z` vendors ahead of Renovate), which fetches the upstream file at that release into every copy under its own header, regenerates every guest's codec with the protoc and nanopb_generator the root `Makefile` pins (it needs Go, Zig, npm, python3 and cargo), mirrors them into the templates and refreshes the goldens; then comment /e2e, whose render jobs fail on codec drift. Per-language identity (template ↔ golden ↔ example) is enforced by the goldens and the render-matches-the-examples test. The rust scaffold's `wit/deps/wasmfn-function.wit` is the root `wit/wasmfn-function.wit` (the world the engine compiles) byte for byte, enforced by the render-matches-the-runtime-world test: change the world at the root, copy it into `templates/rust/wit/deps/` and `examples/hello-rust-v2/wit/deps/` (and move the version in `wit/world.wit`'s `include` if the package version changed), then refresh the goldens; the guest's own world, `wit/world.wit`, is a `local:guest` package, so a scaffold never redefines the contract's package (the ts and python scaffolds' `wit/world.wit` restates the world with a sync `run` instead of including it, so only the contract's copies carry its name). The vendored WASI WIT under `wit/deps/` (wasi:*@0.3 from wasmtime-wasi-http's `src/p3/wit/deps` in the rust template, its golden and hello-rust-v2, the p3 `http.wit` trimmed of its service/middleware worlds; wasi:*@0.2 from its `wit/deps` in the python template, its golden and hello-python) carries a `Vendored from wasmtime-wasi-http X.Y.Z` header under the same tripwire, grouped into Renovate's wasmtime PR: that PR moves the headers with the crates, and is the signal to re-vendor the files by hand from the new crate (keeping the trim).
 
 ### Rendering Locally
 
