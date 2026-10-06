@@ -3,10 +3,11 @@
 # wasi:http types), and this module implements the world's `run` export.
 # `run` is declared sync in this guest's wit (componentize-py takes the sync
 # shape; a sync-lifted function satisfies the runtime's async world) - the
-# fetch still runs on componentize-py's PollLoop over wasi's poll, and
-# wasi:http@0.2's outgoing-handler rides the host's egress policy.
+# CMDB request still runs on componentize-py's PollLoop over wasi's poll,
+# and wasi:http@0.2's outgoing-handler rides the host's egress policy.
 
 import asyncio
+from typing import List, Tuple
 
 import poll_loop
 import wit_world
@@ -19,17 +20,17 @@ from wit_world.imports.types import (
     Scheme_Https,
 )
 
-from fn import handle
+from fn import Response, handle
 
 
-def fetch_text(url: str) -> str:
-    """GETs a URL through the host and returns the trimmed body."""
+def fetch(url: str, headers: List[Tuple[str, str]]) -> Response:
+    """GETs a URL through the host and returns its status and body."""
     loop = poll_loop.PollLoop()
     asyncio.set_event_loop(loop)
-    return loop.run_until_complete(fetch(url))
+    return loop.run_until_complete(get(url, headers))
 
 
-async def fetch(url: str) -> str:
+async def get(url: str, headers: List[Tuple[str, str]]) -> Response:
     if url.startswith("https://"):
         scheme, rest = Scheme_Https(), url.removeprefix("https://")
     elif url.startswith("http://"):
@@ -38,7 +39,7 @@ async def fetch(url: str) -> str:
         raise ValueError(f"GET {url}: only http and https URLs work")
     authority, _, path = rest.partition("/")
 
-    req = OutgoingRequest(Fields.from_list([]))
+    req = OutgoingRequest(Fields.from_list([(k, v.encode()) for k, v in headers]))
     req.set_method(Method_Get())
     req.set_scheme(scheme)
     req.set_authority(authority)
@@ -49,9 +50,7 @@ async def fetch(url: str) -> str:
     body = b""
     while (chunk := await stream.next()) is not None:
         body += chunk
-    if status != 200:
-        raise ValueError(f"GET {url}: status {status}")
-    return body.decode(errors="replace").strip()
+    return Response(status, body)
 
 
 def host_log(level: str, msg: str, kv) -> None:
@@ -60,4 +59,4 @@ def host_log(level: str, msg: str, kv) -> None:
 
 class WitWorld(wit_world.WitWorld):
     def run(self, request: bytes) -> bytes:
-        return handle(request, fetch_text, host_log)
+        return handle(request, fetch, host_log)

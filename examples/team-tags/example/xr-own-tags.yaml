@@ -1,0 +1,12 @@
+apiVersion: storage.example.org/v1alpha1
+kind: Bucket
+metadata:
+  name: index
+  # The team: the search team's namespace.
+  namespace: search
+spec:
+  region: us-east-1
+  tags:
+    environment: production
+    # Not the composite resource's to say: the CMDB's owner replaces it.
+    owner: mallory@example.com

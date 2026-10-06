@@ -1,0 +1,37 @@
+# The module manifest: what this module declares about itself. guestfn build
+# validates it, guestfn push publishes it beside the module as the artifact's
+# manifest layer, and the runtime holds it against what the policy layers grant
+# before every run - a manifest can refuse a run earlier and say why, never
+# make one possible.
+abi: 2
+name: team-tags
+version: 0.1.0
+# The CMDB tokens arrive in the request: the pipeline step's credential
+# "cmdb", a Secret with one key per team namespace. Every step credential
+# but the one that pulled the module reaches the guest that way today, and a
+# manifest cannot yet request a credential
+# (https://github.com/jonasz-lasut/function-wasm/issues/122), so the
+# boundary that keeps the tokens in place is the one capability below.
+requires:
+  # Reading team records: the runtime makes the request on the module's
+  # behalf, only where the Composition's compositionPolicy and the operator's
+  # Cedar policy both permit it, and writes one audit line per request
+  # (grantEgress). The CMDB host is part of what is signed and pinned with
+  # the module, so publish it with yours.
+  egress:
+    http:
+    - host: cmdb.example.org
+      methods: [GET]
+      pathPrefix: /teams/
+config:
+  # The JSON Schema (draft 2020-12) of the Input's config; the runtime refuses
+  # a request whose config does not match, naming the field.
+  schema:
+    type: object
+    required: [cmdbUrl]
+    properties:
+      cmdbUrl:
+        description: The CMDB's base URL; the module reads <cmdbUrl>/teams/<namespace>.
+        type: string
+        format: uri
+    additionalProperties: false

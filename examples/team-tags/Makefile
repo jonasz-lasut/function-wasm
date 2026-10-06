@@ -1,6 +1,6 @@
-# The hello guest in Python, componentized with componentize-py: needs
+# The team-tags guest in Python, componentized with componentize-py: needs
 # python3 (protoc only to regenerate the checked-in codec). Render needs
-# the crossplane CLI and Docker.
+# the crossplane CLI and Docker, render-check also xprin.
 .PHONY: build test render render-check gen-proto clean
 
 .venv: requirements.txt

@@ -137,6 +137,15 @@ rendered and asserted on every `/e2e` run:
   unset), fenced to one repository by the `compositionPolicy`; this add-on
   gives every Deployment the platform composed a PodDisruptionBudget, in the
   default sandbox, with no capability at all.
+- [`examples/team-tags`](examples/team-tags) (Python): a team's owner and
+  cost center come from the CMDB, never from the composite resource. After
+  function-go-templating composes an S3 bucket, the module reads the record
+  of the team whose namespace the composite resource lives in, with that
+  team's token from a step credential holding every team's, and stamps
+  `team`, `owner` and `cost-center` tags on every composed managed
+  resource. The tokens can go only where egress is granted: the one request
+  its manifest declares, which the `compositionPolicy` and the operator's
+  policy both fence.
 
 ## Install
 
@@ -264,7 +273,7 @@ scaffold as ABI v2 components, the rest as ABI v1 modules:
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
 | `ts` | [`examples/policy-gate`](examples/policy-gate) | node + npm: [esbuild](https://esbuild.github.io) bundles, [jco](https://github.com/bytecodealliance/jco) componentizes - **an ABI v2 component**, sync-lifted `run`, `fetch()` over `wasi:http@0.2` | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto (`js+dts` codec checked in; `npm run gen-proto` + protoc to redo) | ~14 MB (SpiderMonkey) |
-| `python` | [`examples/hello-python`](examples/hello-python) | `python3` (a venv with [componentize-py](https://github.com/bytecodealliance/componentize-py)) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2` | protoc's Python codec over the vendored proto (checked in), on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
+| `python` | [`examples/team-tags`](examples/team-tags) | `python3` (a venv with [componentize-py](https://github.com/bytecodealliance/componentize-py)) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2` | protoc's Python codec over the vendored proto (checked in), on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
 
 An **AssemblyScript** flavour exists as an example only for now
 ([`examples/hello-assemblyscript`](examples/hello-assemblyscript), ~30 KB — the

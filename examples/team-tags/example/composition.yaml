@@ -1,0 +1,73 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: buckets.storage.example.org
+spec:
+  compositeTypeRef:
+    apiVersion: storage.example.org/v1alpha1
+    kind: Bucket
+  mode: Pipeline
+  pipeline:
+  # The platform's own step: the bucket itself, named after its namespace and
+  # composite resource (the name it gets in AWS too), with the tags the
+  # composite resource asks for.
+  - step: bucket
+    functionRef:
+      name: function-go-templating
+    input:
+      apiVersion: gotemplating.fn.crossplane.io/v1beta1
+      kind: GoTemplate
+      source: Inline
+      inline:
+        template: |
+          {{- $xr := .observed.composite.resource }}
+          apiVersion: s3.aws.m.upbound.io/v1beta1
+          kind: Bucket
+          metadata:
+            name: {{ $xr.metadata.namespace }}-{{ $xr.metadata.name }}
+            annotations:
+              {{ setResourceNameAnnotation "bucket" }}
+          spec:
+            forProvider:
+              region: {{ $xr.spec.region }}
+              {{- with $xr.spec.tags }}
+              tags:
+                {{- toYaml . | nindent 8 }}
+              {{- end }}
+  # The module: the CMDB record of the team whose namespace the composite
+  # resource lives in, read with that team's token - the key of the same
+  # name in the cmdb credential, which holds every team's token - and
+  # stamped as tags on everything the steps before it composed.
+  - step: team-tags
+    functionRef:
+      name: function-wasm
+    credentials:
+    - name: cmdb
+      source: Secret
+      secretRef:
+        namespace: crossplane-system
+        name: cmdb-tokens
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        # For local rendering the runtime serves this directory (--module-dir),
+        # under a manifest that asks for the fixture server instead of
+        # cmdb.example.org. In a cluster use type: OCI, the oci reference
+        # pinned to the digest guestfn push prints, and no manifestPath: the
+        # published artifact carries its own manifest.
+        type: Path
+        path: fn.wasm
+        manifestPath: example/wasmfn.local.yaml
+      # The Composition's own policy layer. This step hands the module every
+      # team's token, so the Composition fences where it may send them: GET
+      # under /teams/ on the CMDB host alone, whatever a module's manifest
+      # asks for. The operator's policy must permit the same; in a cluster,
+      # name the CMDB's host here.
+      compositionPolicy: |
+        permit (principal, action == Action::"grantEgress", resource == HostPattern::"127.0.0.1")
+        when { context.method == "GET" && context.path like "/teams/*" };
+      config:
+        # The fixture server render.sh starts; in a cluster, the CMDB the
+        # module's manifest names.
+        cmdbUrl: http://127.0.0.1:9480

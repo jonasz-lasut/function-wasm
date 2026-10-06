@@ -22,7 +22,7 @@
 # protoc stamps its version into the AssemblyScript and Python codecs, and the
 # Python one refuses to load on a protobuf runtime older than that stamp, so
 # PROTOC_VERSION must not pass the runtime the python template's
-# requirements.txt pins (hello-python's is the same file). NANOPB_VERSION is
+# requirements.txt pins (team-tags's is the same file). NANOPB_VERSION is
 # the nanopb release hello-c's build.zig.zon compiles and e2e.yml's codec
 # drift check installs.
 PROTOC_VERSION := 35.1
@@ -73,7 +73,7 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-assemblyscript gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-python gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/team-tags gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/policy-gate gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-dotnet gen-proto
 	for f in run_function.pb.go run_function_vtproto.pb.go; do \
@@ -84,7 +84,7 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 	for f in run_function_pb.js run_function_pb.d.ts; do \
 		cp "examples/policy-gate/src/gen/$$f" "crates/guestfn/templates/ts/src/gen/$$f"; \
 	done
-	cp examples/hello-python/src/gen/run_function_pb2.py crates/guestfn/templates/python/src/gen/run_function_pb2.py
+	cp examples/team-tags/src/gen/run_function_pb2.py crates/guestfn/templates/python/src/gen/run_function_pb2.py
 
 vendor-proto-goldens: ## Refresh the guestfn scaffold goldens from the templates
 	UPDATE_GOLDENS=1 cargo test -p guestfn

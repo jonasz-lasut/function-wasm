@@ -2,7 +2,7 @@
 /// wit/wasmfn-function.wit) restated with two deliberate differences: `run`
 /// is declared sync (componentize-py takes the sync shape - a sync-lifted
 /// implementation satisfies the runtime's async world, docs/abi-v2.md), and
-/// the guest imports wasi:http@0.2's outgoing-handler for its greeting fetch
+/// the guest imports wasi:http@0.2's outgoing-handler for its CMDB request
 /// - the runtime serves both wasi:http generations through one egress
 /// policy. It lives in a local package of its own: a WIT package name must
 /// always carry the same contents, and the runtime checks a component's

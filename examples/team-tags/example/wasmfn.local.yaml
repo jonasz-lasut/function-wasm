@@ -1,0 +1,20 @@
+# The manifest a local render runs this module under (module.manifestPath in
+# composition.yaml): the published wasmfn.yaml, but asking for the fixture
+# server render.sh starts on 127.0.0.1:9480 instead of cmdb.example.org, so
+# the example renders without a CMDB.
+abi: 2
+name: team-tags
+version: 0.1.0
+requires:
+  egress:
+    http:
+    - host: 127.0.0.1
+      methods: [GET]
+      pathPrefix: /teams/
+config:
+  schema:
+    type: object
+    required: [cmdbUrl]
+    properties:
+      cmdbUrl: {type: string, format: uri}
+    additionalProperties: false
