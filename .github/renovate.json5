@@ -70,6 +70,26 @@
       depNameTemplate: 'crossplane/crossplane',
       datasourceTemplate: 'github-releases',
     },
+    {
+      // The wasmtime-wasi-http release every vendored WASI WIT file under a
+      // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
+      // and hello-rust-v2, its wit/deps for hello-python. Same tripwire as
+      // the proto: a bump PR moves the version in every header at once; it
+      // does NOT re-download the WIT, so treat the PR as the signal to
+      // re-vendor by hand (keeping the p3 http.wit's service/middleware
+      // trim) and refresh the goldens. The header names an exact release,
+      // hence semver rather than the crate datasource's cargo ranges, under
+      // which `49.0.2` reads as `^49.0.2`.
+      customType: 'regex',
+      description: 'wasmtime-wasi-http release the vendored WASI WIT came from',
+      managerFilePatterns: ['/(^|/)wit/deps/[^/]+\\.wit$/'],
+      matchStrings: [
+        'Vendored from wasmtime-wasi-http (?<currentValue>\\d+\\.\\d+\\.\\d+) ',
+      ],
+      depNameTemplate: 'wasmtime-wasi-http',
+      datasourceTemplate: 'crate',
+      versioningTemplate: 'semver',
+    },
   ],
   // Rules are evaluated in order; later rules win.
   packageRules: [
@@ -92,8 +112,10 @@
     // on the siblings' pins; once the manifest requirement changes it skips
     // that step and one `cargo update --workspace` moves the whole family.
     // Hence their own group, and `bump` so every update changes Cargo.toml.
+    // The vendored WASI WIT headers join the group, so the PR that moves
+    // the crates is also the one that asks for the re-vendoring.
     {
-      matchManagers: ['cargo'],
+      matchManagers: ['cargo', 'custom.regex'],
       matchPackageNames: ['wasmtime', 'wasmtime-*'],
       groupName: 'wasmtime',
       rangeStrategy: 'bump',
@@ -129,6 +151,14 @@
       matchPackageNames: ['crossplane/crossplane'],
       enabled: true,
       groupName: 'vendored run_function.proto',
+    },
+    // The WASI WIT headers, for the same reason: one dep across the rust
+    // template, its golden, hello-rust-v2 and hello-python. Their group is
+    // the wasmtime one above.
+    {
+      matchManagers: ['custom.regex'],
+      matchPackageNames: ['wasmtime-wasi-http'],
+      enabled: true,
     },
   ],
 }
