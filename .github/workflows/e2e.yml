@@ -314,13 +314,11 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # The guest's Makefile names its wasm target (and a rust-toolchain.toml
+      # beside it may pin the compiler), so the lint follows the pull
+      # request's code rather than this file, which comes from main.
       - name: Lint and Test the ABI v2 Rust Guest
-        working-directory: examples/hello-rust-v2
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo clippy --target wasm32-wasip2 -- -D warnings
-          cargo test
+        run: make -C examples/hello-rust-v2 lint test
 
       - name: Setup the Crossplane CLI
         run: |

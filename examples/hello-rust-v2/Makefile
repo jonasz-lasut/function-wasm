@@ -1,11 +1,20 @@
 # The hello guest as an ABI v2 component: needs a Rust toolchain with the
 # wasm32-wasip2 target (rustup target add wasm32-wasip2) and protoc for
 # prost-build. Render needs the crossplane CLI and Docker.
-.PHONY: build test render render-check clean
+.PHONY: build lint test render render-check clean
+
+# The one place this guest's wasm target is named; CI's lint step runs
+# `make lint` so the target travels with the guest, not the workflow.
+TARGET := wasm32-wasip2
 
 build: ## Compile the guest to fn.wasm (a component, built on stable Rust)
-	cargo build --release --target wasm32-wasip2
-	cp target/wasm32-wasip2/release/hello_rust_v2.wasm fn.wasm
+	cargo build --release --target $(TARGET)
+	cp target/$(TARGET)/release/hello_rust_v2.wasm fn.wasm
+
+lint: ## Check formatting, run clippy natively and for the wasm target
+	cargo fmt --check
+	cargo clippy --all-targets -- -D warnings
+	cargo clippy --target $(TARGET) -- -D warnings
 
 test: ## Run the unit tests natively
 	cargo test
