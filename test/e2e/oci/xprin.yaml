@@ -1,0 +1,35 @@
+# The render half of the OCI scenario: run.sh fills the pushed references into
+# the XRs and serves the runtime with the scenario's policy and key, then runs
+# this suite. The refusals are asserted from function validate's JSON instead:
+# a fatal result fails the render, which xprin cannot expect.
+common:
+  inputs:
+    composition: composition.yaml
+    functions: functions.yaml
+    function-credentials: function-credentials.yaml
+tests:
+- name: signed add-on
+  inputs:
+    xr: xr-signed.yaml
+  assertions:
+    xprin:
+    - name: the WebApp, its Deployment and Service, and the add-on's PodDisruptionBudget
+      type: Count
+      value: 4
+    - name: the add-on pulled by digest composed its budget over the Deployment's pods
+      type: FieldValue
+      resource: PodDisruptionBudget
+      field: spec.selector.matchLabels.app
+      operator: is
+      value: shop-signed
+- name: no add-on
+  inputs:
+    xr: xr-none.yaml
+  assertions:
+    xprin:
+    - name: the WebApp, its Deployment and Service only
+      type: Count
+      value: 3
+    - name: the step was skipped, so no budget
+      type: NotExists
+      resource: PodDisruptionBudget
