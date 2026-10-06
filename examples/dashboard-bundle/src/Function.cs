@@ -83,9 +83,9 @@ public static class Function
         var (dashboards, skipped) = Bundle.Unpack(archive, scratch);
         foreach (var file in skipped)
         {
-            // The log import has only debug and info; the warning result
+            // The runtime's log is the operator's record; the Warning result
             // below is what reaches the team, as an event on the XR.
-            log(LogLevel.Info, "Skipped a bundle file that is not a dashboard", ("bundle", url), ("file", file));
+            log(LogLevel.Warn, "Skipped a bundle file that is not a dashboard", ("bundle", url), ("file", file));
         }
         log(LogLevel.Info, "Unpacked dashboard bundle",
             ("bundle", url), ("digest", digest), ("dashboards", dashboards.Count.ToString()));

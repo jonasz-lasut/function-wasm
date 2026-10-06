@@ -70,8 +70,9 @@ beside the dashboards, the `.DS_Store` files and `__MACOSX/` directory a
 zip made on macOS adds (whose AppleDouble `._` twins end in `.json` too) -
 is skipped, never extracted, and named in one Warning result (the first
 ten files, and how many more), which Crossplane turns into a Warning event
-on the composite resource; the module logs each skipped file as well. The module refuses, with a message
-naming the file:
+on the composite resource; the module also logs each skipped file at
+`warn`, in the runtime's log. The module refuses, with a message naming
+the file:
 
 - a bundle whose sha256 is not `spec.digest`, or a `spec.digest` that is not
   `sha256:` and 64 lowercase hex digits;
