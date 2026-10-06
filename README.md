@@ -235,7 +235,7 @@ component, the rest as ABI v1 modules:
 |---|---|---|---|---|
 | `go` (default) | [`examples/hello-go`](examples/hello-go) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
 | `tinygo` | [`examples/hello-tinygo`](examples/hello-tinygo) | [TinyGo](https://tinygo.org) | protobuf-go message types + [vtprotobuf](https://github.com/planetscale/vtprotobuf)'s reflection-free codecs, generated from the vendored proto (shipped pre-generated; `go generate` + protoc to redo) | ~1.8 MB |
-| `rust` | [`examples/hello-rust-v2`](examples/hello-rust-v2) | Rust, `wasm32-wasip2` (`cargo`, `protoc`) — **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~220 KB |
+| `rust` | [`examples/hello-rust-v2`](examples/hello-rust-v2) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) — **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB |
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
 
@@ -272,7 +272,7 @@ policy. Sync-lifted like the TypeScript guest. `guestfn build` builds it
 scaffold it yet.
 
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo,
-targeting `wasm32-wasip2` when the project carries a `wit/` directory and
+targeting `wasm32-wasip3` when the project carries a `wit/` directory and
 `wasm32-wasip1` otherwise; a `build.zig` → zig, for the zig and c guests
 alike; a `package.json` without an `asconfig.json` → npm, for the
 TypeScript guest; a `requirements.txt` → a venv with componentize-py, for
@@ -1049,8 +1049,8 @@ make -C examples/hello-go render-check              # function validate + crossp
 ```
 
 The workspace tests build the example guests to WebAssembly and run them all
-through the host when their toolchains (go, tinygo, cargo + wasm32-wasip1,
-zig) are on PATH, and skip the ones that are not. See
+through the host when their toolchains (go, tinygo, cargo + wasm32-wasip1 and
+wasm32-wasip3, zig) are on PATH, and skip the ones that are not. See
 [AGENTS.md](AGENTS.md) for the layout and conventions.
 
 Design documents live under `docs/` as one-pagers: the implemented ones

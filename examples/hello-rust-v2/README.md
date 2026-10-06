@@ -1,7 +1,7 @@
 # hello-rust-v2
 
 A [Crossplane](https://crossplane.io) composition function in async Rust,
-compiled to a WebAssembly **component** of about 220 KB implementing
+compiled to a WebAssembly **component** of about 240 KB implementing
 **ABI v2** and run by
 [function-wasm](https://github.com/jonasz-lasut/function-wasm). Its `run`
 is an `async fn`; `config.greetingUrl` is fetched by awaiting
@@ -9,10 +9,11 @@ is an `async fn`; `config.greetingUrl` is fetched by awaiting
 networking, with no hand-written ABI glue (the canonical ABI owns what an
 ABI v1 guest carries by hand).
 
-The toolchain is **stable Rust**: `rustup target add wasm32-wasip2`, plus
-`protoc` for prost-build. (The `wasm32-wasip3` target is the eventual home
-once its wasi-libc ships; the component the wasip2 target produces
-implements the same world - the runtime links WASI 0.2 and 0.3 both.)
+The toolchain is **Rust 1.100 or newer** with the `wasm32-wasip3` target,
+plus `protoc` for prost-build. The component imports WASI 0.3 only. Until
+Rust 1.100.0 is released, `rust-toolchain.toml` pins its beta
+(1.100.0-beta.4), which rustup installs with the target the first time
+cargo runs here; delete the file once 1.100.0 is out.
 
 - `proto/run_function.proto` is crossplane's `RunFunction` contract,
   vendored; `build.rs` compiles it with `prost-build` (needs `protoc`).
@@ -30,13 +31,13 @@ implements the same world - the runtime links WASI 0.2 and 0.3 both.)
   built - holding it keeps the body incomplete and hangs the send.
 
 ```shell
-rustup target add wasm32-wasip2
+rustup target add wasm32-wasip3
 
 # Unit tests run natively.
 cargo test
 
 # Compile to a component.
-guestfn build                       # cargo build --release --target wasm32-wasip2 → fn.wasm
+guestfn build                       # cargo build --release --target wasm32-wasip3 → fn.wasm
 
 # Publish it as an OCI artifact; it prints the module block for the Composition.
 guestfn push ghcr.io/example/hello-rust-v2:v0.1.0

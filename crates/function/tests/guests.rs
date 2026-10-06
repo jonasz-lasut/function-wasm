@@ -62,7 +62,11 @@ fn on_path(name: &str) -> bool {
 
 fn command(dir: &Path, name: &str, args: &[&str], envs: &[(&str, &str)]) -> bool {
     let mut cmd = std::process::Command::new(name);
-    cmd.args(args).current_dir(dir);
+    // rustup exports RUSTUP_TOOLCHAIN to everything under the cargo running
+    // this suite, which would override a guest's own rust-toolchain.toml.
+    cmd.args(args)
+        .current_dir(dir)
+        .env_remove("RUSTUP_TOOLCHAIN");
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -155,23 +159,28 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 eprintln!("skipping: cargo/rustup not on PATH");
                 return None;
             }
+            // Asked in the guest's directory, so its rust-toolchain.toml
+            // decides which toolchain's targets count (rustup installs a
+            // pinned toolchain on first use).
             let targets = std::process::Command::new("rustup")
                 .args(["target", "list", "--installed"])
+                .current_dir(&dir)
+                .env_remove("RUSTUP_TOOLCHAIN")
                 .output()
                 .ok()?;
-            if !String::from_utf8_lossy(&targets.stdout).contains("wasm32-wasip2") {
-                eprintln!("skipping: wasm32-wasip2 target not installed");
+            if !String::from_utf8_lossy(&targets.stdout).contains("wasm32-wasip3") {
+                eprintln!("skipping: wasm32-wasip3 target not installed");
                 return None;
             }
             if !command(
                 &dir,
                 "cargo",
-                &["build", "--release", "--target", "wasm32-wasip2"],
+                &["build", "--release", "--target", "wasm32-wasip3"],
                 &[],
             ) {
                 return Some(Vec::new());
             }
-            let release = dir.join("target/wasm32-wasip2/release");
+            let release = dir.join("target/wasm32-wasip3/release");
             let wasm = std::fs::read_dir(&release)
                 .ok()?
                 .filter_map(|e| e.ok())

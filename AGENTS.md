@@ -168,7 +168,7 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
   src/main.rs                 clap CLI: init/build/push/inspect/manifest/scaffold; shared helpers
   src/scaffold.rs             template rendering ([[ ]] delimiters, zigid/zigfp helpers), write with
                               overwrite refusal; the golden and render-matches-the-examples tests
-  src/buildcmd.rs             toolchain detection (Cargo.toml → rust - wasip2 with a wit/ dir,
+  src/buildcmd.rs             toolchain detection (Cargo.toml → rust - wasip3 with a wit/ dir,
                               wasip1 without; package.json sans asconfig.json → ts via npm;
                               requirements.txt → python via componentize-py; build.zig → zig/c; vtprotobuf
                               in go.mod → tinygo, else go), the builds, the ABI verdict, wasmfn.yaml
@@ -193,10 +193,11 @@ examples/hello-zig          the same guest, Zig + zig-protobuf — build.zig
 examples/hello-c            the same guest, C + nanopb + cJSON, compiled by zig cc — build.zig
 examples/hello-rust-v2      the same guest as an ABI v2 component - the rust scaffold's example
                             pair (render-matches-the-examples):
-                            async Rust on stable (wasm32-wasip2 + wit-bindgen), run is an async fn
+                            async Rust 1.100+ (wasm32-wasip3 + wit-bindgen; rust-toolchain.toml pins
+                            1.100's beta until that release), run is an async fn
                             awaiting wasi:http/client for greetingUrl; vendors the world WIT
                             byte-identical plus its own guest world and the wasi:http deps; no ABI
-                            glue - the canonical ABI owns it. ~220 KB
+                            glue - the canonical ABI owns it; imports WASI 0.3 only. ~240 KB
 examples/hello-ts           the same guest in TypeScript via jco (example only, no scaffold):
                             protobuf-es codec (js+dts, checked in), tsc --noEmit gate, esbuild
                             bundle, componentize-js; sync-lifted run (jco cannot async-lift a
@@ -317,7 +318,7 @@ cargo test -p guestfn                     # scaffold goldens, render-matches-the
 (cd examples/hello-c && zig build test)
 ```
 
-`crates/function/tests/guests.rs` builds all six example guests (AssemblyScript skipped without `npm`) and runs each through the whole host with the same expectations — default and configured greeting, a greeting fetched through the host's egress (via an OCI manifest layer and via `module.manifestPath`) and refused without a grant, guest-side fatal on a bad config, guest logs — the guests must stay behaviourally identical. A guest whose toolchain is not on PATH is skipped. Toolchains: `rustup target add wasm32-wasip1`; TinyGo ≥ 0.41; Zig 0.16; `protoc` only for the codec regeneration targets; `nanopb_generator` (`pip install nanopb==0.4.9.1`) only for `zig build gen-proto` in hello-c.
+`crates/function/tests/guests.rs` builds all six example guests (AssemblyScript skipped without `npm`) and runs each through the whole host with the same expectations — default and configured greeting, a greeting fetched through the host's egress (via an OCI manifest layer and via `module.manifestPath`) and refused without a grant, guest-side fatal on a bad config, guest logs — the guests must stay behaviourally identical. A guest whose toolchain is not on PATH is skipped. Toolchains: `rustup target add wasm32-wasip1` for hello-rust (hello-rust-v2's `rust-toolchain.toml` brings its own pinned toolchain with `wasm32-wasip3`, installed by rustup on first use); TinyGo ≥ 0.41; Zig 0.16; `protoc` only for the codec regeneration targets; `nanopb_generator` (`pip install nanopb==0.4.9.1`) only for `zig build gen-proto` in hello-c.
 
 Goldens: `UPDATE_CONFORMANCE=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
 

@@ -50,8 +50,9 @@ world function {
   values. The host attaches the module's identity to every line and renders
   `debug` lines only under `--debug`.
 - **WASI** - the world names no WASI imports; a guest brings whatever its
-  toolchain emits. The host links WASI 0.3 and WASI 0.2 (a `wasm32-wasip3`
-  toolchain's standard library may still import 0.2 interfaces), under the
+  toolchain emits. The host links WASI 0.3 and WASI 0.2 (components built for
+  WASI 0.2 - jco, componentize-py, Rust's `wasm32-wasip2` - import 0.2
+  interfaces; a `wasm32-wasip3` build imports 0.3 only), under the
   same sandbox as v1: no network sockets, no filesystem beyond the granted
   private `/tmp`, env exactly as granted.
 - **HTTP egress** - through `wasi:http/client@0.3.0` (`send: async func`),
