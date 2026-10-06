@@ -172,9 +172,12 @@ impl InitCmd {
 
 /// Runs a toolchain command in dir, inheriting stdout and stderr.
 pub(crate) fn run_in(dir: &std::path::Path, name: &str, args: &[&str]) -> Result<(), String> {
+    // A project's rust-toolchain.toml picks its toolchain; under `cargo run`
+    // rustup exports RUSTUP_TOOLCHAIN, which would override the file.
     let status = std::process::Command::new(name)
         .args(args)
         .current_dir(dir)
+        .env_remove("RUSTUP_TOOLCHAIN")
         .status()
         .map_err(|e| format!("{name} {} failed: {e}", args.join(" ")))?;
     if !status.success() {
