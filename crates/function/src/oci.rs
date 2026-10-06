@@ -542,6 +542,13 @@ pub fn auth_for(registry: &str, data: &HashMap<String, Vec<u8>>) -> Result<Auth,
     }
 }
 
+/// The credential a module's registry is read with: the step's, else the
+/// local Docker config's. The pull and the signature check both go through
+/// it, so a module the runtime can pull is one whose signature it can read.
+pub fn pull_auth(registry: &str, step: Option<Auth>) -> Option<Auth> {
+    step.or_else(|| keychain_auth(registry))
+}
+
 /// The local Docker config's credential for a registry, if any - the
 /// keychain fallback when the step names no credential. Credential helpers
 /// are not consulted.
@@ -621,7 +628,14 @@ pub mod testregistry {
         /// the stored manifests' subjects); without it the API is a 404,
         /// as on GHCR and registry:3.
         pub referrers_api: bool,
+        /// Whether every request needs Basic auth with BASIC_USER and
+        /// BASIC_PASSWORD, as a registry:3 behind htpasswd does.
+        pub basic: bool,
     }
+
+    /// The credential a `basic` registry accepts.
+    pub const BASIC_USER: &str = "e2e";
+    pub const BASIC_PASSWORD: &str = "e2e-password";
 
     impl TestRegistry {
         /// Stores a referrer manifest under its digest as a pushing client
@@ -741,6 +755,14 @@ pub mod testregistry {
         let addr = listener.local_addr().expect("addr");
         let bearer = registry.bearer;
         let referrers_api = registry.referrers_api;
+        let basic = registry.basic.then(|| {
+            use base64::Engine as _;
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD
+                    .encode(format!("{BASIC_USER}:{BASIC_PASSWORD}"))
+            )
+        });
         let manifests = Arc::new(std::sync::Mutex::new(registry.manifests));
         let blobs = Arc::new(std::sync::Mutex::new(registry.blobs));
         std::thread::spawn(move || {
@@ -752,8 +774,14 @@ pub mod testregistry {
                 let path = words.next().unwrap_or_default().to_string();
                 let authorized =
                     !bearer || head.contains("Bearer testtoken") || path.starts_with("/token");
+                let basic_authorized = basic.as_ref().is_none_or(|b| head.contains(b.as_str()));
                 let mut extra_header = String::new();
-                let (status, rsp_body): (&str, Vec<u8>) = if !authorized {
+                let (status, rsp_body): (&str, Vec<u8>) = if !basic_authorized {
+                    (
+                        "401 Unauthorized\r\nWww-Authenticate: Basic realm=\"registry\"",
+                        b"{}".to_vec(),
+                    )
+                } else if !authorized {
                     (
                         "401 Unauthorized\r\nWww-Authenticate: Bearer realm=\"http://REALM/token\",service=\"registry\"",
                         b"{}".to_vec(),
@@ -850,6 +878,7 @@ pub mod testregistry {
             blobs,
             bearer,
             referrers_api: false,
+            basic: false,
         });
         (manifest_digest, addr)
     }
@@ -928,6 +957,7 @@ mod tests {
                 blobs: HashMap::new(),
                 bearer: true,
                 referrers_api,
+                basic: false,
             };
             registry.push_referrer(referrer.clone());
             // Only the listing the registry offers exists: the API answers

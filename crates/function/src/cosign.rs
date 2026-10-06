@@ -502,6 +502,7 @@ mod tests {
             ]),
             bearer: false,
             referrers_api,
+            basic: false,
         };
         (registry, digest)
     }

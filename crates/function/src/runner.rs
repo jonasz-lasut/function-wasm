@@ -269,7 +269,7 @@ impl WasmFunction {
                     .r#ref,
             )
             .expect("validated");
-            let verify_auth = auth.clone();
+            let verify_auth = crate::oci::pull_auth(&reference.registry, auth.clone());
             let verdict = tokio::task::spawn_blocking(move || {
                 let client = crate::oci::RegistryClient::new(&reference, verify_auth);
                 verifier.verify(&client, &reference)
