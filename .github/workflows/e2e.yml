@@ -79,8 +79,13 @@ jobs:
   # always-on unit-test job skips (SKIP_GUEST_BUILDS): all guests through
   # the whole host, greetings, granted and refused egress, manifestPath,
   # guest-side fatals and logs.
+  #
+  # Built in release: a debug wasmtime compiles the large guests (the Go
+  # module, the TypeScript and Python components) many times slower, and
+  # the arm64 runner is faster again. x86-64 code generation stays covered
+  # by the render jobs, which serve every guest through an x86-64 runtime.
   guest-suite:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-26.04-arm
     needs: start
     steps:
       - name: Checkout
@@ -128,7 +133,7 @@ jobs:
             examples/hello-ts/package-lock.json
 
       - name: Run the Guest Suite
-        run: cargo test --locked -p function-wasm --test guests
+        run: cargo test --locked --release -p function-wasm --test guests
 
   # The example guest is the scaffold rendered for itself. Rendering it with
   # crossplane render against the runtime built from this tree proves the
