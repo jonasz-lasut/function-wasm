@@ -92,8 +92,13 @@ make render-check     # the render test, example/xprin.yaml (needs xprin)
 
 ## In a cluster
 
-Publish the module with its manifest, then name the digest `guestfn push`
-prints in a WebApp:
+Each release publishes this example, signed keyless and attested, as
+`ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon:v<version>` (the version in
+`wasmfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
+its reference pinned by digest. To run your own build instead, publish it
+with its manifest, then name the digest `guestfn push` prints in a WebApp
+(a WebApp naming the published add-on needs a `pullModule` permit for
+`Repository::"ghcr.io/jonasz-lasut/wasmfn/examples"` instead):
 
 ```shell
 guestfn push ghcr.io/example-org/webapp-addons/pdb:v0.1.0

@@ -118,7 +118,12 @@ the operator's Cedar `--sandbox-policy-file` both permit it.
 ### Worked examples
 
 Each guest language under [`examples/`](examples) solves one of these, built,
-rendered and asserted on every `/e2e` run:
+rendered and asserted on every `/e2e` run
+([docs/one-pager-use-case-examples.md](docs/one-pager-use-case-examples.md) has
+why these, how they are tested and published). Each release publishes the ones
+that work as published (`cloudflare-origin`, `policy-gate`, `pdb-addon`) at
+`ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, signed and attested, with their
+digest-pinned references in the release's `function-wasm-examples-<release>.yaml`:
 
 - [`examples/cloudflare-origin`](examples/cloudflare-origin) (Rust): only
   Cloudflare may reach an origin. The module composes the origin's AWS
