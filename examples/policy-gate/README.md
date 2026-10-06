@@ -120,8 +120,12 @@ requirement round trip, the tags and the warnings.
 
 ## In a cluster
 
-Publish the module with its manifest, then reference the digest
-`guestfn push` prints as the last step of each Composition:
+Each release publishes this example, signed keyless and attested, as
+`ghcr.io/jonasz-lasut/wasmfn/examples/policy-gate:v<version>` (the version in
+`wasmfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
+its reference pinned by digest. To run your own build instead, publish it
+with its manifest, then reference the digest `guestfn push` prints as the last
+step of each Composition:
 
 ```shell
 guestfn push ghcr.io/example/policy-gate:v0.1.0

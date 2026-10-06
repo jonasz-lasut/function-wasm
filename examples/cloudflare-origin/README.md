@@ -79,8 +79,11 @@ A local render needs no internet and no AWS account. `example/` holds:
 
 ## In a cluster
 
-Publish the module with its manifest, then reference the digest
-`guestfn push` prints:
+Each release publishes this example, signed keyless and attested, as
+`ghcr.io/jonasz-lasut/wasmfn/examples/cloudflare-origin:v<version>` (the version in
+`wasmfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
+its reference pinned by digest. To run your own build instead, publish it
+with its manifest, then reference the digest `guestfn push` prints:
 
 ```shell
 guestfn push ghcr.io/example/cloudflare-origin:v0.1.0

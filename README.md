@@ -118,7 +118,12 @@ the operator's Cedar `--sandbox-policy-file` both permit it.
 ### Worked examples
 
 Each guest language under [`examples/`](examples) solves one of these, built,
-rendered and asserted on every `/e2e` run:
+rendered and asserted on every `/e2e` run
+([docs/one-pager-use-case-examples.md](docs/one-pager-use-case-examples.md) has
+why these, how they are tested and published). Each release publishes the ones
+that work as published (`cloudflare-origin`, `policy-gate`, `pdb-addon`) at
+`ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, signed and attested, with their
+digest-pinned references in the release's `function-wasm-examples-<release>.yaml`:
 
 - [`examples/cloudflare-origin`](examples/cloudflare-origin) (Rust): only
   Cloudflare may reach an origin. The module composes the origin's AWS
@@ -1133,7 +1138,7 @@ toolchain, zig, npm, python3) are on PATH, and skip the ones that are not. See
 Design documents live under `docs/` as one-pagers: the implemented ones
 (cache, module source schema, trust model, resource governance, sandbox,
 admission and inspection tooling, the module manifest, the three-layer
-authorization model, governance and performance phases) and the drafts of
+authorization model, governance and performance phases, the use-case examples) and the drafts of
 what comes next (guest language support, sandbox requests for
 manifest-less sources, a Nix development environment).
 [AGENTS.md](AGENTS.md#key-reference-documents) lists them.

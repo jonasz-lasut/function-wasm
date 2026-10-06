@@ -296,3 +296,255 @@ jobs:
         run: |
           tar -czf "wasmfn-wit-${WORLD_VERSION}.tar.gz" -C wit wasmfn-function.wit
           gh release upload "${RELEASE_VERSION}" "wasmfn-wit-${WORLD_VERSION}.tar.gz"
+
+  # guestfn, built once for the example jobs below.
+  build-guestfn:
+    runs-on: ubuntu-26.04
+    needs:
+      - push
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+
+      - name: Build guestfn
+        run: cargo build --locked --release -p guestfn
+
+      - name: Upload guestfn
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: guestfn
+          path: target/release/guestfn
+          if-no-files-found: error
+          retention-days: 1
+
+  # The use-case examples (#112) as CNCF Wasm OCI artifacts with their module
+  # manifests, at ghcr.io/jonasz-lasut/wasmfn/examples/<name>:v<version>,
+  # signed and attested like the image. Each example carries its own version
+  # in its wasmfn.yaml, independent of the runtime's: a version already
+  # published is never pushed again, so a release publishes only the examples
+  # whose version moved, and a published tag stays immutable. Only the
+  # examples that work as published are here: team-tags and dashboard-bundle
+  # request egress to placeholder hosts their users replace before
+  # publishing their own.
+  publish-examples:
+    runs-on: ubuntu-26.04
+    needs:
+      - build-guestfn
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cloudflare-origin
+            toolchain: rust
+          - name: policy-gate
+            toolchain: node
+          - name: pdb-addon
+            toolchain: go
+    env:
+      REPOSITORY: jonasz-lasut/wasmfn/examples/${{ matrix.name }}
+      EXAMPLE: examples/${{ matrix.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the Example Version
+        id: example
+        run: |
+          version=$(sed -nE 's/^version: *([^ #]+).*$/\1/p' "${EXAMPLE}/wasmfn.yaml")
+          if [ -z "${version}" ]; then
+            echo "::error::${EXAMPLE}/wasmfn.yaml declares no version"
+            exit 1
+          fi
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      # 200: published already, so the digest is read from the registry
+      # rather than pushed again; 404: not yet (also for a repository that does
+      # not exist yet); anything else stops the job rather than risk pushing
+      # over a published tag.
+      - name: Skip a Published Version
+        id: registry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.example.outputs.tag }}
+        run: |
+          token=$(curl -sSf -u "${GITHUB_REPOSITORY_OWNER}:${GH_TOKEN}" \
+            "https://ghcr.io/token?scope=repository:${REPOSITORY}:pull" | jq -r .token)
+          status=$(curl -s -I -o "${RUNNER_TEMP}/manifest-headers" -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/${REPOSITORY}/manifests/${TAG}")
+          case "${status}" in
+            200)
+              digest=$(tr -d '\r' < "${RUNNER_TEMP}/manifest-headers" | sed -nE 's/^docker-content-digest: (sha256:[0-9a-f]{64})$/\1/Ip')
+              if [ -z "${digest}" ]; then
+                echo "::error::ghcr.io/${REPOSITORY}:${TAG} answered without a digest"
+                exit 1
+              fi
+              echo "::notice::ghcr.io/${REPOSITORY}:${TAG} is already published; leaving it as it is"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::cannot tell whether ghcr.io/${REPOSITORY}:${TAG} exists (HTTP ${status})"
+              exit 1
+              ;;
+          esac
+
+      - name: Download guestfn
+        if: steps.registry.outputs.publish == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: guestfn
+          path: ${{ runner.temp }}/guestfn
+
+      # pdb-addon's Makefile builds through guestfn; the push below uses it too.
+      - name: Use the Prebuilt guestfn
+        if: steps.registry.outputs.publish == 'true'
+        run: |
+          chmod +x "${RUNNER_TEMP}/guestfn/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/guestfn/guestfn" >> "$GITHUB_ENV"
+
+      # cloudflare-origin's rust-toolchain.toml brings its own toolchain and
+      # target; prost-build needs protoc.
+      - name: Setup Rust
+        if: steps.registry.outputs.publish == 'true' && matrix.toolchain == 'rust'
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+
+      - name: Setup protoc
+        if: steps.registry.outputs.publish == 'true' && matrix.toolchain == 'rust'
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        if: steps.registry.outputs.publish == 'true' && matrix.toolchain == 'node'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Setup Go
+        if: steps.registry.outputs.publish == 'true' && matrix.toolchain == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          cache: false
+          go-version-file: ${{ env.EXAMPLE }}/go.mod
+
+      - name: Build the Example
+        if: steps.registry.outputs.publish == 'true'
+        run: make -C "${EXAMPLE}" build
+
+      - name: Install Cosign
+        if: steps.registry.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Login to GHCR
+        if: steps.registry.outputs.publish == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # guestfn push refuses a module the runtime would refuse, publishes the
+      # module manifest as the artifact's second layer, and is reproducible
+      # under SOURCE_DATE_EPOCH.
+      - name: Push the Example
+        id: push
+        if: steps.registry.outputs.publish == 'true'
+        env:
+          TAG: ${{ steps.example.outputs.tag }}
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          output=$("${GUESTFN}" push --file "${EXAMPLE}/fn.wasm" --manifest "${EXAMPLE}/wasmfn.yaml" \
+            --revision "${GITHUB_SHA}" "ghcr.io/${REPOSITORY}:${TAG}")
+          echo "${output}"
+          digest=$(printf '%s\n' "${output}" | sed -nE 's/^Pushed .*@(sha256:[0-9a-f]{64})$/\1/p')
+          if [ -z "${digest}" ]; then
+            echo "::error::guestfn push printed no digest"
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the Example
+        if: steps.registry.outputs.publish == 'true'
+        run: cosign sign --yes "ghcr.io/${REPOSITORY}@${{ steps.push.outputs.digest }}"
+
+      - name: Attest SLSA Provenance to the Example
+        if: steps.registry.outputs.publish == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.REPOSITORY }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      # Published now or earlier, the reference goes into the release asset.
+      - name: Record the Reference
+        env:
+          TAG: ${{ steps.example.outputs.tag }}
+          DIGEST: ${{ steps.push.outputs.digest || steps.registry.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/ref"
+          printf -- '- name: %s\n  ref: ghcr.io/%s:%s@%s\n' "${{ matrix.name }}" "${REPOSITORY}" "${TAG}" "${DIGEST}" \
+            > "${RUNNER_TEMP}/ref/${{ matrix.name }}.yaml"
+
+      - name: Upload the Reference
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: example-ref-${{ matrix.name }}
+          path: ${{ runner.temp }}/ref/${{ matrix.name }}.yaml
+          if-no-files-found: error
+          retention-days: 1
+
+  # One file on the release listing every published example's reference,
+  # pinned by digest, for a Composition's module.oci.ref.
+  examples-release-asset:
+    runs-on: ubuntu-26.04
+    needs:
+      - publish-examples
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ github.event.inputs.version }}
+    steps:
+      - name: Download the References
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: example-ref-*
+          path: refs
+          merge-multiple: true
+
+      - name: Attach the References to the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          asset="function-wasm-examples-${RELEASE_VERSION}.yaml"
+          {
+            echo "# The function-wasm use-case examples published with ${RELEASE_VERSION}:"
+            echo "# each module's OCI reference, pinned by digest, for a Composition's"
+            echo "# module.oci.ref. Signed keyless by ${GITHUB_REPOSITORY}'s release workflow."
+            echo "examples:"
+            cat refs/*.yaml
+          } > "${asset}"
+          cat "${asset}"
+          gh release upload "${RELEASE_VERSION}" "${asset}" --repo "${GITHUB_REPOSITORY}"
