@@ -75,9 +75,12 @@ fn guest_dir(guest: &str) -> PathBuf {
         .join("../guestfn/testdata")
         .join(golden);
     // Outside the repository: a scaffold is a standalone project, and under
-    // this checkout cargo would take it for a member of the workspace.
+    // this checkout cargo would take it for a member of the workspace. Keyed
+    // by the checkout, so worktrees never build on one another's caches,
+    // which go stale whenever the scaffolds differ between them.
+    let checkout = hex::encode(&sha2::Sha256::digest(env!("CARGO_MANIFEST_DIR").as_bytes())[..6]);
     let dir = std::env::temp_dir()
-        .join("function-wasm-guest-scaffolds")
+        .join(format!("function-wasm-guest-scaffolds-{checkout}"))
         .join(guest);
     // Build caches survive between runs; every other file is the golden's,
     // so a file the scaffold no longer writes cannot linger.
