@@ -251,6 +251,18 @@ The **ABI v1 Rust** guest remains as an example only
 the scaffold moved to the component, and the v1 example stays as the
 reference for the wasip1 shape (it passes the same behaviour tests).
 
+A **C#** ABI v2 guest exists as an example only as well
+([`examples/hello-dotnet`](examples/hello-dotnet), ~4 MB; the .NET 10 SDK,
+`make build`): compiled by NativeAOT-LLVM with
+[componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet)
+over wit-bindgen's generated bindings, its codec protoc's C# output on
+Google.Protobuf, its greeting fetched over `wasi:http@0.2` through the same
+egress policy. Its `run` is sync-lifted, because wit-bindgen's C# async
+bindings do not compile for this world yet. NativeAOT-LLVM publishes no
+macOS compiler, so on macOS the Makefile builds in the .NET SDK container
+(Docker). It passes the same behaviour tests as the scaffolded flavours,
+but `guestfn` neither scaffolds nor builds it yet.
+
 The **TypeScript** flavour (`npm install` is the whole toolchain) is typed
 end to end (protobuf-es generated types, `tsc --noEmit` in the test gate),
 and its greeting is fetched with the platform's own `fetch()`, which the

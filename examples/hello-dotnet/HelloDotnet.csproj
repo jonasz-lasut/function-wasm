@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The guest as a WebAssembly component: componentize-dotnet runs
+    wit-bindgen over wit/ for the world's bindings, NativeAOT-LLVM compiles
+    everything for wasi-wasm, and the WASI SDK's wasm-component-ld (which
+    componentize-dotnet downloads) turns the module into a component of that
+    world.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>HelloDotnet</RootNamespace>
+    <AssemblyName>hello-dotnet</AssemblyName>
+    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
+    <UseAppHost>false</UseAppHost>
+    <PublishTrimmed>true</PublishTrimmed>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SelfContained>true</SelfContained>
+    <!-- No debug info: the linker strips the component's custom sections,
+         4 MB instead of 10 MB. -->
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Versions in Directory.Packages.props. -->
+    <PackageReference Include="BytecodeAlliance.Componentize.DotNet.Wasm.SDK" />
+    <!-- NativeAOT-LLVM's compiler for the build host, published for
+         linux-x64, linux-arm64 and win-x64 only: macOS builds in the SDK
+         container (Makefile). -->
+    <PackageReference Include="runtime.$(NETCoreSdkPortableRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM" />
+    <PackageReference Include="Google.Protobuf" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="test/**" />
+    <!-- The world and its vendored deps as one package directory, instead of
+         componentize-dotnet's default of every *.wit file on its own. -->
+    <Wit Remove="**/*.wit" />
+    <Wit Include="wit" World="function" />
+  </ItemGroup>
+
+  <!-- componentize-dotnet downloads the x86_64 WASI SDK on every Linux host;
+       an arm64 host (the SDK container on Apple silicon) needs the arm64
+       build of the same release. -->
+  <Target Name="UseArm64WasiSdk" BeforeTargets="ObtainWasiSdk"
+          Condition="$([MSBuild]::IsOSPlatform('Linux')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">
+    <PropertyGroup>
+      <WasiSdkUrl>https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$(WasiSdkVersion.Split('.')[0])/wasi-sdk-$(WasiSdkVersion)-arm64-linux.tar.gz</WasiSdkUrl>
+    </PropertyGroup>
+  </Target>
+
+</Project>

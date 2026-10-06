@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The guest's logic under plain .NET: the function and its codec compiled
+       for the host, src/Wasm (the world glue) left out. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../src/Function.cs" Link="src/Function.cs" />
+    <Compile Include="../src/Gen/*.cs" LinkBase="src/Gen" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="MSTest" />
+  </ItemGroup>
+
+</Project>
