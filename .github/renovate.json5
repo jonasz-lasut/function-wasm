@@ -14,18 +14,32 @@
   // (cgr.dev/chainguard/glibc-dynamic, a `latest`-only image) is digest-pinned
   // and the dockerfile manager keeps that digest current.
   //
-  // The example guests and the scaffold goldens are NOT a surface: they
-  // mirror the templates under crates/guestfn/templates, which Renovate
-  // cannot parse (`.tmpl`), so a bot bump desyncs the three copies and fails
-  // the render-matches goldens. Their dependencies - and the function package
-  // refs in their render files - move by hand, together with the templates.
-  enabledManagers: ['cargo', 'github-actions', 'dockerfile', 'custom.regex'],
+  // The scaffold goldens are NOT a surface, and the example guests are one
+  // only once a month: both mirror the templates under
+  // crates/guestfn/templates, which Renovate cannot parse (`.tmpl`), so a
+  // bot bump of a pin the templates share desyncs the three copies and fails
+  // the render-matches goldens. Those pins - and the function package refs
+  // in the render files - move by hand at release time, together with the
+  // templates (the cut-release skill). What the examples own alone is
+  // refreshed by the monthly examples rules at the end of packageRules
+  // (SECURITY.md has the policy). gomod, npm and pip_requirements are here
+  // for those rules only; every other file they find stays disabled.
+  enabledManagers: [
+    'cargo',
+    'github-actions',
+    'dockerfile',
+    'custom.regex',
+    'gomod',
+    'npm',
+    'pip_requirements',
+  ],
   // config:recommended's :ignoreModulesAndTests skips **/examples/**, so
   // Renovate never read a file there: the version-header tripwire below
   // moved the templates and goldens but not the examples. ignorePaths is
   // not mergeable (this list replaces the preset's), so it repeats the
   // preset minus examples; the examples' own dependencies stay off through
-  // the packageRule that disables everything under examples/.
+  // the packageRule that disables everything under examples/, but for what
+  // the monthly examples rules switch back on.
   ignorePaths: [
     '**/node_modules/**',
     '**/bower_components/**',
@@ -42,6 +56,12 @@
   // version into the manifest instead, so the lockfile is re-resolved as a
   // whole and the vulnerable version can no longer be selected.
   vulnerabilityAlerts: { rangeStrategy: 'bump' },
+  // Lock file maintenance, for the example lockfiles only. Renovate reads
+  // this flag per package file before any packageRule runs, so a rule can
+  // switch lock file maintenance off but never on: it is on here, the
+  // examples rules switch it off for every package file - the workspace's
+  // Cargo.lock included - and back on for the four example lockfiles.
+  lockFileMaintenance: { enabled: true },
   customManagers: [
     {
       // Crossplane CLI version installed by install.sh in the release workflows.
@@ -134,7 +154,7 @@
     },
 
     // Nothing under the example guests or the scaffold goldens (see the
-    // surface note above).
+    // surface note above), but for the exceptions below.
     {
       matchFileNames: ['examples/**', 'crates/guestfn/testdata/**'],
       enabled: false,
@@ -159,6 +179,102 @@
       matchManagers: ['custom.regex'],
       matchPackageNames: ['wasmtime-wasi-http'],
       enabled: true,
+    },
+
+    // The monthly examples refresh. The examples are illustrative and never
+    // shipped (the image holds only the runtime binary), so one batch a
+    // month, judged by /e2e, keeps them current. These rules switch back on
+    // only what an example owns alone, never a pin the templates share.
+    //
+    // Lock file maintenance: off everywhere first, so the workspace's
+    // Cargo.lock keeps the runtime's rules above, then on for the example
+    // lockfiles. The lockfiles move within the manifests' ranges and the
+    // manifests stay as they are, so nothing drifts from the templates.
+    { matchUpdateTypes: ['lockFileMaintenance'], enabled: false },
+    {
+      matchUpdateTypes: ['lockFileMaintenance'],
+      matchFileNames: [
+        'examples/hello-rust/Cargo.toml',
+        'examples/hello-rust-v2/Cargo.toml',
+        'examples/hello-ts/package.json',
+        'examples/hello-assemblyscript/package.json',
+      ],
+      enabled: true,
+    },
+    // gomod has no lock file maintenance, so the Go examples take regular
+    // updates. `enabled` here also covers their indirect requirements,
+    // which gomod extracts disabled. gomodTidy leaves go.mod and go.sum
+    // tidy, as the /e2e drift check for hello-tinygo requires.
+    {
+      matchManagers: ['gomod'],
+      matchFileNames: ['examples/hello-go/go.mod', 'examples/hello-tinygo/go.mod'],
+      enabled: true,
+      postUpdateOptions: ['gomodTidy'],
+    },
+    // ...except what the scaffold templates pin, which moves with a release
+    // instead: the go directive both stamp (it also picks the Go toolchain
+    // /e2e installs, and TinyGo bounds it), the go template's function-sdk-go
+    // (FALLBACK_SDK_VERSION in crates/guestfn/src/main.rs), and the tinygo
+    // template's three requirements, the versions its checked-in vtprotobuf
+    // codec was generated with - today all that hello-tinygo requires.
+    {
+      matchFileNames: ['examples/hello-go/go.mod'],
+      matchPackageNames: ['go', 'github.com/crossplane/function-sdk-go'],
+      enabled: false,
+    },
+    {
+      matchFileNames: ['examples/hello-tinygo/go.mod'],
+      matchPackageNames: [
+        'go',
+        'github.com/google/go-cmp',
+        'github.com/planetscale/vtprotobuf',
+        'google.golang.org/protobuf',
+      ],
+      enabled: false,
+    },
+    // The Python example pins exactly and has no scaffold: regular updates.
+    {
+      matchManagers: ['pip_requirements'],
+      matchFileNames: ['examples/hello-python/requirements.txt'],
+      enabled: true,
+    },
+    // hello-zig and hello-c name their dependencies in build.zig.zon by URL
+    // and content hash, which no Renovate manager reads: they move by hand,
+    // with the zig and c templates, at release time.
+    //
+    // One batch, early on the 1st of the month. Renovate does not group lock
+    // file maintenance with other updates - a grouped one gets its own
+    // lock-file-maintenance- branch - so the batch is two PRs:
+    // renovate/examples (Go and Python) and
+    // renovate/lock-file-maintenance-examples (the four lockfiles). A major
+    // rides in its batch instead of a PR of its own; /e2e judges the whole.
+    // A security update to a Go or Python example dependency still opens at
+    // once on its own branch: Renovate appends those rules after these, with
+    // `force`.
+    {
+      matchManagers: ['cargo', 'npm', 'gomod', 'pip_requirements'],
+      matchFileNames: ['examples/**'],
+      groupName: 'examples',
+      schedule: ['* 0-3 1 * *'],
+      separateMajorMinor: false,
+    },
+    // An indirect requirement's major version is its importer's choice: a
+    // bump across it (yaml.v2 to yaml.v3, a /vN path) would replace a module
+    // the build still imports instead of updating it. Lookup keeps majors
+    // apart for these, so the newest minor or patch is still proposed, and
+    // the major is dropped.
+    {
+      matchManagers: ['gomod'],
+      matchFileNames: ['examples/hello-go/go.mod', 'examples/hello-tinygo/go.mod'],
+      matchDepTypes: ['indirect'],
+      separateMajorMinor: true,
+    },
+    {
+      matchManagers: ['gomod'],
+      matchFileNames: ['examples/hello-go/go.mod', 'examples/hello-tinygo/go.mod'],
+      matchDepTypes: ['indirect'],
+      matchUpdateTypes: ['major'],
+      enabled: false,
     },
   ],
 }
