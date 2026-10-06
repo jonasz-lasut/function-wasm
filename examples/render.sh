@@ -99,7 +99,7 @@ wait_for 9443 || { echo "runtime did not start:" >&2; cat "$work/function.log" >
 
 if $check; then
   echo "==> xprin test example/xprin.yaml" >&2
-  if ! "$xprin" test -v --show-render --show-assertions "$example/xprin.yaml"; then
+  if ! "$xprin" test -v --show-render --show-validate --show-assertions "$example/xprin.yaml"; then
     echo "--- runtime log ---" >&2
     cat "$work/function.log" >&2
     exit 1
