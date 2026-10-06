@@ -1,0 +1,19 @@
+# The manifest a local render runs this module under (module.manifestPath in
+# composition.yaml): the published wasmfn.yaml, but asking for the fixture
+# server render.sh starts on 127.0.0.1:9480 instead of api.cloudflare.com, so
+# the example renders without the internet.
+abi: 2
+name: cloudflare-origin
+version: 0.1.0
+requires:
+  egress:
+    http:
+    - host: 127.0.0.1
+      methods: [GET]
+      pathPrefix: /client/v4/ips
+config:
+  schema:
+    type: object
+    properties:
+      ipsUrl: {type: string, format: uri}
+    additionalProperties: false

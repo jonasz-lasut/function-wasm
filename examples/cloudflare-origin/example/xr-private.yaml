@@ -1,0 +1,9 @@
+apiVersion: network.example.org/v1alpha1
+kind: Origin
+metadata:
+  name: backoffice
+  namespace: default
+spec:
+  region: eu-central-1
+  vpcId: vpc-0a1b2c3d4e5f60718
+  exposure: private

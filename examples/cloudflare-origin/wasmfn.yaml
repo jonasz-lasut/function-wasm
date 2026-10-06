@@ -4,19 +4,26 @@
 # before every run - a manifest can refuse a run earlier and say why, never
 # make one possible.
 abi: 2
-name: hello-rust-v2
+name: cloudflare-origin
 version: 0.1.0
-# requires: the sandbox capabilities the module cannot run without
-# (egress.http rules, filesystem.privateTmp, env credential bindings),
-# granted where the compositionPolicy and the operator's Cedar policy permit. This guest fetches a
-# greeting only when config.greetingUrl is set, so it requires nothing and
-# renders without any grant.
+# The one capability this module cannot run without: reading Cloudflare's
+# published IP ranges. The runtime makes the request on the module's behalf,
+# and only once the Composition's compositionPolicy and the operator's Cedar
+# policy both permit it.
+requires:
+  egress:
+    http:
+    - host: api.cloudflare.com
+      methods: [GET]
+      pathPrefix: /client/v4/ips
 config:
   # The JSON Schema (draft 2020-12) of the Input's config; the runtime refuses
   # a request whose config does not match, naming the field.
   schema:
     type: object
     properties:
-      greeting: {type: string}
-      greetingUrl: {type: string, format: uri}
+      ipsUrl:
+        description: Where to read Cloudflare's IP ranges; defaults to https://api.cloudflare.com/client/v4/ips.
+        type: string
+        format: uri
     additionalProperties: false

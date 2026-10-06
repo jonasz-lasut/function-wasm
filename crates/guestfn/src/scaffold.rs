@@ -302,11 +302,11 @@ mod tests {
                 },
             ),
             (
-                "hello-rust-v2",
+                "cloudflare-origin",
                 &["proto/", "wit/deps/", "build.rs", "rust-toolchain.toml"],
                 Options {
                     lang: LANG_RUST.into(),
-                    name: "hello-rust-v2".into(),
+                    name: "cloudflare-origin".into(),
                     ..Default::default()
                 },
             ),
