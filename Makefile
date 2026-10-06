@@ -1,6 +1,6 @@
 # Re-vendoring crossplane/crossplane's proto/fn/v1/run_function.proto (AGENTS.md
 # "Changing the scaffold"). Every tracked proto/run_function.proto - the files
-# Renovate's version-header rule reads: six templates, six goldens, eight
+# Renovate's version-header rule reads: six templates, six goldens, nine
 # examples - is the upstream file byte for byte under a five-line header whose
 # first line names the release. A Renovate bump moves that version in every
 # header but can neither re-download the file nor regenerate the codecs checked
@@ -75,6 +75,7 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-assemblyscript gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-python gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-ts gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/hello-dotnet gen-proto
 	for f in run_function.pb.go run_function_vtproto.pb.go; do \
 		cp "examples/hello-tinygo/internal/fnv1/$$f" "crates/guestfn/templates/tinygo/internal/fnv1/$$f.tmpl"; \
 	done
