@@ -17,11 +17,12 @@ cargo runs here; delete the file once 1.100.0 is out.
 
 - `proto/run_function.proto` is crossplane's `RunFunction` contract,
   vendored; `build.rs` compiles it with `prost-build` (needs `protoc`).
-- `wit/wasmfn-function.wit` is the
-  [ABI v2 world](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md),
-  vendored byte-identical to the runtime's copy; `wit/guest.wit` is this
-  guest's own world - the contract plus the `wasi:http` client it fetches
-  with; `wit/deps/` carries the wasi WIT that client needs.
+- `wit/world.wit` is this guest's own world, in a `local:guest` package -
+  the contract plus the `wasi:http` client it fetches with. `wit/deps/`
+  carries what it builds on: `wasmfn-function.wit`, the
+  [ABI v2 world](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md)
+  vendored byte-identical to the runtime's copy, and the wasi WIT the
+  client needs.
 - `src/lib.rs` — `run_function` over the prost messages (edit this),
   ordinary async Rust, natively testable (`cargo test`) with a fetch
   double.

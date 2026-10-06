@@ -15,6 +15,37 @@ than `wasm32-wasip3`'s tier-2 promotion in Rust
 (`docs/one-pager-abi-v2.md`). Until then a runtime release may require
 guests rebuilt against the current draft.
 
+## Getting the world
+
+Guest toolchains read a local `wit/` directory, so a guest carries the
+world as a file. `guestfn init --lang rust` writes it to
+`wit/deps/wasmfn-function.wit`, byte-identical to the runtime's copy, and
+the guest's own world, `wit/world.wit` in a `local:guest` package, includes
+it beside whatever the guest imports (the rust scaffold adds the
+`wasi:http` client). Keep the contract's file unmodified: a WIT package
+that appears twice must have the same contents, so a guest's additions
+belong in its own world.
+
+From `2.0.0` on, a release that brings a new world version also publishes
+it, signed and attested:
+
+- as an OCI artifact in the CNCF Wasm OCI layout (wkg's format):
+  `ghcr.io/jonasz-lasut/wasmfn/function:<version>`;
+- as `wasmfn-wit-<version>.tar.gz` on that GitHub release.
+
+A pre-release world (the current `2.0.0-draft`) is never published, and a
+published version is never pushed again. To fetch it with
+[wkg](https://github.com/bytecodealliance/wasm-pkg-tools), map the
+namespace in wkg's configuration:
+
+```toml
+[namespace_registries]
+wasmfn = { registry = "wasmfn", metadata = { preferredProtocol = "oci", "oci" = { registry = "ghcr.io", namespacePrefix = "jonasz-lasut/" } } }
+```
+
+`wkg get wasmfn:function@2.0.0 --format wit` then writes
+`wasmfn_function@2.0.0.wit`, the file a guest keeps under `wit/deps/`.
+
 ## Detection
 
 The binary format is the ABI version: a core module (layer 0 in the wasm
