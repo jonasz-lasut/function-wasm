@@ -962,7 +962,9 @@ function-sdk-go never enabled the histogram, and
 The complete model — parties, what pins the code, credentials, what the
 guest sees, threats considered — is
 [docs/one-pager-trust-model.md](docs/one-pager-trust-model.md); this is the
-short version.
+short version. How vulnerabilities in the dependencies of the runtime, of
+scaffolded projects and of the examples get fixed is in
+[SECURITY.md](SECURITY.md).
 
 A module runs with the privileges of the Composition that references it: it
 sees the request's observed and desired state, context and the step
