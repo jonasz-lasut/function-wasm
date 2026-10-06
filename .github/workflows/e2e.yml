@@ -39,7 +39,7 @@ jobs:
   # the comment with a reaction, resolves the PR's head SHA and marks its
   # e2e status pending.
   start:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/e2e')
     outputs:
       sha: ${{ steps.pr.outputs.sha }}
@@ -69,7 +69,7 @@ jobs:
   # the whole host, greetings, granted and refused egress, manifestPath,
   # guest-side fatals and logs.
   guest-suite:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     steps:
       - name: Checkout
@@ -124,7 +124,7 @@ jobs:
   # Crossplane accepts the response.
   render-go:
     name: render (go)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       # These environment variables are important to the Crossplane CLI
@@ -172,7 +172,7 @@ jobs:
   # rendered through the runtime.
   render-tinygo:
     name: render (tinygo)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -235,7 +235,7 @@ jobs:
   # wasm32-wasip1), rendered through the runtime.
   render-rust:
     name: render (rust)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -283,7 +283,7 @@ jobs:
 
   render-rust-v2:
     name: render (rust-v2)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -334,7 +334,7 @@ jobs:
   # regenerate the checked-in codec, which zig build gen-proto downloads.
   render-zig:
     name: render (zig)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -389,7 +389,7 @@ jobs:
   # checked-in codec.
   render-c:
     name: render (c)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -459,7 +459,7 @@ jobs:
   # regenerate the checked-in codec (make gen-proto).
   render-assemblyscript:
     name: render (assemblyscript)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -495,7 +495,7 @@ jobs:
 
   render-ts:
     name: render (ts)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -534,7 +534,7 @@ jobs:
 
   render-python:
     name: render (python)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -566,7 +566,7 @@ jobs:
 
   # One commit status carries the verdict back to the PR.
   report:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-rust-v2, render-zig, render-c, render-assemblyscript, render-ts, render-python]
     if: always() && needs.start.result == 'success'
     env:
