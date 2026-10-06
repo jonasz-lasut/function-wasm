@@ -1,0 +1,9 @@
+# wasm32-wasip3 reaches stable with Rust 1.100.0. Until that release this
+# guest builds on its beta, pinned by date (1.100.0-beta.4); rustup installs
+# it, with the target and the components, the first time cargo runs here.
+# Delete this file once Rust 1.100.0 is out.
+[toolchain]
+channel = "beta-2026-10-05"
+targets = ["wasm32-wasip3"]
+components = ["rustfmt", "clippy"]
+profile = "minimal"

@@ -2,6 +2,7 @@
 name = "my-fn"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.100"
 publish = false
 description = "A function-wasm ABI v2 guest: a Crossplane composition function compiled to a WebAssembly component, fetching over async wasi:http"
 

@@ -209,11 +209,11 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
             )?;
         }
         scaffold::LANG_RUST => {
-            // The scaffold emits an ABI v2 component (wasm32-wasip2, the
+            // The scaffold emits an ABI v2 component (wasm32-wasip3, the
             // wit/ directory carries its world); a project without wit/ is
             // an ABI v1 wasip1 guest and keeps building as one.
             let target = if dir.join("wit").is_dir() {
-                "wasm32-wasip2"
+                "wasm32-wasip3"
             } else {
                 "wasm32-wasip1"
             };
