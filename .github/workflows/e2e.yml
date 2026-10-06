@@ -328,8 +328,11 @@ jobs:
       - name: Render the TinyGo Guest
         run: make -C examples/hello-tinygo render-check
 
-  render-rust-v2:
-    name: render (rust-v2)
+  # The Rust guest, an ABI v2 component (wasm32-wasip3 on the toolchain its
+  # rust-toolchain.toml pins): the cloudflare-origin use case, which fetches
+  # over the host's egress from a fixture server render.sh starts.
+  render-rust:
+    name: render (rust)
     runs-on: ubuntu-26.04
     needs:
       - start
@@ -377,7 +380,7 @@ jobs:
       # beside it may pin the compiler), so the lint follows the pull
       # request's code rather than this file, which comes from main.
       - name: Lint and Test the ABI v2 Rust Guest
-        run: make -C examples/hello-rust-v2 lint test
+        run: make -C examples/cloudflare-origin lint test
 
       - name: Setup the Crossplane CLI
         run: |
@@ -385,7 +388,7 @@ jobs:
           sudo mv crossplane /usr/local/bin/crossplane
 
       - name: Render the ABI v2 Rust Guest
-        run: make -C examples/hello-rust-v2 render-check
+        run: make -C examples/cloudflare-origin render-check
 
   # The same guest in Zig (zig-protobuf over the vendored proto), rendered
   # through the runtime. One zig binary builds it; protoc is only needed to
@@ -749,7 +752,7 @@ jobs:
   # One commit status carries the verdict back to the PR.
   report:
     runs-on: ubuntu-26.04
-    needs: [start, guest-suite, render-go, render-tinygo, render-rust-v2, render-zig, render-c, render-assemblyscript, render-ts, render-python, render-dotnet]
+    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-zig, render-c, render-assemblyscript, render-ts, render-python, render-dotnet]
     if: always() && needs.start.result == 'success'
     permissions:
       statuses: write
@@ -762,7 +765,7 @@ jobs:
           description="all jobs passed"
           for result in "${{ needs.guest-suite.result }}" "${{ needs.render-go.result }}" \
             "${{ needs.render-tinygo.result }}" \
-            "${{ needs.render-rust-v2.result }}" \
+            "${{ needs.render-rust.result }}" \
             "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}" \
             "${{ needs.render-assemblyscript.result }}" "${{ needs.render-ts.result }}" \
             "${{ needs.render-python.result }}" "${{ needs.render-dotnet.result }}"; do

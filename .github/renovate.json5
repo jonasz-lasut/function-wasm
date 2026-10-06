@@ -109,7 +109,7 @@
     {
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
-      // and hello-rust-v2, its wit/deps for the python scaffold,
+      // and cloudflare-origin, its wit/deps for the python scaffold,
       // hello-python and hello-dotnet (templates and goldens included: the
       // files are plain .wit in all of them). Same tripwire as the proto: a
       // bump PR moves the version in every header at once; it does NOT
@@ -191,7 +191,7 @@
       groupName: 'vendored run_function.proto',
     },
     // The WASI WIT headers, for the same reason: one dep across the rust
-    // and python templates, their goldens, hello-rust-v2, hello-python and
+    // and python templates, their goldens, cloudflare-origin, hello-python and
     // hello-dotnet.
     // Their group is the wasmtime one above.
     {
@@ -213,7 +213,7 @@
     {
       matchUpdateTypes: ['lockFileMaintenance'],
       matchFileNames: [
-        'examples/hello-rust-v2/Cargo.toml',
+        'examples/cloudflare-origin/Cargo.toml',
         'examples/hello-ts/package.json',
         'examples/hello-assemblyscript/package.json',
       ],

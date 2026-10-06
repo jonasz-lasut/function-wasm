@@ -1,9 +1,9 @@
 //! The ABI v2 world: wit-bindgen generates the component bindings for the
 //! guest's world (wit/world.wit - the vendored wasmfn:function contract plus
 //! the wasi:http client), and this module implements the async `run` export
-//! and the greeting fetch over `wasi:http/client@0.3.0`. wasm-only: the
-//! canonical ABI has no native analogue, so native tests drive
-//! `run_function` with a fetch double instead.
+//! and the fetch of Cloudflare's IP ranges over `wasi:http/client@0.3.0`.
+//! wasm-only: the canonical ABI has no native analogue, so native tests
+//! drive `run_function` with a fetch double instead.
 
 wit_bindgen::generate!({
     path: "wit",
@@ -23,7 +23,8 @@ impl Guest for Guest2 {
 }
 
 /// GETs a URL through the host's wasi:http client and returns the trimmed
-/// body, the v2 counterpart of an ABI v1 guest's get_text helper.
+/// body. The host answers only what the module's manifest requested and the
+/// policy layers granted; a refusal arrives as an error, never a trap.
 async fn fetch_text(url: String) -> Result<String, String> {
     let (scheme, rest) = if let Some(rest) = url.strip_prefix("https://") {
         (Scheme::Https, rest)

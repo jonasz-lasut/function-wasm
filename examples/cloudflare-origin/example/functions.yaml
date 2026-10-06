@@ -5,8 +5,10 @@ metadata:
   name: function-wasm
   annotations:
     # Development runtime: run the function-wasm runtime locally, serving this
-    # directory, e.g. from a checkout of function-wasm:
-    #   cargo run --release -p function-wasm -- --insecure --debug --module-dir=<this directory>
+    # directory with the example's operator policy, e.g. from a checkout of
+    # function-wasm (../render.sh does this, and serves example/fixtures):
+    #   cargo run --release -p function-wasm -- --insecure --debug \
+    #     --module-dir=<this directory> --sandbox-policy-file=<this directory>/example/policy.cedar
     render.crossplane.io/runtime: Development
 spec:
   package: ghcr.io/jonasz-lasut/function-wasm:v0.1.0

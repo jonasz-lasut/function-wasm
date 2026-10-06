@@ -1,24 +1,29 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: hello-rust-v2
+  name: origins.network.example.org
 spec:
   compositeTypeRef:
-    apiVersion: example.crossplane.io/v1
-    kind: XR
+    apiVersion: network.example.org/v1alpha1
+    kind: Origin
   mode: Pipeline
   pipeline:
-  - step: hello-rust-v2
+  - step: cloudflare-origin
     functionRef:
       name: function-wasm
     input:
       apiVersion: wasm.fn.crossplane.io/v1beta1
       kind: Input
       module:
-        # For local rendering the runtime serves this directory (--module-dir).
-        # In a cluster use type: OCI and an oci reference pinned to the digest
-        # guestfn push prints.
+        # For local rendering the runtime serves this directory (--module-dir),
+        # under a manifest that asks for the fixture server instead of
+        # api.cloudflare.com. In a cluster use type: OCI, the oci reference
+        # pinned to the digest guestfn push prints, and no manifestPath: the
+        # published artifact carries its own manifest.
         type: Path
         path: fn.wasm
+        manifestPath: example/wasmfn.local.yaml
       config:
-        greeting: hi
+        # The fixture render.sh serves; leave ipsUrl out in a cluster to read
+        # https://api.cloudflare.com/client/v4/ips.
+        ipsUrl: http://127.0.0.1:9480/client/v4/ips

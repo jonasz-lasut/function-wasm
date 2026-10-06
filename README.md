@@ -115,6 +115,17 @@ budgeting and auditing every request - see [HTTP egress](#http-egress).
 Each capability is granted only when the Input's `compositionPolicy` and
 the operator's Cedar `--sandbox-policy-file` both permit it.
 
+### Worked examples
+
+Each guest language under [`examples/`](examples) solves one of these, built,
+rendered and asserted on every `/e2e` run:
+
+- [`examples/cloudflare-origin`](examples/cloudflare-origin) (Rust): only
+  Cloudflare may reach an origin. The module composes the origin's AWS
+  security group and one ingress rule per range Cloudflare publishes, read
+  at reconcile time through the host's egress - a capability its manifest
+  requests and both policy layers must grant.
+
 ## Install
 
 ```yaml
@@ -235,7 +246,7 @@ scaffold as ABI v2 components, the rest as ABI v1 modules:
 |---|---|---|---|---|
 | `go` (default) | [`examples/hello-go`](examples/hello-go) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
 | `tinygo` | [`examples/hello-tinygo`](examples/hello-tinygo) | [TinyGo](https://tinygo.org) | protobuf-go message types + [vtprotobuf](https://github.com/planetscale/vtprotobuf)'s reflection-free codecs, generated from the vendored proto (shipped pre-generated; `go generate` + protoc to redo) | ~1.8 MB |
-| `rust` | [`examples/hello-rust-v2`](examples/hello-rust-v2) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) — **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB |
+| `rust` | [`examples/cloudflare-origin`](examples/cloudflare-origin) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) - **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
 | `ts` | [`examples/hello-ts`](examples/hello-ts) | node + npm: [esbuild](https://esbuild.github.io) bundles, [jco](https://github.com/bytecodealliance/jco) componentizes - **an ABI v2 component**, sync-lifted `run`, `fetch()` over `wasi:http@0.2` | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto (`js+dts` codec checked in; `npm run gen-proto` + protoc to redo) | ~14 MB (SpiderMonkey) |

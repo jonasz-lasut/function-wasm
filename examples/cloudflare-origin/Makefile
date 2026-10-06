@@ -1,7 +1,8 @@
-# The hello guest as an ABI v2 component: needs Rust 1.100 or newer with the
-# wasm32-wasip3 target - rust-toolchain.toml pins 1.100's beta until that
-# release, and rustup installs it on first use - and protoc for prost-build.
-# Render needs the crossplane CLI and Docker.
+# The cloudflare-origin guest, an ABI v2 component: needs Rust 1.100 or
+# newer with the wasm32-wasip3 target - rust-toolchain.toml pins 1.100's beta
+# until that release, and rustup installs it on first use - and protoc for
+# prost-build. Render needs the crossplane CLI and Docker, render-check also
+# xprin.
 .PHONY: build lint test render render-check clean
 
 # The one place this guest's wasm target is named; CI's lint step runs
@@ -10,7 +11,7 @@ TARGET := wasm32-wasip3
 
 build: ## Compile the guest to fn.wasm (a component)
 	cargo build --release --target $(TARGET)
-	cp target/$(TARGET)/release/hello_rust_v2.wasm fn.wasm
+	cp target/$(TARGET)/release/cloudflare_origin.wasm fn.wasm
 
 lint: ## Check formatting, run clippy natively and for the wasm target
 	cargo fmt --check

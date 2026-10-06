@@ -1,19 +1,80 @@
-# The example's render test (https://github.com/crossplane-contrib/xprin),
-# run by `make render-check` against the runtime serving this directory.
-tests:
-- name: greeting
+# The example's render test (https://github.com/crossplane-contrib/xprin), run
+# by `make render-check` against the runtime serving this directory under
+# example/policy.cedar, while render.sh serves example/fixtures. Each case
+# validates the XR and every composed resource against their schemas (the XRD
+# and the provider's CRDs in crds/), then asserts what was composed.
+common:
   inputs:
-    xr: xr.yaml
     composition: composition.yaml
     functions: functions.yaml
+    crds:
+    - definition.yaml
+    - crds
+  patches:
+    xrd: definition.yaml
+tests:
+- name: cloudflare
+  inputs:
+    xr: xr.yaml
   assertions:
     xprin:
-    - name: the module composes the greeting ConfigMap
+    - name: the origin, its security group and one ingress rule per Cloudflare range (15 IPv4, 7 IPv6)
+      type: Count
+      value: 24
+    - name: the security group is in the origin's VPC
+      type: FieldValue
+      resource: SecurityGroup
+      field: spec.forProvider.vpcId
+      operator: is
+      value: vpc-0a1b2c3d4e5f60718
+    - name: every rule admits TCP
+      type: FieldValue
+      resource: SecurityGroupIngressRule
+      field: spec.forProvider.ipProtocol
+      operator: is
+      value: tcp
+    - name: every rule opens the origin's port, and only that port
+      type: FieldValue
+      resource: SecurityGroupIngressRule
+      field: spec.forProvider.fromPort
+      operator: ==
+      value: 443
+    - name: every rule closes at the origin's port
+      type: FieldValue
+      resource: SecurityGroupIngressRule
+      field: spec.forProvider.toPort
+      operator: ==
+      value: 443
+    - name: every rule belongs to the security group this origin composed
+      type: FieldValue
+      resource: SecurityGroupIngressRule
+      field: spec.forProvider.securityGroupIdSelector.matchControllerRef
+      operator: ==
+      value: true
+    - name: the status records the list the rules were built from
+      type: FieldValue
+      resource: Origin/shop
+      field: status.cloudflare.etag
+      operator: is
+      value: 38f79d050aa027e3be3865e495dcc9bc
+    - name: the status counts the ranges admitted
+      type: FieldValue
+      resource: Origin/shop
+      field: status.cloudflare.ranges
+      operator: ==
+      value: 22
+- name: private
+  inputs:
+    xr: xr-private.yaml
+  assertions:
+    xprin:
+    - name: the origin and its security group, nothing else
       type: Count
       value: 2
-    - name: the ConfigMap carries the configured greeting
-      type: FieldValue
-      resource: ConfigMap
-      field: data.greeting
-      operator: is
-      value: hi example-xr
+    - name: no ingress rules
+      type: NotExists
+      resource: SecurityGroupIngressRule
+    - name: no Cloudflare status
+      type: FieldNotExists
+      resource: Origin/backoffice
+      field: status.cloudflare
