@@ -18,8 +18,8 @@ serde_json.workspace = true
 tempfile = "3"
 thiserror = "2"
 tracing.workspace = true
-wasmtime = { version = "48", features = ["call-hook"] }
-wasmtime-wasi = { version = "48", features = ["p3"] }
+wasmtime = { version = "49", features = ["call-hook"] }
+wasmtime-wasi = { version = "49", features = ["p3"] }
 # default-send-request stays off on purpose: the compiler then requires the
 # egress hooks implementation - a run can never fall through to an
 # unpoliced default HTTP client.
