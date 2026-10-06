@@ -88,18 +88,18 @@ fn bench_instantiation() {
         bench("small (4 pages)", pooling, &small);
         bench("large (1024 pages, 64 MiB)", pooling, &large);
     }
-    // The repository's real Rust example guest, when built
-    // (make -C examples/hello-rust build).
+    // A real ABI v1 guest from the repository, when built
+    // (make -C examples/hello-tinygo build).
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/hello-rust/fn.wasm"
+        "/../../examples/hello-tinygo/fn.wasm"
     );
     match std::fs::read(path) {
         Ok(wasm) => {
             for pooling in [false, true] {
-                bench("hello-rust example guest", pooling, &wasm);
+                bench("hello-tinygo example guest", pooling, &wasm);
             }
         }
-        Err(_) => println!("hello-rust guest not built, skipping ({path})"),
+        Err(_) => println!("hello-tinygo guest not built, skipping ({path})"),
     }
 }

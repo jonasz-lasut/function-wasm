@@ -487,37 +487,6 @@ fn the_request_deadline_caps_the_run() {
     );
 }
 
-/// Runs the repository's real Rust example guest when its built module is
-/// present (make -C examples/hello-rust build), the way the Go runtime's
-/// guest tests skip without a toolchain. Whatever the guest thinks of an
-/// empty request, a decodable RunFunctionResponse proves the ABI mechanics
-/// against a real prost guest, not just WAT fixtures.
-#[test]
-fn runs_the_real_rust_example_guest() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../examples/hello-rust/fn.wasm"
-    );
-    let Ok(wasm) = std::fs::read(path) else {
-        eprintln!("skipping: {path} not built");
-        return;
-    };
-    let e = engine();
-    let m = e.compile(&wasm).expect("compile the example guest");
-    let out = e
-        .run(
-            &m,
-            &function_sdk_rust::proto::v1::RunFunctionRequest::default().encode_to_vec(),
-            RunOptions::default(),
-        )
-        .expect("run the example guest");
-    let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode the guest's response");
-    assert!(
-        rsp.meta.is_some() || !rsp.results.is_empty(),
-        "empty response: {rsp:?}"
-    );
-}
-
 #[test]
 fn env_reaches_the_guest_sorted() {
     let e = engine();

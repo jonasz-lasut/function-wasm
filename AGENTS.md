@@ -149,7 +149,7 @@ crates/function/            the runtime crate: a library (everything below) + th
   sandboxenv.rs, quantity.rs
   src/ops.rs                  /livez + /readyz (warm-up gated) and /metrics on plain HTTP; warm()
   tests/conformance.rs        the golden conformance suite (see "Conformance goldens" below)
-  tests/guests.rs             the five-guest behavioural suite (see "Testing")
+  tests/guests.rs             the guest behavioural suite over every scaffold (see "Testing")
   tests/raw_client.rs         a raw-codec gRPC client proving byte transparency end to end
   testdata/validate/          the validate fixture corpus (one file per refusal family, policies, XR)
   testdata/conformance/       the recorded goldens
@@ -171,7 +171,8 @@ crates/engine/              the wasmtime engine - the only crate that imports wa
 crates/guestfn/             the CLI crate (binary `guestfn`)
   src/main.rs                 clap CLI: init/build/push/inspect/manifest/scaffold; shared helpers
   src/scaffold.rs             template rendering ([[ ]] delimiters, zigid/zigfp helpers), write with
-                              overwrite refusal; the golden and render-matches-the-examples tests
+                              overwrite refusal; the golden and examples-share-the-scaffold-plumbing
+                              tests
   src/buildcmd.rs             toolchain detection (Cargo.toml → rust - wasip3 with a wit/ dir,
                               wasip1 without; package.json sans asconfig.json → ts via npm - npm ci
                               with a package-lock.json, npm install without; requirements.txt →
@@ -185,19 +186,17 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
   src/manifestcmd.rs          manifest validate <file> / manifest show <ref>
   src/composition.rs          scaffold composition: the step, a config skeleton from the schema, the
                               commented compositionPolicy skeleton from the manifest's requires
-  templates/<lang>            the seven template sets (each is its example rendered for itself)
+  templates/<lang>            the seven template sets: minimal greeting projects, whose plumbing
+                              (glue, codecs, proto, WIT) the paired examples carry byte for byte
   testdata/<lang>             the golden scaffolds (UPDATE_GOLDENS=1 cargo test regenerates)
 examples/hello-go           the Go example guest — separate go.mod; vendors its ABI glue under
                             internal/wasmfn (no external SDK); built by tests, the /e2e render job and
                             local rendering, never published
 examples/hello-tinygo       the same guest, TinyGo + vtprotobuf — separate go.mod, `make generate`
-examples/hello-rust         the same guest, Rust + prost, ABI v1 wasip1 — example-only now (the
-                            rust scaffold emits ABI v2); Cargo crate (excluded from the workspace:
-                            guests depend on nothing in this repository)
 examples/hello-zig          the same guest, Zig + zig-protobuf — build.zig
 examples/hello-c            the same guest, C + nanopb + cJSON, compiled by zig cc — build.zig
 examples/hello-rust-v2      the same guest as an ABI v2 component - the rust scaffold's example
-                            pair (render-matches-the-examples):
+                            pair (examples-share-the-scaffold-plumbing):
                             async Rust 1.100+ (wasm32-wasip3 + wit-bindgen; rust-toolchain.toml pins
                             1.100's beta until that release), run is an async fn
                             awaiting wasi:http/client for greetingUrl; its own world
@@ -233,8 +232,11 @@ examples/hello-assemblyscript  the same guest, AssemblyScript + as-proto (exampl
                             four files hand-written where as-proto-gen 1.3.0 gets this proto
                             wrong (the Value oneof, proto3 optional presence, packed repeated
                             enums), stub runtime with a bump allocator, ~30 KB - the smallest guest
-examples/render.sh          shared: cargo-build the runtime serving an example dir, crossplane
-                            render its example/, optionally --check
+examples/render.sh          shared: cargo-build the runtime, function validate every example/xr*.yaml,
+                            serve the example dir (example/policy.cedar as the operator policy,
+                            example/fixtures/ on a local HTTP server for egress), then crossplane
+                            render example/xr.yaml - or, with --check, run example/xprin.yaml
+                            (xprin, crossplane-contrib's render test framework) against it
 package/                    crossplane.yaml + the checked-in Input CRD (documentation for tooling;
                             Crossplane never installs a function's Input CRD - the CRD is maintained
                             by hand now that the Go types that generated it are gone)
@@ -326,21 +328,20 @@ crossplane xpkg build -f package --embed-runtime-image=runtime
 ```bash
 cargo test --workspace                    # everything below
 cargo test -p function-wasm-engine        # the engine over WAT fixtures
-cargo test -p function-wasm               # runtime units, conformance goldens, five-guest suite, raw client
-cargo test -p guestfn                     # scaffold goldens, render-matches-the-examples, CLI against an in-memory registry
+cargo test -p function-wasm               # runtime units, conformance goldens, guest suite, raw client
+cargo test -p guestfn                     # scaffold goldens, the examples' shared plumbing, CLI against an in-memory registry
 (cd examples/hello-go && go test -race ./...)
 (cd examples/hello-tinygo && go test -race ./...)
-(cd examples/hello-rust && cargo test)
 (cd examples/hello-zig && zig build test)
 (cd examples/hello-c && zig build test)
 make -C examples/hello-dotnet test        # dotnet test (in the .NET SDK container off Linux)
 ```
 
-`crates/function/tests/guests.rs` builds all six example guests (AssemblyScript skipped without `npm`) and runs each through the whole host with the same expectations — default and configured greeting, a greeting fetched through the host's egress (via an OCI manifest layer and via `module.manifestPath`) and refused without a grant, guest-side fatal on a bad config, guest logs — the guests must stay behaviourally identical. A guest whose toolchain is not on PATH is skipped. Toolchains: `rustup target add wasm32-wasip1` for hello-rust (hello-rust-v2's `rust-toolchain.toml` brings its own pinned toolchain with `wasm32-wasip3`, installed by rustup on first use); TinyGo ≥ 0.41; Zig 0.16; `protoc` only for the codec regeneration targets; `nanopb_generator` (`pip install nanopb==0.4.9.1`) only for `zig build gen-proto` in hello-c; the .NET 10 SDK for hello-dotnet on Linux, Docker for it elsewhere (NativeAOT-LLVM has no macOS compiler).
+`crates/function/tests/guests.rs` builds every language's scaffold - its golden under `crates/guestfn/testdata`, copied fresh into the OS temp dir (outside the workspace), so the suite proves what `guestfn init` writes - and the example-only guests (AssemblyScript, skipped without `npm`, and C#), and runs each through the whole host with the same expectations: default and configured greeting, a greeting fetched through the host's egress (via an OCI manifest layer and via `module.manifestPath`) and refused without a grant, guest-side fatal on a bad config, guest logs. The guests must stay behaviourally identical; the examples under `examples/` are free to solve their own use cases and are checked by their render jobs. A scaffold has no lockfile, so the suite resolves dependencies the way a user's first build does (`go mod tidy`, `npm install`, a fresh `Cargo.lock`). A guest whose toolchain is not on PATH is skipped. Toolchains: the rust scaffold's `rust-toolchain.toml` brings its own pinned toolchain with `wasm32-wasip3`, installed by rustup on first use; TinyGo >= 0.41; Zig 0.16; `protoc` for the rust scaffold's prost-build and the codec regeneration targets; `nanopb_generator` (`pip install nanopb==0.4.9.1`) only for `zig build gen-proto` in hello-c; the .NET 10 SDK for hello-dotnet on Linux, Docker for it elsewhere (NativeAOT-LLVM has no macOS compiler).
 
 Goldens: `UPDATE_CONFORMANCE=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
 
-CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml` (its `build-tools` job compiles the release runtime and `guestfn` once per run and hands them to every render job as an artifact, which `examples/render.sh` and hello-go's Makefile pick up from `FUNCTION_BIN` and `GUESTFN`; without them they build from the tree), hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push.
+CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml` (its `build-tools` job compiles the release runtime and `guestfn` once per run, fetches xprin pinned by checksum, and hands all three to every render job as an artifact, which `examples/render.sh` and hello-go's Makefile pick up from `FUNCTION_BIN`, `GUESTFN` and `XPRIN`; without them they build from the tree and take xprin from PATH), hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push.
 
 ### Test Patterns
 
@@ -352,7 +353,6 @@ Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration 
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 (cd examples/hello-go && golangci-lint run ./...)   # the Go guests keep Go lint
-(cd examples/hello-rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings)
 (cd examples/hello-zig && zig fmt --check build.zig src/main.zig)
 (cd examples/hello-c && zig fmt --check build.zig)
 ```
@@ -365,7 +365,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 - Only `crates/engine` imports `wasmtime`/`wasmtime-wasi` — the engine is the seam if the runtime ever changes.
 - Only `crates/function/src/authz.rs` imports `cedar-policy`.
 - Errors that reach users are `String`s carrying the runtime's exact refusal wording — the wording is contract (conformance goldens); route new refusals through the same phrasing patterns.
-- The `internal/wasmfn` glue must stay buildable natively (portable `Register`/`NewLogger`/`GetConfig`/`HTTPClient`) so a guest's own tests run natively; only the exports and the two host imports are `//go:build wasip1`. Edit it in `examples/hello-go/internal/wasmfn`, then mirror to `crates/guestfn/templates/go/internal/wasmfn/*.go.tmpl`; the render-matches-the-examples test keeps them in step.
+- The `internal/wasmfn` glue must stay buildable natively (portable `Register`/`NewLogger`/`GetConfig`/`HTTPClient`) so a guest's own tests run natively; only the exports and the two host imports are `//go:build wasip1`. Edit it in `examples/hello-go/internal/wasmfn`, then mirror to `crates/guestfn/templates/go/internal/wasmfn/*.go.tmpl`; the examples-share-the-scaffold-plumbing test keeps them in step.
 
 ## Common Development Tasks
 
@@ -381,19 +381,20 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 1. Define it in the engine (`linker.func_wrap(HOST_MODULE, name, fn)`), allow it in `check_abi` with its exact type; reach per-run state through the store's `CallState` and pass what it needs in `RunOptions`. To hand bytes back, call the guest's `wasmfn_alloc` re-entrantly — copy the request out first and re-read memory afterwards, the guest may grow it — and return `ptr<<32|len`; keep failures inside the payload (never a trap for a refusal)
 2. Add the guest side to the glue (a `//go:wasmimport wasmfn <name>` in a `_wasip1.go` file, a portable fallback behind a swappable package var so the codec is testable natively)
-3. Document it in `docs/abi.md`; cover it with a WAT fixture in the engine's tests and, through the five-guest suite, in every guest
+3. Document it in `docs/abi.md`; cover it with a WAT fixture in the engine's tests and, through the guest suite, in every scaffold
 
 ### Changing the scaffold
 
-Edit the example **and** its template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; the examples are the templates rendered for themselves; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the render-matches-the-examples test keeps each pair in sync (everything but `go.mod`; the examples' `Makefile`, lockfiles (`Cargo.lock`, `package-lock.json`) and the go example's glue tests are extra). The twenty-one vendored `run_function.proto` copies (six templates, six goldens, nine examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file** or regenerate the codecs checked in beside it: treat the PR as the signal to run `make vendor-proto` on its branch (`VERSION=vX.Y.Z` vendors ahead of Renovate), which fetches the upstream file at that release into every copy under its own header, regenerates every guest's codec with the protoc and nanopb_generator the root `Makefile` pins (it needs Go, Zig, npm, python3 and cargo), mirrors them into the templates and refreshes the goldens; then comment /e2e, whose render jobs fail on codec drift. Per-language identity (template ↔ golden ↔ example) is enforced by the goldens and the render-matches-the-examples test. The rust scaffold's `wit/deps/wasmfn-function.wit` is the root `wit/wasmfn-function.wit` (the world the engine compiles) byte for byte, enforced by the render-matches-the-runtime-world test: change the world at the root, copy it into `templates/rust/wit/deps/` and `examples/hello-rust-v2/wit/deps/` (and move the version in `wit/world.wit`'s `include` if the package version changed), then refresh the goldens; the guest's own world, `wit/world.wit`, is a `local:guest` package, so a scaffold never redefines the contract's package (the ts and python scaffolds' `wit/world.wit` restates the world with a sync `run` instead of including it, so only the contract's copies carry its name). The vendored WASI WIT under `wit/deps/` (wasi:*@0.3 from wasmtime-wasi-http's `src/p3/wit/deps` in the rust template, its golden and hello-rust-v2, the p3 `http.wit` trimmed of its service/middleware worlds; wasi:*@0.2 from its `wit/deps` in the python template, its golden, hello-python and hello-dotnet) carries a `Vendored from wasmtime-wasi-http X.Y.Z` header under the same tripwire, grouped into Renovate's wasmtime PR: that PR moves the headers with the crates, and is the signal to re-vendor the files by hand from the new crate (keeping the trim).
+Edit the template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; each template set is a minimal greeting project; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the guest suite builds the goldens, so `/e2e` proves the change. A change to the plumbing - the vendored ABI glue (`internal/wasmfn`), the generated codecs, the proto, the vendored WIT - goes into the paired example too: the examples-share-the-scaffold-plumbing test holds each example's copy of those files identical to its template (its list of shared paths per language is in `scaffold.rs`); everything else in an example is its own. The twenty vendored `run_function.proto` copies (six templates, six goldens, eight examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file** or regenerate the codecs checked in beside it: treat the PR as the signal to run `make vendor-proto` on its branch (`VERSION=vX.Y.Z` vendors ahead of Renovate), which fetches the upstream file at that release into every copy under its own header, regenerates every guest's codec with the protoc and nanopb_generator the root `Makefile` pins (it needs Go, Zig, npm, python3 and cargo), mirrors them into the templates and refreshes the goldens; then comment /e2e, whose render jobs fail on codec drift. Per-language identity of the plumbing (template ↔ golden ↔ example) is enforced by the goldens and the examples-share-the-scaffold-plumbing test. The rust scaffold's `wit/deps/wasmfn-function.wit` is the root `wit/wasmfn-function.wit` (the world the engine compiles) byte for byte, enforced by the render-matches-the-runtime-world test: change the world at the root, copy it into `templates/rust/wit/deps/` and `examples/hello-rust-v2/wit/deps/` (and move the version in `wit/world.wit`'s `include` if the package version changed), then refresh the goldens; the guest's own world, `wit/world.wit`, is a `local:guest` package, so a scaffold never redefines the contract's package (the ts and python scaffolds' `wit/world.wit` restates the world with a sync `run` instead of including it, so only the contract's copies carry its name). The vendored WASI WIT under `wit/deps/` (wasi:*@0.3 from wasmtime-wasi-http's `src/p3/wit/deps` in the rust template, its golden and hello-rust-v2, the p3 `http.wit` trimmed of its service/middleware worlds; wasi:*@0.2 from its `wit/deps` in the python template, its golden, hello-python and hello-dotnet) carries a `Vendored from wasmtime-wasi-http X.Y.Z` header under the same tripwire, grouped into Renovate's wasmtime PR: that PR moves the headers with the crates, and is the signal to re-vendor the files by hand from the new crate (keeping the trim).
 
 ### Rendering Locally
 
+Each example's `example/xprin.yaml` is its render test: [xprin](https://github.com/crossplane-contrib/xprin) cases (an XR plus any required resources, observed resources or function credentials) with declarative assertions on what the module composes - `Count`, `Exists`/`NotExists`, `FieldValue` - never string matching over the render output. A suite asserts outcomes as composed resources or XR status, never function results (they carry no name, so xprin collapses them onto one `Result/` key); a fatal path is tested in the guest's own unit tests, because a fatal result fails the render. `render.sh` owns the runtime's side: `function validate` over every `example/xr*.yaml`, the operator policy and the fixture server.
+
 ```bash
 make -C examples/hello-go render          # build fn.wasm (guestfn via cargo), serve it, crossplane render example/
-make -C examples/hello-go render-check    # same, asserting the output — what the /e2e render job runs
+make -C examples/hello-go render-check    # same, running example/xprin.yaml (xprin on PATH, or XPRIN) - what the /e2e render job runs
 make -C examples/hello-tinygo render      # the TinyGo guest (tinygo on PATH)
-make -C examples/hello-rust render        # the Rust guest (cargo + wasm32-wasip1 + protoc)
 make -C examples/hello-zig render         # the Zig guest (zig on PATH)
 make -C examples/hello-c render           # the C guest (zig on PATH: zig cc builds it)
 ```

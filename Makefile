@@ -65,8 +65,8 @@ vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(VERSION)
 
 # rust and rust-v2 have no checked-in codec (build.rs runs prost-build); the
 # tinygo, zig, c, ts and python codecs are mirrored into their guestfn
-# templates, which render-matches-the-examples holds identical to the
-# examples. The ts and python codecs are copied file by file: a gen/ directory
+# templates, which examples_share_the_scaffold_plumbing holds identical to
+# the examples. The ts and python codecs are copied file by file: a gen/ directory
 # may hold a __pycache__ the templates must not embed.
 vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the pinned generators and mirror them into the templates
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-tinygo generate

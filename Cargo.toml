@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/engine", "crates/function", "crates/guestfn"]
 # The example guests are deliberately standalone: a guest depends on nothing
 # in this repository.
-exclude = ["examples/hello-rust", "examples/hello-rust-v2"]
+exclude = ["examples/hello-rust-v2"]
 
 [workspace.package]
 edition = "2024"

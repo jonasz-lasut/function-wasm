@@ -3,10 +3,9 @@
 //! generated protobuf messages, Rust with prost, Zig with zig-protobuf, C
 //! with nanopb (built by zig cc), TypeScript with protobuf-es (componentized
 //! by jco), or Python with protobuf (componentized by componentize-py). Each
-//! template set is the matching example guest of this repository
-//! (examples/hello-go, hello-tinygo, hello-rust-v2, hello-zig, hello-c,
-//! hello-ts, hello-python) with the module path and name parameterised;
-//! tests keep them identical.
+//! template set is a minimal greeting project; the example guests of this
+//! repository solve their own use cases on the same plumbing (the vendored
+//! glue, codecs, proto and WIT), which tests keep identical.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -264,16 +263,18 @@ mod tests {
         }
     }
 
-    /// Each language's example guest is its scaffold rendered for itself.
-    /// Only go.mod may differ (the Go examples replace the SDK with the
-    /// checkout and carry tidy's indirect requirements); the examples'
-    /// Makefile, lockfiles (Cargo.lock, package-lock.json) and generated
-    /// build artefacts are extra.
+    /// The examples solve their own use cases, but each one that pairs with
+    /// a scaffold builds on that scaffold's plumbing - the vendored ABI glue,
+    /// the generated codecs, the proto and the WIT - and must carry it byte
+    /// for byte, so a plumbing fix lands in the template and the example
+    /// together. Everything else (the function itself, wasmfn.yaml, the
+    /// README, the example manifests) is the example's own.
     #[test]
-    fn render_matches_the_examples() {
-        let examples: [(&str, Options); 7] = [
+    fn examples_share_the_scaffold_plumbing() {
+        let examples: [(&str, &[&str], Options); 7] = [
             (
-                LANG_GO,
+                "hello-go",
+                &["internal/wasmfn/"],
                 Options {
                     lang: LANG_GO.into(),
                     module: "github.com/jonasz-lasut/function-wasm/examples/hello-go".into(),
@@ -282,7 +283,17 @@ mod tests {
                 },
             ),
             (
-                LANG_TINYGO,
+                "hello-tinygo",
+                &[
+                    "internal/fnv1/",
+                    "proto/",
+                    "abi_wasip1.go",
+                    "generate.go",
+                    "http.go",
+                    "http_wasip1.go",
+                    "log.go",
+                    "log_other.go",
+                ],
                 Options {
                     lang: LANG_TINYGO.into(),
                     module: "github.com/jonasz-lasut/function-wasm/examples/hello-tinygo".into(),
@@ -290,10 +301,9 @@ mod tests {
                     ..Default::default()
                 },
             ),
-            // The rust scaffold emits ABI v2; its example pair is
-            // hello-rust-v2 (hello-rust stays as the example-only v1 guest).
             (
-                "rust-v2",
+                "hello-rust-v2",
+                &["proto/", "wit/deps/", "build.rs", "rust-toolchain.toml"],
                 Options {
                     lang: LANG_RUST.into(),
                     name: "hello-rust-v2".into(),
@@ -301,7 +311,8 @@ mod tests {
                 },
             ),
             (
-                LANG_ZIG,
+                "hello-zig",
+                &["proto/", "src/fnv1/"],
                 Options {
                     lang: LANG_ZIG.into(),
                     name: "hello-zig".into(),
@@ -309,7 +320,8 @@ mod tests {
                 },
             ),
             (
-                LANG_C,
+                "hello-c",
+                &["proto/", "src/fnv1/", "src/structpb.", "src/wasmfn."],
                 Options {
                     lang: LANG_C.into(),
                     name: "hello-c".into(),
@@ -317,7 +329,8 @@ mod tests {
                 },
             ),
             (
-                LANG_TS,
+                "hello-ts",
+                &["proto/", "src/gen/", "src/log.d.ts"],
                 Options {
                     lang: LANG_TS.into(),
                     name: "hello-ts".into(),
@@ -325,7 +338,8 @@ mod tests {
                 },
             ),
             (
-                LANG_PYTHON,
+                "hello-python",
+                &["proto/", "src/gen/", "wit/deps/"],
                 Options {
                     lang: LANG_PYTHON.into(),
                     name: "hello-python".into(),
@@ -333,24 +347,26 @@ mod tests {
                 },
             ),
         ];
-        for (lang, o) in examples {
+        for (example, plumbing, o) in examples {
             let files = render(o).expect("render");
-            let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+            let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../examples")
-                .join(format!("hello-{lang}"));
-            for (name, rendered) in &files {
-                if name == "go.mod" {
-                    continue;
-                }
-                let want = std::fs::read(example.join(name)).unwrap_or_else(|e| {
+                .join(example);
+            let shared: Vec<_> = files
+                .iter()
+                .filter(|(name, _)| plumbing.iter().any(|p| name.starts_with(p)))
+                .collect();
+            assert!(!shared.is_empty(), "{example}: no plumbing rendered");
+            for (name, rendered) in shared {
+                let want = std::fs::read(dir.join(name)).unwrap_or_else(|e| {
                     panic!(
-                        "examples/hello-{lang}/{name}: {e} (the scaffold renders it; copy it there)"
+                        "examples/{example}/{name}: {e} (the scaffold renders it; copy it there)"
                     )
                 });
                 assert_eq!(
                     String::from_utf8_lossy(&want),
                     String::from_utf8_lossy(rendered),
-                    "examples/hello-{lang}/{name} differs from the scaffold template"
+                    "examples/{example}/{name} differs from the scaffold template"
                 );
             }
         }
@@ -358,8 +374,8 @@ mod tests {
 
     /// The rust scaffold vendors the ABI v2 world the engine compiles
     /// (wit/wasmfn-function.wit) byte for byte as a dependency of the
-    /// guest's own world; the two tests above carry that on to the golden
-    /// and to hello-rust-v2.
+    /// guest's own world; the golden and plumbing tests above carry that on
+    /// to the golden and to the Rust example.
     #[test]
     fn render_matches_the_runtime_world() {
         let runtime_world = "wit/wasmfn-function.wit";
@@ -371,8 +387,8 @@ mod tests {
             String::from_utf8_lossy(&runtime),
             String::from_utf8_lossy(&files[vendored_world]),
             "templates/rust/{vendored_world} differs from the runtime's {runtime_world} (the \
-             root world is canonical: copy it into the template and examples/hello-rust-v2, \
-             then run UPDATE_GOLDENS=1 cargo test -p guestfn)"
+             root world is canonical: copy it into the template and the Rust example's \
+             wit/deps, then run UPDATE_GOLDENS=1 cargo test -p guestfn)"
         );
     }
 

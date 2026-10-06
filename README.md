@@ -246,11 +246,6 @@ An **AssemblyScript** flavour exists as an example only for now
 smallest guest; `npm ci && make build`): it passes the same behaviour tests as
 the scaffolded flavours, but `guestfn init` cannot scaffold it yet.
 
-The **ABI v1 Rust** guest remains as an example only
-([`examples/hello-rust`](examples/hello-rust), ~250 KB, `wasm32-wasip1`):
-the scaffold moved to the component, and the v1 example stays as the
-reference for the wasip1 shape (it passes the same behaviour tests).
-
 A **C#** ABI v2 guest exists as an example only as well
 ([`examples/hello-dotnet`](examples/hello-dotnet), ~4 MB; the .NET 10 SDK,
 `make build`): compiled by NativeAOT-LLVM with
@@ -288,8 +283,10 @@ or takes `--lang`. Every flavour carries
 its ABI glue in the open — the Go scaffold vendors it under `internal/wasmfn`,
 TinyGo, Rust, Zig and C carry theirs beside the module — with a small HTTP
 helper over `wasmfn.http`; each example
-has a `make render-check` that runs it through the runtime, and the root tests
-run them all through the host as well — with and without an egress grant.
+has a `make render-check` that runs it through the runtime and asserts what it
+composes with an [xprin](https://github.com/crossplane-contrib/xprin) suite,
+and the root tests build every scaffold and run it through the host as well -
+with and without an egress grant.
 
 ### Render locally
 
@@ -305,8 +302,9 @@ crossplane render example/xr.yaml example/composition.yaml example/functions.yam
 
 The example Composition uses `module.type: Path` with `path: fn.wasm`; swap
 in `type: OCI` and the `oci` reference for a cluster. In this repository `make -C examples/hello-go render`
-does all of the above for the example guest (`render-check` asserts the
-output; CI runs it).
+does all of the above for the example guest (`render-check` runs the
+example's [xprin](https://github.com/crossplane-contrib/xprin) suite,
+`example/xprin.yaml`, instead; CI runs it).
 
 ### Validate a Composition
 
@@ -1081,12 +1079,13 @@ fail-closed.
 cargo build --workspace && cargo test --workspace   # engine, runtime, guestfn - conformance goldens and scaffold goldens included
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 (cd examples/hello-go && go test ./...)             # the example guest and its vendored internal/wasmfn glue
-make -C examples/hello-go render-check              # function validate + crossplane render through the real runtime
+make -C examples/hello-go render-check              # function validate, then the example's xprin suite through the real runtime
 ```
 
-The workspace tests build the example guests to WebAssembly and run them all
-through the host when their toolchains (go, tinygo, cargo + wasm32-wasip1 and
-wasm32-wasip3, zig) are on PATH, and skip the ones that are not. See
+The workspace tests build every scaffold (what `guestfn init` writes) and the
+AssemblyScript example to WebAssembly and run them all through the host when
+their toolchains (go, tinygo, cargo with the rust scaffold's pinned
+toolchain, zig, npm, python3) are on PATH, and skip the ones that are not. See
 [AGENTS.md](AGENTS.md) for the layout and conventions.
 
 Design documents live under `docs/` as one-pagers: the implemented ones
