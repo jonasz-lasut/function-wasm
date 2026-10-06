@@ -1133,7 +1133,7 @@ toolchain, zig, npm, python3) are on PATH, and skip the ones that are not. See
 Design documents live under `docs/` as one-pagers: the implemented ones
 (cache, module source schema, trust model, resource governance, sandbox,
 admission and inspection tooling, the module manifest, the three-layer
-authorization model, governance and performance phases) and the drafts of
+authorization model, governance and performance phases, the use-case examples) and the drafts of
 what comes next (guest language support, sandbox requests for
 manifest-less sources, a Nix development environment).
 [AGENTS.md](AGENTS.md#key-reference-documents) lists them.

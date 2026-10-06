@@ -542,5 +542,6 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 - `docs/one-pager-module-source-schema.md`, `docs/one-pager-module-manifest.md`, `docs/one-pager-manifest-less-sources.md` — the Input and the manifest
 - `docs/one-pager-admission-tooling.md` — validate and inspection
 - `docs/one-pager-language-support.md` — the guest language matrix
+- `docs/one-pager-use-case-examples.md` - the use-case examples: why these, how they are tested (scaffold goldens, shared plumbing, xprin suites), how they are published
 - `crates/function/src/input.rs` — authoritative Input schema
 - `.claude/skills/cut-release/SKILL.md`, `.claude/skills/remediate-cves/SKILL.md` — releasing
