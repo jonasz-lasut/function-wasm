@@ -81,10 +81,16 @@ jobs:
 
       - name: Build Package
         # --examples-root must point at a directory of Crossplane example objects
-        # only. The default (./examples) recurses into the guest projects and
-        # their wasmfn.yaml module manifests (no Kind), which xpkg build cannot
-        # parse; point it at one guest's example/ dir instead.
-        run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/ --examples-root=examples/hello-go/example --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
+        # only: xpkg build parses every YAML file under it. The default
+        # (./examples) recurses into the guest projects and their wasmfn.yaml
+        # module manifests (no Kind), and a guest's example/ dir holds its xprin
+        # render test (no Kind either), so the package takes one guest's
+        # example objects without the test.
+        run: |
+          mkdir package-examples
+          cp examples/hello-go/example/*.yaml package-examples/
+          rm package-examples/xprin.yaml
+          ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/ --examples-root=package-examples --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
 
       - name: Upload Single-Platform Package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
