@@ -223,7 +223,10 @@ fn init_offline_writes_a_project() {
 /// after its directory and runs no toolchain.
 #[test]
 fn init_names_a_component_project_after_its_directory() {
-    let cases = [("ts", "my-ts", "package", "package.json")];
+    let cases = [
+        ("ts", "my-ts", "package", "package.json"),
+        ("python", "my-py", "project", "requirements.txt"),
+    ];
     for (lang, name, kind, manifest) in cases {
         let dir = tempfile::tempdir().expect("tempdir");
         let (stdout, stderr, ok) = guestfn(dir.path(), &["init", name, "--lang", lang]);

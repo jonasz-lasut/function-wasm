@@ -73,8 +73,9 @@ struct InitCmd {
 
     /// Language of the project: go (function-sdk-go), tinygo (raw protobuf
     /// messages, ~1 MB modules), rust (prost, an ABI v2 component), zig
-    /// (zig-protobuf, ~95 KB), c (nanopb, built by zig cc, ~70 KB) or ts
-    /// (protobuf-es, an ABI v2 component built by jco, ~14 MB).
+    /// (zig-protobuf, ~95 KB), c (nanopb, built by zig cc, ~70 KB), ts
+    /// (protobuf-es, an ABI v2 component built by jco, ~14 MB) or python
+    /// (protobuf, an ABI v2 component built by componentize-py, ~21 MB).
     #[arg(long, default_value = "go", value_parser = scaffold::LANGS)]
     lang: String,
 
@@ -84,9 +85,9 @@ struct InitCmd {
     module: Option<String>,
 
     /// Short name used in docs and the example Composition, the crate name
-    /// for rust and the package name for ts (the project name for zig and
-    /// c). Defaults to the module's last element or the directory's base
-    /// name.
+    /// for rust and the package name for ts (the project name for zig, c
+    /// and python). Defaults to the module's last element or the
+    /// directory's base name.
     #[arg(long)]
     name: Option<String>,
 
@@ -165,6 +166,9 @@ impl InitCmd {
             scaffold::LANG_C => "zig build test       # edit src/fn.c, keep the tests passing",
             scaffold::LANG_TS => {
                 "npm install          # protobuf-es, esbuild, jco\n  npm test             # edit src/fn.ts, keep the tests passing"
+            }
+            scaffold::LANG_PYTHON => {
+                "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt\n  .venv/bin/python -m unittest discover -s test   # edit src/fn.py, keep the tests passing"
             }
             _ => "go test ./...        # edit fn.go, keep the tests passing",
         };

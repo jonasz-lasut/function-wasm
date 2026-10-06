@@ -1,4 +1,4 @@
-# hello-python
+# [[ .Name ]]
 
 A [Crossplane](https://crossplane.io) composition function in Python,
 componentized with
@@ -39,7 +39,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 guestfn build                       # componentize-py -w function componentize app → fn.wasm
 
 # Publish it as an OCI artifact; it prints the module block for the Composition.
-guestfn push ghcr.io/example/hello-python:v0.1.0
+guestfn push ghcr.io/example/[[ .Name ]]:v0.1.0
 ```
 
 Render it locally against a checkout of function-wasm serving this

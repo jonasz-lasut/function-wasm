@@ -9,10 +9,6 @@ use function_wasm::manifest::Manifest;
 
 use crate::scaffold;
 
-/// Python builds through a venv (componentize-py); it has no scaffold
-/// template yet, so the name lives here, not in scaffold::LANGS.
-pub(crate) const LANG_PYTHON: &str = "python";
-
 #[derive(clap::Args, Debug)]
 pub struct BuildCmd {
     /// Project directory.
@@ -149,7 +145,7 @@ fn detect_lang(dir: &Path) -> Result<String, String> {
         return Ok(scaffold::LANG_TS.to_string());
     }
     if dir.join("requirements.txt").exists() {
-        return Ok(LANG_PYTHON.to_string());
+        return Ok(scaffold::LANG_PYTHON.to_string());
     }
     let gomod = std::fs::read_to_string(dir.join("go.mod")).map_err(|_| {
         format!(
@@ -258,8 +254,8 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
                 std::fs::write(out, wasm).map_err(|e| e.to_string())?;
             }
         }
-        LANG_PYTHON => {
-            // The documented layout of a python guest (examples/hello-python):
+        scaffold::LANG_PYTHON => {
+            // The layout the python scaffold writes (examples/hello-python):
             // the app module under src/, the generated codec under src/gen,
             // the world in wit/, componentize-py pinned in requirements.txt.
             which("python3", "install Python from https://www.python.org")?;
