@@ -20,7 +20,8 @@ gRPC server), and its generated codec module itself imports @grpc/grpc-js,
 which cannot exist inside a SpiderMonkey component. Two shapes worth knowing, both required by where
 componentize-js is today:
 
-- `run` is declared **sync** in this guest's wit (`wit/function.wit`):
+- `run` is declared **sync** in this guest's wit (`wit/function.wit`, a
+  `local:guest` package of its own, so it never claims the contract's name):
   componentize-js cannot async-lift a custom world's export yet, and a
   sync-lifted function satisfies the runtime's async world. The JS still
   awaits freely - componentize-js resolves the promise before the export

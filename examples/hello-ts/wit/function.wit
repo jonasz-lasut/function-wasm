@@ -1,10 +1,13 @@
-/// The wasmfn:function contract as this guest targets it. One deliberate
-/// difference from the runtime's wit/wasmfn-function.wit: `run` is declared
-/// sync here, because componentize-js cannot async-lift a custom world's
-/// export yet - and a sync-lifted implementation satisfies the runtime's
-/// async world (docs/abi-v2.md). The JS code still awaits inside run;
-/// componentize-js resolves the promise before the export returns.
-package wasmfn:function@2.0.0-draft;
+/// This guest's world: the wasmfn:function contract (the runtime's
+/// wit/wasmfn-function.wit) restated with one deliberate difference: `run`
+/// is declared sync here, because componentize-js cannot async-lift a
+/// custom world's export yet - and a sync-lifted implementation satisfies
+/// the runtime's async world (docs/abi-v2.md). The JS code still awaits
+/// inside run; componentize-js resolves the promise before the export
+/// returns. It lives in a local package of its own: a WIT package name must
+/// always carry the same contents, and the runtime checks a component's
+/// types, not the package its world came from.
+package local:guest;
 
 world function {
     enum log-level {
