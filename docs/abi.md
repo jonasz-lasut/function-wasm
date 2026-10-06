@@ -200,7 +200,7 @@ indefinitely alongside it. The v2 contract lives in
 
 ## Examples
 
-`examples/hello-go` (Go with function-sdk-go and the vendored `internal/wasmfn`
+`examples/pdb-addon` (Go with function-sdk-go and the vendored `internal/wasmfn`
 glue), `examples/hello-tinygo` (TinyGo, protobuf-go types + vtprotobuf codecs),
 `examples/hello-zig` (Zig, zig-protobuf) and `examples/hello-c` (C built by
 `zig cc`, nanopb) implement this contract and carry the same ABI plumbing as

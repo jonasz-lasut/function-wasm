@@ -1,0 +1,78 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: webapps.platform.example.org
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: WebApp
+  mode: Pipeline
+  pipeline:
+  # The platform's own step: the workload every WebApp gets.
+  - step: webapp
+    functionRef:
+      name: function-go-templating
+    input:
+      apiVersion: gotemplating.fn.crossplane.io/v1beta1
+      kind: GoTemplate
+      source: Inline
+      inline:
+        template: |
+          {{- $xr := .observed.composite.resource }}
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            annotations:
+              {{ setResourceNameAnnotation "deployment" }}
+          spec:
+            replicas: {{ $xr.spec.replicas }}
+            selector:
+              matchLabels:
+                app: {{ $xr.metadata.name }}
+            template:
+              metadata:
+                labels:
+                  app: {{ $xr.metadata.name }}
+              spec:
+                containers:
+                - name: app
+                  image: {{ $xr.spec.image }}
+                  ports:
+                  - containerPort: {{ $xr.spec.port }}
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            annotations:
+              {{ setResourceNameAnnotation "service" }}
+          spec:
+            selector:
+              app: {{ $xr.metadata.name }}
+            ports:
+            - port: {{ $xr.spec.port }}
+              targetPort: {{ $xr.spec.port }}
+  # The tenant's hook, reserved last: the module the WebApp names in
+  # spec.addOn runs over what the platform composed, and a WebApp that names
+  # none skips the step (allowEmpty), its desired state passing through.
+  - step: add-on
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        # For local rendering the runtime serves this directory (--module-dir)
+        # and the XR names a file in it (spec.addOn: fn.wasm). In a cluster
+        # use type: OCI, and the XR names a pinned reference instead
+        # (spec.addOn: {ref: ghcr.io/example-org/webapp-addons/pdb@sha256:...}).
+        type: Path
+        from: spec.addOn
+        allowEmpty: true
+      # Which add-ons a WebApp may name: an OCI reference only under this
+      # repository, default-deny. A Path source has no host to fence: an XR
+      # can name only a file the operator put under --module-dir (a path
+      # that leaves it is refused), so the fence does not apply to it.
+      compositionPolicy: |
+        permit (principal, action == Action::"pullModule",
+                resource in Repository::"ghcr.io/example-org/webapp-addons");

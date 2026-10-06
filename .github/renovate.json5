@@ -225,7 +225,7 @@
     // tidy, as the /e2e drift check for hello-tinygo requires.
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/hello-go/go.mod', 'examples/hello-tinygo/go.mod'],
+      matchFileNames: ['examples/pdb-addon/go.mod', 'examples/hello-tinygo/go.mod'],
       enabled: true,
       postUpdateOptions: ['gomodTidy'],
     },
@@ -236,7 +236,7 @@
     // template's three requirements, the versions its checked-in vtprotobuf
     // codec was generated with - today all that hello-tinygo requires.
     {
-      matchFileNames: ['examples/hello-go/go.mod'],
+      matchFileNames: ['examples/pdb-addon/go.mod'],
       matchPackageNames: ['go', 'github.com/crossplane/function-sdk-go'],
       enabled: false,
     },
@@ -302,13 +302,13 @@
     // the major is dropped.
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/hello-go/go.mod', 'examples/hello-tinygo/go.mod'],
+      matchFileNames: ['examples/pdb-addon/go.mod', 'examples/hello-tinygo/go.mod'],
       matchDepTypes: ['indirect'],
       separateMajorMinor: true,
     },
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/hello-go/go.mod', 'examples/hello-tinygo/go.mod'],
+      matchFileNames: ['examples/pdb-addon/go.mod', 'examples/hello-tinygo/go.mod'],
       matchDepTypes: ['indirect'],
       matchUpdateTypes: ['major'],
       enabled: false,

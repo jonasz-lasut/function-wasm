@@ -13,7 +13,7 @@ The implementation is a Rust workspace (it was ported from Go in 2026-08; the Go
 | deliverable | where | what |
 |---|---|---|
 | the runtime (host) | `crates/function` (binary `function`) + `crates/engine` | the gRPC function: resolves the module named by the Input, compiles and caches it, runs it per request; `function validate` runs the same admission offline |
-| the guest glue | vendored per guest (the Go scaffold writes `internal/wasmfn`; the example is `examples/hello-go/internal/wasmfn`) | linked into a user's `.wasm`: the ABI exports, request/response codec, a `logging.Logger` over the host, `GetConfig`, `HTTPClient`. Not a published module - each guest owns its copy, like TinyGo/Rust/Zig/C own theirs |
+| the guest glue | vendored per guest (the Go scaffold writes `internal/wasmfn`; the example is `examples/pdb-addon/internal/wasmfn`) | linked into a user's `.wasm`: the ABI exports, request/response codec, a `logging.Logger` over the host, `GetConfig`, `HTTPClient`. Not a published module - each guest owns its copy, like TinyGo/Rust/Zig/C own theirs |
 | the CLI | `crates/guestfn` (binary `guestfn`) | `guestfn init` scaffolds a guest project (with its `wasmfn.yaml` manifest), `guestfn build` compiles it (and checks its ABI with the runtime's engine, and its manifest), `guestfn inspect` shows what the runtime sees in a module or an artifact, `guestfn push` publishes module and manifest (refusing a module the runtime would refuse), `guestfn manifest validate\|show`, `guestfn scaffold composition` writes a Composition step from a manifest |
 
 ## Architecture Overview
@@ -189,9 +189,17 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
   templates/<lang>            the seven template sets: minimal greeting projects, whose plumbing
                               (glue, codecs, proto, WIT) the paired examples carry byte for byte
   testdata/<lang>             the golden scaffolds (UPDATE_GOLDENS=1 cargo test regenerates)
-examples/hello-go           the Go example guest — separate go.mod; vendors its ABI glue under
-                            internal/wasmfn (no external SDK); built by tests, the /e2e render job and
-                            local rendering, never published
+examples/pdb-addon          #112's Go use case on the go scaffold's plumbing (examples-share-the-
+                            scaffold-plumbing: internal/wasmfn, the vendored ABI glue, no external
+                            SDK) - separate go.mod: a tenant add-on hook. A WebApp XR names the
+                            module in spec.addOn, read by the Composition's last step through
+                            module.from with allowEmpty (no add-on: the step is skipped) and fenced
+                            by its compositionPolicy's pullModule; the module adds a
+                            PodDisruptionBudget for every desired apps/v1 Deployment of 2+ replicas
+                            that the function-go-templating step before it composed, in the
+                            default sandbox (its manifest requires nothing). Its render runs that
+                            step in Docker; its xprin suite renders with and without an add-on.
+                            Its example/ is also the package's examples (publish-pkg.yml). ~75 MB
 examples/hello-tinygo       the same guest, TinyGo + vtprotobuf — separate go.mod, `make generate`
 examples/hello-zig          the same guest, Zig + zig-protobuf — build.zig
 examples/hello-c            the same guest, C + nanopb + cJSON, compiled by zig cc — build.zig
@@ -327,11 +335,11 @@ Design documents under `docs/one-pager-*.md` follow one pattern: the H1 is the f
 
 ```bash
 cargo build --workspace                # engine, runtime, guestfn
-cargo run -p function-wasm -- --insecure --module-dir=examples/hello-go
-cargo run -p guestfn -- inspect examples/hello-go/fn.wasm
+cargo run -p function-wasm -- --insecure --module-dir=examples/pdb-addon
+cargo run -p guestfn -- inspect examples/pdb-addon/fn.wasm
 
 # The example guest (with its vendored internal/wasmfn glue) must also build for wasm
-(cd examples/hello-go && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o /dev/null .)
+(cd examples/pdb-addon && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o /dev/null .)
 
 # The runtime image (multi-arch; FUNCTION_WASM_VERSION stamps a release)
 docker buildx build --platform linux/amd64,linux/arm64 --target image .
@@ -347,7 +355,7 @@ cargo test --workspace                    # everything below
 cargo test -p function-wasm-engine        # the engine over WAT fixtures
 cargo test -p function-wasm               # runtime units, conformance goldens, guest suite, raw client
 cargo test -p guestfn                     # scaffold goldens, the examples' shared plumbing, CLI against an in-memory registry
-(cd examples/hello-go && go test -race ./...)
+(cd examples/pdb-addon && go test -race ./...)
 (cd examples/hello-tinygo && go test -race ./...)
 (cd examples/hello-zig && zig build test)
 (cd examples/hello-c && zig build test)
@@ -358,7 +366,7 @@ make -C examples/hello-dotnet test        # dotnet test (in the .NET SDK contain
 
 Goldens: `UPDATE_CONFORMANCE=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
 
-CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml` (its `build-tools` job compiles the release runtime and `guestfn` once per run, fetches xprin pinned by checksum, and hands all three to every render job as an artifact, which `examples/render.sh` and hello-go's Makefile pick up from `FUNCTION_BIN`, `GUESTFN` and `XPRIN`; without them they build from the tree and take xprin from PATH), hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push.
+CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml` (its `build-tools` job compiles the release runtime and `guestfn` once per run, fetches xprin pinned by checksum, and hands all three to every render job as an artifact, which `examples/render.sh` and pdb-addon's Makefile pick up from `FUNCTION_BIN`, `GUESTFN` and `XPRIN`; without them they build from the tree and take xprin from PATH), hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push.
 
 ### Test Patterns
 
@@ -369,7 +377,7 @@ Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration 
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-(cd examples/hello-go && golangci-lint run ./...)   # the Go guests keep Go lint
+(cd examples/pdb-addon && golangci-lint run ./...)  # the Go guests keep Go lint
 (cd examples/hello-zig && zig fmt --check build.zig src/main.zig)
 (cd examples/hello-c && zig fmt --check build.zig)
 ```
@@ -382,7 +390,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 - Only `crates/engine` imports `wasmtime`/`wasmtime-wasi` — the engine is the seam if the runtime ever changes.
 - Only `crates/function/src/authz.rs` imports `cedar-policy`.
 - Errors that reach users are `String`s carrying the runtime's exact refusal wording — the wording is contract (conformance goldens); route new refusals through the same phrasing patterns.
-- The `internal/wasmfn` glue must stay buildable natively (portable `Register`/`NewLogger`/`GetConfig`/`HTTPClient`) so a guest's own tests run natively; only the exports and the two host imports are `//go:build wasip1`. Edit it in `examples/hello-go/internal/wasmfn`, then mirror to `crates/guestfn/templates/go/internal/wasmfn/*.go.tmpl`; the examples-share-the-scaffold-plumbing test keeps them in step.
+- The `internal/wasmfn` glue must stay buildable natively (portable `Register`/`NewLogger`/`GetConfig`/`HTTPClient`) so a guest's own tests run natively; only the exports and the two host imports are `//go:build wasip1`. Edit it in `examples/pdb-addon/internal/wasmfn`, then mirror to `crates/guestfn/templates/go/internal/wasmfn/*.go.tmpl`; the examples-share-the-scaffold-plumbing test keeps them in step.
 
 ## Common Development Tasks
 
@@ -394,7 +402,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ### Adding a host import (ABI)
 
-`wasmfn.http` (`crates/engine/src/hosthttp.rs`, the guest side in `examples/hello-go/internal/wasmfn/http*.go` and the matching template) is the worked example:
+`wasmfn.http` (`crates/engine/src/hosthttp.rs`, the guest side in `examples/pdb-addon/internal/wasmfn/http*.go` and the matching template) is the worked example:
 
 1. Define it in the engine (`linker.func_wrap(HOST_MODULE, name, fn)`), allow it in `check_abi` with its exact type; reach per-run state through the store's `CallState` and pass what it needs in `RunOptions`. To hand bytes back, call the guest's `wasmfn_alloc` re-entrantly — copy the request out first and re-read memory afterwards, the guest may grow it — and return `ptr<<32|len`; keep failures inside the payload (never a trap for a refusal)
 2. Add the guest side to the glue (a `//go:wasmimport wasmfn <name>` in a `_wasip1.go` file, a portable fallback behind a swappable package var so the codec is testable natively)
@@ -409,14 +417,14 @@ Edit the template set under `crates/guestfn/templates/<lang>` (templates use `[[
 Each example's `example/xprin.yaml` is its render test: [xprin](https://github.com/crossplane-contrib/xprin) cases (an XR plus any required resources, observed resources or function credentials) with declarative assertions on what the module composes - `Count`, `Exists`/`NotExists`, `FieldValue` - never string matching over the render output. A suite asserts outcomes as composed resources or XR status, never function results (they carry no name, so xprin collapses them onto one `Result/` key); a fatal path is tested in the guest's own unit tests, because a fatal result fails the render. `render.sh` owns the runtime's side: `function validate` over every `example/xr*.yaml`, the operator policy and the fixture server.
 
 ```bash
-make -C examples/hello-go render          # build fn.wasm (guestfn via cargo), serve it, crossplane render example/
-make -C examples/hello-go render-check    # same, running example/xprin.yaml (xprin on PATH, or XPRIN) - what the /e2e render job runs
+make -C examples/pdb-addon render         # build fn.wasm (guestfn via cargo), serve it, crossplane render example/
+make -C examples/pdb-addon render-check   # same, running example/xprin.yaml (xprin on PATH, or XPRIN) - what the /e2e render job runs
 make -C examples/hello-tinygo render      # the TinyGo guest (tinygo on PATH)
 make -C examples/hello-zig render         # the Zig guest (zig on PATH)
 make -C examples/hello-c render           # the C guest (zig on PATH: zig cc builds it)
 ```
 
-By hand: `cargo run -p function-wasm -- --insecure --debug --module-dir=examples/hello-go`, then in the example: `cargo run -p guestfn -- build` and `crossplane render example/xr.yaml example/composition.yaml example/functions.yaml --include-function-results`. `functions.yaml` uses the Development runtime, so the function must be running locally; the render engine itself runs in Docker.
+By hand: `cargo run -p function-wasm -- --insecure --debug --module-dir=examples/pdb-addon`, then in the example: `cargo run -p guestfn -- build` and `crossplane render example/xr.yaml example/composition.yaml example/functions.yaml --include-function-results`. `functions.yaml` uses the Development runtime, so the function must be running locally; the render engine itself runs in Docker.
 
 ## Key Dependencies
 

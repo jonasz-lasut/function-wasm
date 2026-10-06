@@ -4,19 +4,20 @@
 # before every run - a manifest can refuse a run earlier and say why, never
 # make one possible.
 abi: 1
-name: hello-go
+name: pdb-addon
 version: 0.1.0
-# requires: the sandbox capabilities the module cannot run without
-# (egress.http rules, filesystem.privateTmp, env credential bindings),
-# granted where the compositionPolicy and the operator's Cedar policy permit. This guest fetches a
-# greeting only when config.greetingUrl is set, so it requires nothing and
-# renders without any grant.
+# No requires: the add-on runs in the default sandbox - no network, no
+# filesystem, no environment. Everything it reads arrives in the request, and
+# everything it does is the response, so no policy layer has anything to
+# grant it.
 config:
   # The JSON Schema (draft 2020-12) of the Input's config; the runtime refuses
   # a request whose config does not match, naming the field.
   schema:
     type: object
     properties:
-      greeting: {type: string}
-      greetingUrl: {type: string, format: uri}
+      maxUnavailable:
+        description: How many of a Deployment's pods a voluntary disruption may take down at once; defaults to 1.
+        type: integer
+        minimum: 1
     additionalProperties: false

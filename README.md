@@ -131,6 +131,12 @@ rendered and asserted on every `/e2e` run:
   mandatory tags to every composed resource without overwriting the team's,
   and refuses a region or instance class the environment does not allow -
   one digest-pinned module the platform team rolls out on its own.
+- [`examples/pdb-addon`](examples/pdb-addon) (Go): a customization hook at
+  the end of a pipeline. A `WebApp` Composition reserves its last step for
+  the add-on each WebApp names in `spec.addOn` (`module.from`, skipped while
+  unset), fenced to one repository by the `compositionPolicy`; this add-on
+  gives every Deployment the platform composed a PodDisruptionBudget, in the
+  default sandbox, with no capability at all.
 
 ## Install
 
@@ -238,7 +244,9 @@ a guest that works on the raw `RunFunctionRequest`/`RunFunctionResponse`
 (`fnv1` and `structpb`) is about 20 MB. Either way the runtime compiles a
 module once per digest and caches it.
 
-[`examples/hello-go`](examples/hello-go) is exactly what `guestfn init` produces.
+[`examples/pdb-addon`](examples/pdb-addon) is a Go module built on what
+`guestfn init` writes: its `internal/wasmfn` glue is the scaffold's, byte
+for byte.
 
 ### Other languages
 
@@ -250,7 +258,7 @@ scaffold as ABI v2 components, the rest as ABI v1 modules:
 
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
 |---|---|---|---|---|
-| `go` (default) | [`examples/hello-go`](examples/hello-go) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
+| `go` (default) | [`examples/pdb-addon`](examples/pdb-addon) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
 | `tinygo` | [`examples/hello-tinygo`](examples/hello-tinygo) | [TinyGo](https://tinygo.org) | protobuf-go message types + [vtprotobuf](https://github.com/planetscale/vtprotobuf)'s reflection-free codecs, generated from the vendored proto (shipped pre-generated; `go generate` + protoc to redo) | ~1.8 MB |
 | `rust` | [`examples/cloudflare-origin`](examples/cloudflare-origin) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) - **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
@@ -318,8 +326,8 @@ crossplane render example/xr.yaml example/composition.yaml example/functions.yam
 ```
 
 The example Composition uses `module.type: Path` with `path: fn.wasm`; swap
-in `type: OCI` and the `oci` reference for a cluster. In this repository `make -C examples/hello-go render`
-does all of the above for the example guest (`render-check` runs the
+in `type: OCI` and the `oci` reference for a cluster. In this repository `make -C examples/pdb-addon render`
+does all of the above for the Go example (`render-check` runs the
 example's [xprin](https://github.com/crossplane-contrib/xprin) suite,
 `example/xprin.yaml`, instead; CI runs it).
 
@@ -361,7 +369,7 @@ Composition, egress granted without `--cosign-key`, a limit equal to its
 ceiling, a field the runtime would silently ignore) are printed under the
 step and never change the exit code: 0 when every step is admitted, 1 when
 at least one is refused, 2 when the tool itself failed (unreadable file,
-unparsable YAML, a bad flag). `make -C examples/hello-go render` runs it
+unparsable YAML, a bad flag). `make -C examples/pdb-addon render` runs it
 over the example first.
 
 ## Input reference
@@ -1095,8 +1103,8 @@ fail-closed.
 ```shell
 cargo build --workspace && cargo test --workspace   # engine, runtime, guestfn - conformance goldens and scaffold goldens included
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
-(cd examples/hello-go && go test ./...)             # the example guest and its vendored internal/wasmfn glue
-make -C examples/hello-go render-check              # function validate, then the example's xprin suite through the real runtime
+(cd examples/pdb-addon && go test ./...)            # the Go example and its vendored internal/wasmfn glue
+make -C examples/pdb-addon render-check             # function validate, then the example's xprin suite through the real runtime
 ```
 
 The workspace tests build every scaffold (what `guestfn init` writes) and the

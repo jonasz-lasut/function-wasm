@@ -1,0 +1,12 @@
+apiVersion: platform.example.org/v1alpha1
+kind: WebApp
+metadata:
+  name: shop
+  namespace: default
+spec:
+  image: ghcr.io/example-org/shop:1.4.0
+  replicas: 3
+  port: 8080
+  # The team's add-on: a module file under the runtime's --module-dir for a
+  # local render; in a cluster {ref: ghcr.io/example-org/webapp-addons/pdb@sha256:...}.
+  addOn: fn.wasm

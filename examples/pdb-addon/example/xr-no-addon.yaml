@@ -1,0 +1,7 @@
+apiVersion: platform.example.org/v1alpha1
+kind: WebApp
+metadata:
+  name: blog
+  namespace: default
+spec:
+  image: ghcr.io/example-org/blog:2.0.1

@@ -64,8 +64,8 @@ patch and belongs in this flow. Every wasmtime release is a new Go major with
 a new crate major: `cargo update` (or bump the version in
 `crates/engine/Cargo.toml`) and update the
 single import in `internal/engine`. Then run the full root test suite without
-`-short` — it builds `examples/hello-go` to wasm and runs it through the new
-runtime — plus `go test ./...` in `examples/hello-go`. Note that
+`-short` — it builds `examples/pdb-addon` to wasm and runs it through the new
+runtime — plus `go test ./...` in `examples/pdb-addon`. Note that
 syft/grype cannot see the Rust code inside the prebuilt libwasmtime; watch
 wasmtime's own advisories, not only the scan.
 
@@ -99,7 +99,7 @@ git status --porcelain                  # only go.mod/go.sum/Dockerfile should h
 under `cmd/guestfn/internal/scaffold/testdata/golden/`. A dependency bump must
 not change either; if the golden moves, the scaffold users get changed — stop
 and review that diff before deciding to keep it. Also run the example module
-(`cd examples/hello-go && go test ./...`, which covers its vendored
+(`cd examples/pdb-addon && go test ./...`, which covers its vendored
 internal/wasmfn glue) and the root tests without `-short` (they build the
 example guest to wasm).
 Commit locally as `fix(security): ...`, naming the CVE/GHSA IDs

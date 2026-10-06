@@ -29,7 +29,7 @@ other project.
 
 The guests under `examples/` illustrate the guest languages and are never
 shipped: the image holds only the runtime binary, and the package embeds
-only the example manifests of `examples/hello-go/example`. Renovate
+only the example manifests of `examples/pdb-addon/example`. Renovate
 refreshes their dependencies in a monthly batch, which merges once the
 end-to-end suite (`/e2e`) passes. An alert against an example that a
 sandboxed WebAssembly guest cannot reach, or that has no fix, is dismissed

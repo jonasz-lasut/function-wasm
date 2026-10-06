@@ -273,11 +273,11 @@ mod tests {
     fn examples_share_the_scaffold_plumbing() {
         let examples: [(&str, &[&str], Options); 7] = [
             (
-                "hello-go",
+                "pdb-addon",
                 &["internal/wasmfn/"],
                 Options {
                     lang: LANG_GO.into(),
-                    module: "github.com/jonasz-lasut/function-wasm/examples/hello-go".into(),
+                    module: "github.com/jonasz-lasut/function-wasm/examples/pdb-addon".into(),
                     go_version: "1.26.6".into(),
                     ..Default::default()
                 },
