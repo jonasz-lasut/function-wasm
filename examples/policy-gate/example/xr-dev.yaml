@@ -1,0 +1,14 @@
+apiVersion: data.example.org/v1alpha1
+kind: Database
+metadata:
+  name: orders-sandbox
+  namespace: default
+spec:
+  environment: dev
+  region: us-east-1
+  instanceClass: db.t4g.micro
+  tags:
+    team: orders
+    # The team bills its sandbox to its own cost center: allowed, but the
+    # gate keeps the team's value with a warning.
+    cost-center: "7310"

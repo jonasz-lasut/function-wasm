@@ -74,7 +74,7 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-assemblyscript gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-python gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-ts gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/policy-gate gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-dotnet gen-proto
 	for f in run_function.pb.go run_function_vtproto.pb.go; do \
 		cp "examples/hello-tinygo/internal/fnv1/$$f" "crates/guestfn/templates/tinygo/internal/fnv1/$$f.tmpl"; \
@@ -82,7 +82,7 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 	rm -rf crates/guestfn/templates/zig/src/fnv1 && cp -R examples/hello-zig/src/fnv1 crates/guestfn/templates/zig/src/fnv1
 	rm -rf crates/guestfn/templates/c/src/fnv1 && cp -R examples/hello-c/src/fnv1 crates/guestfn/templates/c/src/fnv1
 	for f in run_function_pb.js run_function_pb.d.ts; do \
-		cp "examples/hello-ts/src/gen/$$f" "crates/guestfn/templates/ts/src/gen/$$f"; \
+		cp "examples/policy-gate/src/gen/$$f" "crates/guestfn/templates/ts/src/gen/$$f"; \
 	done
 	cp examples/hello-python/src/gen/run_function_pb2.py crates/guestfn/templates/python/src/gen/run_function_pb2.py
 

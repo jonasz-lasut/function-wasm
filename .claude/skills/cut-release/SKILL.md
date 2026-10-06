@@ -91,7 +91,7 @@ requires grpc v1.83 or newer)
 the rust `Cargo.toml.tmpl`, the zig and c `build.zig.zon.tmpl`
 (`zig fetch --save <url>` writes url and hash), the ts
 `package.json.tmpl`'s devDependency ranges (then `npm install` in
-`examples/hello-ts` so its lockfile, which the template does not carry,
+`examples/policy-gate` so its lockfile, which the template does not carry,
 satisfies them), and the python `requirements.txt` (componentize-py and
 protobuf; the protobuf runtime refuses a codec from a newer protoc, so its
 `7.X.Y` must not fall behind the root `Makefile`'s `PROTOC_VERSION` `X.Y`).

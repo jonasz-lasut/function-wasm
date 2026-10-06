@@ -5,8 +5,15 @@ metadata:
   name: function-wasm
   annotations:
     # Development runtime: run the function-wasm runtime locally, serving this
-    # directory, e.g. from a checkout of function-wasm:
+    # directory, e.g. from a checkout of function-wasm (../render.sh does this):
     #   cargo run --release -p function-wasm -- --insecure --debug --module-dir=<this directory>
     render.crossplane.io/runtime: Development
 spec:
   package: ghcr.io/jonasz-lasut/function-wasm:v0.1.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-go-templating
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/function-go-templating:v0.13.0

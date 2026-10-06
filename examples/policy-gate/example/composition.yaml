@@ -1,0 +1,56 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: databases.data.example.org
+spec:
+  compositeTypeRef:
+    apiVersion: data.example.org/v1alpha1
+    kind: Database
+  mode: Pipeline
+  pipeline:
+  # The team's composition: the RDS instance, with the team's own tags.
+  - step: compose-database
+    functionRef:
+      name: function-go-templating
+    input:
+      apiVersion: gotemplating.fn.crossplane.io/v1beta1
+      kind: GoTemplate
+      source: Inline
+      inline:
+        template: |
+          {{- $spec := .observed.composite.resource.spec }}
+          apiVersion: rds.aws.m.upbound.io/v1beta1
+          kind: Instance
+          metadata:
+            annotations:
+              gotemplating.fn.crossplane.io/composition-resource-name: instance
+          spec:
+            forProvider:
+              region: {{ $spec.region }}
+              instanceClass: {{ $spec.instanceClass }}
+              engine: postgres
+              engineVersion: "17"
+              allocatedStorage: 20
+              username: app
+              manageMasterUserPassword: true
+              skipFinalSnapshot: true
+              {{- with $spec.tags }}
+              tags: {{ toJson . }}
+              {{- end }}
+  # The organisation's gate, last: it asks Crossplane for the EnvironmentConfig
+  # named after spec.environment, adds that environment's mandatory tags to
+  # every composed resource and refuses a region or instance class the
+  # environment does not allow.
+  - step: policy-gate
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        # For local rendering the runtime serves this directory (--module-dir).
+        # In a cluster use type: OCI and an oci reference pinned to the digest
+        # guestfn push prints: the platform team rolls a new policy out by
+        # moving that digest, without touching the steps above.
+        type: Path
+        path: fn.wasm

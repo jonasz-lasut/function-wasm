@@ -209,14 +209,25 @@ examples/cloudflare-origin  #112's Rust use case, an ABI v2 component on the rus
                             (example/fixtures, module.manifestPath naming the fixture host) and
                             its xprin suite validates the output against the vendored
                             provider-upjet-aws CRDs (example/crds). ~315 KB
-examples/hello-ts           the same guest in TypeScript via jco - the ts scaffold's example pair
-                            (its Makefile and package-lock.json example-only):
+examples/policy-gate        #112's TypeScript use case, an ABI v2 component on the ts scaffold's
+                            plumbing (examples-share-the-scaffold-plumbing): the organisation's
+                            policy as the last pipeline step, after function-go-templating
+                            composes a Database XR's RDS Instance. It asks for the
+                            EnvironmentConfig named after spec.environment through the
+                            response's requirements (the wire-level proxy carries the round
+                            trip), then adds the environment's mandatory tags without
+                            overwriting the team's, refuses a disallowed region or instance
+                            class with a fatal result (unit-tested only: a fatal fails the
+                            render), and records warnings and counts in status.policy.
                             protobuf-es codec (js+dts, checked in), tsc --noEmit gate, esbuild
-                            bundle, componentize-js; sync-lifted run (jco cannot async-lift a
-                            custom world yet - the world accepts sync), fetch() over
-                            wasi:http@0.2 through the same egress hooks; root-world imports
-                            arrive as default imports (import log from "log", kept external in
-                            the bundle). ~14 MB (SpiderMonkey)
+                            bundle, componentize-js built without wasi:http (-d http -d
+                            fetch-event: it requires nothing); sync-lifted run (jco cannot
+                            async-lift a custom world yet - the world accepts sync); root-world
+                            imports arrive as default imports (import log from "log", kept
+                            external in the bundle). Its render supplies the EnvironmentConfigs
+                            from example/required-resources.yaml and its xprin suite validates
+                            against the vendored provider-upjet-aws Instance CRD (example/crds).
+                            ~14 MB (SpiderMonkey)
 examples/hello-python       the same guest in Python via componentize-py - the python scaffold's
                             example pair (its Makefile example-only; requirements.txt is a
                             template pin): protoc codec checked in, pure-Python protobuf runtime

@@ -1,0 +1,27 @@
+# The EnvironmentConfigs the policy gate asks Crossplane for, one per
+# environment, owned by the platform team. Crossplane fetches the one named
+# after the Database's spec.environment; crossplane render (and the xprin
+# suite, as extra-resources) supplies it from this file instead of a cluster.
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: prod
+data:
+  policy:
+    mandatoryTags:
+      cost-center: "4200"
+      data-classification: confidential
+    allowedRegions: [eu-central-1, eu-west-1]
+    allowedInstanceClasses: [db.r6g.large, db.r6g.xlarge, db.r6g.2xlarge]
+---
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: dev
+data:
+  policy:
+    mandatoryTags:
+      cost-center: "4200"
+      data-classification: internal
+    allowedRegions: [eu-central-1, us-east-1]
+    allowedInstanceClasses: [db.t4g.micro, db.t4g.small]

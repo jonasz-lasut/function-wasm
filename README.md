@@ -125,6 +125,12 @@ rendered and asserted on every `/e2e` run:
   security group and one ingress rule per range Cloudflare publishes, read
   at reconcile time through the host's egress - a capability its manifest
   requests and both policy layers must grant.
+- [`examples/policy-gate`](examples/policy-gate) (TypeScript): the
+  organisation's policy as the last pipeline step. The module asks Crossplane
+  for the environment's EnvironmentConfig through `requirements`, adds its
+  mandatory tags to every composed resource without overwriting the team's,
+  and refuses a region or instance class the environment does not allow -
+  one digest-pinned module the platform team rolls out on its own.
 
 ## Install
 
@@ -249,7 +255,7 @@ scaffold as ABI v2 components, the rest as ABI v1 modules:
 | `rust` | [`examples/cloudflare-origin`](examples/cloudflare-origin) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) - **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
-| `ts` | [`examples/hello-ts`](examples/hello-ts) | node + npm: [esbuild](https://esbuild.github.io) bundles, [jco](https://github.com/bytecodealliance/jco) componentizes - **an ABI v2 component**, sync-lifted `run`, `fetch()` over `wasi:http@0.2` | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto (`js+dts` codec checked in; `npm run gen-proto` + protoc to redo) | ~14 MB (SpiderMonkey) |
+| `ts` | [`examples/policy-gate`](examples/policy-gate) | node + npm: [esbuild](https://esbuild.github.io) bundles, [jco](https://github.com/bytecodealliance/jco) componentizes - **an ABI v2 component**, sync-lifted `run`, `fetch()` over `wasi:http@0.2` | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto (`js+dts` codec checked in; `npm run gen-proto` + protoc to redo) | ~14 MB (SpiderMonkey) |
 | `python` | [`examples/hello-python`](examples/hello-python) | `python3` (a venv with [componentize-py](https://github.com/bytecodealliance/componentize-py)) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2` | protoc's Python codec over the vendored proto (checked in), on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
 
 An **AssemblyScript** flavour exists as an example only for now

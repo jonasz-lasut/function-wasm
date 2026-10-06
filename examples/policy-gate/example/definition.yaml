@@ -1,0 +1,66 @@
+# A team's database: an RDS instance in one of the organisation's
+# environments, held to that environment's policy. Crossplane v2: a
+# namespaced composite resource, no claim.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: databases.data.example.org
+spec:
+  group: data.example.org
+  names:
+    kind: Database
+    plural: databases
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required: [environment, region, instanceClass]
+            properties:
+              environment:
+                description: >-
+                  The environment the database runs in, which chooses the
+                  policy it is held to: the EnvironmentConfig of that name.
+                type: string
+                enum: [dev, prod]
+              region:
+                description: The AWS region of the instance.
+                type: string
+              instanceClass:
+                description: The RDS instance class, e.g. db.r6g.large.
+                type: string
+              tags:
+                description: >-
+                  The team's own tags. The environment's mandatory tags are
+                  added to them; a team tag the environment also sets keeps
+                  the team's value, with a warning.
+                type: object
+                additionalProperties:
+                  type: string
+          status:
+            type: object
+            properties:
+              policy:
+                description: What the organisation's policy gate found.
+                type: object
+                properties:
+                  environment:
+                    description: The environment whose policy was applied.
+                    type: string
+                  resources:
+                    description: How many composed resources the gate checked.
+                    type: integer
+                  tagsAdded:
+                    description: How many mandatory tags the gate added.
+                    type: integer
+                  warnings:
+                    description: >-
+                      How many findings the gate let through with a warning,
+                      such as a team tag overriding a mandatory one.
+                    type: integer

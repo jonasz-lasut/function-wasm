@@ -1,0 +1,119 @@
+# The example's render test (https://github.com/crossplane-contrib/xprin), run
+# by `make render-check` against the runtime serving this directory. Each case
+# supplies the EnvironmentConfigs as extra resources - the gate asks Crossplane
+# for the one its environment names, and render answers the requirement from
+# the file - then validates the XR and the composed instance against their
+# schemas (the XRD and the provider's CRD in crds/) and asserts what the gate
+# did. A request the policy refuses is a fatal result, which fails a render:
+# the gate's unit tests cover those (npm test).
+common:
+  inputs:
+    composition: composition.yaml
+    functions: functions.yaml
+    extra-resources: required-resources.yaml
+    crds:
+    - definition.yaml
+    - crds
+  patches:
+    xrd: definition.yaml
+tests:
+- name: prod
+  inputs:
+    xr: xr.yaml
+  assertions:
+    xprin:
+    - name: the database and its instance
+      type: Count
+      value: 2
+    - name: the gate adds prod's cost center
+      type: FieldValue
+      resource: Instance
+      field: spec.forProvider.tags.cost-center
+      operator: is
+      value: "4200"
+    - name: the team's classification matches prod's and stays
+      type: FieldValue
+      resource: Instance
+      field: spec.forProvider.tags.data-classification
+      operator: is
+      value: confidential
+    - name: the team's own tag stays
+      type: FieldValue
+      resource: Instance
+      field: spec.forProvider.tags.team
+      operator: is
+      value: orders
+    - name: the instance keeps the region prod allows
+      type: FieldValue
+      resource: Instance
+      field: spec.forProvider.region
+      operator: is
+      value: eu-central-1
+    - name: the status names the environment whose policy was applied
+      type: FieldValue
+      resource: Database/orders
+      field: status.policy.environment
+      operator: is
+      value: prod
+    - name: the gate checked the one composed resource
+      type: FieldValue
+      resource: Database/orders
+      field: status.policy.resources
+      operator: ==
+      value: 1
+    - name: one tag added
+      type: FieldValue
+      resource: Database/orders
+      field: status.policy.tagsAdded
+      operator: ==
+      value: 1
+    - name: no warnings
+      type: FieldValue
+      resource: Database/orders
+      field: status.policy.warnings
+      operator: ==
+      value: 0
+- name: dev
+  inputs:
+    xr: xr-dev.yaml
+  assertions:
+    xprin:
+    - name: the database and its instance
+      type: Count
+      value: 2
+    - name: the gate adds dev's classification, not prod's
+      type: FieldValue
+      resource: Instance
+      field: spec.forProvider.tags.data-classification
+      operator: is
+      value: internal
+    - name: the team's cost center overrides dev's and stays
+      type: FieldValue
+      resource: Instance
+      field: spec.forProvider.tags.cost-center
+      operator: is
+      value: "7310"
+    - name: the team's own tag stays
+      type: FieldValue
+      resource: Instance
+      field: spec.forProvider.tags.team
+      operator: is
+      value: orders
+    - name: the status names the environment whose policy was applied
+      type: FieldValue
+      resource: Database/orders-sandbox
+      field: status.policy.environment
+      operator: is
+      value: dev
+    - name: one tag added
+      type: FieldValue
+      resource: Database/orders-sandbox
+      field: status.policy.tagsAdded
+      operator: ==
+      value: 1
+    - name: the override is counted as a warning
+      type: FieldValue
+      resource: Database/orders-sandbox
+      field: status.policy.warnings
+      operator: ==
+      value: 1
