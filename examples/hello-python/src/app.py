@@ -1,5 +1,5 @@
 # The world wiring, wasm-only: componentize-py generates the bindings for
-# wit/function.wit (the wit_world module, the typed log import and the
+# wit/world.wit (the wit_world module, the typed log import and the
 # wasi:http types), and this module implements the world's `run` export.
 # `run` is declared sync in this guest's wit (componentize-py takes the sync
 # shape; a sync-lifted function satisfies the runtime's async world) - the
