@@ -614,7 +614,7 @@ fn fixed_component(rsp: &[u8]) -> String {
     (data (i32.const 1024) "{data}"))
   (core instance $i (instantiate $m))
   (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
 )"#,
         len = rsp.len(),
         data = wat_bytes(rsp),
@@ -650,7 +650,7 @@ fn component_guest_error_string() {
     (data (i32.const 1024) "boom"))
   (core instance $i (instantiate $m))
   (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
 )"#
     );
     let m = e
@@ -676,7 +676,7 @@ fn component_run_deadline() {
       i32.const 64))
   (core instance $i (instantiate $m))
   (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
 )"#
     );
     let m = e
@@ -723,7 +723,7 @@ fn component_memory_limit_denies_growth() {
     (data (i32.const 1024) "grow denied"))
   (core instance $i (instantiate $m))
   (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
 )"#
     );
     let m = e
@@ -792,7 +792,7 @@ fn component_log_import_is_provided() {
   (core module $libc
     {COMPONENT_CORE_PRELUDE})
   (core instance $libc_inst (instantiate $libc))
-  (core func $log_lowered (canon lower (func $log) (memory $libc_inst "memory") (realloc (core func $libc_inst "cabi_realloc"))))
+  (core func $log_lowered (canon lower (func $log) (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
   (core module $m
     (import "env" "memory" (memory 4))
     (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
@@ -809,7 +809,7 @@ fn component_log_import_is_provided() {
     (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
     (with "host" (instance (export "log" (func $log_lowered))))))
   (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $m_inst "run") (memory $libc_inst "memory") (realloc (core func $libc_inst "cabi_realloc"))))
+    (canon lift (core func $m_inst "run") (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
 )"#,
         len = rsp.len(),
         data = wat_bytes(&rsp),

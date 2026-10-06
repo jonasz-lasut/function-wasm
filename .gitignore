@@ -13,3 +13,4 @@ zig-pkg
 target/
 node_modules/
 target/
+/.cache

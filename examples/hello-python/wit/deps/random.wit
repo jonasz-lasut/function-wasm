@@ -1,4 +1,4 @@
-// Vendored from wasmtime-wasi-http 48.0.1 (wit/deps): the wasi:http@0.2 client surface a
+// Vendored from wasmtime-wasi-http 49.0.2 (wit/deps): the wasi:http@0.2 client surface a
 // componentize-py guest fetches with. Keep in step with the wasmtime the runtime pins.
 package wasi:random@0.2.12;
 

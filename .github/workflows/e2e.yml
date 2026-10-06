@@ -19,28 +19,42 @@
 # which the always-on CI keeps toolchain-free. The result is reported as a
 # commit status on the PR's head, since an issue_comment run does not show
 # up as a check by itself.
+#
+# An issue_comment run uses this file from the default branch but builds the
+# pull request's code, so only the repository's owner, members and
+# collaborators can start it, the jobs that run that code get a read-only
+# token, and no checkout leaves the token behind for the code to read. Nor do
+# the jobs restore or save caches (rust-cache, setup-go, setup-zig, npm): they
+# run in the default branch's cache scope, where trusted workflows would
+# restore whatever the pull request's code wrote.
 name: E2E
 
 on:
   issue_comment:
     types: [created]
 
-# Reactions and the head lookup on a pull request's comment go through the
-# pull-requests permission (an explicit permissions block zeroes everything
-# unlisted); issues: write stays for comments on plain issues.
+# Read-only by default; start and report, which run none of the pull
+# request's code, take the write scopes they need.
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
-  statuses: write
 
 jobs:
   # Gates the whole run on a /e2e comment on a pull request, acknowledges
   # the comment with a reaction, resolves the PR's head SHA and marks its
   # e2e status pending.
   start:
-    runs-on: ubuntu-24.04
-    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/e2e')
+    runs-on: ubuntu-26.04
+    if: >-
+      github.event.issue.pull_request
+      && startsWith(github.event.comment.body, '/e2e')
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    # Reactions and the head lookup on a pull request's comment go through
+    # the pull-requests permission; issues: write stays for comments on
+    # plain issues.
+    permissions:
+      issues: write
+      pull-requests: write
+      statuses: write
     outputs:
       sha: ${{ steps.pr.outputs.sha }}
     env:
@@ -68,27 +82,31 @@ jobs:
   # always-on unit-test job skips (SKIP_GUEST_BUILDS): all guests through
   # the whole host, greetings, granted and refused egress, manifestPath,
   # guest-side fatals and logs.
+  #
+  # Built in release: a debug wasmtime compiles the large guests (the Go
+  # module, the TypeScript and Python components) many times slower, and
+  # the arm64 runner is faster again. x86-64 code generation stays covered
+  # by the render jobs, which serve every guest through an x86-64 runtime.
   guest-suite:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04-arm
     needs: start
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
           targets: wasm32-wasip1, wasm32-wasip2
 
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: examples/hello-go/go.mod
 
       - name: Setup TinyGo
@@ -99,6 +117,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
+          use-cache: false
           version: 0.16.0
 
       - name: Setup protoc
@@ -110,13 +129,9 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-          cache: npm
-          cache-dependency-path: |
-            examples/hello-assemblyscript/package-lock.json
-            examples/hello-ts/package-lock.json
 
       - name: Run the Guest Suite
-        run: cargo test --locked -p function-wasm --test guests
+        run: cargo test --locked --release -p function-wasm --test guests
 
   # The example guest is the scaffold rendered for itself. Rendering it with
   # crossplane render against the runtime built from this tree proves the
@@ -124,7 +139,7 @@ jobs:
   # Crossplane accepts the response.
   render-go:
     name: render (go)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       # These environment variables are important to the Crossplane CLI
@@ -136,20 +151,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       # The runtime the render runs against, and guestfn, are built from
       # this tree.
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: examples/hello-go/go.mod
 
       - name: Setup the Crossplane CLI
@@ -172,7 +186,7 @@ jobs:
   # rendered through the runtime.
   render-tinygo:
     name: render (tinygo)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -182,18 +196,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: examples/hello-tinygo/go.mod
 
       - name: Setup TinyGo
@@ -235,7 +248,7 @@ jobs:
   # wasm32-wasip1), rendered through the runtime.
   render-rust:
     name: render (rust)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -245,20 +258,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
           targets: wasm32-wasip1
           components: rustfmt, clippy
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: |
-            .
-            examples/hello-rust
 
       - name: Setup protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -283,7 +290,7 @@ jobs:
 
   render-rust-v2:
     name: render (rust-v2)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -293,20 +300,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
           targets: wasm32-wasip2
           components: rustfmt, clippy
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: |
-            .
-            examples/hello-rust-v2
 
       - name: Setup protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -334,7 +335,7 @@ jobs:
   # regenerate the checked-in codec, which zig build gen-proto downloads.
   render-zig:
     name: render (zig)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -344,18 +345,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
+          use-cache: false
           version: 0.16.0
 
       - name: Check Generated Codec
@@ -389,7 +389,7 @@ jobs:
   # checked-in codec.
   render-c:
     name: render (c)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -399,18 +399,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
+          use-cache: false
           version: 0.16.0
 
       - name: Setup protoc
@@ -459,7 +458,7 @@ jobs:
   # regenerate the checked-in codec (make gen-proto).
   render-assemblyscript:
     name: render (assemblyscript)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -469,20 +468,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-          cache: npm
           cache-dependency-path: examples/hello-assemblyscript/package-lock.json
 
       - name: Setup the Crossplane CLI
@@ -495,7 +491,7 @@ jobs:
 
   render-ts:
     name: render (ts)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -505,20 +501,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-          cache: npm
           cache-dependency-path: examples/hello-ts/package-lock.json
 
       - name: Test the TypeScript Guest
@@ -534,7 +527,7 @@ jobs:
 
   render-python:
     name: render (python)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: start
     env:
       XP_CHANNEL: stable
@@ -544,14 +537,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Test the Python Guest
         run: make -C examples/hello-python test
@@ -566,9 +557,11 @@ jobs:
 
   # One commit status carries the verdict back to the PR.
   report:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-rust-v2, render-zig, render-c, render-assemblyscript, render-ts, render-python]
     if: always() && needs.start.result == 'success'
+    permissions:
+      statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:

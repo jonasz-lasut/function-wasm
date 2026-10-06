@@ -26,9 +26,10 @@ yet.
 - `proto/run_function.proto` is crossplane's `RunFunction` contract,
   vendored; the checked-in `src/gen/run_function_pb2.py` is protoc's
   output (`make gen-proto` to redo)
-- `wit/function.wit` is this guest's world - the wasmfn contract plus the
-  `wasi:http` import it fetches with; `wit/deps/` carries the wasi 0.2 WIT
-  that import needs
+- `wit/function.wit` is this guest's world, in a `local:guest` package of
+  its own - the wasmfn contract with a sync `run`, plus the `wasi:http`
+  import it fetches with; `wit/deps/` carries the wasi 0.2 WIT that import
+  needs
 - `src/fn.py` is the function - ordinary Python over the protobuf
   messages, natively testable (`make test`) with a fetch double
 - `src/app.py` (wasm only at runtime) is the world wiring: the `run`

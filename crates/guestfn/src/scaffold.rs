@@ -325,6 +325,24 @@ mod tests {
         }
     }
 
+    /// The rust scaffold vendors the ABI v2 world the engine compiles
+    /// (wit/wasmfn-function.wit) byte for byte; the two tests above carry
+    /// that on to the golden and to hello-rust-v2.
+    #[test]
+    fn render_matches_the_runtime_world() {
+        let world = "wit/wasmfn-function.wit";
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let runtime = std::fs::read(repo.join(world)).expect("read the runtime's world");
+        let files = render(golden(LANG_RUST)).expect("render");
+        assert_eq!(
+            String::from_utf8_lossy(&runtime),
+            String::from_utf8_lossy(&files[world]),
+            "templates/rust/{world} differs from the runtime's {world} (the root world is \
+             canonical: copy it into the template and examples/hello-rust-v2, then run \
+             UPDATE_GOLDENS=1 cargo test -p guestfn)"
+        );
+    }
+
     #[test]
     fn render_options() {
         let err = render(Options::default()).expect_err("no module");
