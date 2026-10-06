@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.4
+* Status: Implemented, revision 1.5
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. Written after the 2026-08-16 review,
@@ -19,7 +19,11 @@ one-pager). Revision 1.4 records the three-layer authorization model
 (three-layer-authz one-pager): the `policy` allowlists became the Input's
 `compositionPolicy` (Cedar), the `sandbox` block became the module
 manifest's `requires`, and every capability is the AND of manifest ∧
-composition layer ∧ operator layer. Everything below is implemented.
+composition layer ∧ operator layer. Revision 1.5 records the signature
+format: the runtime verifies cosign 3's key-based Sigstore bundles, found
+among the OCI 1.1 referrers of the module's manifest, and no longer reads
+cosign 2's legacy `sha256-<hex>.sig` signatures. Everything below is
+implemented.
 
 
 ## Parties
@@ -59,10 +63,34 @@ it delegated to) changing.
 With `--cosign-key`, only OCI modules carrying a key-based cosign signature
 run, and `http`/`path` sources are refused. Verification is a precondition
 of *running*, checked once per digest per process before any cache tier is
-consulted: an artifact a keyless runtime (or one with a since-rotated key)
-left on a shared or persisted volume is never served by a keyed one. Keyless
-(Fulcio/Rekor) signatures are out of scope — sigstore-go alone is hundreds
-of modules and needs network access to Rekor and TUF at run time.
+consulted: an artifact a runtime without a key (or with a since-rotated key)
+left on a shared or persisted volume is never served by a keyed one.
+
+The signature is cosign 3's: a Sigstore bundle (v0.3) holding a DSSE
+envelope around an in-toto statement, pushed as an OCI 1.1 referrer whose
+subject is the module's manifest. The runtime lists the referrers through
+the registry's referrers API, or through the referrers tag schema's
+`sha256-<hex>` index where the API answers 404 (GHCR, `registry:3`), over
+its own registry client with the pull's credentials. Neither listing is
+pinned, so a referrer counts only if its subject is the pinned digest, and
+the bundle is fetched bounded and verified against its digest. A module is
+signed when an envelope signature over the DSSE pre-authentication encoding
+verifies with a configured key and the statement it signs is a cosign
+signature (`predicateType` `https://sigstore.dev/cosign/sign/v1`) whose
+subject is the manifest digest; the statement is read only after the
+signature verifies. Other attestations, such as SLSA provenance, never
+count, whichever key signed them. The configured keys are the trust root:
+the bundle's verification material (key hint, certificate, Rekor entries)
+is not consulted, as the legacy path never consulted Rekor.
+
+cosign 2's legacy signature, a simple-signing payload under the
+`sha256-<hex>.sig` tag, is not read: a module signed only that way is
+unsigned to this runtime and must be re-signed with cosign 3. Keyless
+(Fulcio/Rekor) verification is not implemented yet (#116, waiting on
+sigstore-rs): a keyless bundle matches no configured key, so it never
+admits a module and never fails the check for a key-based bundle beside it.
+Until then an operator admits a keyless-signed module by verifying it with
+cosign and countersigning it with their own key.
 
 An operator `--sandbox-policy-file` makes the requirement per-repository: a
 `requireSignature` rule demands a signature for the repositories it names,

@@ -662,20 +662,20 @@ fn validate_resolve_oci_source_matches_the_goldens() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
-/// Cosign verification against the Go runtime: the harness signs an
-/// artifact with a P-256 key (ASN.1 DER ECDSA over SHA-256 of the
-/// simple-signing payload, the shape cosign's key-based flow writes) and
-/// both binaries verify it under the legacy all-or-nothing --cosign-key.
-/// The unsigned refusal is a recorded wording-only gap.
+/// Cosign verification under the all-or-nothing --cosign-key: the harness
+/// signs an artifact with a P-256 key the way cosign 3's key-based flow
+/// does (a Sigstore bundle - DSSE over an in-toto statement - attached as
+/// an OCI 1.1 referrer, listed by the referrers tag schema as on GHCR and
+/// registry:3) and leaves another unsigned. The Go runtime read cosign 2's
+/// legacy .sig signatures instead, so the unsigned refusal's wording is
+/// this runtime's own.
 #[test]
 fn validate_resolve_cosign_matches_the_goldens() {
-    use p256::ecdsa::signature::Signer as _;
-    use p256::pkcs8::EncodePublicKey as _;
-    use sha2::Digest as _;
+    use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey, attach};
+    use function_wasm::oci::testregistry::{TestRegistry, digest_of, serve};
 
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
     let cwd = crate_dir();
-    let digest_of = |b: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)));
 
     let wasm = wat::parse_str(
         r#"(module (memory (export "memory") 1)
@@ -699,94 +699,29 @@ fn validate_resolve_cosign_matches_the_goldens() {
     let (signed_digest, unsigned_digest) =
         (digest_of(&signed_manifest), digest_of(&unsigned_manifest));
 
-    // Sign the signed artifact's digest.
-    let key = p256::ecdsa::SigningKey::from_bytes((&[5u8; 32]).into()).expect("key");
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "critical": {
-            "identity": {"docker-reference": ""},
-            "image": {"docker-manifest-digest": signed_digest},
-            "type": "cosign container image signature",
-        },
-        "optional": null,
-    }))
-    .expect("payload");
-    let signature: p256::ecdsa::DerSignature = key.sign(&payload);
-    use base64::Engine as _;
-    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
-    let sig_manifest = serde_json::to_vec(&serde_json::json!({
-        "schemaVersion": 2,
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(config), "size": config.len()},
-        "layers": [{
-            "mediaType": "application/vnd.dev.cosign.simplesigning.v1+json",
-            "digest": digest_of(&payload),
-            "size": payload.len(),
-            "annotations": {"dev.cosignproject.cosign/signature": sig_b64},
-        }],
-    }))
-    .expect("sig manifest");
-
-    // The registry: both artifacts, the signature under its cosign tag.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    {
-        let mut manifests: std::collections::HashMap<String, Vec<u8>> = [
+    // The registry: both artifacts, the signed one's bundle as a referrer.
+    let mut registry = TestRegistry {
+        manifests: [
             (signed_digest.clone(), signed_manifest),
             (unsigned_digest.clone(), unsigned_manifest),
-            (
-                format!("{}.sig", signed_digest.replacen(':', "-", 1)),
-                sig_manifest,
-            ),
         ]
-        .into();
-        let blobs: std::collections::HashMap<String, Vec<u8>> = [
-            (digest_of(&wasm), wasm.clone()),
-            (digest_of(&payload), payload.clone()),
-        ]
-        .into();
-        manifests.shrink_to_fit();
-        std::thread::spawn(move || {
-            for conn in listener.incoming().flatten() {
-                let mut conn = conn;
-                let mut buf = [0u8; 4096];
-                let n = std::io::Read::read(&mut conn, &mut buf).unwrap_or(0);
-                let head = String::from_utf8_lossy(&buf[..n]).into_owned();
-                let path = head.split_whitespace().nth(1).unwrap_or_default();
-                let (status, body): (&str, Vec<u8>) =
-                    if let Some(d) = path.split("/manifests/").nth(1) {
-                        match manifests.get(d) {
-                            Some(m) => ("200 OK", m.clone()),
-                            None => ("404 Not Found", Vec::new()),
-                        }
-                    } else if let Some(d) = path.split("/blobs/").nth(1) {
-                        match blobs.get(d) {
-                            Some(b) => ("200 OK", b.clone()),
-                            None => ("404 Not Found", Vec::new()),
-                        }
-                    } else {
-                        ("200 OK", Vec::new())
-                    };
-                let ctype = "application/vnd.oci.image.manifest.v1+json";
-                let dcd = digest_of(&body);
-                let header = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nDocker-Content-Digest: {dcd}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = std::io::Write::write_all(&mut conn, header.as_bytes());
-                let _ = std::io::Write::write_all(&mut conn, &body);
-            }
-        });
-    }
+        .into(),
+        blobs: [(digest_of(&wasm), wasm.clone())].into(),
+        bearer: false,
+        referrers_api: false,
+    };
+    let key = TestKey::from_seed(5);
+    attach(
+        &mut registry,
+        &signed_digest,
+        &key.bundle(&signed_digest, COSIGN_SIGN_PREDICATE),
+        Shape::ArtifactType,
+    );
+    let addr = serve(registry);
 
     let dir = tempfile::tempdir().expect("tempdir");
     let key_path = dir.path().join("cosign.pub");
-    std::fs::write(
-        &key_path,
-        key.verifying_key()
-            .to_public_key_pem(p256::pkcs8::LineEnding::LF)
-            .expect("pem"),
-    )
-    .expect("write key");
+    std::fs::write(&key_path, &key.public_pem).expect("write key");
     let key_path = key_path.display().to_string();
 
     let composition = |name: &str, digest: &str| {

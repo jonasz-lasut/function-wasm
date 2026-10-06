@@ -734,7 +734,7 @@ flags would admit.
 | `--max-cached-modules` | `MAX_CACHED_MODULES` | `0` (unbounded) | most compiled modules resident at once; the least recently used is dropped beyond it (freed once its last run ends). Artifacts are mapped from disk, so a resident Go module costs ~90 MB of file-backed memory |
 | `--max-concurrent-compiles` | `MAX_CONCURRENT_COMPILES` | `1` | modules compiled at once. One compile already uses every core (~25 CPU-seconds and ~1 GB for a large Go module); further first requests wait their turn instead of multiplying that |
 | `--max-cache-size` | `MAX_CACHE_SIZE` | `0` (unbounded) | MB the two on-disk caches may hold together; past it the least recently used entries (fetched modules and artifacts alike, ~230 MB per Go module version) are removed, at startup and every ten minutes. Size the volume, or set this below its size |
-| `--cosign-key` | `COSIGN_KEY` | unset | PEM file of cosign public key(s); on its own, all-or-nothing — only OCI modules with a matching `cosign sign --key` signature run and `http`/`path` sources are refused. With a `--sandbox-policy-file`, it supplies the keys while the policy's `requireSignature` rules decide which repositories must be signed (a repository no rule names runs unsigned) |
+| `--cosign-key` | `COSIGN_KEY` | unset | PEM file of cosign public key(s); on its own, all-or-nothing: only OCI modules carrying a matching key-based cosign 3 signature (`cosign sign --key`: a Sigstore bundle attached as an OCI 1.1 referrer, found through the referrers API or the `sha256-<hex>` tag fallback) run and `http`/`path` sources are refused. cosign 2's legacy `.sig` signatures are not read, and keyless signatures are not verified yet ([#116](https://github.com/jonasz-lasut/function-wasm/issues/116)) - see [signing](#trust-model). With a `--sandbox-policy-file`, it supplies the keys while the policy's `requireSignature` rules decide which repositories must be signed (a repository no rule names runs unsigned) |
 | `--max-concurrent-runs` | `MAX_CONCURRENT_RUNS` | `0` (unbounded) | module runs executing at once; a further request waits for a slot under its own deadline and, if that passes first, is a fatal result (`waiting for a run slot: context deadline exceeded`) without having run. Unbounded, concurrency is the caller's — Crossplane's reconcile workers |
 | `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | total linear-memory budget in MB across all running modules; a run reserves its module's initial linear memory from the pool before it starts (waiting under its deadline when the pool is full) and each growth beyond it as its guest actually grows - so the pool holds what runs use, not their worst-case ceilings. A growth the pool cannot serve before the run's deadline is denied: the guest sees `memory.grow` fail, counted in `function_wasm_module_memory_denials_total` |
 | `--warm-modules` | `WARM_MODULES` | unset | modules loaded before the health service reports Serving — resolved, verified (`--cosign-key` applies), then compiled or mapped through the same caches a request uses: OCI references pinned to their manifest digest (`repo[:tag]@sha256:…`, pulled with the runtime's Docker config) and, with `--module-dir`, `path:<file>` entries. Repeatable or comma-separated. An entry that fails to load is logged with the reason and does not stop the pod from serving; that module is loaded on its first request as usual |
@@ -1016,13 +1016,42 @@ and both are verified on fetch) or `http.digest` — so nothing that runs can
 change without the Composition changing.
 
 To restrict a Function to modules your organisation signed, sign them with
-`cosign sign --key cosign.key <ref>` and start the runtime with
+cosign 3, `cosign sign --key cosign.key <ref>`, and start the runtime with
 `--cosign-key cosign.pub` (a `DeploymentRuntimeConfig` mounts the key and
 sets the flag or `COSIGN_KEY`). Every OCI module is then verified once per
-manifest digest per process before it is run — before any cache is
+manifest digest per process before it is run - before any cache is
 consulted, so an artifact left on a persisted volume by a runtime without
-the key is not served by one with it — and unsigned sources are refused.
-Keyless (Fulcio/Rekor) signatures are not verified.
+the key is not served by one with it - and unsigned sources are refused.
+
+cosign 3 stores a signature as a Sigstore bundle: a DSSE envelope around an
+in-toto statement that names the module's manifest digest, pushed as an OCI
+1.1 referrer of that manifest. The runtime lists the referrers through the
+registry's referrers API or, where the registry has none (GHCR,
+`registry:3`), through the `sha256-<hex>` tag index cosign maintains
+instead, with the same credentials as the pull. A module is signed when
+one bundle's signature verifies with a configured key and its statement is
+a cosign signature (predicate type `https://sigstore.dev/cosign/sign/v1`)
+of that digest. Other attestations among the referrers, such as SLSA
+provenance from `actions/attest`, are not signatures and never admit a
+module, even when signed with a configured key. The keys are the trust
+root: a bundle's key hint, certificate and transparency-log entries are
+not consulted.
+
+cosign 2's legacy signatures (the `sha256-<hex>.sig` tag, which cosign 3
+still writes with `--new-bundle-format=false`) are not read: a module
+signed only that way is refused as unsigned, so re-sign it with cosign 3.
+Keyless (Fulcio/Rekor) signatures are not verified yet
+([#116](https://github.com/jonasz-lasut/function-wasm/issues/116)): a
+keyless bundle matches no configured key, so it neither admits a module
+nor gets in the way of a key-based bundle beside it. Until then, admit a
+module signed keyless upstream by verifying it, copying it if you serve
+from your own registry, and countersigning it with your key:
+
+```shell
+cosign verify --certificate-identity <identity> --certificate-oidc-issuer <issuer> <upstream-ref>
+crane copy <upstream-ref> <your-ref>         # optional; keeps the manifest digest
+cosign sign --key cosign.key <your-ref>      # pinned by digest, repo@sha256:…
+```
 
 `--cosign-key` on its own is all-or-nothing: with it, every module must be
 signed. An operator grant policy (`--sandbox-policy-file`) can instead require a

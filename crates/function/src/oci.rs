@@ -29,6 +29,10 @@ const WASM_LAYER_TYPES: &[&str] = &[
 /// The media type of the artifact layer carrying the module manifest.
 pub const MANIFEST_LAYER_TYPE: &str = "application/vnd.wasmfn.manifest.v1+json";
 
+/// The media types of an OCI image manifest and image index.
+pub const OCI_MANIFEST_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
+pub const OCI_INDEX_TYPE: &str = "application/vnd.oci.image.index.v1+json";
+
 /// Where a FROM scratch image must hold the module: `COPY fn.wasm /`. The
 /// one path looked for in a tar layer; nothing is guessed and the name is
 /// not configurable.
@@ -52,8 +56,18 @@ pub struct OciManifest {
     pub layers: Vec<Descriptor>,
     #[serde(default)]
     pub annotations: std::collections::BTreeMap<String, String>,
+    /// The manifest this one refers to (OCI 1.1): what makes it a referrer.
+    #[serde(default)]
+    pub subject: Option<Descriptor>,
     #[serde(default)]
     manifests: Vec<serde_json::Value>,
+}
+
+/// An image index - here, a referrers listing.
+#[derive(Debug, Deserialize)]
+struct OciIndex {
+    #[serde(default)]
+    manifests: Vec<Descriptor>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -111,23 +125,7 @@ impl RegistryClient {
     /// pinned digest - the root of the trust chain. An image index is
     /// refused: the reference must name the manifest holding the module.
     pub fn manifest(&self, reference: &OciReference) -> Result<OciManifest, String> {
-        let url = format!(
-            "{}/v2/{}/manifests/{}",
-            self.base, self.repository, reference.digest
-        );
-        let accept = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json";
-        let raw = self
-            .get(&url, Some(accept), usize::MAX)
-            .map_err(|e| format!("cannot fetch manifest {}: {e}", reference.digest))?;
-        let got = format!("sha256:{}", hex::encode(sha2::Sha256::digest(&raw)));
-        if got != reference.digest {
-            return Err(format!(
-                "manifest content is {got}, want {}",
-                reference.digest
-            ));
-        }
-        let m: OciManifest = serde_json::from_slice(&raw)
-            .map_err(|e| format!("cannot parse manifest {}: {e}", reference.digest))?;
+        let m = self.manifest_by_digest(&reference.digest, usize::MAX)?;
         if m.media_type.contains("index")
             || m.media_type.contains("manifest.list")
             || !m.manifests.is_empty()
@@ -140,21 +138,46 @@ impl RegistryClient {
         Ok(m)
     }
 
-    /// Fetches a manifest by tag - the cosign signature artifact's address
-    /// (`sha256-<hex>.sig`); a missing tag is None, not an error. The
-    /// content is not digest-pinned by design: the signature inside is what
-    /// verifies.
-    pub fn manifest_by_tag(&self, tag: &str) -> Result<Option<OciManifest>, String> {
-        let url = format!("{}/v2/{}/manifests/{tag}", self.base, self.repository);
-        let accept = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json";
-        let raw = match self.get(&url, Some(accept), usize::MAX) {
+    /// Fetches and parses a manifest by digest, verified against it and
+    /// bounded to limit bytes.
+    pub fn manifest_by_digest(&self, digest: &str, limit: usize) -> Result<OciManifest, String> {
+        let url = format!("{}/v2/{}/manifests/{digest}", self.base, self.repository);
+        let accept = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json";
+        let raw = self
+            .get_as(&url, Some(accept), limit, "manifest")
+            .map_err(|e| format!("cannot fetch manifest {digest}: {e}"))?;
+        let got = format!("sha256:{}", hex::encode(sha2::Sha256::digest(&raw)));
+        if got != digest {
+            return Err(format!("manifest content is {got}, want {digest}"));
+        }
+        serde_json::from_slice(&raw).map_err(|e| format!("cannot parse manifest {digest}: {e}"))
+    }
+
+    /// Lists the referrers of a manifest (OCI distribution 1.1): the
+    /// referrers API, or - where the registry answers it 404, as GHCR and
+    /// registry:3 do - the referrers tag schema's index, tagged
+    /// sha256-<hex> and maintained by the pushing client; a missing tag is
+    /// no referrers. Neither listing is digest-pinned (both change as
+    /// referrers are pushed): a caller fetches each referrer by its digest
+    /// and checks its subject.
+    pub fn referrers(&self, digest: &str, limit: usize) -> Result<Vec<Descriptor>, String> {
+        let api = format!("{}/v2/{}/referrers/{digest}", self.base, self.repository);
+        let raw = match self.get_as(&api, Some(OCI_INDEX_TYPE), limit, "referrers index") {
             Ok(raw) => raw,
-            Err(e) if e.starts_with("404") => return Ok(None),
-            Err(e) => return Err(format!("cannot fetch cosign signature {tag}: {e}")),
+            Err(e) if e.starts_with("404") => {
+                let tag = referrers_tag(digest);
+                let url = format!("{}/v2/{}/manifests/{tag}", self.base, self.repository);
+                match self.get_as(&url, Some(OCI_INDEX_TYPE), limit, "referrers index") {
+                    Ok(raw) => raw,
+                    Err(e) if e.starts_with("404") => return Ok(Vec::new()),
+                    Err(e) => return Err(format!("cannot list the referrers of {digest}: {e}")),
+                }
+            }
+            Err(e) => return Err(format!("cannot list the referrers of {digest}: {e}")),
         };
-        let m: OciManifest = serde_json::from_slice(&raw)
-            .map_err(|e| format!("cannot parse cosign signature {tag}: {e}"))?;
-        Ok(Some(m))
+        let index: OciIndex = serde_json::from_slice(&raw)
+            .map_err(|e| format!("cannot parse the referrers of {digest}: {e}"))?;
+        Ok(index.manifests)
     }
 
     /// Fetches one layer blob by digest, bounded to limit; the caller
@@ -165,11 +188,37 @@ impl RegistryClient {
             .map_err(|e| format!("cannot fetch {label}: {e}"))
     }
 
+    /// Fetches a small blob read straight from the registry rather than
+    /// through the blob store, bounded to limit and verified against its
+    /// digest here.
+    pub fn verified_blob(&self, digest: &str, limit: u64, label: &str) -> Result<Vec<u8>, String> {
+        let url = format!("{}/v2/{}/blobs/{digest}", self.base, self.repository);
+        let raw = self
+            .get_as(&url, None, limit as usize, label)
+            .map_err(|e| format!("cannot fetch {label} {digest}: {e}"))?;
+        let got = format!("sha256:{}", hex::encode(sha2::Sha256::digest(&raw)));
+        if got != digest {
+            return Err(format!("{label} content is {got}, want {digest}"));
+        }
+        Ok(raw)
+    }
+
+    fn get(&self, url: &str, accept: Option<&str>, limit: usize) -> Result<Vec<u8>, String> {
+        self.get_as(url, accept, limit, "module")
+    }
+
     /// One authenticated GET: anonymous first, then the challenge the
     /// registry answers with - Basic, or the Bearer token flow (the token
     /// endpoint queried with the credential, the request retried with the
-    /// token, which is cached for the artifact's other requests).
-    fn get(&self, url: &str, accept: Option<&str>, limit: usize) -> Result<Vec<u8>, String> {
+    /// token, which is cached for the artifact's other requests). A body
+    /// over limit is refused, naming what was fetched.
+    fn get_as(
+        &self,
+        url: &str,
+        accept: Option<&str>,
+        limit: usize,
+        what: &str,
+    ) -> Result<Vec<u8>, String> {
         let attempt = |bearer: Option<&str>| -> Result<reqwest::blocking::Response, String> {
             let mut req = self.http.get(url);
             if let Some(a) = accept {
@@ -204,7 +253,7 @@ impl RegistryClient {
         let mut limited = rsp.take((limit as u64).saturating_add(1));
         limited.read_to_end(&mut out).map_err(|e| e.to_string())?;
         if out.len() > limit {
-            return Err(format!("module exceeds the size limit of {limit} bytes"));
+            return Err(format!("{what} exceeds the size limit of {limit} bytes"));
         }
         Ok(out)
     }
@@ -365,6 +414,11 @@ impl RegistryClient {
         };
         Ok((!token.is_empty()).then_some(token))
     }
+}
+
+/// The referrers tag schema's tag for a manifest digest: sha256-<hex>.
+pub fn referrers_tag(digest: &str) -> String {
+    digest.replacen(':', "-", 1)
 }
 
 /// Picks the layer of a manifest that holds the module: a wasm-typed layer
@@ -551,7 +605,8 @@ fn docker_config_auth(registry: &str, raw: &[u8]) -> Option<Auth> {
 #[cfg(any(test, feature = "testutil"))]
 pub mod testregistry {
     //! A minimal distribution registry for tests: manifests and blobs by
-    //! digest, optionally behind the Bearer token flow.
+    //! digest, optionally behind the Bearer token flow, with OCI 1.1
+    //! referrers through the referrers API or the referrers tag schema.
 
     use std::collections::HashMap;
     use std::io::Write as _;
@@ -562,6 +617,84 @@ pub mod testregistry {
         pub manifests: HashMap<String, Vec<u8>>,
         pub blobs: HashMap<String, Vec<u8>>,
         pub bearer: bool,
+        /// Whether the registry answers the referrers API (computed from
+        /// the stored manifests' subjects); without it the API is a 404,
+        /// as on GHCR and registry:3.
+        pub referrers_api: bool,
+    }
+
+    impl TestRegistry {
+        /// Stores a referrer manifest under its digest as a pushing client
+        /// does: on a registry without the referrers API it also adds the
+        /// manifest to its subject's referrers tag index (sha256-<hex>).
+        pub fn push_referrer(&mut self, manifest: Vec<u8>) {
+            let digest = digest_of(&manifest);
+            let (subject, descriptor) =
+                referrer_descriptor(&digest, &manifest).expect("a manifest with a subject");
+            if !self.referrers_api {
+                let tag = super::referrers_tag(&subject);
+                let mut index: serde_json::Value = self
+                    .manifests
+                    .get(&tag)
+                    .map(|raw| serde_json::from_slice(raw).expect("index json"))
+                    .unwrap_or_else(|| {
+                        serde_json::json!({
+                            "schemaVersion": 2,
+                            "mediaType": super::OCI_INDEX_TYPE,
+                            "manifests": [],
+                        })
+                    });
+                index["manifests"]
+                    .as_array_mut()
+                    .expect("manifests")
+                    .push(descriptor);
+                self.manifests
+                    .insert(tag, serde_json::to_vec(&index).expect("index json"));
+            }
+            self.manifests.insert(digest, manifest);
+        }
+    }
+
+    /// A referrer's subject digest and its descriptor in a referrers
+    /// listing: artifactType is the manifest's, or else its config's media
+    /// type, and the manifest's annotations are carried over - as the OCI
+    /// distribution spec has registries list them.
+    fn referrer_descriptor(digest: &str, manifest: &[u8]) -> Option<(String, serde_json::Value)> {
+        let m: serde_json::Value = serde_json::from_slice(manifest).ok()?;
+        let subject = m["subject"]["digest"].as_str()?.to_string();
+        let artifact_type = m["artifactType"]
+            .as_str()
+            .or_else(|| m["config"]["mediaType"].as_str())
+            .unwrap_or_default();
+        let mut descriptor = serde_json::json!({
+            "mediaType": super::OCI_MANIFEST_TYPE,
+            "digest": digest,
+            "size": manifest.len(),
+            "artifactType": artifact_type,
+        });
+        if let Some(annotations) = m.get("annotations") {
+            descriptor["annotations"] = annotations.clone();
+        }
+        Some((subject, descriptor))
+    }
+
+    /// The referrers API's answer for a digest: every stored manifest whose
+    /// subject is that digest, in digest order.
+    fn referrers_index(manifests: &HashMap<String, Vec<u8>>, digest: &str) -> Vec<u8> {
+        let mut found: Vec<serde_json::Value> = manifests
+            .iter()
+            .filter(|(key, raw)| **key == digest_of(raw))
+            .filter_map(|(key, raw)| referrer_descriptor(key, raw))
+            .filter(|(subject, _)| subject == digest)
+            .map(|(_, descriptor)| descriptor)
+            .collect();
+        found.sort_by(|a, b| a["digest"].as_str().cmp(&b["digest"].as_str()));
+        serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": super::OCI_INDEX_TYPE,
+            "manifests": found,
+        }))
+        .expect("index json")
     }
 
     /// Reads one HTTP request: the head up to the blank line, then
@@ -607,6 +740,7 @@ pub mod testregistry {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
         let bearer = registry.bearer;
+        let referrers_api = registry.referrers_api;
         let manifests = Arc::new(std::sync::Mutex::new(registry.manifests));
         let blobs = Arc::new(std::sync::Mutex::new(registry.blobs));
         std::thread::spawn(move || {
@@ -640,6 +774,14 @@ pub mod testregistry {
                     m.insert(key.to_string(), body.clone());
                     m.insert(digest_of(&body), body);
                     ("201 Created", Vec::new())
+                } else if let Some(digest) = path.split("/referrers/").nth(1) {
+                    if referrers_api {
+                        let digest = digest.split('?').next().unwrap_or_default();
+                        let index = referrers_index(&manifests.lock().expect("poisoned"), digest);
+                        ("200 OK", index)
+                    } else {
+                        ("404 Not Found", Vec::new())
+                    }
                 } else if let Some(digest) = path.split("/manifests/").nth(1) {
                     match manifests.lock().expect("poisoned").get(digest) {
                         Some(m) => ("200 OK", m.clone()),
@@ -707,6 +849,7 @@ pub mod testregistry {
             manifests,
             blobs,
             bearer,
+            referrers_api: false,
         });
         (manifest_digest, addr)
     }
@@ -765,6 +908,65 @@ mod tests {
         let client = RegistryClient::new(&r, None);
         let err = client.manifest(&r).expect_err("refuse");
         assert!(err.starts_with("cannot fetch manifest"), "{err}");
+    }
+
+    #[test]
+    fn lists_referrers_through_the_api_or_the_tag_schema() {
+        let subject = format!("sha256:{}", "a".repeat(64));
+        let referrer = serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": OCI_MANIFEST_TYPE,
+            "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": testregistry::digest_of(b"{}"), "size": 2},
+            "layers": [],
+            "subject": {"mediaType": OCI_MANIFEST_TYPE, "digest": subject, "size": 2},
+        }))
+        .expect("referrer");
+        let referrer_digest = testregistry::digest_of(&referrer);
+        for referrers_api in [true, false] {
+            let mut registry = testregistry::TestRegistry {
+                manifests: HashMap::new(),
+                blobs: HashMap::new(),
+                bearer: true,
+                referrers_api,
+            };
+            registry.push_referrer(referrer.clone());
+            // Only the listing the registry offers exists: the API answers
+            // 404 without it, and a client pushing to a registry with it
+            // writes no tag.
+            assert_eq!(
+                registry.manifests.contains_key(&referrers_tag(&subject)),
+                !referrers_api
+            );
+            let addr = testregistry::serve(registry);
+            let r = reference(&addr, &subject);
+            let client = RegistryClient::new(&r, None);
+
+            let listed = client.referrers(&subject, 1 << 20).expect("referrers");
+            let digests: Vec<&str> = listed.iter().map(|d| d.digest.as_str()).collect();
+            assert_eq!(
+                digests,
+                vec![referrer_digest.as_str()],
+                "api {referrers_api}"
+            );
+            assert_eq!(listed[0].media_type, OCI_MANIFEST_TYPE);
+            let m = client
+                .manifest_by_digest(&listed[0].digest, 1 << 20)
+                .expect("referrer manifest");
+            assert_eq!(m.subject.map(|s| s.digest), Some(subject.clone()));
+
+            let unreferenced = format!("sha256:{}", "b".repeat(64));
+            assert!(
+                client
+                    .referrers(&unreferenced, 1 << 20)
+                    .expect("referrers")
+                    .is_empty()
+            );
+            let err = client.referrers(&subject, 8).expect_err("bounded");
+            assert!(
+                err.ends_with("referrers index exceeds the size limit of 8 bytes"),
+                "{err}"
+            );
+        }
     }
 
     #[test]
