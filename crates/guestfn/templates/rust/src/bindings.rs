@@ -1,5 +1,5 @@
 //! The ABI v2 world: wit-bindgen generates the component bindings for the
-//! guest's world (wit/guest.wit - the vendored wasmfn:function contract plus
+//! guest's world (wit/world.wit - the vendored wasmfn:function contract plus
 //! the wasi:http client), and this module implements the async `run` export
 //! and the greeting fetch over `wasi:http/client@0.3.0`. wasm-only: the
 //! canonical ABI has no native analogue, so native tests drive
@@ -7,7 +7,7 @@
 
 wit_bindgen::generate!({
     path: "wit",
-    world: "guest",
+    world: "function",
     generate_all,
 });
 
