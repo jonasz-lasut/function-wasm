@@ -743,19 +743,84 @@ fn component_world_typecheck_refusals() {
     }
 }
 
+/// Records the level and message of every guest log line dispatched while it
+/// is the thread's default subscriber. A v2 run drives the guest on the
+/// calling thread, so a scoped default sees the lines its log import emits.
+#[derive(Clone, Default)]
+struct GuestLogLines(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+
+impl tracing::Subscriber for GuestLogLines {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        struct Message(String);
+        impl tracing::field::Visit for Message {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0 = format!("{value:?}");
+                }
+            }
+        }
+        // WASI's own tracing runs through the same dispatcher; only the
+        // world's log import is under test.
+        if event.metadata().target() != "function_wasm_engine::component" {
+            return;
+        }
+        let mut msg = Message(String::new());
+        event.record(&mut msg);
+        self.0
+            .lock()
+            .expect("poisoned")
+            .push((*event.metadata().level(), msg.0));
+    }
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
 /// A component that imports the world's log is linked against the host's
-/// typed import and runs.
+/// typed import, and each of the world's levels lands at the runtime's level
+/// of the same name.
 #[test]
-fn component_log_import_is_provided() {
+fn component_log_levels_land() {
     let e = engine();
     let rsp = response_bytes();
+    let lines = [
+        (tracing::Level::DEBUG, "at debug"),
+        (tracing::Level::INFO, "at info"),
+        (tracing::Level::WARN, "at warn"),
+        (tracing::Level::ERROR, "at error"),
+    ];
+    // log(<case i>, <message i>, []) for each case, in the enum's order; the
+    // messages sit 16 bytes apart from offset 2048.
+    let (mut calls, mut data) = (String::new(), String::new());
+    for (i, (_, msg)) in lines.iter().enumerate() {
+        let at = 2048 + 16 * i;
+        let _ = write!(
+            calls,
+            "\n      (call $log (i32.const {i}) (i32.const {at}) (i32.const {len}) (i32.const 0) (i32.const 0))",
+            len = msg.len()
+        );
+        let _ = write!(data, "\n    (data (i32.const {at}) \"{msg}\")");
+    }
     // The memory lives in its own core module so the lowered import can name
     // it before the main module (which needs that import) is instantiated;
     // the enum must reach the import's signature as an eq-bound type import
     // (a defined type is not importable directly).
     let wat = format!(
         r#"(component
-  (type $level_def (enum "debug" "info"))
+  (type $level_def (enum "debug" "info" "warn" "error"))
   (import "level" (type $level (eq $level_def)))
   (import "log" (func $log (param "level" $level) (param "msg" string) (param "kv" (list (tuple string string)))))
   (core module $libc
@@ -765,15 +830,12 @@ fn component_log_import_is_provided() {
   (core module $m
     (import "env" "memory" (memory 4))
     (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
-    (func (export "run") (param i32 i32) (result i32)
-      ;; log(info, "hello from v2", [])
-      (call $log (i32.const 1) (i32.const 2048) (i32.const 13) (i32.const 0) (i32.const 0))
+    (func (export "run") (param i32 i32) (result i32){calls}
       (i32.store8 (i32.const 64) (i32.const 0))
       (i32.store (i32.const 68) (i32.const 1024))
       (i32.store (i32.const 72) (i32.const {len}))
       (i32.const 64))
-    (data (i32.const 1024) "{data}")
-    (data (i32.const 2048) "hello from v2"))
+    (data (i32.const 1024) "{rsp_data}"){data})
   (core instance $m_inst (instantiate $m
     (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
     (with "host" (instance (export "log" (func $log_lowered))))))
@@ -781,13 +843,21 @@ fn component_log_import_is_provided() {
     (canon lift (core func $m_inst "run") (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
 )"#,
         len = rsp.len(),
-        data = wat_bytes(&rsp),
+        rsp_data = wat_bytes(&rsp),
     );
     let m = e
         .compile(&wat::parse_str(&wat).expect("wat"))
         .expect("compile");
-    let out = e.run(&m, b"", RunOptions::default()).expect("run");
+    let logged = GuestLogLines::default();
+    let out =
+        tracing::subscriber::with_default(logged.clone(), || e.run(&m, b"", RunOptions::default()))
+            .expect("run");
     assert_eq!(out, rsp);
+    let want: Vec<_> = lines
+        .iter()
+        .map(|(level, msg)| (*level, msg.to_string()))
+        .collect();
+    assert_eq!(*logged.0.lock().expect("poisoned"), want);
 }
 
 /// A serialized component artifact loads back through the same cache path a

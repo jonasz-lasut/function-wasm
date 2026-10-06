@@ -219,18 +219,41 @@ fn fatal(req: Option<&RunFunctionRequest>, msg: &str) -> RunFunctionResponse {
 }
 
 /// Structured logging through the host: the world's typed `log` import on
-/// the wasm target, stderr elsewhere.
+/// the wasm target, stderr elsewhere. One function per level of the world.
 pub mod log {
+    /// The world's log levels, mirrored so the helpers build natively too.
+    #[derive(Clone, Copy, Debug)]
+    enum Level {
+        Debug,
+        Info,
+        Warn,
+        Error,
+    }
+
+    pub fn debug(msg: &str, kv: &[(&str, &str)]) {
+        emit(Level::Debug, msg, kv);
+    }
+
     pub fn info(msg: &str, kv: &[(&str, &str)]) {
-        emit(false, msg, kv);
+        emit(Level::Info, msg, kv);
+    }
+
+    pub fn warn(msg: &str, kv: &[(&str, &str)]) {
+        emit(Level::Warn, msg, kv);
+    }
+
+    pub fn error(msg: &str, kv: &[(&str, &str)]) {
+        emit(Level::Error, msg, kv);
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn emit(debug: bool, msg: &str, kv: &[(&str, &str)]) {
-        let level = if debug {
-            crate::bindings::LogLevel::Debug
-        } else {
-            crate::bindings::LogLevel::Info
+    fn emit(level: Level, msg: &str, kv: &[(&str, &str)]) {
+        use crate::bindings::LogLevel;
+        let level = match level {
+            Level::Debug => LogLevel::Debug,
+            Level::Info => LogLevel::Info,
+            Level::Warn => LogLevel::Warn,
+            Level::Error => LogLevel::Error,
         };
         let kv: Vec<(String, String)> = kv
             .iter()
@@ -240,8 +263,8 @@ pub mod log {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn emit(_debug: bool, msg: &str, kv: &[(&str, &str)]) {
-        eprintln!("{msg} {kv:?}");
+    fn emit(level: Level, msg: &str, kv: &[(&str, &str)]) {
+        eprintln!("{level:?} {msg} {kv:?}");
     }
 }
 

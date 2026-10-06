@@ -63,7 +63,7 @@ declaration does not match the binary
 package wasmfn:function@2.0.0-draft;
 
 world function {
-    enum log-level { debug, info }
+    enum log-level { debug, info, warn, error }
 
     import log: func(level: log-level, msg: string, kv: list<tuple<string, string>>);
 
@@ -81,7 +81,12 @@ world function {
   usable.
 - **`log`** - v1's `wasmfn.log` with the JSON payload replaced by typed
   values. The host attaches the module's identity to every line and renders
-  `debug` lines only under `--debug`.
+  it at the runtime's level of the same name: `debug` lines only under
+  `--debug`, `info`, `warn` and `error` always. `warn` and `error` are v2's
+  own (a v1 line is debug or info) and joined the draft before the freeze:
+  the runtime typechecks the enum exactly, so a new case refuses every
+  guest built without it - a component built against the two-level draft
+  must be rebuilt.
 - **WASI** - the world names no WASI imports; a guest brings whatever its
   toolchain emits. The host links WASI 0.3 and WASI 0.2 (components built for
   WASI 0.2 - jco, componentize-py, Rust's `wasm32-wasip2` - import 0.2

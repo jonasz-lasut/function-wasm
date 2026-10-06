@@ -24,6 +24,8 @@ public enum LogLevel
 {
     Debug,
     Info,
+    Warn,
+    Error,
 }
 
 /// <summary>A failure whose message is the fatal result.</summary>

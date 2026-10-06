@@ -19,8 +19,15 @@ public class FunctionWorldExportsImpl : IFunctionWorldExports
     public static byte[] Run(byte[] request) => Function.Handle(request, Http.FetchBytes, Log);
 
     static void Log(DashboardBundle.LogLevel level, string msg, params (string Key, string Value)[] kv) =>
-        IFunctionWorldImports.Log(
-            level == DashboardBundle.LogLevel.Debug ? LogLevel.DEBUG : LogLevel.INFO, msg, [.. kv]);
+        IFunctionWorldImports.Log(Level(level), msg, [.. kv]);
+
+    static LogLevel Level(DashboardBundle.LogLevel level) => level switch
+    {
+        DashboardBundle.LogLevel.Debug => LogLevel.DEBUG,
+        DashboardBundle.LogLevel.Warn => LogLevel.WARN,
+        DashboardBundle.LogLevel.Error => LogLevel.ERROR,
+        _ => LogLevel.INFO,
+    };
 }
 
 static class Http

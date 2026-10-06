@@ -77,6 +77,12 @@ impl FunctionImports for CtxV2 {
             LogLevel::Info => {
                 tracing::info!(module, digest, kv = %kv, "{msg}");
             }
+            LogLevel::Warn => {
+                tracing::warn!(module, digest, kv = %kv, "{msg}");
+            }
+            LogLevel::Error => {
+                tracing::error!(module, digest, kv = %kv, "{msg}");
+            }
         }
     }
 }

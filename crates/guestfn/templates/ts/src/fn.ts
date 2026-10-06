@@ -26,7 +26,7 @@ const DEFAULT_TTL_SECONDS = 60n;
 
 export type FetchText = (url: string) => Promise<string>;
 export type Log = (
-  level: "debug" | "info",
+  level: "debug" | "info" | "warn" | "error",
   msg: string,
   kv: [string, string][],
 ) => void;
