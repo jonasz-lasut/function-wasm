@@ -252,10 +252,13 @@ examples/team-tags          #112's Python use case, an ABI v2 component on the p
                             author cannot spend another team's token) and stamps
                             team/owner/cost-center tags on every composed managed resource,
                             keeping other tags, plus status.cmdb; a missing credential or key,
-                            an unknown team or a failed request is fatal. The tokens' boundary
-                            is egress: the manifest requires GET cmdb.example.org /teams/, and
-                            the step's compositionPolicy fences the same (#122 proposes
-                            withholding ungranted credentials). componentize-py, sync-lifted
+                            an unknown team or a failed request is fatal. The manifest requires
+                            the credential (requires.credentials: [cmdb]), so the request
+                            carries it only where both policy layers permit spendCredential
+                            and no other step credential; the tokens' boundary from there is
+                            egress: the manifest requires GET cmdb.example.org /teams/, and
+                            the step's compositionPolicy fences the credential and the request
+                            alike. componentize-py, sync-lifted
                             run, pure-Python protobuf runtime bundled, wasi:http@0.2 on
                             componentize-py's poll loop; requirements.txt is a template pin.
                             Its render passes example/function-credentials.yaml, runs under

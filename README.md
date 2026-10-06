@@ -150,9 +150,10 @@ digest-pinned references in the release's `function-wasm-examples-<release>.yaml
   of the team whose namespace the composite resource lives in, with that
   team's token from a step credential holding every team's, and stamps
   `team`, `owner` and `cost-center` tags on every composed managed
-  resource. The tokens can go only where egress is granted: the one request
-  its manifest declares, which the `compositionPolicy` and the operator's
-  policy both fence.
+  resource. The module receives that credential only because its manifest
+  requires it and both policy layers permit it, and the tokens can go only
+  where egress is granted: the one request its manifest declares, which the
+  `compositionPolicy` and the operator's policy both fence.
 - [`examples/dashboard-bundle`](examples/dashboard-bundle) (C#): dashboards
   as code, delivered as a bundle. A composite resource pins a team's zip of
   Grafana dashboards by sha256; the module fetches it through the host's

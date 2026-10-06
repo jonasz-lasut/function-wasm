@@ -6,6 +6,7 @@ abi: 2
 name: team-tags
 version: 0.1.0
 requires:
+  credentials: [cmdb]
   egress:
     http:
     - host: 127.0.0.1

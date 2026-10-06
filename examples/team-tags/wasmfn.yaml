@@ -6,18 +6,19 @@
 abi: 2
 name: team-tags
 version: 0.1.0
-# The CMDB tokens arrive in the request: the pipeline step's credential
-# "cmdb", a Secret with one key per team namespace. Every step credential
-# but the one that pulled the module reaches the guest that way today, and a
-# manifest cannot yet request a credential
-# (https://github.com/jonasz-lasut/function-wasm/issues/122), so the
-# boundary that keeps the tokens in place is the one capability below.
 requires:
+  # The CMDB tokens arrive in the request: the pipeline step's credential
+  # "cmdb", a Secret with one key per team namespace. The runtime forwards a
+  # module only the step credentials its manifest names, and this one only
+  # where the Composition's compositionPolicy and the operator's Cedar policy
+  # both permit it (spendCredential); every other step credential, the one
+  # that pulled the module above all, is edited out of the request.
+  credentials: [cmdb]
   # Reading team records: the runtime makes the request on the module's
   # behalf, only where the Composition's compositionPolicy and the operator's
   # Cedar policy both permit it, and writes one audit line per request
-  # (grantEgress). The CMDB host is part of what is signed and pinned with
-  # the module, so publish it with yours.
+  # (grantEgress) - the one place the tokens can go. The CMDB host is part
+  # of what is signed and pinned with the module, so publish it with yours.
   egress:
     http:
     - host: cmdb.example.org
