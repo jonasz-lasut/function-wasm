@@ -21,6 +21,12 @@
   // refs in their render files - move by hand, together with the templates.
   enabledManagers: ['cargo', 'github-actions', 'dockerfile', 'custom.regex'],
   osvVulnerabilityAlerts: true,
+  // A security PR is forced onto its own branch with update-lockfile, which
+  // no packageRule can override - and update-lockfile cannot move a wasmtime
+  // crate alone (see the wasmtime rule below). `bump` writes the fixed
+  // version into the manifest instead, so the lockfile is re-resolved as a
+  // whole and the vulnerable version can no longer be selected.
+  vulnerabilityAlerts: { rangeStrategy: 'bump' },
   customManagers: [
     {
       // Crossplane CLI version installed by install.sh in the release workflows.
@@ -64,6 +70,19 @@
 
     // The workspace crates move together.
     { matchManagers: ['cargo'], groupName: 'rust' },
+
+    // The wasmtime crates pin one another to exact versions (`=48.0.4`), so
+    // they resolve only as one family. For a lockfile-only update Renovate
+    // runs `cargo update --precise` crate by crate, and each of those fails
+    // on the siblings' pins; once the manifest requirement changes it skips
+    // that step and one `cargo update --workspace` moves the whole family.
+    // Hence their own group, and `bump` so every update changes Cargo.toml.
+    {
+      matchManagers: ['cargo'],
+      matchPackageNames: ['wasmtime', 'wasmtime-*'],
+      groupName: 'wasmtime',
+      rangeStrategy: 'bump',
+    },
 
     // Dockerfile: the rust build stage floats by design; the runtime base is
     // pinned to a digest that moves with Chainguard's daily rebuilds - one PR

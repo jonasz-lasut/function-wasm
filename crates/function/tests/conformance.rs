@@ -293,7 +293,7 @@ fn validate_resolve_matches_the_goldens() {
               (i32.const 64)))
           (core instance $i (instantiate $m))
           (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-            (canon lift (core func $i "run") (memory $i "memory") (realloc (core func $i "cabi_realloc"))))
+            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
         )"#,
     )
     .expect("wat");
