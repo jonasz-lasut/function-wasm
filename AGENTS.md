@@ -47,15 +47,18 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       blob digest; a tar layer yields /fn.wasm exactly) + engine.compile     │
 │       (checkABI after wasmtime decodes it — the one ABI check) + serialize   │
 │  6. resolver.manifest(resolved) → the module's manifest (an OCI layer, or a  │
-│       wasmfn.yaml a path/http source names by reference, else none);        │
+│       wasmfn.yaml a path/http source names by reference, else none);         │
 │       admission::admit_requires(requires, ceilings, compositionPolicy,       │
 │       principal) - the three-layer AND: the manifest requests, the           │
 │       composition layer permits (scoped default-permit), the operator layer  │
-│       permits (default-deny) → Capabilities{private tmp, HTTP grant, env},   │
-│       or a fatal "module <desc> requires …, which the … does not permit";    │
-│       manifest.check (minRuntime vs the stamped version, config schema);     │
-│       sandboxenv::materialize(env bindings, step credentials - the pull      │
-│       credential withheld) → the run's env                                   │
+│       permits (default-deny) → Capabilities{private tmp, HTTP grant, env,    │
+│       credentials}, or a fatal "module <desc> requires …, which the … does   │
+│       not permit"; manifest.check (minRuntime vs the stamped version, config │
+│       schema); sandboxenv::materialize(env bindings, step credentials) →     │
+│       the run's env, sandboxenv::check_credentials(requires.credentials) -   │
+│       the request must carry each, and neither may name the pull credential; │
+│       protowire::retain_credentials → the forwarded request: the caller's    │
+│       bytes less every step credential not granted (spendCredential)         │
 │  7. step_slots.acquire(digest, limits.concurrency)   per-step semaphore      │
 │       (0 = skip); waits are capped by the request's gRPC deadline            │
 │  8. engine.run(module, raw request bytes, opts)             crates/engine    │
@@ -70,9 +73,10 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       guest's wasmfn_alloc (re-entrant)                                      │
 │  9. return the guest's raw response bytes verbatim (meta appended at the     │
 │     wire level only when the guest omitted it); the caller's raw request     │
-│     bytes were forwarded verbatim too, with only the withheld pull           │
-│     credential edited out (protowire.rs) - fields newer than the vendored    │
-│     proto survive in both directions                                         │
+│     bytes were forwarded verbatim too, with only the step credentials the    │
+│     module was not granted - the pull credential always - edited out         │
+│     (protowire.rs) - fields newer than the vendored proto survive in both    │
+│     directions                                                               │
 │     trap / timeout / OOM / bad ABI / fetch / compile → fatal result          │
 └──────────────────────────────────────────────────────────────────────────────┘
     ↓
@@ -101,13 +105,15 @@ crates/function/            the runtime crate: a library (everything below) + th
                               certs dir, v1+v1alpha reflection, gRPC health handed back NOT_SERVING
                               for warm-up to flip; ~50 lines of transport built from public pieces
                               (a deliberate copy - see the function-sdk-rust decision below)
-  src/protowire.rs            wire-level protobuf surgery: strip_credential (drops one field-7 map
-                              entry), append_meta (field 1), noop_response (the skipped step's reply:
+  src/protowire.rs            wire-level protobuf surgery: retain_credentials (drops every field-7 map
+                              entry the module was not granted, failing closed), append_meta (field
+                              1), noop_response (the skipped step's reply:
                               the request's desired and context re-tagged under a meta) - how the
                               transparent proxy edits raw bytes without decoding them
   src/validate.rs             function validate: multi-doc YAML/JSON (- stdin) → per step: strict
                               decode (unknown fields → warnings), admit, --xr → from_composite,
-                              --resolve → resolve + verify + fetch + engine.inspect + admit_requires;
+                              --resolve → resolve + verify + fetch + engine.inspect + admit_requires
+                              and the credentials the module's request carries (credentials:);
                               text or --output json; exit 0 admitted / 1 refused / 2 tool failure
   src/admission.rs            admit (step 1) and admit_requires (step 6, the three-layer AND) -
                               shared verbatim with validate
@@ -144,9 +150,9 @@ crates/function/            the runtime crate: a library (everything below) + th
   src/manifest.rs             the module manifest: parse (artifact layer), load (wasmfn.yaml,
                               unknown top-level fields refused), validate, check (grants, config
                               schema via jsonschema, minRuntime vs runtime_version()), summary, json
-  src/from.rs, input.rs,      module.from fencing, the Input types, egress rule and env binding
-  egress_rules.rs,            shapes, quantity/duration parsing, env materialization
-  sandboxenv.rs, quantity.rs
+  src/from.rs, input.rs,      module.from fencing, the Input types, egress rule, env binding and
+  egress_rules.rs,            required-credential shapes, quantity/duration parsing, env
+  sandboxenv.rs, quantity.rs  materialization and the required credentials held against the request
   src/ops.rs                  /livez + /readyz (warm-up gated) and /metrics on plain HTTP; warm()
   tests/conformance.rs        the golden conformance suite (see "Conformance goldens" below)
   tests/guests.rs             the guest behavioural suite over every scaffold (see "Testing")
@@ -304,7 +310,7 @@ The function receives an `Input` (`wasm.fn.crossplane.io/v1beta1`) — a KRM-lik
 - `limits` — `timeout`, `memory`, `concurrency`, each ≤ the runtime's ceiling flag (concurrency silently capped)
 - `config` — opaque; the guest reads it via `GetConfig` - non-secret module configuration lives here
 
-There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The user-facing field reference lives in `README.md` ("Input reference"); keep it in sync with `input.rs` and the CRD under `package/input/`.
+There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The user-facing field reference lives in `README.md` ("Input reference"); keep it in sync with `input.rs` and the CRD under `package/input/`.
 
 ### ABI v1
 
@@ -316,11 +322,11 @@ The component-model contract, served by the same runtime (`docs/abi-v2.md`, desi
 
 ### The transparent proxy is wire-level
 
-The host forwards the whole request and returns the whole response — requirements/extra-resource round trips work with no runtime knowledge. In Rust this needs care: prost drops protobuf fields it does not know, so the gRPC layer uses a raw pass-through codec (`grpc.rs`), the runtime decodes only a typed *copy* for admission, and the guest receives the caller's exact bytes with the withheld pull credential edited out at the wire level (`protowire.rs`). The guest's response bytes travel back untouched; `meta` is appended as raw bytes only when the guest omitted it. `tests/raw_client.rs` proves an unknown field survives the whole served stack. Never route the forwarded payload through prost structs.
+The host forwards the whole request and returns the whole response - requirements/extra-resource round trips work with no runtime knowledge. In Rust this needs care: prost drops protobuf fields it does not know, so the gRPC layer uses a raw pass-through codec (`grpc.rs`), the runtime decodes only a typed *copy* for admission, and the guest receives the caller's exact bytes with the step credentials it was not granted edited out at the wire level (`protowire.rs`: only those `credentials` map entries go, the pull credential always among them; a module receives only the credentials its admitted `requires.env` bindings and `requires.credentials` name). The guest's response bytes travel back untouched; `meta` is appended as raw bytes only when the guest omitted it. `tests/raw_client.rs` proves unknown fields survive the whole served stack, in place, while the credentials around them are withheld. Never route the forwarded payload through prost structs.
 
 ### Parity with the Go runtime
 
-The Go implementation was the reference until 2026-08; the contract is **logical compatibility**: the same Inputs admitted, the same requests refused for the same reasons, nothing running wider than the Go runtime would allow. Most admission and policy refusal strings match Go verbatim (the conformance goldens hold them); wording-only divergences are accepted (alpha), the recorded ones being: guest log kv rendered as one JSON field, egress transport-error text (reqwest's words, no 64KiB response-header cap, no HTTP/2 attempt), limits parse-error wording, a cold module load (fetch + compile) not being cut short by the request's deadline - the compile completes and caches where Go bounded loads with a load timeout; the run that follows still gets only the remaining budget - and the run deadline metering guest compute: time blocked in `wasmfn.http` is credited back to the epoch deadline (the gRPC deadline stays the hard cap) where Go spent `limits.timeout` on it. One recorded divergence is more than wording - the signature format: the Go runtime read cosign 2's legacy `sha256-<hex>.sig` signatures, this runtime reads only cosign 3's key-based Sigstore bundles among the manifest's OCI 1.1 referrers (the same `--cosign-key` keys decide, in the format cosign 3 writes by default), so a module signed only the legacy way is refused as unsigned until re-signed with cosign 3. Anything the runtime does not carry is refused with a message naming it, never silently ignored.
+The Go implementation was the reference until 2026-08; the contract is **logical compatibility**: the same Inputs admitted, the same requests refused for the same reasons, nothing running wider than the Go runtime would allow. Most admission and policy refusal strings match Go verbatim (the conformance goldens hold them); wording-only divergences are accepted (alpha), the recorded ones being: guest log kv rendered as one JSON field, egress transport-error text (reqwest's words, no 64KiB response-header cap, no HTTP/2 attempt), limits parse-error wording, a cold module load (fetch + compile) not being cut short by the request's deadline - the compile completes and caches where Go bounded loads with a load timeout; the run that follows still gets only the remaining budget - and the run deadline metering guest compute: time blocked in `wasmfn.http` is credited back to the epoch deadline (the gRPC deadline stays the hard cap) where Go spent `limits.timeout` on it. One recorded divergence is more than wording - the signature format: the Go runtime read cosign 2's legacy `sha256-<hex>.sig` signatures, this runtime reads only cosign 3's key-based Sigstore bundles among the manifest's OCI 1.1 referrers (the same `--cosign-key` keys decide, in the format cosign 3 writes by default), so a module signed only the legacy way is refused as unsigned until re-signed with cosign 3. Another is step credential forwarding: the Go runtime forwarded a module every step credential but the pull credential, this runtime forwards only the ones it was granted - those its manifest's `requires.env` bindings and `requires.credentials` name, each permitted by `spendCredential` in both Cedar layers - so a module that read a credential it did not declare stops seeing it (and a required credential the step does not carry is refused, as an env binding's always was); `function validate --resolve` lists what each module receives. Anything the runtime does not carry is refused with a message naming it, never silently ignored.
 
 ### Conformance goldens
 
@@ -478,6 +484,7 @@ The Go-era decisions below still describe the product's behaviour; the runtime t
 - **Sandbox filesystem and env are WASI, not ABI** (Jonasz, 2026-08-16): the private `/tmp` is a per-run temp dir under the OS temp dir ($TMPDIR is the operator's quota knob), pre-opened at `/tmp` and removed after the store; env is exactly the materialized bindings. Nothing new for guests to import, so all five languages are equal.
 - **No host mounts** (Jonasz, 2026-08-16): a module's inputs come through the request; mapping any part of the pod's filesystem into a module is a boundary the runtime does not offer; the private `/tmp` is the only directory a guest ever gets.
 - **HTTP egress goes through the host, never a socket** (Jonasz, 2026-08-16): the guest asks (`wasmfn.http`), the host resolves, judges every resolved address against the default block list (operator `allowedCIDRs` punch holes, `blockedCIDRs` add, an explicit block wins), dials the checked address, applies the module's admitted rules on the first request and every redirect hop, enforces per-run budgets, and writes one audit line plus an outcome-labelled metric. A refusal is a JSON error the guest reads, never a trap. The response travels back through the guest's own `wasmfn_alloc`, re-entrantly.
+- **A module sees only the step credentials it was granted** (issue #122, 2026-10): the forwarded request carries the credential each admitted `requires.env` binding reads and each `requires.credentials` entry, every one permitted by `spendCredential` in both Cedar layers; every other credentials map entry is edited out at the wire level, failing closed, and the pull credential is never forwarded (a manifest naming it is refused). Forwarding everything, as Crossplane does to a native function, made `spendCredential` gate a convenience - a module denied an env binding still read the key from its request. A required credential the step does not carry is a fatal result, as an env binding's is, so a module that cannot run as declared fails before it runs.
 - **Guest error → fatal result** instead of a gRPC error: crossplane treats both as a failed step, fatal results are visible in `crossplane render --include-function-results`, and the wire stays one message.
 - **Memory-export ABI, not stdin/stdout**; **fresh instance per request** (hermetic, no reentrancy; the expensive compile is cached by content digest in memory and as a wasmtime artifact on disk); **digests are stated, not discovered** (OCI refs `@sha256:`-pinned, `http.digest` required, no tags alone, no request-time resolution).
 - **Disk caches are bounded by LRU sweep, not per-entry policy**: `--max-cache-size` (off by default) removes least recently used entries across the stores at startup and every ten minutes; entries are immutable and reproducible, so removal is always safe.
@@ -508,6 +515,9 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 - **`module layer is a tar archive without /fn.wasm`**: a `FROM scratch` image must `COPY` the module to `/fn.wasm` exactly. Prefer `guestfn push` / `oras push` (a raw `application/wasm` layer).
 - **`guestfn build` says `built fn.wasm, but the runtime would refuse it: …`** (or `guestfn push` refuses): the module lacks the ABI; the message is the runtime's own load-time refusal. `guestfn inspect fn.wasm` lists what the module exports and imports.
 - **`module oci … requires egress GET to host "x" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit`** (or `… which the compositionPolicy does not permit`; the same pair for the private /tmp and env forms; or `requires runtime vX or newer, this is vY`): the module's manifest declares a need the named policy layer does not permit - add a `permit` to that layer or use a module that needs less.
+- **`module oci … requires credential "cmdb" (requires.credentials[0]), which the operator policy (--sandbox-policy-file) does not permit`** (or `… which the compositionPolicy does not permit`, or `… but the runtime has no --sandbox-policy-file, which is required to grant step credentials (spendCredential)`): the module reads that step credential from its request, and the named layer has no `spendCredential` permit for `Credential::"cmdb"` - add one, or use a module that needs less.
+- **A module stops seeing a step credential it used to read** (a Go-era module, or one whose manifest does not declare it): the runtime forwards only the credentials a module was granted. Declare it in the manifest - `requires.credentials: [name]` for the whole credential, or a `requires.env` binding for one key - and permit `spendCredential` for it in the operator policy (and in a `compositionPolicy` that scopes the action). `function validate --resolve` lists what each step's module receives; the runtime logs the withheld names at debug level.
+- **`module … requires.credentials[0]: the request carries no credential "cmdb"; declare it on the pipeline step`**: the module requires a credential the step does not pass - add it to the step's `credentials`.
 - **`module oci … config does not match the module's schema: /greeting: got number, want string`**: the Input's `config` fails the module's `config.schema`.
 - **`function validate` exits 1**: at least one step is refused - the line names the runtime's reason; exit 2 is the tool's own failure. Run it with the flags the runtime is started with.
 - **`module.path is refused`**: the runtime was started without `--module-dir`.

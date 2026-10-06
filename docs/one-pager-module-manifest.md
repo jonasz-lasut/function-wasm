@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.1
+* Status: Implemented, revision 1.2
 
 A module declares what it needs — the sandbox capabilities it cannot run
 without, the shape of the `config` it reads, the oldest runtime it works on
@@ -16,7 +16,10 @@ manifest never widens anything: it is the *request* of the three-layer
 decision (docs/one-pager-three-layer-authz.md), granted only where the
 Input's `compositionPolicy` and the operator's `--sandbox-policy-file` both
 permit. Revision 1.1 records that change: `requires` gained `env`
-credential bindings and its check became the three-layer decision. Modules
+credential bindings and its check became the three-layer decision.
+Revision 1.2 adds `requires.credentials`, the step credentials a module
+reads whole from its request: the runtime now forwards a module only the
+step credentials its manifest names and both layers permit. Modules
 served as `path` or `http` sources have no artifact layer, but may name
 their `wasmfn.yaml` manifest by reference
 (docs/one-pager-manifest-less-sources.md) - loaded through the same
@@ -75,6 +78,7 @@ requires:                                # what the run must be granted; each op
   env:                                   # secret env: bindings to step-credential keys
   - name: DATABASE_URL
     fromCredential: {name: db, key: url}
+  credentials: [cmdb]                    # step credentials read whole from the request
 config:
   schema:                                # JSON Schema 2020-12, inline; validates the Input's config
     type: object
@@ -92,8 +96,11 @@ version, source, description, revision}` annotations from the manifest and
 module layer as before (a wasm-typed layer, else the only layer that is not
 the manifest layer). `requires.egress.http` reuses `egress.HTTPRule`,
 so a requirement and a compiled grant compare like with like;
-`requires.env` binds variable names to step-credential keys - the value
-still arrives at the pipeline step, never in the manifest.
+`requires.env` binds variable names to step-credential keys and
+`requires.credentials` names the step credentials the module reads whole
+from its request - the values still arrive at the pipeline step, never in
+the manifest, and the request the module receives carries only the
+credentials these two name (every other one is edited out of it).
 `oras push fn.wasm:application/wasm wasmfn.json:application/vnd.wasmfn.manifest.v1+json`
 produces the same artifact.
 
@@ -110,9 +117,10 @@ must be readable without running it (and by every language equally).
 **Decided by the policy layers.** In `RunFunction`, after admission and
 the load, before `Run`: `admission.AdmitRequires` decides every
 requirement by the three-layer rule - each egress rule (once per rule and
-method, so a policy can key on `context.method`), `filesystem.privateTmp`
-and each env binding (`setEnv` over the bound names, `spendCredential` per
-binding) must be permitted by the Input's `compositionPolicy` (scoped
+method, so a policy can key on `context.method`), `filesystem.privateTmp`,
+each env binding (`setEnv` over the bound names, `spendCredential` per
+binding) and each required credential (`spendCredential`) must be
+permitted by the Input's `compositionPolicy` (scoped
 default-permit: it narrows only the actions it writes rules for) and by
 the operator's `--sandbox-policy-file` (default-deny) - then
 `checkManifestGrants` holds the rest of the manifest against the run:
