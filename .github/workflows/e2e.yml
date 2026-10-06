@@ -162,6 +162,14 @@ jobs:
         with:
           node-version: '24'
 
+      # dotnet_guest builds with the host's dotnet on Linux; without it the
+      # test would fall back to the .NET SDK container.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+          cache: false
+
       - name: Run the Guest Suite
         run: cargo test --locked --release -p function-wasm --test guests
 
@@ -690,10 +698,59 @@ jobs:
       - name: Render the Python Guest
         run: make -C examples/hello-python render-check
 
+  render-dotnet:
+    name: render (dotnet)
+    runs-on: ubuntu-26.04
+    needs:
+      - start
+      - build-tools
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
+
+      # The runtime and guestfn come from build-tools; render.sh and the
+      # Makefiles take them from FUNCTION_BIN and GUESTFN instead of building.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: e2e-tools
+          path: ${{ runner.temp }}/e2e-tools
+
+      - name: Use the Prebuilt Runtime and guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function" >> "$GITHUB_ENV"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
+
+      # NativeAOT-LLVM's linux-x64 compiler: the Makefile builds with the
+      # host's dotnet here, no container.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+          cache: false
+
+      - name: Test the C# Guest
+        run: make -C examples/hello-dotnet test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the C# Guest
+        run: make -C examples/hello-dotnet render-check
+
   # One commit status carries the verdict back to the PR.
   report:
     runs-on: ubuntu-26.04
-    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-rust-v2, render-zig, render-c, render-assemblyscript, render-ts, render-python]
+    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-rust-v2, render-zig, render-c, render-assemblyscript, render-ts, render-python, render-dotnet]
     if: always() && needs.start.result == 'success'
     permissions:
       statuses: write
@@ -709,7 +766,7 @@ jobs:
             "${{ needs.render-rust-v2.result }}" \
             "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}" \
             "${{ needs.render-assemblyscript.result }}" "${{ needs.render-ts.result }}" \
-            "${{ needs.render-python.result }}"; do
+            "${{ needs.render-python.result }}" "${{ needs.render-dotnet.result }}"; do
             if [ "$result" != "success" ]; then
               state=failure
               description="at least one job did not pass"
