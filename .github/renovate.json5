@@ -22,9 +22,9 @@
   // in the render files - move by hand at release time, together with the
   // templates (the cut-release skill). What the examples own alone is
   // refreshed by the monthly examples rules at the end of packageRules
-  // (SECURITY.md has the policy). gomod and npm are here for those rules
-  // only; every other file they find stays disabled. pip_requirements is
-  // not enabled at all: every requirements.txt is the python template's
+  // (SECURITY.md has the policy). gomod, npm and nuget are here for those
+  // rules only; every other file they find stays disabled. pip_requirements
+  // is not enabled at all: every requirements.txt is the python template's
   // pins - a plain file in the template too, which the manager would read
   // and bump alone - and those move with the template at release.
   enabledManagers: [
@@ -34,6 +34,7 @@
     'custom.regex',
     'gomod',
     'npm',
+    'nuget',
   ],
   // config:recommended's :ignoreModulesAndTests skips **/examples/**, so
   // Renovate never read a file there: the version-header tripwire below
@@ -51,6 +52,17 @@
     '**/tests/**',
     '**/__fixtures__/**',
   ],
+  // The same preset gives nuget a list of its own (keeping .NET test
+  // projects in), which skips examples too and which the list above does
+  // not replace: it repeats the preset's nuget list minus examples.
+  nuget: {
+    ignorePaths: [
+      '**/node_modules/**',
+      '**/bower_components/**',
+      '**/vendor/**',
+      '**/__fixtures__/**',
+    ],
+  },
   osvVulnerabilityAlerts: true,
   // A security PR is forced onto its own branch with update-lockfile, which
   // no packageRule can override - and update-lockfile cannot move a wasmtime
@@ -97,14 +109,15 @@
     {
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
-      // and hello-rust-v2, its wit/deps for the python scaffold and
-      // hello-python (templates and goldens included: the files are plain
-      // .wit in all three). Same tripwire as the proto: a bump PR moves the
-      // version in every header at once; it does NOT re-download the WIT,
-      // so treat the PR as the signal to re-vendor by hand (keeping the p3
-      // http.wit's service/middleware trim) and refresh the goldens. The
-      // header names an exact release, hence semver rather than the crate
-      // datasource's cargo ranges, under which `49.0.2` reads as `^49.0.2`.
+      // and hello-rust-v2, its wit/deps for the python scaffold,
+      // hello-python and hello-dotnet (templates and goldens included: the
+      // files are plain .wit in all of them). Same tripwire as the proto: a
+      // bump PR moves the version in every header at once; it does NOT
+      // re-download the WIT, so treat the PR as the signal to re-vendor by
+      // hand (keeping the p3 http.wit's service/middleware trim) and refresh
+      // the goldens. The header names an exact release, hence semver rather
+      // than the crate datasource's cargo ranges, under which `49.0.2` reads
+      // as `^49.0.2`.
       customType: 'regex',
       description: 'wasmtime-wasi-http release the vendored WASI WIT came from',
       managerFilePatterns: ['/(^|/)wit/deps/[^/]+\\.wit$/'],
@@ -178,7 +191,8 @@
       groupName: 'vendored run_function.proto',
     },
     // The WASI WIT headers, for the same reason: one dep across the rust
-    // and python templates, their goldens, hello-rust-v2 and hello-python.
+    // and python templates, their goldens, hello-rust-v2, hello-python and
+    // hello-dotnet.
     // Their group is the wasmtime one above.
     {
       matchManagers: ['custom.regex'],
@@ -237,6 +251,26 @@
       ],
       enabled: false,
     },
+    // hello-dotnet is example-only, with no template to drift from: its
+    // NuGet packages take regular updates. nuget reads every version from
+    // its Directory.Packages.props (the projects name packages without one)
+    // and looks them up in the sources its nuget.config names.
+    {
+      matchManagers: ['nuget'],
+      matchFileNames: ['examples/hello-dotnet/**'],
+      enabled: true,
+    },
+    // ...except NativeAOT-LLVM: componentize-dotnet is built against one
+    // build of it from the dotnet-experimental feed (which publishes a new
+    // one most days), and the compiler for the build host must be that same
+    // build. They stay pinned to what componentize-dotnet was released with
+    // and move by hand, when a componentize-dotnet update arrives in the
+    // batch below - that PR is the signal, and /e2e fails until they move.
+    {
+      matchManagers: ['nuget'],
+      matchPackageNames: ['/^(runtime\\.[a-z0-9-]+\\.)?Microsoft\\.DotNet\\.ILCompiler\\.LLVM$/i'],
+      enabled: false,
+    },
     // hello-python's requirements.txt is the python template's: its
     // componentize-py and protobuf pins move with the template at release
     // time (the cut-release skill), never in this batch - pip_requirements
@@ -249,14 +283,14 @@
     // One batch, early on the 1st of the month. Renovate does not group lock
     // file maintenance with other updates - a grouped one gets its own
     // lock-file-maintenance- branch - so the batch is two PRs:
-    // renovate/examples (the Go examples) and
+    // renovate/examples (the Go examples and hello-dotnet) and
     // renovate/lock-file-maintenance-examples (the four lockfiles). A major
     // rides in its batch instead of a PR of its own; /e2e judges the whole.
-    // A security update to a Go example dependency still opens at once on
-    // its own branch: Renovate appends those rules after these, with
+    // A security update to a Go or .NET example dependency still opens at
+    // once on its own branch: Renovate appends those rules after these, with
     // `force`.
     {
-      matchManagers: ['cargo', 'npm', 'gomod'],
+      matchManagers: ['cargo', 'npm', 'gomod', 'nuget'],
       matchFileNames: ['examples/**'],
       groupName: 'examples',
       schedule: ['* 0-3 1 * *'],
