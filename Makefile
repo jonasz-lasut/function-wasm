@@ -75,7 +75,7 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-assemblyscript gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/team-tags gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/policy-gate gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-dotnet gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/dashboard-bundle gen-proto
 	for f in run_function.pb.go run_function_vtproto.pb.go; do \
 		cp "examples/hello-tinygo/internal/fnv1/$$f" "crates/guestfn/templates/tinygo/internal/fnv1/$$f.tmpl"; \
 	done

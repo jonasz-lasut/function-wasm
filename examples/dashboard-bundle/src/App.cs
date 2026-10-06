@@ -4,29 +4,29 @@
 // file implements the world's `run` export over those bindings. `run` is
 // declared sync in this guest's wit (wit-bindgen's C# async bindings do not
 // compile for this world yet; a sync-lifted function satisfies the
-// runtime's async world): the fetch blocks on wasi:io pollables, and
-// wasi:http@0.2's outgoing-handler rides the host's egress policy.
+// runtime's async world): the bundle fetch blocks on wasi:io pollables, and
+// wasi:http@0.2's outgoing-handler rides the host's egress policy. The run
+// unpacks into the private /tmp the runtime pre-opens (Function.PrivateTmp).
 
 using FunctionWorld.wit.Imports.wasi.http.v0_2_12;
 using FunctionWorld.wit.Imports.wasi.io.v0_2_12;
-using HelloDotnet;
+using DashboardBundle;
 
 namespace FunctionWorld;
 
 public class FunctionWorldExportsImpl : IFunctionWorldExports
 {
-    public static byte[] Run(byte[] request) => Function.Handle(request, Http.FetchText, Log);
+    public static byte[] Run(byte[] request) => Function.Handle(request, Http.FetchBytes, Log);
 
-    static void Log(HelloDotnet.LogLevel level, string msg, params (string Key, string Value)[] kv) =>
+    static void Log(DashboardBundle.LogLevel level, string msg, params (string Key, string Value)[] kv) =>
         IFunctionWorldImports.Log(
-            level == HelloDotnet.LogLevel.Debug ? LogLevel.DEBUG : LogLevel.INFO, msg, [.. kv]);
+            level == DashboardBundle.LogLevel.Debug ? LogLevel.DEBUG : LogLevel.INFO, msg, [.. kv]);
 }
 
 static class Http
 {
-    /// <summary>GETs a URL through the host and returns the trimmed body -
-    /// the wasi:http counterpart of the other guests' get_text helpers.</summary>
-    public static string FetchText(string url)
+    /// <summary>GETs a URL through the host and returns the body.</summary>
+    public static byte[] FetchBytes(string url)
     {
         ITypesImports.Scheme scheme;
         string rest;
@@ -67,12 +67,12 @@ static class Http
             using var response = Await(url, pending);
             var status = response.Status();
             using var body = response.Consume();
-            var text = ReadToEnd(body);
+            var bytes = ReadToEnd(body);
             if (status != 200)
             {
                 throw new InvalidOperationException($"GET {url}: status {status}");
             }
-            return text.Trim();
+            return bytes;
         }
     }
 
@@ -92,7 +92,7 @@ static class Http
         return response.IsOk ? response.AsOk : throw Failed(url, response.AsErr);
     }
 
-    static string ReadToEnd(ITypesImports.IncomingBody body)
+    static byte[] ReadToEnd(ITypesImports.IncomingBody body)
     {
         using var stream = body.Stream();
         var buf = new MemoryStream();
@@ -105,12 +105,12 @@ static class Http
             catch (WitException<IStreamsImports.StreamError> e)
                 when (e.TypedValue.Tag == IStreamsImports.StreamError.Tags.Closed)
             {
-                return System.Text.Encoding.UTF8.GetString(buf.ToArray());
+                return buf.ToArray();
             }
         }
     }
 
-    /// <summary>The error-code as the exception the greeting reports: the
+    /// <summary>The error-code as the exception the fetch reports: the
     /// runtime puts its own refusal wording in internal-error.</summary>
     static InvalidOperationException Failed(string url, ITypesImports.ErrorCode code) =>
         new(code.Tag == ITypesImports.ErrorCode.Tags.InternalError

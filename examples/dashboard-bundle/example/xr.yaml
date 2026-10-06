@@ -1,0 +1,10 @@
+apiVersion: observability.example.org/v1alpha1
+kind: DashboardBundle
+metadata:
+  name: platform
+  namespace: monitoring
+spec:
+  # The fixture render.sh serves; in a cluster, where the team publishes it.
+  url: http://127.0.0.1:9480/bundles/platform-v1.2.0.zip
+  digest: sha256:30fcd2b65e69cf67263d111498348b7879eaf415871db947674b25c31a76defd
+  folder: Platform

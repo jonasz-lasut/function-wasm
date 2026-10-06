@@ -177,14 +177,6 @@ jobs:
         with:
           node-version: '24'
 
-      # dotnet_guest builds with the host's dotnet on Linux; without it the
-      # test would fall back to the .NET SDK container.
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: '10.0.x'
-          cache: false
-
       - name: Run the Guest Suite
         run: cargo test --locked --release -p function-wasm --test guests
 
@@ -708,6 +700,10 @@ jobs:
       - name: Render the Python Guest
         run: make -C examples/team-tags render-check
 
+  # The C# guest, an ABI v2 component from componentize-dotnet: the
+  # dashboard-bundle use case, which fetches a pinned zip archive over the
+  # host's egress from a fixture server render.sh starts and unpacks it into
+  # its private /tmp, under example/policy.cedar.
   render-dotnet:
     name: render (dotnet)
     runs-on: ubuntu-26.04
@@ -751,8 +747,8 @@ jobs:
           dotnet-version: '10.0.x'
           cache: false
 
-      - name: Test the C# Guest
-        run: make -C examples/hello-dotnet test
+      - name: Lint and Test the C# Guest
+        run: make -C examples/dashboard-bundle lint test
 
       - name: Setup the Crossplane CLI
         run: |
@@ -760,7 +756,7 @@ jobs:
           sudo mv crossplane /usr/local/bin/crossplane
 
       - name: Render the C# Guest
-        run: make -C examples/hello-dotnet render-check
+        run: make -C examples/dashboard-bundle render-check
 
   # One commit status carries the verdict back to the PR.
   report:

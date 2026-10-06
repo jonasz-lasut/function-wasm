@@ -3,7 +3,7 @@
 /// is declared sync (wit-bindgen's C# async bindings do not compile for this
 /// world yet - a sync-lifted implementation satisfies the runtime's async
 /// world, docs/abi-v2.md), and the guest imports wasi:http@0.2's
-/// outgoing-handler for its greeting fetch - the runtime serves both
+/// outgoing-handler to fetch the bundle - the runtime serves both
 /// wasi:http generations through one egress policy. It lives in a local
 /// package of its own: a WIT package name must always carry the same
 /// contents, and the runtime checks a component's types, not the package its

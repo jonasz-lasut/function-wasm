@@ -146,6 +146,12 @@ rendered and asserted on every `/e2e` run:
   resource. The tokens can go only where egress is granted: the one request
   its manifest declares, which the `compositionPolicy` and the operator's
   policy both fence.
+- [`examples/dashboard-bundle`](examples/dashboard-bundle) (C#): dashboards
+  as code, delivered as a bundle. A composite resource pins a team's zip of
+  Grafana dashboards by sha256; the module fetches it through the host's
+  egress, refuses any other content, unpacks it into its private `/tmp` and
+  composes one ConfigMap per dashboard for Grafana's sidecar - the two
+  capabilities its manifest requests.
 
 ## Install
 
@@ -281,16 +287,18 @@ smallest guest; `npm ci && make build`): it passes the same behaviour tests as
 the scaffolded flavours, but `guestfn init` cannot scaffold it yet.
 
 A **C#** ABI v2 guest exists as an example only as well
-([`examples/hello-dotnet`](examples/hello-dotnet), ~4 MB; the .NET 10 SDK,
-`make build`): compiled by NativeAOT-LLVM with
+([`examples/dashboard-bundle`](examples/dashboard-bundle), ~4.5 MB; the
+.NET 10 SDK, `make build`): compiled by NativeAOT-LLVM with
 [componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet)
 over wit-bindgen's generated bindings, its codec protoc's C# output on
-Google.Protobuf, its greeting fetched over `wasi:http@0.2` through the same
-egress policy. Its `run` is sync-lifted, because wit-bindgen's C# async
-bindings do not compile for this world yet. NativeAOT-LLVM publishes no
+Google.Protobuf, its bundle fetched over `wasi:http@0.2` through the same
+egress policy and unpacked with `System.IO.Compression` into its private
+`/tmp`. Its `run` is sync-lifted, because wit-bindgen's C# async bindings
+do not compile for this world yet. NativeAOT-LLVM publishes no
 macOS compiler, so on macOS the Makefile builds in the .NET SDK container
-(Docker). It passes the same behaviour tests as the scaffolded flavours,
-but `guestfn` neither scaffolds nor builds it yet.
+(Docker). It solves its own use case instead of greeting, so its unit tests
+and its render test cover it rather than the behaviour tests the other
+flavours share, and `guestfn` neither scaffolds nor builds it yet.
 
 The **TypeScript** flavour (`npm install` is the whole toolchain) is typed
 end to end (protobuf-es generated types, `tsc --noEmit` in the test gate),

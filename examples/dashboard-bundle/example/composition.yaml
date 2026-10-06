@@ -1,0 +1,25 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: dashboardbundles.observability.example.org
+spec:
+  compositeTypeRef:
+    apiVersion: observability.example.org/v1alpha1
+    kind: DashboardBundle
+  mode: Pipeline
+  pipeline:
+  - step: dashboard-bundle
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        # For local rendering the runtime serves this directory (--module-dir),
+        # under a manifest that asks for the fixture server instead of
+        # artifacts.example.com. In a cluster use type: OCI, the oci reference
+        # pinned to the digest guestfn push prints, and no manifestPath: the
+        # published artifact carries its own manifest.
+        type: Path
+        path: fn.wasm
+        manifestPath: example/wasmfn.local.yaml

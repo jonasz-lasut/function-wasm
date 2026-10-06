@@ -1,0 +1,30 @@
+{
+  "uid": "payments-checkout",
+  "title": "Checkout",
+  "tags": ["payments"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "time": {"from": "now-12h", "to": "now"},
+  "templating": {
+    "list": [
+      {"name": "datasource", "type": "datasource", "query": "prometheus"}
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Checkouts by outcome",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(checkout_attempts_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    }
+  ]
+}

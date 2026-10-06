@@ -1,0 +1,87 @@
+# The example's render test (https://github.com/crossplane-contrib/xprin), run
+# by `make render-check` against the runtime serving this directory under
+# example/policy.cedar, while render.sh serves example/fixtures. Each case
+# renders one DashboardBundle and asserts the ConfigMaps its bundle composes
+# and the status. No schema validation: a ConfigMap is a core kind with no
+# CRD to validate against. The dashboards' JSON sits under data keys ending
+# in .json, which xprin's dotted field paths cannot name; the unit tests
+# assert it.
+common:
+  inputs:
+    composition: composition.yaml
+    functions: functions.yaml
+tests:
+- name: platform
+  inputs:
+    xr: xr.yaml
+  assertions:
+    xprin:
+    - name: the bundle and one ConfigMap per dashboard it holds, none for its README
+      type: Count
+      value: 4
+    - name: nodes/overview.json is named after its path
+      type: Exists
+      resource: ConfigMap/platform-nodes-overview
+    - name: nodes/filesystems.json is named after its path
+      type: Exists
+      resource: ConfigMap/platform-nodes-filesystems
+    - name: api/latency.json is named after its path
+      type: Exists
+      resource: ConfigMap/platform-api-latency
+    - name: every ConfigMap carries the sidecar's label
+      type: FieldValue
+      resource: ConfigMap
+      field: metadata.labels.grafana_dashboard
+      operator: is
+      value: "1"
+    - name: every dashboard lands in the bundle's folder
+      type: FieldValue
+      resource: ConfigMap
+      field: metadata.annotations.grafana_folder
+      operator: is
+      value: Platform
+    - name: every ConfigMap holds its dashboard
+      type: FieldExists
+      resource: ConfigMap
+      field: data
+    - name: the status counts the dashboards
+      type: FieldValue
+      resource: DashboardBundle/platform
+      field: status.dashboards.count
+      operator: ==
+      value: 3
+    - name: the status records the verified digest
+      type: FieldValue
+      resource: DashboardBundle/platform
+      field: status.dashboards.digest
+      operator: is
+      value: sha256:30fcd2b65e69cf67263d111498348b7879eaf415871db947674b25c31a76defd
+- name: payments
+  inputs:
+    xr: xr-payments.yaml
+  assertions:
+    xprin:
+    - name: another team's bundle, one dashboard
+      type: Count
+      value: 2
+    - name: checkout.json is named after its path
+      type: Exists
+      resource: ConfigMap/payments-checkout
+    - name: it lands in that team's folder
+      type: FieldValue
+      resource: ConfigMap/payments-checkout
+      field: metadata.annotations.grafana_folder
+      operator: is
+      value: Payments
+    - name: the status counts the dashboard
+      type: FieldValue
+      resource: DashboardBundle/payments
+      field: status.dashboards.count
+      operator: ==
+      value: 1
+    - name: the status records the verified digest
+      type: FieldValue
+      resource: DashboardBundle/payments
+      field: status.dashboards.digest
+      operator: is
+      value: sha256:5120dabb4a1df3ca23ab16d0f26dd1c3ff874183bfbcdaf5991b101916fb112a

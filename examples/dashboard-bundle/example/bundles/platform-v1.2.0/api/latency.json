@@ -1,0 +1,55 @@
+{
+  "uid": "api-latency",
+  "title": "API latency",
+  "tags": ["platform", "api", "slo"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "time": {"from": "now-3h", "to": "now"},
+  "templating": {
+    "list": [
+      {"name": "datasource", "type": "datasource", "query": "prometheus"},
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(http_request_duration_seconds_bucket, service)"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Latency quantiles",
+      "gridPos": {"x": 0, "y": 0, "w": 16, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"$service\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"$service\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Requests under 300 ms",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "percentunit"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_request_duration_seconds_bucket{service=\"$service\", le=\"0.3\"}[30m])) / sum(rate(http_request_duration_seconds_count{service=\"$service\"}[30m]))"
+        }
+      ]
+    }
+  ]
+}

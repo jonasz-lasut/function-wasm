@@ -13,8 +13,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <RootNamespace>HelloDotnet</RootNamespace>
-    <AssemblyName>hello-dotnet</AssemblyName>
+    <RootNamespace>DashboardBundle</RootNamespace>
+    <AssemblyName>dashboard-bundle</AssemblyName>
     <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
     <UseAppHost>false</UseAppHost>
     <PublishTrimmed>true</PublishTrimmed>
@@ -51,6 +51,22 @@
     <PropertyGroup>
       <WasiSdkUrl>https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$(WasiSdkVersion.Split('.')[0])/wasi-sdk-$(WasiSdkVersion)-arm64-linux.tar.gz</WasiSdkUrl>
     </PropertyGroup>
+  </Target>
+
+  <!-- System.IO.Compression (zip, deflate) calls zlib through .NET's native
+       compression shim. NativeAOT-LLVM ships both for wasi-wasm but links
+       neither, so every zip call fails at run time ("Lazy PInvoke resolution
+       is not supported when targeting WebAssembly"): bind the shim's P/Invokes
+       at compile time and link the two archives. -->
+  <ItemGroup>
+    <DirectPInvoke Include="libSystem.IO.Compression.Native" />
+  </ItemGroup>
+
+  <Target Name="LinkCompressionNative" BeforeTargets="LinkNativeLlvm">
+    <ItemGroup>
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libSystem.IO.Compression.Native.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libz.a" />
+    </ItemGroup>
   </Target>
 
 </Project>
