@@ -58,6 +58,10 @@ pub struct Requires {
     pub filesystem: Option<Filesystem>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<EnvBinding>,
+    /// The pipeline-step credentials the module reads whole from its
+    /// request; every other step credential is withheld from it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub credentials: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -90,6 +94,7 @@ pub struct Grants {
     pub private_tmp: bool,
     pub http: Vec<HttpRule>,
     pub env: Vec<EnvBinding>,
+    pub credentials: Vec<String>,
 }
 
 /// The runtime's own release version, stamped at build time
@@ -189,6 +194,7 @@ impl Manifest {
                 egress_rules::validate_rules("requires.egress.http", &egress.http)?;
             }
             sandboxenv::validate_bindings("requires.env", &r.env)?;
+            sandboxenv::validate_credentials("requires.credentials", &r.credentials)?;
         }
         if !self.min_runtime.is_empty() && parse_semver(&canonical(&self.min_runtime)).is_none() {
             return Err(format!(
@@ -256,6 +262,9 @@ impl Manifest {
             if !r.env.is_empty() {
                 let names: Vec<&str> = r.env.iter().map(|b| b.name.as_str()).collect();
                 parts.push(format!("env {}", names.join(" ")));
+            }
+            if !r.credentials.is_empty() {
+                parts.push(format!("credentials {}", r.credentials.join(" ")));
             }
         }
         let mut out = parts.join(", ");
@@ -325,6 +334,13 @@ impl Manifest {
                     ));
                 }
             }
+            for (i, name) in r.credentials.iter().enumerate() {
+                if !g.credentials.contains(name) {
+                    return Err(format!(
+                        "requires credential {name:?} (requires.credentials[{i}]), which was not granted"
+                    ));
+                }
+            }
         }
         if !self.min_runtime.is_empty()
             && !runtime_version.is_empty()
@@ -380,6 +396,7 @@ fn strict_requires(v: &Value) -> Result<(), String> {
         egress: Option<StrictEgress>,
         filesystem: Option<StrictFilesystem>,
         env: Vec<StrictBinding>,
+        credentials: Vec<String>,
     }
     #[derive(Deserialize, Default)]
     #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
@@ -554,13 +571,66 @@ mod tests {
                 methods: vec!["GET".to_string()],
                 ..Default::default()
             }],
-            env: Vec::new(),
+            ..Default::default()
         };
         assert!(m.check(&full, None, "", 1).is_ok());
         let none = Grants::default();
         assert_eq!(
             m.check(&none, None, "", 1).expect_err("refuse"),
             "requires egress host api.example.com methods [GET], which was not granted"
+        );
+    }
+
+    #[test]
+    fn required_credentials_parse_summarise_and_check() {
+        let m = manifest(
+            r#"{"abi":2,"name":"team-tags","requires":{"env":[{"name":"API_TOKEN","fromCredential":{"name":"apikeys","key":"token"}}],"credentials":["cmdb","db"]}}"#,
+        );
+        assert_eq!(m.summary(), "team-tags, env API_TOKEN, credentials cmdb db");
+        // Published and printed as declared.
+        let json: Value = serde_json::from_slice(&m.json().expect("json")).expect("decode");
+        assert_eq!(
+            json["requires"]["credentials"],
+            serde_json::json!(["cmdb", "db"])
+        );
+        let granted = Grants {
+            env: m.requires.as_ref().expect("requires").env.clone(),
+            credentials: vec!["cmdb".to_string(), "db".to_string()],
+            ..Default::default()
+        };
+        assert!(m.check(&granted, None, "", 2).is_ok());
+        let partly = Grants {
+            credentials: vec!["cmdb".to_string()],
+            ..granted
+        };
+        assert_eq!(
+            m.check(&partly, None, "", 2).expect_err("refuse"),
+            r#"requires credential "db" (requires.credentials[1]), which was not granted"#
+        );
+        // Names are checked like an env binding's credential, and each is
+        // required once.
+        let cases: &[(&str, &str)] = &[
+            (
+                r#"{"abi":2,"requires":{"credentials":[""]}}"#,
+                "requires.credentials[0] must not be empty",
+            ),
+            (
+                r#"{"abi":2,"requires":{"credentials":["cmdb","cmdb"]}}"#,
+                r#"requires.credentials[1]: credential "cmdb" is already required by requires.credentials[0]"#,
+            ),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(
+                &Manifest::parse(raw.as_bytes()).expect_err(raw),
+                want,
+                "{raw}"
+            );
+        }
+        // Not a list of names: the strict decode refuses it.
+        assert!(
+            Manifest::parse(br#"{"abi":2,"requires":{"credentials":[{"name":"cmdb"}]}}"#)
+                .expect_err("strict requires")
+                .starts_with("cannot parse manifest")
         );
     }
 

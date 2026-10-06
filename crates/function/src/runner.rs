@@ -105,9 +105,10 @@ impl WasmFunction {
     /// The raw request path: the caller's bytes in, response bytes out. The
     /// guest receives the caller's own bytes - fields newer than this
     /// runtime's vendored proto included, which a prost decode cannot
-    /// retain - with only the withheld pull credential edited out at the
-    /// wire level; the guest's response bytes travel back untouched, a meta
-    /// field appended when the guest omitted one.
+    /// retain - with only the step credentials it was not granted (the pull
+    /// credential always among them) edited out at the wire level; the
+    /// guest's response bytes travel back untouched, a meta field appended
+    /// when the guest omitted one.
     pub async fn handle_raw(
         &self,
         raw: Vec<u8>,
@@ -183,19 +184,16 @@ impl WasmFunction {
         }
 
         // The credential that pulls the module is the host's business: the
-        // guest sees every other step credential, as a native function
-        // would, but not the one that fetched it. The full set is kept
-        // aside for the manifest's env bindings, which still may not name
-        // the withheld one.
-        let all_credentials = req.credentials.clone();
-        let mut withheld = String::new();
+        // guest never sees the one that fetched it, and no env binding or
+        // required credential of its manifest may name it.
+        let mut pull_credential = String::new();
         let mut auth = None;
         if source.r#type == "OCI"
             && let Some(oci) = &source.oci
             && !oci.credentials.is_empty()
         {
             let name = oci.credentials.clone();
-            let Some(data) = all_credentials.get(&name).and_then(|c| {
+            let Some(data) = req.credentials.get(&name).and_then(|c| {
                 c.source.as_ref().map(
                     |function_sdk_rust::proto::v1::credentials::Source::CredentialData(d)| &d.data,
                 )
@@ -219,7 +217,7 @@ impl WasmFunction {
                     )));
                 }
             };
-            withheld = name;
+            pull_credential = name;
         }
 
         // resolve hashes a path module's file (up to --max-module-size) on
@@ -391,34 +389,62 @@ impl WasmFunction {
             )));
         }
         // The manifest's env bindings resolve against the request's own
-        // credentials. (The withheld pull credential arrives with OCI
-        // sources; a Path source has none.)
+        // credentials, and the credentials it requires whole must be there
+        // too. (The pull credential arrives with OCI sources; a Path source
+        // has none.)
+        let sources = sandboxenv::Sources {
+            credentials: &req.credentials,
+            withheld: &pull_credential,
+        };
         let env = if caps.env.is_empty() {
-            Default::default()
+            Ok(Default::default())
         } else {
-            let sources = sandboxenv::Sources {
-                credentials: &all_credentials,
-                withheld: &withheld,
-            };
-            match sandboxenv::materialize(&caps.env, &sources) {
-                Ok(env) => env,
-                Err(e) => {
-                    return Ok(raw_rsp(self.fatal(
-                        rsp,
-                        OUTCOME_REFUSED,
-                        format!("module {}: {e}", resolved.description),
-                    )));
-                }
+            sandboxenv::materialize(&caps.env, &sources)
+        };
+        let env = match env.and_then(|env| {
+            sandboxenv::check_credentials(&caps.credentials, &sources).map(|()| env)
+        }) {
+            Ok(env) => env,
+            Err(e) => {
+                return Ok(raw_rsp(self.fatal(
+                    rsp,
+                    OUTCOME_REFUSED,
+                    format!("module {}: {e}", resolved.description),
+                )));
             }
         };
 
         // The whole request is forwarded and the whole response returned:
-        // the caller's own bytes, with only the pull credential edited out
-        // at the wire level; the engine works on the protobuf bytes.
+        // the caller's own bytes, with only the step credentials the module
+        // was not granted edited out at the wire level - the pull credential
+        // unconditionally; the engine works on the protobuf bytes.
+        let granted = caps.forwarded_credentials();
+        let forward = |name: &str| name != pull_credential && granted.contains(name);
+        let mut withheld: Vec<&str> = req
+            .credentials
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !forward(name))
+            .collect();
         let bytes = if withheld.is_empty() {
             raw
         } else {
-            crate::protowire::strip_credential(&raw, &withheld)
+            withheld.sort_unstable();
+            tracing::debug!(
+                module = %resolved.description,
+                credentials = ?withheld,
+                "Withholding the step credentials the module was not granted"
+            );
+            match crate::protowire::retain_credentials(&raw, forward) {
+                Some(bytes) => bytes,
+                None => {
+                    return Ok(raw_rsp(self.fatal(
+                        rsp,
+                        OUTCOME_ERROR,
+                        "internal error while running the module: cannot withhold the step credentials it was not granted: the request does not parse as protobuf".to_string(),
+                    )));
+                }
+            }
         };
         // The per-run client logs every request with the module's reference
         // and digest attached.
@@ -597,7 +623,9 @@ pub(crate) fn parse_grpc_timeout(v: &str) -> Option<Duration> {
 mod tests {
     use super::*;
 
-    use function_sdk_rust::proto::v1::{RequestMeta, Severity};
+    use function_sdk_rust::proto::v1::{
+        CredentialData, Credentials, RequestMeta, Severity, credentials,
+    };
     use function_sdk_rust::resource;
     use function_wasm_engine::Config;
 
@@ -888,6 +916,223 @@ mod tests {
         // unknown field included; and since the echo carries a field-1
         // message (read back as meta), the response returned untouched.
         assert_eq!(out, raw);
+    }
+
+    /// A guest that returns the request it was given as an unknown field
+    /// (999) of an otherwise empty response, so a test reads back exactly
+    /// what the runtime forwarded - credentials included, which an echoed
+    /// request would not survive the response decode with.
+    const WRAP_WAT: &str = r#"(module
+      (memory (export "memory") 4)
+      (global $next (mut i32) (i32.const 65536))
+      (func (export "wasmfn_alloc") (param $n i32) (result i32)
+        (local $p i32)
+        (local.set $p (global.get $next))
+        (global.set $next (i32.add (global.get $next) (local.get $n)))
+        (local.get $p))
+      (func (export "wasmfn_run") (param $ptr i32) (param $len i32) (result i64)
+        (local $out i32) (local $v i32)
+        (i32.store8 (i32.const 1024) (i32.const 0xba))
+        (i32.store8 (i32.const 1025) (i32.const 0x3e))
+        (local.set $out (i32.const 1026))
+        (local.set $v (local.get $len))
+        (block $done
+          (loop $more
+            (br_if $done (i32.lt_u (local.get $v) (i32.const 0x80)))
+            (i32.store8 (local.get $out)
+              (i32.or (i32.and (local.get $v) (i32.const 0x7f)) (i32.const 0x80)))
+            (local.set $out (i32.add (local.get $out) (i32.const 1)))
+            (local.set $v (i32.shr_u (local.get $v) (i32.const 7)))
+            (br $more)))
+        (i32.store8 (local.get $out) (local.get $v))
+        (local.set $out (i32.add (local.get $out) (i32.const 1)))
+        (memory.copy (local.get $out) (local.get $ptr) (local.get $len))
+        (i64.or
+          (i64.shl (i64.const 1024) (i64.const 32))
+          (i64.extend_i32_u
+            (i32.sub (i32.add (local.get $out) (local.get $len)) (i32.const 1024))))))"#;
+
+    fn read_varint(b: &[u8], mut i: usize) -> (u64, usize) {
+        let start = i;
+        let mut value = 0u64;
+        let mut shift = 0;
+        loop {
+            let byte = b[i];
+            value |= u64::from(byte & 0x7f) << shift;
+            i += 1;
+            if byte & 0x80 == 0 {
+                return (value, i - start);
+            }
+            shift += 7;
+        }
+    }
+
+    /// The request the wrap guest received, read back from its response
+    /// (every field of which is length-delimited: 999, and the meta the
+    /// runtime appends).
+    fn forwarded_request(out: &[u8]) -> RunFunctionRequest {
+        let mut i = 0;
+        while i < out.len() {
+            let (tag, n) = read_varint(out, i);
+            i += n;
+            let (len, n) = read_varint(out, i);
+            i += n;
+            let value = &out[i..i + len as usize];
+            i += len as usize;
+            if tag == (999 << 3) | 2 {
+                return RunFunctionRequest::decode(value).expect("decode forwarded request");
+            }
+        }
+        panic!("no forwarded request in the response: {out:?}");
+    }
+
+    fn step_credentials(names: &[&str]) -> std::collections::HashMap<String, Credentials> {
+        names
+            .iter()
+            .map(|name| {
+                let data = std::collections::HashMap::from([
+                    ("token".to_string(), format!("{name} secret").into_bytes()),
+                    ("username".to_string(), b"user".to_vec()),
+                    ("password".to_string(), b"pass".to_vec()),
+                ]);
+                (
+                    name.to_string(),
+                    Credentials {
+                        source: Some(credentials::Source::CredentialData(CredentialData { data })),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn granting_function(dir: Option<&std::path::Path>) -> WasmFunction {
+        let mut f = function(dir.map(std::path::Path::to_owned));
+        f.policy = Some(
+            crate::authz::OperatorPolicy::new(
+                "test",
+                r#"permit (principal, action == Action::"setEnv", resource);
+                   permit (principal, action == Action::"spendCredential", resource);"#,
+            )
+            .expect("policy"),
+        );
+        f
+    }
+
+    async fn run_with_credentials(
+        f: &WasmFunction,
+        module: serde_json::Value,
+        names: &[&str],
+    ) -> Vec<u8> {
+        let req = RunFunctionRequest {
+            meta: Some(RequestMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            input: Some(resource::json_to_struct(
+                input(module).as_object().expect("object"),
+            )),
+            credentials: step_credentials(names),
+            ..Default::default()
+        };
+        f.handle_raw(req.encode_to_vec(), None)
+            .await
+            .expect("handled")
+    }
+
+    fn sorted_names(req: &RunFunctionRequest) -> Vec<String> {
+        let mut names: Vec<String> = req.credentials.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn forwards_only_the_credentials_the_module_was_granted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            wat::parse_str(WRAP_WAT).expect("wat"),
+        )
+        .expect("write");
+        std::fs::write(
+            dir.path().join("wasmfn.yaml"),
+            "abi: 1\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n  credentials: [cmdb]\n",
+        )
+        .expect("write");
+        let f = granting_function(Some(dir.path()));
+        let declared =
+            serde_json::json!({"type": "Path", "path": "fn.wasm", "manifestPath": "wasmfn.yaml"});
+
+        // The env binding's credential and the required one reach the guest,
+        // whole; the step's other credential does not.
+        let out = run_with_credentials(&f, declared.clone(), &["apikeys", "cmdb", "other"]).await;
+        let forwarded = forwarded_request(&out);
+        assert_eq!(sorted_names(&forwarded), ["apikeys", "cmdb"]);
+        assert_eq!(
+            forwarded.credentials["cmdb"],
+            step_credentials(&["cmdb"])["cmdb"]
+        );
+        assert!(!out.windows(12).any(|w| w == b"other secret"));
+
+        // A module without a manifest requires nothing and sees no credential.
+        let out = run_with_credentials(
+            &f,
+            serde_json::json!({"type": "Path", "path": "fn.wasm"}),
+            &["apikeys", "cmdb", "other"],
+        )
+        .await;
+        assert!(forwarded_request(&out).credentials.is_empty());
+
+        // A required credential the step does not carry is refused, as an
+        // env binding's is: the module never runs.
+        let out = run_with_credentials(&f, declared, &["apikeys"]).await;
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        let result = rsp.results.first().expect("a fatal result");
+        assert_eq!(result.severity, Severity::Fatal as i32);
+        assert_eq!(
+            result.message,
+            r#"module module file fn.wasm: requires.credentials[0]: the request carries no credential "cmdb"; declare it on the pipeline step"#
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_pull_credential_is_never_forwarded() {
+        let wasm = wat::parse_str(WRAP_WAT).expect("wat");
+        let f = granting_function(None);
+        let module = |manifest: &[u8]| {
+            let (digest, addr) =
+                crate::oci::testregistry::wasm_artifact(&wasm, Some(manifest), false);
+            serde_json::json!({
+                "type": "OCI",
+                "oci": {"ref": format!("{addr}/example/wrap@{digest}"), "credentials": "registry"},
+            })
+        };
+
+        let out = run_with_credentials(
+            &f,
+            module(br#"{"abi":1,"requires":{"credentials":["cmdb"]}}"#),
+            &["registry", "cmdb", "other"],
+        )
+        .await;
+        assert_eq!(sorted_names(&forwarded_request(&out)), ["cmdb"]);
+
+        // A manifest that requires the pull credential is refused before the
+        // run, as an env binding naming it is.
+        let out = run_with_credentials(
+            &f,
+            module(br#"{"abi":1,"requires":{"credentials":["registry"]}}"#),
+            &["registry", "cmdb"],
+        )
+        .await;
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        let result = rsp.results.first().expect("a fatal result");
+        assert_eq!(result.severity, Severity::Fatal as i32);
+        assert!(
+            result.message.ends_with(
+                r#": requires.credentials[0]: credential "registry" is the pull credential and is never forwarded to the module"#
+            ),
+            "{}",
+            result.message
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

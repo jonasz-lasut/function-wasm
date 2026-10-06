@@ -277,7 +277,8 @@ fn requires_block(m: &Manifest) -> Result<Option<String>, String> {
     };
     let empty = r.egress.as_ref().is_none_or(|e| e.http.is_empty())
         && r.filesystem.as_ref().is_none_or(|f| !f.private_tmp)
-        && r.env.is_empty();
+        && r.env.is_empty()
+        && r.credentials.is_empty();
     if empty {
         return Ok(None);
     }

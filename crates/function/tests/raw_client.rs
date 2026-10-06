@@ -1,13 +1,17 @@
 //! A raw-bytes gRPC client against the served runtime: the definitive
 //! transparency proof. A typed client would drop an unknown protobuf field
 //! before it ever left the process, so this client speaks the wire format
-//! directly - the request bytes carry a field this runtime's vendored proto
-//! does not know, an echo guest returns its request buffer, and the caller
-//! must get its exact bytes back through the whole gRPC stack.
+//! directly - the request bytes carry fields this runtime's vendored proto
+//! does not know, between step credentials the module was not granted, an
+//! echo guest returns its request buffer, and the caller must get its exact
+//! bytes back through the whole gRPC stack, less exactly those credentials.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use function_sdk_rust::proto::v1::{RequestMeta, RunFunctionRequest};
+use function_sdk_rust::proto::v1::{
+    CredentialData, Credentials, RequestMeta, RunFunctionRequest, credentials,
+};
 use function_sdk_rust::resource;
 use function_wasm::authz::IpRules;
 use function_wasm::cache::{CacheOptions, ModuleCache};
@@ -137,9 +141,21 @@ async fn the_served_runtime_is_byte_transparent() {
         )),
         ..Default::default()
     };
-    let mut raw = typed.encode_to_vec();
-    // A field this runtime's vendored proto does not know: field 999.
-    raw.extend_from_slice(&[0xba, 0x3e, 0x03, b'x', b'y', b'z']);
+    // Fields this runtime's vendored proto does not know (999 and 1000),
+    // between and after step credentials: the module has no manifest, so it
+    // was granted none of them.
+    let unknown = [0xba, 0x3e, 0x03, b'x', b'y', b'z'];
+    let unknown_too = [0xc2, 0x3e, 0x02, b'u', b'v'];
+    let head = typed.encode_to_vec();
+    let mut raw = head.clone();
+    raw.extend(credential_entry("registry"));
+    raw.extend_from_slice(&unknown);
+    raw.extend(credential_entry("cmdb"));
+    raw.extend(credential_entry("api"));
+    raw.extend_from_slice(&unknown_too);
+    let mut want = head;
+    want.extend_from_slice(&unknown);
+    want.extend_from_slice(&unknown_too);
 
     let channel = connect(port).await;
     let mut client = tonic::client::Grpc::new(channel);
@@ -148,15 +164,16 @@ async fn the_served_runtime_is_byte_transparent() {
         "/apiextensions.fn.proto.v1.FunctionRunnerService/RunFunction",
     );
     let rsp = client
-        .unary(tonic::Request::new(raw.clone()), path, RawClientCodec)
+        .unary(tonic::Request::new(raw), path, RawClientCodec)
         .await
         .expect("RunFunction")
         .into_inner();
 
-    // The echo guest returned the forwarded request; the caller's exact
-    // bytes - the unknown field included - came back through the whole
-    // stack.
-    assert_eq!(rsp, raw);
+    // The echo guest returned the forwarded request: the caller's exact
+    // bytes - the unknown fields included, in place - came back through the
+    // whole stack, with every credentials entry edited out and nothing else.
+    assert_eq!(rsp, want);
+    assert!(!rsp.windows(6).any(|w| w == b"secret"));
 
     // The served call showed up in the Go runtime's gRPC server series -
     // started when it arrived, handled OK and one message each way when its
@@ -220,6 +237,23 @@ async fn the_served_runtime_is_byte_transparent() {
         Some(0.0),
         "streaming methods stay zero"
     );
+}
+
+/// One step credential's credentials map entry on the wire: what a request
+/// carrying only that credential encodes to.
+fn credential_entry(name: &str) -> Vec<u8> {
+    RunFunctionRequest {
+        credentials: HashMap::from([(
+            name.to_string(),
+            Credentials {
+                source: Some(credentials::Source::CredentialData(CredentialData {
+                    data: HashMap::from([("token".to_string(), format!("{name} secret").into())]),
+                })),
+            },
+        )]),
+        ..Default::default()
+    }
+    .encode_to_vec()
 }
 
 async fn connect(port: u16) -> tonic::transport::Channel {
