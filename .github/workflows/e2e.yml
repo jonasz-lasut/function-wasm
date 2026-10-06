@@ -597,6 +597,10 @@ jobs:
       - name: Render the AssemblyScript Guest
         run: make -C examples/hello-assemblyscript render-check
 
+  # The TypeScript guest, an ABI v2 component (jco): the policy-gate use
+  # case, the last step after function-go-templating (which render runs in
+  # Docker). It asks for its environment's EnvironmentConfig through
+  # requirements, which the xprin suite answers from its extra resources.
   render-ts:
     name: render (ts)
     runs-on: ubuntu-26.04
@@ -636,10 +640,10 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-          cache-dependency-path: examples/hello-ts/package-lock.json
+          cache-dependency-path: examples/policy-gate/package-lock.json
 
       - name: Test the TypeScript Guest
-        run: make -C examples/hello-ts test
+        run: make -C examples/policy-gate test
 
       - name: Setup the Crossplane CLI
         run: |
@@ -647,7 +651,7 @@ jobs:
           sudo mv crossplane /usr/local/bin/crossplane
 
       - name: Render the TypeScript Guest
-        run: make -C examples/hello-ts render-check
+        run: make -C examples/policy-gate render-check
 
   render-python:
     name: render (python)

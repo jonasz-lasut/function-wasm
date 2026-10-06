@@ -1,0 +1,12 @@
+apiVersion: data.example.org/v1alpha1
+kind: Database
+metadata:
+  name: orders
+  namespace: default
+spec:
+  environment: prod
+  region: eu-central-1
+  instanceClass: db.r6g.large
+  tags:
+    team: orders
+    data-classification: confidential

@@ -214,7 +214,7 @@
       matchUpdateTypes: ['lockFileMaintenance'],
       matchFileNames: [
         'examples/cloudflare-origin/Cargo.toml',
-        'examples/hello-ts/package.json',
+        'examples/policy-gate/package.json',
         'examples/hello-assemblyscript/package.json',
       ],
       enabled: true,

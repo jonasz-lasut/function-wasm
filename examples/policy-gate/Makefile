@@ -1,6 +1,7 @@
-# The hello guest in TypeScript, componentized with jco: needs node and npm
-# (protoc only to regenerate the checked-in codec). Render needs the
-# crossplane CLI and Docker.
+# The policy-gate guest in TypeScript, componentized with jco: needs node and
+# npm (protoc only to regenerate the checked-in codec). Render needs the
+# crossplane CLI and Docker (the composition's first step,
+# function-go-templating, runs in a container), render-check also xprin.
 .PHONY: build test render render-check gen-proto clean
 
 node_modules: package-lock.json
@@ -9,7 +10,7 @@ node_modules: package-lock.json
 build: node_modules ## Bundle and componentize the guest to fn.wasm
 	npm run build
 
-test: node_modules ## Run the unit tests natively under node
+test: node_modules ## Type-check, then run the unit tests natively under node
 	npm test
 
 gen-proto: node_modules ## Regenerate the checked-in protobuf-es codec (protoc)

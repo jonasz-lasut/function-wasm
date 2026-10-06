@@ -329,11 +329,11 @@ mod tests {
                 },
             ),
             (
-                "hello-ts",
+                "policy-gate",
                 &["proto/", "src/gen/", "src/log.d.ts"],
                 Options {
                     lang: LANG_TS.into(),
-                    name: "hello-ts".into(),
+                    name: "policy-gate".into(),
                     ..Default::default()
                 },
             ),
