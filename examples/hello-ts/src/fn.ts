@@ -44,7 +44,7 @@ export async function runFunction(
   const config = structField(req.input, "config");
   let greeting =
     stringField(config, "greeting", "cannot read config") ?? "hello";
-  // greetingUrl fetches the greeting through the host instead — the
+  // greetingUrl fetches the greeting through the host instead - the
   // requires.egress grant of the module's manifest decides whether it may.
   const url = stringField(config, "greetingUrl", "cannot read config");
   if (url !== undefined) {
