@@ -23,7 +23,10 @@
 # An issue_comment run uses this file from the default branch but builds the
 # pull request's code, so only the repository's owner, members and
 # collaborators can start it, the jobs that run that code get a read-only
-# token, and no checkout leaves the token behind for the code to read.
+# token, and no checkout leaves the token behind for the code to read. Nor do
+# the jobs restore or save caches (rust-cache, setup-go, setup-zig, npm): they
+# run in the default branch's cache scope, where trusted workflows would
+# restore whatever the pull request's code wrote.
 name: E2E
 
 on:
@@ -100,12 +103,10 @@ jobs:
           toolchain: stable
           targets: wasm32-wasip1, wasm32-wasip2
 
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: examples/hello-go/go.mod
 
       - name: Setup TinyGo
@@ -116,6 +117,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
+          use-cache: false
           version: 0.16.0
 
       - name: Setup protoc
@@ -127,10 +129,6 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-          cache: npm
-          cache-dependency-path: |
-            examples/hello-assemblyscript/package-lock.json
-            examples/hello-ts/package-lock.json
 
       - name: Run the Guest Suite
         run: cargo test --locked --release -p function-wasm --test guests
@@ -162,12 +160,10 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: examples/hello-go/go.mod
 
       - name: Setup the Crossplane CLI
@@ -207,12 +203,10 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: examples/hello-tinygo/go.mod
 
       - name: Setup TinyGo
@@ -273,13 +267,6 @@ jobs:
           targets: wasm32-wasip1
           components: rustfmt, clippy
 
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: |
-            .
-            examples/hello-rust
-
       - name: Setup protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
@@ -321,13 +308,6 @@ jobs:
           toolchain: stable
           targets: wasm32-wasip2
           components: rustfmt, clippy
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: |
-            .
-            examples/hello-rust-v2
 
       - name: Setup protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -372,12 +352,10 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
+          use-cache: false
           version: 0.16.0
 
       - name: Check Generated Codec
@@ -428,12 +406,10 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
+          use-cache: false
           version: 0.16.0
 
       - name: Setup protoc
@@ -499,14 +475,10 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-          cache: npm
           cache-dependency-path: examples/hello-assemblyscript/package-lock.json
 
       - name: Setup the Crossplane CLI
@@ -536,14 +508,10 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-          cache: npm
           cache-dependency-path: examples/hello-ts/package-lock.json
 
       - name: Test the TypeScript Guest
@@ -575,9 +543,6 @@ jobs:
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Test the Python Guest
         run: make -C examples/hello-python test
