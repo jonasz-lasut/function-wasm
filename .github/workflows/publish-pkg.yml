@@ -67,8 +67,8 @@ jobs:
         with:
           context: .
           platforms: linux/${{ matrix.arch }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # No GitHub Actions cache: the release image is built from
+          # scratch so nothing another workflow saved can reach it.
           target: image
           # The release version is stamped into the binary: what minRuntime
           # rules in module manifests are checked against.
