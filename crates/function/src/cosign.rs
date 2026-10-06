@@ -257,6 +257,7 @@ mod tests {
             manifests,
             blobs,
             bearer: false,
+            referrers_api: false,
         });
         (addr, artifact_digest, key.public_pem)
     }
@@ -316,6 +317,7 @@ mod tests {
             manifests,
             blobs: HashMap::new(),
             bearer: false,
+            referrers_api: false,
         });
         let err = verify(&addr, &digest, &key.public_pem).expect_err("refused");
         assert!(err.contains("carries no cosign signature"), "{err}");

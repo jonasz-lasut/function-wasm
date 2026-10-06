@@ -52,6 +52,7 @@ fn empty_registry() -> String {
         manifests: Default::default(),
         blobs: Default::default(),
         bearer: false,
+        referrers_api: false,
     })
 }
 
