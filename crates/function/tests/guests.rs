@@ -1,7 +1,8 @@
 //! The example guests - the same greeting function written with
 //! function-sdk-go (Go), with TinyGo and vtprotobuf, in Rust with prost, in
 //! Zig with zig-protobuf, in C with nanopb, in AssemblyScript with as-proto,
-//! and as an ABI v2 component in async Rust with wit-bindgen - through the
+//! and as ABI v2 components in async Rust with wit-bindgen and in C# with
+//! componentize-dotnet - through the
 //! whole host: path and OCI sources, compile, per-request instance, egress
 //! through wasmfn.http or wasi:http, guest logging. Every guest must produce
 //! the same response.
@@ -85,6 +86,14 @@ fn command(dir: &Path, name: &str, args: &[&str], envs: &[(&str, &str)]) -> bool
             false
         }
     }
+}
+
+fn docker_running() -> bool {
+    on_path("docker")
+        && std::process::Command::new("docker")
+            .args(["version", "--format", "{{.Server.Version}}"])
+            .output()
+            .is_ok_and(|out| out.status.success())
 }
 
 /// Builds one example guest with its toolchain; None skips the guest.
@@ -252,6 +261,24 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
             if !command(&dir, "npm", &["ci", "--no-audit", "--no-fund"], &[])
                 || !command(&dir, "npm", &["run", "build"], &[])
             {
+                return Some(Vec::new());
+            }
+            std::fs::copy(dir.join("fn.wasm"), out).ok()?;
+            true
+        }
+        "dotnet" => {
+            // NativeAOT-LLVM publishes its compiler for linux-x64,
+            // linux-arm64 and win-x64 hosts only: the Makefile builds with
+            // the host's dotnet on Linux and in the .NET SDK container
+            // everywhere else, so either one is this guest's toolchain.
+            let native = cfg!(target_os = "linux") && on_path("dotnet");
+            if !on_path("make") || !(native || docker_running()) {
+                eprintln!(
+                    "skipping: needs make and dotnet on a Linux host, or a running docker daemon"
+                );
+                return None;
+            }
+            if !command(&dir, "make", &["build"], &[]) {
                 return Some(Vec::new());
             }
             std::fs::copy(dir.join("fn.wasm"), out).ok()?;
@@ -612,6 +639,11 @@ fn ts_guest() {
 #[test]
 fn python_guest() {
     run_guest("python");
+}
+
+#[test]
+fn dotnet_guest() {
+    run_guest("dotnet");
 }
 
 #[test]
