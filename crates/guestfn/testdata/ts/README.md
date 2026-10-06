@@ -1,4 +1,4 @@
-# hello-ts
+# my-fn
 
 A [Crossplane](https://crossplane.io) composition function in TypeScript,
 componentized with [jco](https://github.com/bytecodealliance/jco) into a
@@ -44,7 +44,7 @@ npm test
 guestfn build                       # npm run build → fn.wasm
 
 # Publish it as an OCI artifact; it prints the module block for the Composition.
-guestfn push ghcr.io/example/hello-ts:v0.1.0
+guestfn push ghcr.io/example/my-fn:v0.1.0
 ```
 
 Render it locally against a checkout of function-wasm serving this

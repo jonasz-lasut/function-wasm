@@ -1,10 +1,11 @@
-//! Renders a new guest project in one of five flavours: Go with
+//! Renders a new guest project in one of six flavours: Go with
 //! function-sdk-go (its ABI glue vendored in internal/wasmfn), TinyGo over
-//! generated protobuf messages, Rust with prost, Zig with zig-protobuf, or C
-//! with nanopb (built by zig cc). Each template set is the matching example
-//! guest of this repository (examples/hello-go, hello-tinygo, hello-rust,
-//! hello-zig, hello-c) with the module path and name parameterised; tests
-//! keep them identical.
+//! generated protobuf messages, Rust with prost, Zig with zig-protobuf, C
+//! with nanopb (built by zig cc), or TypeScript with protobuf-es
+//! (componentized by jco). Each template set is the matching example guest
+//! of this repository (examples/hello-go, hello-tinygo, hello-rust-v2,
+//! hello-zig, hello-c, hello-ts) with the module path and name
+//! parameterised; tests keep them identical.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -18,9 +19,10 @@ pub const LANG_TINYGO: &str = "tinygo";
 pub const LANG_RUST: &str = "rust";
 pub const LANG_ZIG: &str = "zig";
 pub const LANG_C: &str = "c";
+pub const LANG_TS: &str = "ts";
 
 /// The scaffoldable languages, default first.
-pub const LANGS: [&str; 5] = [LANG_GO, LANG_TINYGO, LANG_RUST, LANG_ZIG, LANG_C];
+pub const LANGS: [&str; 6] = [LANG_GO, LANG_TINYGO, LANG_RUST, LANG_ZIG, LANG_C, LANG_TS];
 
 /// Options parameterise a scaffold.
 #[derive(Debug, Default, Clone)]
@@ -28,10 +30,12 @@ pub struct Options {
     /// The template set; empty means go.
     pub lang: String,
     /// The Go module path of the guest, e.g. github.com/me/my-fn. Required
-    /// for Go and TinyGo; Rust, Zig and C projects have no module path.
+    /// for Go and TinyGo; Rust, Zig, C and TypeScript projects have no
+    /// module path.
     pub module: String,
-    /// The guest's short name: the crate name for Rust, and what docs and
-    /// the example Composition call the guest. Empty derives it from the
+    /// The guest's short name: the crate name for Rust, the package name
+    /// for TypeScript, and what docs and the example Composition call the
+    /// guest. Empty derives it from the
     /// last element of module.
     pub name: String,
     /// The go directive of the generated go.mod, e.g. 1.26.6.
@@ -253,10 +257,11 @@ mod tests {
     /// Each language's example guest is its scaffold rendered for itself.
     /// Only go.mod may differ (the Go examples replace the SDK with the
     /// checkout and carry tidy's indirect requirements); the examples'
-    /// Makefile, Cargo.lock and generated build artefacts are extra.
+    /// Makefile, lockfiles (Cargo.lock, package-lock.json) and generated
+    /// build artefacts are extra.
     #[test]
     fn render_matches_the_examples() {
-        let examples: [(&str, Options); 5] = [
+        let examples: [(&str, Options); 6] = [
             (
                 LANG_GO,
                 Options {
@@ -298,6 +303,14 @@ mod tests {
                 Options {
                     lang: LANG_C.into(),
                     name: "hello-c".into(),
+                    ..Default::default()
+                },
+            ),
+            (
+                LANG_TS,
+                Options {
+                    lang: LANG_TS.into(),
+                    name: "hello-ts".into(),
                     ..Default::default()
                 },
             ),
@@ -363,7 +376,7 @@ mod tests {
         .expect_err("unknown language");
         assert_eq!(
             err,
-            "unsupported language \"cobol\"; one of go, tinygo, rust, zig, c"
+            "unsupported language \"cobol\"; one of go, tinygo, rust, zig, c, ts"
         );
 
         // The C flavour builds with zig, so build.zig.zon gets the project's

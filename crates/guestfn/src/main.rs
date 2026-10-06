@@ -72,9 +72,10 @@ struct InitCmd {
     dir: PathBuf,
 
     /// Language of the project: go (function-sdk-go), tinygo (raw protobuf
-    /// messages, ~1 MB modules), rust (prost), zig (zig-protobuf, ~95 KB)
-    /// or c (nanopb, built by zig cc, ~70 KB).
-    #[arg(long, default_value = "go", value_parser = ["go", "tinygo", "rust", "zig", "c"])]
+    /// messages, ~1 MB modules), rust (prost, an ABI v2 component), zig
+    /// (zig-protobuf, ~95 KB), c (nanopb, built by zig cc, ~70 KB) or ts
+    /// (protobuf-es, an ABI v2 component built by jco, ~14 MB).
+    #[arg(long, default_value = "go", value_parser = scaffold::LANGS)]
     lang: String,
 
     /// Go module path of the project (go, tinygo). Defaults to the
@@ -82,9 +83,10 @@ struct InitCmd {
     #[arg(long)]
     module: Option<String>,
 
-    /// Short name used in docs and the example Composition, and the crate
-    /// name for rust (the project name for zig and c). Defaults to the
-    /// module's last element or the directory's base name.
+    /// Short name used in docs and the example Composition, the crate name
+    /// for rust and the package name for ts (the project name for zig and
+    /// c). Defaults to the module's last element or the directory's base
+    /// name.
     #[arg(long)]
     name: Option<String>,
 
@@ -105,44 +107,44 @@ impl InitCmd {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let (module, name) = match self.lang.as_str() {
-            // No Go module path: the crate or project is named after the
-            // directory.
-            scaffold::LANG_RUST | scaffold::LANG_ZIG | scaffold::LANG_C => (
-                String::new(),
-                self.name.clone().unwrap_or_else(|| base.clone()),
-            ),
-            _ => (
+        let is_go = self.lang == scaffold::LANG_GO || self.lang == scaffold::LANG_TINYGO;
+        let (module, name) = if is_go {
+            (
                 self.module.clone().unwrap_or_else(|| base.clone()),
                 self.name.clone().unwrap_or_default(),
-            ),
+            )
+        } else {
+            // No Go module path: the crate, package or project is named
+            // after the directory.
+            (
+                String::new(),
+                self.name.clone().unwrap_or_else(|| base.clone()),
+            )
         };
         let files = scaffold::render(scaffold::Options {
             lang: self.lang.clone(),
             module: module.clone(),
-            name,
+            name: name.clone(),
             go_version: go_version(),
             sdk_version: self.sdk_version.clone(),
             requires: self.offline,
         })?;
         scaffold::write(&self.dir, &files)?;
         let dir = self.dir.display();
-        match self.lang.as_str() {
-            scaffold::LANG_RUST => println!(
-                "Created {dir} (crate {})",
-                self.name.clone().unwrap_or(base.clone())
-            ),
-            scaffold::LANG_ZIG | scaffold::LANG_C => println!(
-                "Created {dir} (project {})",
-                self.name.clone().unwrap_or(base.clone())
-            ),
-            _ => println!("Created {dir} (module {module})"),
-        }
+        let kind = match self.lang.as_str() {
+            scaffold::LANG_GO | scaffold::LANG_TINYGO => "module",
+            scaffold::LANG_RUST => "crate",
+            scaffold::LANG_TS => "package",
+            _ => "project",
+        };
+        let what = if is_go { &module } else { &name };
+        println!("Created {dir} ({kind} {what})");
 
-        // Only the Go-toolchain flavours carry a go.mod to resolve; rust,
-        // zig and c vendor or fetch their dependencies through their own
-        // build systems.
-        if !self.offline && (self.lang == scaffold::LANG_GO || self.lang == scaffold::LANG_TINYGO) {
+        // Only the Go-toolchain flavours carry a go.mod to resolve; the
+        // others vendor or fetch their dependencies through their own build
+        // systems (guestfn build runs npm install for a ts project without
+        // a lockfile).
+        if !self.offline && is_go {
             if self.lang == scaffold::LANG_GO {
                 run_in(
                     &self.dir,
@@ -161,6 +163,9 @@ impl InitCmd {
                 "zig build test       # edit src/main.zig, keep the tests passing"
             }
             scaffold::LANG_C => "zig build test       # edit src/fn.c, keep the tests passing",
+            scaffold::LANG_TS => {
+                "npm install          # protobuf-es, esbuild, jco\n  npm test             # edit src/fn.ts, keep the tests passing"
+            }
             _ => "go test ./...        # edit fn.go, keep the tests passing",
         };
         println!(

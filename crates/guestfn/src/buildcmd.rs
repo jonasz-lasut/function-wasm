@@ -9,10 +9,8 @@ use function_wasm::manifest::Manifest;
 
 use crate::scaffold;
 
-/// TypeScript builds through npm (componentize-js) and Python through a
-/// venv (componentize-py); neither has a scaffold template yet, so the
-/// names live here, not in scaffold::LANGS.
-pub(crate) const LANG_TS: &str = "ts";
+/// Python builds through a venv (componentize-py); it has no scaffold
+/// template yet, so the name lives here, not in scaffold::LANGS.
 pub(crate) const LANG_PYTHON: &str = "python";
 
 #[derive(clap::Args, Debug)]
@@ -148,7 +146,7 @@ fn detect_lang(dir: &Path) -> Result<String, String> {
         return Ok(scaffold::LANG_ZIG.to_string());
     }
     if dir.join("package.json").exists() && !dir.join("asconfig.json").exists() {
-        return Ok(LANG_TS.to_string());
+        return Ok(scaffold::LANG_TS.to_string());
     }
     if dir.join("requirements.txt").exists() {
         return Ok(LANG_PYTHON.to_string());
@@ -238,7 +236,7 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
             let wasm = std::fs::read(matches.remove(0)).map_err(|e| e.to_string())?;
             std::fs::write(out, wasm).map_err(|e| e.to_string())?;
         }
-        LANG_TS => {
+        scaffold::LANG_TS => {
             which("npm", "install node from https://nodejs.org")?;
             if !dir.join("node_modules").is_dir() {
                 // A lockfile pins the install; a fresh project has none, so

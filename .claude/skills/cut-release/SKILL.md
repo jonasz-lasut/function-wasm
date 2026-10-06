@@ -86,8 +86,11 @@ no separate SDK version to bump.
 `sdk_version` in `scaffold.rs`'s tests), the go and tinygo `go.mod.tmpl`
 (after a protobuf or vtprotobuf move, regenerate the tinygo codec with
 `make -C examples/hello-tinygo generate` and copy it into the templates),
-the rust `Cargo.toml.tmpl`, and the zig and c `build.zig.zon.tmpl`
-(`zig fetch --save <url>` writes url and hash). Mirror each change into its
+the rust `Cargo.toml.tmpl`, the zig and c `build.zig.zon.tmpl`
+(`zig fetch --save <url>` writes url and hash), and the ts
+`package.json.tmpl`'s devDependency ranges (then `npm install` in
+`examples/hello-ts` so its lockfile, which the template does not carry,
+satisfies them). Mirror each change into its
 example (`render_matches_the_examples` fails on drift), run
 `UPDATE_GOLDENS=1 cargo test -p guestfn`, and merge the PR to `main` once CI
 and `/e2e` (comment it on the PR) are green.
