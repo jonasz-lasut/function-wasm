@@ -1,6 +1,6 @@
 //! The example guests - the same greeting function written with
-//! function-sdk-go (Go), with TinyGo and vtprotobuf, in Rust with prost, in
-//! Zig with zig-protobuf, in C with nanopb, in AssemblyScript with as-proto,
+//! function-sdk-go (Go), with TinyGo and vtprotobuf, in Zig with
+//! zig-protobuf, in C with nanopb, in AssemblyScript with as-proto,
 //! and as ABI v2 components in async Rust with wit-bindgen and in C# with
 //! componentize-dotnet - through the
 //! whole host: path and OCI sources, compile, per-request instance, egress
@@ -132,36 +132,6 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 ],
                 &[],
             )
-        }
-        "rust" => {
-            if !on_path("cargo") || !on_path("rustup") {
-                eprintln!("skipping: cargo/rustup not on PATH");
-                return None;
-            }
-            let targets = std::process::Command::new("rustup")
-                .args(["target", "list", "--installed"])
-                .output()
-                .ok()?;
-            if !String::from_utf8_lossy(&targets.stdout).contains("wasm32-wasip1") {
-                eprintln!("skipping: wasm32-wasip1 target not installed");
-                return None;
-            }
-            if !command(
-                &dir,
-                "cargo",
-                &["build", "--release", "--target", "wasm32-wasip1"],
-                &[],
-            ) {
-                return Some(Vec::new());
-            }
-            let release = dir.join("target/wasm32-wasip1/release");
-            let wasm = std::fs::read_dir(&release)
-                .ok()?
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .find(|p| p.extension().is_some_and(|e| e == "wasm"))?;
-            std::fs::copy(&wasm, out).ok()?;
-            true
         }
         "rust-v2" => {
             if !on_path("cargo") || !on_path("rustup") {
@@ -619,11 +589,6 @@ fn go_guest() {
 #[test]
 fn tinygo_guest() {
     run_guest("tinygo");
-}
-
-#[test]
-fn rust_guest() {
-    run_guest("rust");
 }
 
 #[test]

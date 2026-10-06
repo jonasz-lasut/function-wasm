@@ -246,11 +246,6 @@ An **AssemblyScript** flavour exists as an example only for now
 smallest guest; `npm ci && make build`): it passes the same behaviour tests as
 the scaffolded flavours, but `guestfn init` cannot scaffold it yet.
 
-The **ABI v1 Rust** guest remains as an example only
-([`examples/hello-rust`](examples/hello-rust), ~250 KB, `wasm32-wasip1`):
-the scaffold moved to the component, and the v1 example stays as the
-reference for the wasip1 shape (it passes the same behaviour tests).
-
 A **C#** ABI v2 guest exists as an example only as well
 ([`examples/hello-dotnet`](examples/hello-dotnet), ~4 MB; the .NET 10 SDK,
 `make build`): compiled by NativeAOT-LLVM with

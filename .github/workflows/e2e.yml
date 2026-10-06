@@ -129,11 +129,12 @@ jobs:
           ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
+      # The rust-v2 guest's rust-toolchain.toml brings its own toolchain and
+      # target; stable builds the runtime under test.
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-          targets: wasm32-wasip1
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -303,66 +304,6 @@ jobs:
 
       - name: Render the TinyGo Guest
         run: make -C examples/hello-tinygo render-check
-
-  # The same guest in Rust (prost over the vendored proto, cdylib for
-  # wasm32-wasip1), rendered through the runtime.
-  render-rust:
-    name: render (rust)
-    runs-on: ubuntu-26.04
-    needs:
-      - start
-      - build-tools
-    env:
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
-          persist-credentials: false
-
-      # The runtime and guestfn come from build-tools; render.sh and the
-      # Makefiles take them from FUNCTION_BIN and GUESTFN instead of building.
-      - name: Download the Runtime and guestfn
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: e2e-tools
-          path: ${{ runner.temp }}/e2e-tools
-
-      - name: Use the Prebuilt Runtime and guestfn
-        run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
-          echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function" >> "$GITHUB_ENV"
-          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
-        with:
-          toolchain: stable
-          targets: wasm32-wasip1
-          components: rustfmt, clippy
-
-      - name: Setup protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Lint and Test the Rust Guest
-        working-directory: examples/hello-rust
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo clippy --target wasm32-wasip1 -- -D warnings
-          cargo test
-
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Render the Rust Guest
-        run: make -C examples/hello-rust render-check
 
   render-rust-v2:
     name: render (rust-v2)
@@ -750,7 +691,7 @@ jobs:
   # One commit status carries the verdict back to the PR.
   report:
     runs-on: ubuntu-26.04
-    needs: [start, guest-suite, render-go, render-tinygo, render-rust, render-rust-v2, render-zig, render-c, render-assemblyscript, render-ts, render-python, render-dotnet]
+    needs: [start, guest-suite, render-go, render-tinygo, render-rust-v2, render-zig, render-c, render-assemblyscript, render-ts, render-python, render-dotnet]
     if: always() && needs.start.result == 'success'
     permissions:
       statuses: write
@@ -762,7 +703,7 @@ jobs:
           state=success
           description="all jobs passed"
           for result in "${{ needs.guest-suite.result }}" "${{ needs.render-go.result }}" \
-            "${{ needs.render-tinygo.result }}" "${{ needs.render-rust.result }}" \
+            "${{ needs.render-tinygo.result }}" \
             "${{ needs.render-rust-v2.result }}" \
             "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}" \
             "${{ needs.render-assemblyscript.result }}" "${{ needs.render-ts.result }}" \

@@ -291,7 +291,7 @@ mod tests {
                 },
             ),
             // The rust scaffold emits ABI v2; its example pair is
-            // hello-rust-v2 (hello-rust stays as the example-only v1 guest).
+            // hello-rust-v2.
             (
                 "rust-v2",
                 Options {
