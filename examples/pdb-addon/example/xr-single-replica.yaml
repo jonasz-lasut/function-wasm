@@ -1,0 +1,9 @@
+apiVersion: platform.example.org/v1alpha1
+kind: WebApp
+metadata:
+  name: preview
+  namespace: default
+spec:
+  image: ghcr.io/example-org/shop:1.5.0-rc.1
+  replicas: 1
+  addOn: fn.wasm

@@ -1,0 +1,82 @@
+# The example's render test (https://github.com/crossplane-contrib/xprin), run
+# by `make render-check` against the runtime serving this directory. Each case
+# renders a WebApp through the platform's step and the add-on hook, with the
+# XRD's defaults applied, then asserts what was composed. No crds: the
+# composed kinds are core Kubernetes ones, which have no CRD schema to
+# validate against.
+common:
+  inputs:
+    composition: composition.yaml
+    functions: functions.yaml
+  patches:
+    xrd: definition.yaml
+tests:
+- name: add-on
+  inputs:
+    xr: xr.yaml
+  assertions:
+    xprin:
+    - name: the WebApp, its Deployment and Service, and the add-on's PodDisruptionBudget
+      type: Count
+      value: 4
+    - name: the add-on composed a PodDisruptionBudget
+      type: Exists
+      resource: PodDisruptionBudget
+    - name: the Deployment selects the WebApp's pods
+      type: FieldValue
+      resource: Deployment
+      field: spec.selector.matchLabels.app
+      operator: is
+      value: shop
+    - name: the budget selects the Deployment's pods
+      type: FieldValue
+      resource: PodDisruptionBudget
+      field: spec.selector.matchLabels.app
+      operator: is
+      value: shop
+    - name: the budget lets drains take one pod at a time
+      type: FieldValue
+      resource: PodDisruptionBudget
+      field: spec.maxUnavailable
+      operator: ==
+      value: 1
+    - name: the platform's Deployment is kept as composed
+      type: FieldValue
+      resource: Deployment
+      field: spec.replicas
+      operator: ==
+      value: 3
+- name: no-add-on
+  inputs:
+    xr: xr-no-addon.yaml
+  assertions:
+    xprin:
+    - name: the WebApp, its Deployment and Service, nothing else
+      type: Count
+      value: 3
+    - name: no PodDisruptionBudget although the Deployment runs the default 2 replicas
+      type: NotExists
+      resource: PodDisruptionBudget
+    - name: the Deployment runs the default replicas
+      type: FieldValue
+      resource: Deployment
+      field: spec.replicas
+      operator: ==
+      value: 2
+- name: single-replica
+  inputs:
+    xr: xr-single-replica.yaml
+  assertions:
+    xprin:
+    - name: the WebApp, its Deployment and Service, nothing else
+      type: Count
+      value: 3
+    - name: no PodDisruptionBudget over a single replica
+      type: NotExists
+      resource: PodDisruptionBudget
+    - name: the Deployment runs one replica
+      type: FieldValue
+      resource: Deployment
+      field: spec.replicas
+      operator: ==
+      value: 1

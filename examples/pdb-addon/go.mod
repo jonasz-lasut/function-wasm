@@ -1,4 +1,4 @@
-module github.com/jonasz-lasut/function-wasm/examples/hello-go
+module github.com/jonasz-lasut/function-wasm/examples/pdb-addon
 
 go 1.26.6
 
@@ -7,6 +7,7 @@ require (
 	github.com/crossplane/function-sdk-go v0.7.1
 	github.com/google/go-cmp v0.7.0
 	google.golang.org/protobuf v1.36.12
+	k8s.io/apimachinery v0.35.3
 )
 
 require (
@@ -69,7 +70,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.35.3 // indirect
 	k8s.io/apiextensions-apiserver v0.35.0 // indirect
-	k8s.io/apimachinery v0.35.3 // indirect
 	k8s.io/client-go v0.35.1 // indirect
 	k8s.io/code-generator v0.35.0 // indirect
 	k8s.io/gengo/v2 v2.0.0-20251215205346-5ee0d033ba5b // indirect

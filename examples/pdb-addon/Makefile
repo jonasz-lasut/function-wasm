@@ -1,15 +1,20 @@
-# Targets for the hello guest. `guestfn` and the runtime come from this
+# Targets for the pdb-addon guest. `guestfn` and the runtime come from this
 # repository (cargo run), so nothing needs to be installed except Go, Rust
 # and, for render, the crossplane CLI and Docker (the render engine runs in
-# a container). GUESTFN and FUNCTION_BIN (read by ../render.sh) can name
-# prebuilt binaries instead, as CI does.
+# a container; the platform's go-templating step too); render-check also
+# needs xprin. GUESTFN, FUNCTION_BIN (read by ../render.sh) and XPRIN can
+# name prebuilt binaries instead, as CI does.
 ROOT := $(abspath ../..)
 GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 
-.PHONY: build test render render-check clean
+.PHONY: build lint test render render-check clean
 
 build: ## Compile the guest to fn.wasm
 	$(GUESTFN) build --dir $(CURDIR)
+
+lint: ## Vet the guest and run golangci-lint over it
+	go vet ./...
+	golangci-lint run ./...
 
 test: ## Run the guest's unit tests natively
 	go test ./...
