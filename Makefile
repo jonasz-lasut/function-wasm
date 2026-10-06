@@ -1,6 +1,6 @@
 # Re-vendoring crossplane/crossplane's proto/fn/v1/run_function.proto (AGENTS.md
 # "Changing the scaffold"). Every tracked proto/run_function.proto - the files
-# Renovate's version-header rule reads: four templates, four goldens, eight
+# Renovate's version-header rule reads: six templates, six goldens, eight
 # examples - is the upstream file byte for byte under a five-line header whose
 # first line names the release. A Renovate bump moves that version in every
 # header but can neither re-download the file nor regenerate the codecs checked
@@ -21,9 +21,10 @@
 #
 # protoc stamps its version into the AssemblyScript and Python codecs, and the
 # Python one refuses to load on a protobuf runtime older than that stamp, so
-# PROTOC_VERSION must not pass the runtime examples/hello-python/requirements.txt
-# pins. NANOPB_VERSION is the nanopb release hello-c's build.zig.zon compiles
-# and e2e.yml's codec drift check installs.
+# PROTOC_VERSION must not pass the runtime the python template's
+# requirements.txt pins (hello-python's is the same file). NANOPB_VERSION is
+# the nanopb release hello-c's build.zig.zon compiles and e2e.yml's codec
+# drift check installs.
 PROTOC_VERSION := 35.1
 NANOPB_VERSION := 0.4.9.1
 
@@ -63,8 +64,10 @@ vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(VERSION)
 	done
 
 # rust and rust-v2 have no checked-in codec (build.rs runs prost-build); the
-# tinygo, zig and c codecs are mirrored into their guestfn templates, which
-# render-matches-the-examples holds identical to the examples.
+# tinygo, zig, c, ts and python codecs are mirrored into their guestfn
+# templates, which render-matches-the-examples holds identical to the
+# examples. The ts and python codecs are copied file by file: a gen/ directory
+# may hold a __pycache__ the templates must not embed.
 vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the pinned generators and mirror them into the templates
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-tinygo generate
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-proto
@@ -77,6 +80,10 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 	done
 	rm -rf crates/guestfn/templates/zig/src/fnv1 && cp -R examples/hello-zig/src/fnv1 crates/guestfn/templates/zig/src/fnv1
 	rm -rf crates/guestfn/templates/c/src/fnv1 && cp -R examples/hello-c/src/fnv1 crates/guestfn/templates/c/src/fnv1
+	for f in run_function_pb.js run_function_pb.d.ts; do \
+		cp "examples/hello-ts/src/gen/$$f" "crates/guestfn/templates/ts/src/gen/$$f"; \
+	done
+	cp examples/hello-python/src/gen/run_function_pb2.py crates/guestfn/templates/python/src/gen/run_function_pb2.py
 
 vendor-proto-goldens: ## Refresh the guestfn scaffold goldens from the templates
 	UPDATE_GOLDENS=1 cargo test -p guestfn
