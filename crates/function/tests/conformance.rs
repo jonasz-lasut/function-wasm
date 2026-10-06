@@ -426,6 +426,64 @@ fn validate_resolve_manifest_matches_the_goldens() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
+/// The step credentials a module requires whole (requires.credentials) over
+/// the fixture Composition testdata/validate/credentials.yaml: spendCredential
+/// decided under no operator policy, one that does not permit it
+/// (policy.cedar) and one that does, each with the three composition layers
+/// the fixture's steps carry - and the credentials an admitted step's module
+/// receives.
+#[test]
+fn validate_resolve_credentials_matches_the_goldens() {
+    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let cwd = crate_dir();
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ok = wat::parse_str(
+        r#"(module (memory (export "memory") 1)
+          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+    )
+    .expect("wat");
+    std::fs::write(dir.path().join("fn.wasm"), &ok).expect("write");
+    std::fs::copy(
+        cwd.join("testdata/validate/credentials.wasmfn.yaml"),
+        dir.path().join("credentials.wasmfn.yaml"),
+    )
+    .expect("copy manifest");
+
+    let module_dir = dir.path().display().to_string();
+    let mut failures = Vec::new();
+    let permissive = Some("testdata/validate/policy-permissive.cedar");
+    for (name, policy, output) in [
+        ("NoPolicy", None, "text"),
+        (
+            "OperatorDenies",
+            Some("testdata/validate/policy.cedar"),
+            "text",
+        ),
+        ("Permissive", permissive, "text"),
+        ("Permissive-json", permissive, "json"),
+    ] {
+        let mut args = vec![
+            "testdata/validate/credentials.yaml",
+            "--resolve",
+            "--module-dir",
+            module_dir.as_str(),
+            "--output",
+            output,
+        ];
+        if let Some(policy) = policy {
+            args.extend(["--sandbox-policy-file", policy]);
+        }
+        let rust_out = run_validate(rust, &args, "", &cwd);
+        let golden = format!("Credentials/{name}");
+        if let Some(f) = assert_golden(&golden, &rust_out, &[(module_dir.clone(), "<DIR>")]) {
+            failures.push(f);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}
+
 /// The HTTP module source over a local server both binaries fetch from:
 /// a module pinned by its stated digest, a wasmfn.yaml manifest by
 /// reference (manifestURL/manifestDigest) decided by the three layers, and

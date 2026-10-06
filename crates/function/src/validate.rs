@@ -128,6 +128,10 @@ struct StepResult {
     warnings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     resolved: Option<Resolved>,
+    /// With --resolve, the step credentials the module's request carries:
+    /// those its admitted manifest names. The runtime withholds every other.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    credentials: Vec<String>,
 }
 
 /// What --resolve reads from a module.
@@ -286,6 +290,9 @@ fn print_result(output: &str, r: &StepResult) -> Result<(), String> {
             line += &format!("; manifest: {}", m.summary());
         }
         println!("{line}");
+    }
+    if !r.credentials.is_empty() {
+        println!("  credentials: {}", r.credentials.join(" "));
     }
     for warning in &r.warnings {
         println!("  warning: {warning}");
@@ -644,6 +651,19 @@ impl Validator {
         ) {
             refuse!(format!("module {} {e}", resolved.description));
         }
+        // The credentials the module was granted are checked against the
+        // request at run time; whether one is the pull credential the
+        // Input already says.
+        let pull_credential = match &src.oci {
+            Some(oci) if src.r#type == "OCI" => oci.credentials.as_str(),
+            _ => "",
+        };
+        if let Err(e) =
+            crate::sandboxenv::refuse_pull_credential(&caps.env, &caps.credentials, pull_credential)
+        {
+            refuse!(format!("module {}: {e}", resolved.description));
+        }
+        r.credentials = caps.forwarded_credentials().into_iter().collect();
         r
     }
 
