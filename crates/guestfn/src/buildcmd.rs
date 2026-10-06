@@ -9,12 +9,6 @@ use function_wasm::manifest::Manifest;
 
 use crate::scaffold;
 
-/// TypeScript builds through npm (componentize-js) and Python through a
-/// venv (componentize-py); neither has a scaffold template yet, so the
-/// names live here, not in scaffold::LANGS.
-pub(crate) const LANG_TS: &str = "ts";
-pub(crate) const LANG_PYTHON: &str = "python";
-
 #[derive(clap::Args, Debug)]
 pub struct BuildCmd {
     /// Project directory.
@@ -148,10 +142,10 @@ fn detect_lang(dir: &Path) -> Result<String, String> {
         return Ok(scaffold::LANG_ZIG.to_string());
     }
     if dir.join("package.json").exists() && !dir.join("asconfig.json").exists() {
-        return Ok(LANG_TS.to_string());
+        return Ok(scaffold::LANG_TS.to_string());
     }
     if dir.join("requirements.txt").exists() {
-        return Ok(LANG_PYTHON.to_string());
+        return Ok(scaffold::LANG_PYTHON.to_string());
     }
     let gomod = std::fs::read_to_string(dir.join("go.mod")).map_err(|_| {
         format!(
@@ -238,10 +232,17 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
             let wasm = std::fs::read(matches.remove(0)).map_err(|e| e.to_string())?;
             std::fs::write(out, wasm).map_err(|e| e.to_string())?;
         }
-        LANG_TS => {
+        scaffold::LANG_TS => {
             which("npm", "install node from https://nodejs.org")?;
             if !dir.join("node_modules").is_dir() {
-                crate::run_in(dir, "npm", &["ci", "--no-audit", "--no-fund"])?;
+                // A lockfile pins the install; a fresh project has none, so
+                // npm install resolves the package.json ranges and writes it.
+                let install = if dir.join("package-lock.json").is_file() {
+                    "ci"
+                } else {
+                    "install"
+                };
+                crate::run_in(dir, "npm", &[install, "--no-audit", "--no-fund"])?;
             }
             crate::run_in(dir, "npm", &["run", "build"])?;
             // The package's build script componentizes to fn.wasm in the
@@ -253,8 +254,8 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
                 std::fs::write(out, wasm).map_err(|e| e.to_string())?;
             }
         }
-        LANG_PYTHON => {
-            // The documented layout of a python guest (examples/hello-python):
+        scaffold::LANG_PYTHON => {
+            // The layout the python scaffold writes (examples/hello-python):
             // the app module under src/, the generated codec under src/gen,
             // the world in wit/, componentize-py pinned in requirements.txt.
             which("python3", "install Python from https://www.python.org")?;

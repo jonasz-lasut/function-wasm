@@ -22,8 +22,11 @@
   // in the render files - move by hand at release time, together with the
   // templates (the cut-release skill). What the examples own alone is
   // refreshed by the monthly examples rules at the end of packageRules
-  // (SECURITY.md has the policy). gomod, npm and pip_requirements are here
-  // for those rules only; every other file they find stays disabled.
+  // (SECURITY.md has the policy). gomod and npm are here for those rules
+  // only; every other file they find stays disabled. pip_requirements is
+  // not enabled at all: every requirements.txt is the python template's
+  // pins - a plain file in the template too, which the manager would read
+  // and bump alone - and those move with the template at release.
   enabledManagers: [
     'cargo',
     'github-actions',
@@ -31,7 +34,6 @@
     'custom.regex',
     'gomod',
     'npm',
-    'pip_requirements',
   ],
   // config:recommended's :ignoreModulesAndTests skips **/examples/**, so
   // Renovate never read a file there: the version-header tripwire below
@@ -95,13 +97,14 @@
     {
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
-      // and hello-rust-v2, its wit/deps for hello-python. Same tripwire as
-      // the proto: a bump PR moves the version in every header at once; it
-      // does NOT re-download the WIT, so treat the PR as the signal to
-      // re-vendor by hand (keeping the p3 http.wit's service/middleware
-      // trim) and refresh the goldens. The header names an exact release,
-      // hence semver rather than the crate datasource's cargo ranges, under
-      // which `49.0.2` reads as `^49.0.2`.
+      // and hello-rust-v2, its wit/deps for the python scaffold and
+      // hello-python (templates and goldens included: the files are plain
+      // .wit in all three). Same tripwire as the proto: a bump PR moves the
+      // version in every header at once; it does NOT re-download the WIT,
+      // so treat the PR as the signal to re-vendor by hand (keeping the p3
+      // http.wit's service/middleware trim) and refresh the goldens. The
+      // header names an exact release, hence semver rather than the crate
+      // datasource's cargo ranges, under which `49.0.2` reads as `^49.0.2`.
       customType: 'regex',
       description: 'wasmtime-wasi-http release the vendored WASI WIT came from',
       managerFilePatterns: ['/(^|/)wit/deps/[^/]+\\.wit$/'],
@@ -163,7 +166,7 @@
     },
 
     // The one exception, and the reason it is safe: the vendored proto's
-    // version header is the same dep in all sixteen copies, so Renovate
+    // version header is the same dep in all twenty copies, so Renovate
     // moves templates, goldens and examples in a single PR - the examples
     // only because ignorePaths above no longer skips them. Left disabled
     // under those paths it would update the templates alone - desyncing the
@@ -175,8 +178,8 @@
       groupName: 'vendored run_function.proto',
     },
     // The WASI WIT headers, for the same reason: one dep across the rust
-    // template, its golden, hello-rust-v2 and hello-python. Their group is
-    // the wasmtime one above.
+    // and python templates, their goldens, hello-rust-v2 and hello-python.
+    // Their group is the wasmtime one above.
     {
       matchManagers: ['custom.regex'],
       matchPackageNames: ['wasmtime-wasi-http'],
@@ -234,12 +237,11 @@
       ],
       enabled: false,
     },
-    // The Python example pins exactly and has no scaffold: regular updates.
-    {
-      matchManagers: ['pip_requirements'],
-      matchFileNames: ['examples/hello-python/requirements.txt'],
-      enabled: true,
-    },
+    // hello-python's requirements.txt is the python template's: its
+    // componentize-py and protobuf pins move with the template at release
+    // time (the cut-release skill), never in this batch - pip_requirements
+    // is not an enabled manager.
+    //
     // hello-zig and hello-c name their dependencies in build.zig.zon by URL
     // and content hash, which no Renovate manager reads: they move by hand,
     // with the zig and c templates, at release time.
@@ -247,14 +249,14 @@
     // One batch, early on the 1st of the month. Renovate does not group lock
     // file maintenance with other updates - a grouped one gets its own
     // lock-file-maintenance- branch - so the batch is two PRs:
-    // renovate/examples (Go and Python) and
+    // renovate/examples (the Go examples) and
     // renovate/lock-file-maintenance-examples (the four lockfiles). A major
     // rides in its batch instead of a PR of its own; /e2e judges the whole.
-    // A security update to a Go or Python example dependency still opens at
-    // once on its own branch: Renovate appends those rules after these, with
+    // A security update to a Go example dependency still opens at once on
+    // its own branch: Renovate appends those rules after these, with
     // `force`.
     {
-      matchManagers: ['cargo', 'npm', 'gomod', 'pip_requirements'],
+      matchManagers: ['cargo', 'npm', 'gomod'],
       matchFileNames: ['examples/**'],
       groupName: 'examples',
       schedule: ['* 0-3 1 * *'],

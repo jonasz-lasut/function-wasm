@@ -135,7 +135,7 @@ Install the CLI and scaffold a project:
 ```shell
 cargo install --git https://github.com/jonasz-lasut/function-wasm guestfn
 
-guestfn init greeter --module github.com/example/greeter   # --lang go (default), tinygo, rust, zig or c
+guestfn init greeter --module github.com/example/greeter   # --lang go (default), tinygo, rust, zig, c, ts or python
 cd greeter
 ```
 
@@ -227,9 +227,9 @@ module once per digest and caches it.
 
 The [ABI v1](docs/abi.md) is two exports and protobuf bytes, so any wasip1
 toolchain works — and [ABI v2](docs/abi-v2.md) opens the component-model
-toolchains beside it. `guestfn` scaffolds and builds five flavours — the
-same greeting function each time; the `rust` flavour scaffolds as an ABI v2
-component, the rest as ABI v1 modules:
+toolchains beside it. `guestfn` scaffolds and builds seven flavours - the
+same greeting function each time; the `rust`, `ts` and `python` flavours
+scaffold as ABI v2 components, the rest as ABI v1 modules:
 
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
 |---|---|---|---|---|
@@ -238,6 +238,8 @@ component, the rest as ABI v1 modules:
 | `rust` | [`examples/hello-rust-v2`](examples/hello-rust-v2) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) — **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB |
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
+| `ts` | [`examples/hello-ts`](examples/hello-ts) | node + npm: [esbuild](https://esbuild.github.io) bundles, [jco](https://github.com/bytecodealliance/jco) componentizes - **an ABI v2 component**, sync-lifted `run`, `fetch()` over `wasi:http@0.2` | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto (`js+dts` codec checked in; `npm run gen-proto` + protoc to redo) | ~14 MB (SpiderMonkey) |
+| `python` | [`examples/hello-python`](examples/hello-python) | `python3` (a venv with [componentize-py](https://github.com/bytecodealliance/componentize-py)) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2` | protoc's Python codec over the vendored proto (checked in), on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
 
 An **AssemblyScript** flavour exists as an example only for now
 ([`examples/hello-assemblyscript`](examples/hello-assemblyscript), ~30 KB — the
@@ -249,27 +251,20 @@ The **ABI v1 Rust** guest remains as an example only
 the scaffold moved to the component, and the v1 example stays as the
 reference for the wasip1 shape (it passes the same behaviour tests).
 
-A **TypeScript** ABI v2 flavour exists as an example only as well:
-[`examples/hello-ts`](examples/hello-ts) (~14 MB, SpiderMonkey embedded;
-`npm install` is the whole toolchain) - typed end to end (protobuf-es
-generated types, `tsc --noEmit` in the test gate), componentized with
-[jco](https://github.com/bytecodealliance/jco), its greeting fetched with
-the platform's own `fetch()`, which the runtime serves over `wasi:http@0.2`
-through the same egress policy as every other guest. Its `run` is
-sync-lifted (componentize-js cannot async-lift a custom world yet - the
-world accepts that); the TypeScript itself awaits freely. `guestfn build`
-builds it (`package.json` detection, or `--lang ts`); `guestfn init`
-cannot scaffold it yet.
+The **TypeScript** flavour (`npm install` is the whole toolchain) is typed
+end to end (protobuf-es generated types, `tsc --noEmit` in the test gate),
+and its greeting is fetched with the platform's own `fetch()`, which the
+runtime serves over `wasi:http@0.2` through the same egress policy as every
+other guest. Its `run` is sync-lifted (componentize-js cannot async-lift a
+custom world yet - the world accepts that); the TypeScript itself awaits
+freely. The scaffold carries no `package-lock.json`: `guestfn build` runs
+`npm install` for a project without one, and `npm ci` once it has one.
 
-A **Python** ABI v2 flavour exists as an example only as well:
-[`examples/hello-python`](examples/hello-python) (~21 MB, CPython
-embedded; `python3` is the whole toolchain) - componentized with
-[componentize-py](https://github.com/bytecodealliance/componentize-py),
-the pure-Python protobuf runtime bundled in, its greeting fetched over
-`wasi:http@0.2` on componentize-py's poll loop through the same egress
-policy. Sync-lifted like the TypeScript guest. `guestfn build` builds it
-(`requirements.txt` detection, or `--lang python`); `guestfn init` cannot
-scaffold it yet.
+The **Python** flavour (`python3` is the whole toolchain) bundles the
+pure-Python protobuf runtime and fetches its greeting over `wasi:http@0.2`
+on componentize-py's poll loop, through the same egress policy. Sync-lifted
+like the TypeScript guest; `guestfn build` makes the venv from
+`requirements.txt` when the project has none.
 
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo,
 targeting `wasm32-wasip3` when the project carries a `wit/` directory and

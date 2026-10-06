@@ -219,6 +219,39 @@ fn init_offline_writes_a_project() {
     assert!(stderr.contains("already exists"), "{stderr}");
 }
 
+/// The component flavours have no Go module path: init names the project
+/// after its directory and runs no toolchain.
+#[test]
+fn init_names_a_component_project_after_its_directory() {
+    let cases = [
+        ("ts", "my-ts", "package", "package.json"),
+        ("python", "my-py", "project", "requirements.txt"),
+    ];
+    for (lang, name, kind, manifest) in cases {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (stdout, stderr, ok) = guestfn(dir.path(), &["init", name, "--lang", lang]);
+        assert!(ok, "{lang}: init failed: {stderr}");
+        assert!(
+            stdout.contains(&format!("Created {name} ({kind} {name})")),
+            "{lang}: {stdout}"
+        );
+        let project = dir.path().join(name);
+        let wasmfn = std::fs::read_to_string(project.join("wasmfn.yaml")).expect("wasmfn.yaml");
+        assert!(
+            wasmfn.contains(&format!("name: {name}\n")),
+            "{lang}: {wasmfn}"
+        );
+        assert!(
+            project.join(manifest).is_file(),
+            "{lang}: missing {manifest}"
+        );
+        assert!(
+            project.join("wit/world.wit").is_file(),
+            "{lang}: missing wit/world.wit"
+        );
+    }
+}
+
 #[test]
 fn scaffold_composition_from_a_file() {
     let dir = tempfile::tempdir().expect("tempdir");
