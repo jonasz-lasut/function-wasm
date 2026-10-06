@@ -9,11 +9,13 @@
 package wasmfn:function@2.0.0-draft;
 
 world function {
-    /// The level of a guest log line; the host renders debug lines only when
-    /// it runs under --debug.
+    /// The level of a guest log line, rendered at the runtime's level of the
+    /// same name; debug lines show only when the runtime runs under --debug.
     enum log-level {
         debug,
         info,
+        warn,
+        error,
     }
 
     /// Structured logging through the host: one line, message plus key-value

@@ -14,6 +14,8 @@ world function {
     enum log-level {
         debug,
         info,
+        warn,
+        error,
     }
 
     import log: func(level: log-level, msg: string, kv: list<tuple<string, string>>);

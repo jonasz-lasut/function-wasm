@@ -276,10 +276,10 @@ public sealed class FunctionTests
         CollectionAssert.AreEqual(
             new[]
             {
-                $"Info Skipped a bundle file that is not a dashboard bundle={Url} file=README.md",
-                $"Info Skipped a bundle file that is not a dashboard bundle={Url} file=nodes/.DS_Store",
-                $"Info Skipped a bundle file that is not a dashboard bundle={Url} file=__MACOSX/nodes/._overview.json",
-                $"Info Skipped a bundle file that is not a dashboard bundle={Url} file=._README.md",
+                $"Warn Skipped a bundle file that is not a dashboard bundle={Url} file=README.md",
+                $"Warn Skipped a bundle file that is not a dashboard bundle={Url} file=nodes/.DS_Store",
+                $"Warn Skipped a bundle file that is not a dashboard bundle={Url} file=__MACOSX/nodes/._overview.json",
+                $"Warn Skipped a bundle file that is not a dashboard bundle={Url} file=._README.md",
             },
             logged.Take(4).ToArray());
         var extracted = Directory.EnumerateFileSystemEntries(Path.Combine(lastRun, "bundle"), "*", SearchOption.AllDirectories)

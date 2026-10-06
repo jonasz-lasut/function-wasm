@@ -53,8 +53,18 @@ async def get(url: str, headers: List[Tuple[str, str]]) -> Response:
     return Response(status, body)
 
 
+# The world's levels by the names fn.py logs with; any other name logs at
+# info.
+LEVELS = {
+    "debug": LogLevel.DEBUG,
+    "info": LogLevel.INFO,
+    "warn": LogLevel.WARN,
+    "error": LogLevel.ERROR,
+}
+
+
 def host_log(level: str, msg: str, kv) -> None:
-    log(LogLevel.DEBUG if level == "debug" else LogLevel.INFO, msg, kv)
+    log(LEVELS.get(level, LogLevel.INFO), msg, kv)
 
 
 class WitWorld(wit_world.WitWorld):

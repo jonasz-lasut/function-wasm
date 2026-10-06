@@ -34,7 +34,7 @@ const DEFAULT_TTL_SECONDS = 60n;
 export const ENVIRONMENT_CONFIG = "environment-config";
 
 export type Log = (
-  level: "debug" | "info",
+  level: "debug" | "info" | "warn" | "error",
   msg: string,
   kv: [string, string][],
 ) => void;
