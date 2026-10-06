@@ -1,0 +1,49 @@
+# A team's S3 bucket. The team is the namespace the composite resource lives
+# in, which cluster RBAC decides; who owns it and which cost center pays for
+# it come from the CMDB, never from the composite resource. Crossplane v2: a
+# namespaced composite resource, no claim.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: buckets.storage.example.org
+spec:
+  group: storage.example.org
+  names:
+    kind: Bucket
+    plural: buckets
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required: [region]
+            properties:
+              region:
+                description: The AWS region of the bucket.
+                type: string
+              tags:
+                description: >-
+                  Tags of the team's own for the bucket. The CMDB's team,
+                  owner and cost-center tags replace any of the same keys.
+                type: object
+                additionalProperties:
+                  type: string
+          status:
+            type: object
+            properties:
+              cmdb:
+                description: The team's CMDB record the tags were stamped from.
+                type: object
+                properties:
+                  owner:
+                    description: Who owns the team's resources.
+                    type: string
+                  costCenter:
+                    description: The cost center the team's resources are billed to.
+                    type: string

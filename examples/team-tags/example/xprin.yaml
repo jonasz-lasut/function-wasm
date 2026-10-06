@@ -1,0 +1,102 @@
+# The example's render test (https://github.com/crossplane-contrib/xprin), run
+# by `make render-check` against the runtime serving this directory under
+# example/policy.cedar, while render.sh serves example/fixtures. Each case
+# passes the shared Secret of team tokens, validates the XR and the composed
+# bucket against their schemas (the XRD and the provider's CRD in crds/),
+# then asserts what the pipeline composed. The composite resource and the S3
+# bucket are both of kind Bucket, so every assertion names one: the
+# composite resource by its own name, the bucket by the <namespace>-<name>
+# the Composition gives it.
+common:
+  inputs:
+    composition: composition.yaml
+    functions: functions.yaml
+    function-credentials: function-credentials.yaml
+    crds:
+    - definition.yaml
+    - crds
+  patches:
+    xrd: definition.yaml
+tests:
+- name: payments
+  inputs:
+    xr: xr.yaml
+  assertions:
+    xprin:
+    - name: the composite resource and its bucket, nothing else
+      type: Count
+      value: 2
+    - name: the bucket keeps what the step before the module composed
+      type: FieldValue
+      resource: Bucket/payments-invoices
+      field: spec.forProvider.region
+      operator: is
+      value: eu-central-1
+    - name: the bucket is tagged with its team, the composite resource's namespace
+      type: FieldValue
+      resource: Bucket/payments-invoices
+      field: spec.forProvider.tags.team
+      operator: is
+      value: payments
+    - name: the bucket is tagged with the team's owner from the CMDB
+      type: FieldValue
+      resource: Bucket/payments-invoices
+      field: spec.forProvider.tags.owner
+      operator: is
+      value: alice@example.com
+    - name: the bucket is tagged with the team's cost center from the CMDB
+      type: FieldValue
+      resource: Bucket/payments-invoices
+      field: spec.forProvider.tags.cost-center
+      operator: is
+      value: cc-4711
+    - name: the status records the owner the tags came from
+      type: FieldValue
+      resource: Bucket/invoices
+      field: status.cmdb.owner
+      operator: is
+      value: alice@example.com
+    - name: the status records the cost center the tags came from
+      type: FieldValue
+      resource: Bucket/invoices
+      field: status.cmdb.costCenter
+      operator: is
+      value: cc-4711
+- name: own tags
+  inputs:
+    xr: xr-own-tags.yaml
+  assertions:
+    xprin:
+    - name: the composite resource and its bucket, nothing else
+      type: Count
+      value: 2
+    - name: a tag the team set for itself is kept
+      type: FieldValue
+      resource: Bucket/search-index
+      field: spec.forProvider.tags.environment
+      operator: is
+      value: production
+    - name: the owner the team set for itself gives way to the CMDB's
+      type: FieldValue
+      resource: Bucket/search-index
+      field: spec.forProvider.tags.owner
+      operator: is
+      value: bob@example.com
+    - name: the bucket is tagged with its team, the composite resource's namespace
+      type: FieldValue
+      resource: Bucket/search-index
+      field: spec.forProvider.tags.team
+      operator: is
+      value: search
+    - name: the bucket is tagged with the team's cost center from the CMDB
+      type: FieldValue
+      resource: Bucket/search-index
+      field: spec.forProvider.tags.cost-center
+      operator: is
+      value: cc-2087
+    - name: the status records the CMDB's owner, not the team's own tag
+      type: FieldValue
+      resource: Bucket/index
+      field: status.cmdb.owner
+      operator: is
+      value: bob@example.com

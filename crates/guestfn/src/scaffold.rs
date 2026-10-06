@@ -338,11 +338,11 @@ mod tests {
                 },
             ),
             (
-                "hello-python",
+                "team-tags",
                 &["proto/", "src/gen/", "wit/deps/"],
                 Options {
                     lang: LANG_PYTHON.into(),
-                    name: "hello-python".into(),
+                    name: "team-tags".into(),
                     ..Default::default()
                 },
             ),

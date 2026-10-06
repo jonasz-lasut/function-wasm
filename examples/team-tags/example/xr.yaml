@@ -1,0 +1,8 @@
+apiVersion: storage.example.org/v1alpha1
+kind: Bucket
+metadata:
+  name: invoices
+  # The team: the payments team's namespace.
+  namespace: payments
+spec:
+  region: eu-central-1

@@ -110,7 +110,7 @@
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
       // and cloudflare-origin, its wit/deps for the python scaffold,
-      // hello-python and hello-dotnet (templates and goldens included: the
+      // team-tags and hello-dotnet (templates and goldens included: the
       // files are plain .wit in all of them). Same tripwire as the proto: a
       // bump PR moves the version in every header at once; it does NOT
       // re-download the WIT, so treat the PR as the signal to re-vendor by
@@ -191,7 +191,7 @@
       groupName: 'vendored run_function.proto',
     },
     // The WASI WIT headers, for the same reason: one dep across the rust
-    // and python templates, their goldens, cloudflare-origin, hello-python and
+    // and python templates, their goldens, cloudflare-origin, team-tags and
     // hello-dotnet.
     // Their group is the wasmtime one above.
     {
@@ -270,7 +270,7 @@
       matchPackageNames: ['/^(runtime\\.[a-z0-9-]+\\.)?Microsoft\\.DotNet\\.ILCompiler\\.LLVM$/i'],
       enabled: false,
     },
-    // hello-python's requirements.txt is the python template's: its
+    // team-tags's requirements.txt is the python template's: its
     // componentize-py and protobuf pins move with the template at release
     // time (the cut-release skill), never in this batch - pip_requirements
     // is not an enabled manager.
