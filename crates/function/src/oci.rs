@@ -153,23 +153,6 @@ impl RegistryClient {
         serde_json::from_slice(&raw).map_err(|e| format!("cannot parse manifest {digest}: {e}"))
     }
 
-    /// Fetches a manifest by tag - the cosign signature artifact's address
-    /// (`sha256-<hex>.sig`); a missing tag is None, not an error. The
-    /// content is not digest-pinned by design: the signature inside is what
-    /// verifies.
-    pub fn manifest_by_tag(&self, tag: &str) -> Result<Option<OciManifest>, String> {
-        let url = format!("{}/v2/{}/manifests/{tag}", self.base, self.repository);
-        let accept = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json";
-        let raw = match self.get(&url, Some(accept), usize::MAX) {
-            Ok(raw) => raw,
-            Err(e) if e.starts_with("404") => return Ok(None),
-            Err(e) => return Err(format!("cannot fetch cosign signature {tag}: {e}")),
-        };
-        let m: OciManifest = serde_json::from_slice(&raw)
-            .map_err(|e| format!("cannot parse cosign signature {tag}: {e}"))?;
-        Ok(Some(m))
-    }
-
     /// Lists the referrers of a manifest (OCI distribution 1.1): the
     /// referrers API, or - where the registry answers it 404, as GHCR and
     /// registry:3 do - the referrers tag schema's index, tagged
