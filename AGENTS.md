@@ -120,14 +120,18 @@ crates/function/            the runtime crate: a library (everything below) + th
                               HTTP with stated digests, OCI by manifest digest; manifests by
                               reference (manifestPath, manifestURL/manifestDigest); fetch timed into
                               fetch_duration_seconds, the blob store counted as cache events
-  src/oci.rs                  the distribution client: manifest/blob GET, raw_manifest, push_blob +
+  src/oci.rs                  the distribution client: manifest/blob GET, OCI 1.1 referrers (the API,
+                              then the sha256-<hex> tag schema), raw_manifest, push_blob +
                               push_manifest (guestfn), anonymous/Basic/Bearer auth, the local Docker
                               config (keychain_auth); wasm_layer/manifest_layer/extract_wasm rules;
-                              testregistry (feature "testutil") serves and accepts artifacts in tests
+                              testregistry (feature "testutil") serves and accepts artifacts and
+                              referrers in tests
   src/location.rs             go-containerregistry-compatible reference normalization: pinned refs
                               (the runtime), any refs with tag/digest (guestfn), http locations
-  src/cosign.rs               cosign key-based verification (sigstore-rs crypto over the runtime's
-                              own registry client); keyless deliberately unsupported
+  src/cosign.rs               cosign 3 Sigstore bundle verification, key-based (bundles found among
+                              the manifest's referrers over the runtime's own registry client, DSSE
+                              + in-toto parsed here, sigstore-rs crypto); legacy .sig not read,
+                              keyless not yet (#116); testutil signs cosign-3-shaped bundles
   src/cache.rs                the module cache: memory (idle TTL, LRU bound) over the compiled-
                               artifact store, single-flight loads with compile slots; cache events
   src/store.rs                the content-addressed disk stores (modules, compiled/<version>,
@@ -255,7 +259,7 @@ The host forwards the whole request and returns the whole response — requireme
 
 ### Parity with the Go runtime
 
-The Go implementation was the reference until 2026-08; the contract is **logical compatibility**: the same Inputs admitted, the same requests refused for the same reasons, nothing running wider than the Go runtime would allow. Most admission and policy refusal strings match Go verbatim (the conformance goldens hold them); wording-only divergences are accepted (alpha), the recorded ones being: guest log kv rendered as one JSON field, egress transport-error text (reqwest's words, no 64KiB response-header cap, no HTTP/2 attempt), limits parse-error wording, a cold module load (fetch + compile) not being cut short by the request's deadline - the compile completes and caches where Go bounded loads with a load timeout; the run that follows still gets only the remaining budget - and the run deadline metering guest compute: time blocked in `wasmfn.http` is credited back to the epoch deadline (the gRPC deadline stays the hard cap) where Go spent `limits.timeout` on it. Anything the runtime does not carry is refused with a message naming it, never silently ignored.
+The Go implementation was the reference until 2026-08; the contract is **logical compatibility**: the same Inputs admitted, the same requests refused for the same reasons, nothing running wider than the Go runtime would allow. Most admission and policy refusal strings match Go verbatim (the conformance goldens hold them); wording-only divergences are accepted (alpha), the recorded ones being: guest log kv rendered as one JSON field, egress transport-error text (reqwest's words, no 64KiB response-header cap, no HTTP/2 attempt), limits parse-error wording, a cold module load (fetch + compile) not being cut short by the request's deadline - the compile completes and caches where Go bounded loads with a load timeout; the run that follows still gets only the remaining budget - and the run deadline metering guest compute: time blocked in `wasmfn.http` is credited back to the epoch deadline (the gRPC deadline stays the hard cap) where Go spent `limits.timeout` on it. One recorded divergence is more than wording - the signature format: the Go runtime read cosign 2's legacy `sha256-<hex>.sig` signatures, this runtime reads only cosign 3's key-based Sigstore bundles among the manifest's OCI 1.1 referrers (the same `--cosign-key` keys decide, in the format cosign 3 writes by default), so a module signed only the legacy way is refused as unsigned until re-signed with cosign 3. Anything the runtime does not carry is refused with a message naming it, never silently ignored.
 
 ### Conformance goldens
 
@@ -283,7 +287,7 @@ Readiness is answered twice — gRPC health on the function port and plain-HTTP 
 
 ### Signatures
 
-`--cosign-key` loads PEM public keys into `cosign::Verifier` (sigstore-rs crypto, key-based only); verification runs **before** the caches, once per manifest digest per process, over the runtime's own registry client (same auth path as the pull); non-OCI sources are refused when a signature is required. Keyless (Fulcio/Rekor) is deliberately unsupported.
+`--cosign-key` loads PEM public keys into `cosign::Verifier` (sigstore-rs crypto, key-based only); verification runs **before** the caches, once per manifest digest per process, over the runtime's own registry client (same auth path as the pull); non-OCI sources are refused when a signature is required. The format is cosign 3's: a Sigstore bundle (v0.3) in an OCI 1.1 referrer of the module's manifest, discovered through the referrers API or, on a 404 (GHCR, `registry:3`), the `sha256-<hex>` referrers tag index; bundles are recognised by the layer media type, never by `artifactType` (cosign 3.0 sets none). A referrer counts only if its `subject` is the pinned digest; the bundle is fetched bounded and verified against its digest; a DSSE envelope signature over the PAE must verify with a configured key, and only then is the in-toto statement read: `Statement/v1`, `predicateType` exactly `https://sigstore.dev/cosign/sign/v1` (SLSA provenance and other attestations never count, whoever signed them) and a subject with the manifest digest. The keys are the trust root - the bundle's verification material (key hint, certificate, tlog entries) is ignored. Refusal reasons are sorted and deduplicated so the wording is deterministic whatever order a registry lists referrers in. cosign 2's legacy `.sig` signatures are not read (no lookup, no hint). Keyless (Fulcio/Rekor) is not implemented yet (#116, waiting on sigstore-rs): a keyless bundle matches no key and never fails the check for a key bundle beside it. `cosign::testutil` (feature `testutil`) signs cosign-3-shaped bundles and attaches them to `oci::testregistry`.
 
 ### One-pagers
 
@@ -330,7 +334,7 @@ CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.ym
 
 ### Test Patterns
 
-Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration suites under `tests/`. Guest modules for tests are WAT fixtures assembled with the `wat` crate implementing ABI v1 (the engine's tests carry fixtures that misbehave in one way each; the sandbox is tested through raw WASI — a path escape is `module exited with status 63` (EPERM), a missing file 44 (ENOENT), no pre-open 8 (EBADF)). Registry-backed tests use `oci::testregistry` (feature `testutil`): an in-memory distribution registry that serves and accepts artifacts, optionally behind the Bearer token flow. Expected `RunFunctionResponse`s are constructed whole and compared with `assert_eq!` on the prost types — including fatal cases, whose per-guest message wording is blanked before the comparison.
+Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration suites under `tests/`. Guest modules for tests are WAT fixtures assembled with the `wat` crate implementing ABI v1 (the engine's tests carry fixtures that misbehave in one way each; the sandbox is tested through raw WASI: a path escape is `module exited with status 63` (EPERM), a missing file 44 (ENOENT), no pre-open 8 (EBADF)). Registry-backed tests use `oci::testregistry` (feature `testutil`): an in-memory distribution registry that serves and accepts artifacts, optionally behind the Bearer token flow, with OCI 1.1 referrers through the referrers API (`referrers_api: true`) or the tag schema (`push_referrer` maintains the `sha256-<hex>` index); `cosign::testutil` signs cosign-3-shaped Sigstore bundles into it. Expected `RunFunctionResponse`s are constructed whole and compared with `assert_eq!` on the prost types, including fatal cases, whose per-guest message wording is blanked before the comparison.
 
 ### Linting
 
@@ -391,7 +395,7 @@ By hand: `cargo run -p function-wasm -- --insecure --debug --module-dir=examples
 - `wasmtime` / `wasmtime-wasi` — the sandbox (Cranelift, pure Rust). Each major may change APIs; only `crates/engine` touches them, and `engine::version()` re-namespaces the compiled cache automatically on a bump.
 - `function-sdk-rust` — the gRPC/protobuf types (prost), `request`/`response`/`resource` helpers and the CLI `Args`; the generated FunctionRunnerService *client* types serve tests, while serving goes through the raw codec.
 - `cedar-policy` — both policy layers.
-- `sigstore` (features `cosign`, `rustls-tls`, no default features) — cosign key verification crypto only; fetching stays on the runtime's own registry client.
+- `sigstore` (features `cosign`, `rustls-tls`, no default features): cosign key verification crypto only; fetching stays on the runtime's own registry client and the bundle, DSSE and in-toto shapes are parsed by `cosign.rs`'s own serde structs (no `bundle`/`verify` features).
 - `reqwest` (blocking, rustls) — the egress client and the registry client.
 - `prometheus-client` — the metrics registry and OpenMetrics encoder (the official OpenMetrics-native client; the classic text format is derived from its output in `metrics.rs`).
 - `clap` — both CLIs.
@@ -453,6 +457,8 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 - **`the operator policy grants a private /tmp (usePrivateTmp), but the runtime cannot create one under …`** at startup: point `TMPDIR` at a writable directory (an `emptyDir`; tmpfs with `sizeLimit` bounds what a module may write).
 - **Guest gets `EPERM` under `/tmp`**: its path left the private `/tmp`; there is no other directory to reach.
 - **`cannot verify module oci …: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it`**: add `--cosign-key`, or narrow the `requireSignature` rule. The runtime warns loudly at startup when `--cosign-key` is set but the policy requires nothing.
+- **`cannot verify module oci …: <ref> carries no cosign signature (no Sigstore bundle among its referrers)`**: nothing among the manifest's OCI 1.1 referrers (the referrers API, or the `sha256-<hex>` tag index where the registry has no API) carries a Sigstore bundle naming this digest. Sign it with cosign 3 (`cosign sign --key cosign.key <repo>@sha256:…`). A module signed only with cosign 2 or `--new-bundle-format=false` (a `sha256-<hex>.sig` tag) lands here too: the legacy format is not read - re-sign it.
+- **`cannot verify module oci …: no valid cosign signature for <ref>: signature does not verify with the configured keys`**: a bundle is there but no `--cosign-key` key signed it - a different key, or a keyless signature (not verified yet, #116; countersign it with your key). Other reasons in the same list: `signed statement's predicate type is "https://slsa.dev/provenance/v1", not https://sigstore.dev/cosign/sign/v1` (an attestation, not a signature), `signed statement is for another digest` (a bundle copied from another manifest), and fetch, size or digest failures of a bundle.
 - **`operator policy …: dialAddress rule "…" must scope the action as == Action::"dialAddress"`** (or another Cedar/ip-rule load error): the `--sandbox-policy-file` is malformed and refused at load. A `dialAddress` condition accepts only `context.ip.isInRange(ip("CIDR"))`, `context.ip.isLoopback()`, or a `||` of them.
 - **A guest's request fails with `sandbox.egress: <host> resolves to an address the egress policy blocks`**: the host refuses private, loopback, link-local and cluster ranges by default; the address and block-list entry stay operator-side in the audit line. Add the range to the policy's `allowedCIDRs` to permit an in-cluster service.
 - **A guest's request fails with `wasmfn: sandbox.egress: HTTP egress is not granted to this module`**: the module calls the HTTP helper but its manifest requires no egress; the import always exists, the grant decides.
