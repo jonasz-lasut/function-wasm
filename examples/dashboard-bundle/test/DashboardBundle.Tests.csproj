@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The guest's logic under plain .NET: the function and its codec compiled
-       for the host, src/Wasm (the world glue) left out. -->
+  <!-- The function under plain .NET: everything under src/ compiled for the
+       host, src/App.cs (the world wiring) left out. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -10,8 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="../src/Function.cs" Link="src/Function.cs" />
-    <Compile Include="../src/Gen/*.cs" LinkBase="src/Gen" />
+    <Compile Include="../src/**/*.cs" Exclude="../src/App.cs" LinkBase="src" />
   </ItemGroup>
 
   <ItemGroup>

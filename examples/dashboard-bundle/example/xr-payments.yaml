@@ -1,0 +1,9 @@
+apiVersion: observability.example.org/v1alpha1
+kind: DashboardBundle
+metadata:
+  name: payments
+  namespace: payments
+spec:
+  url: http://127.0.0.1:9480/bundles/payments-v2.0.1.zip
+  digest: sha256:5120dabb4a1df3ca23ab16d0f26dd1c3ff874183bfbcdaf5991b101916fb112a
+  folder: Payments

@@ -110,7 +110,7 @@
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
       // and cloudflare-origin, its wit/deps for the python scaffold,
-      // team-tags and hello-dotnet (templates and goldens included: the
+      // team-tags and dashboard-bundle (templates and goldens included: the
       // files are plain .wit in all of them). Same tripwire as the proto: a
       // bump PR moves the version in every header at once; it does NOT
       // re-download the WIT, so treat the PR as the signal to re-vendor by
@@ -192,7 +192,7 @@
     },
     // The WASI WIT headers, for the same reason: one dep across the rust
     // and python templates, their goldens, cloudflare-origin, team-tags and
-    // hello-dotnet.
+    // dashboard-bundle.
     // Their group is the wasmtime one above.
     {
       matchManagers: ['custom.regex'],
@@ -250,13 +250,13 @@
       ],
       enabled: false,
     },
-    // hello-dotnet is example-only, with no template to drift from: its
+    // dashboard-bundle is example-only, with no template to drift from: its
     // NuGet packages take regular updates. nuget reads every version from
     // its Directory.Packages.props (the projects name packages without one)
     // and looks them up in the sources its nuget.config names.
     {
       matchManagers: ['nuget'],
-      matchFileNames: ['examples/hello-dotnet/**'],
+      matchFileNames: ['examples/dashboard-bundle/**'],
       enabled: true,
     },
     // ...except NativeAOT-LLVM: componentize-dotnet is built against one
@@ -282,7 +282,7 @@
     // One batch, early on the 1st of the month. Renovate does not group lock
     // file maintenance with other updates - a grouped one gets its own
     // lock-file-maintenance- branch - so the batch is two PRs:
-    // renovate/examples (the Go examples and hello-dotnet) and
+    // renovate/examples (the Go examples and dashboard-bundle) and
     // renovate/lock-file-maintenance-examples (the four lockfiles). A major
     // rides in its batch instead of a PR of its own; /e2e judges the whole.
     // A security update to a Go or .NET example dependency still opens at

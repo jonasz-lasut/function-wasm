@@ -1,0 +1,27 @@
+# The module manifest: what this module declares about itself. guestfn push
+# publishes it beside the module as the artifact's manifest layer, and the
+# runtime holds it against what the policy layers grant before every run - a
+# manifest can refuse a run earlier and say why, never make one possible.
+abi: 2
+name: dashboard-bundle
+version: 0.1.0
+# The two capabilities this module cannot run without, granted only where the
+# Composition's compositionPolicy and the operator's Cedar policy both permit
+# them: a private /tmp to unpack the bundle into, and reading the bundle from
+# the host the teams publish to. Name your own artifact host here before
+# publishing.
+requires:
+  filesystem:
+    privateTmp: true
+  egress:
+    http:
+    - host: artifacts.example.com
+      methods: [GET]
+      pathPrefix: /dashboards/
+config:
+  # The JSON Schema (draft 2020-12) of the Input's config. The module takes
+  # none - the composite resource names the bundle - so the runtime refuses a
+  # step that passes one, naming the field.
+  schema:
+    type: object
+    additionalProperties: false

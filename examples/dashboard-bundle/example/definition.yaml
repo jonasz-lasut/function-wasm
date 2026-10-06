@@ -1,0 +1,49 @@
+# A team's Grafana dashboards, published as one versioned archive and pinned
+# by digest. Crossplane v2: a namespaced composite resource, no claim.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: dashboardbundles.observability.example.org
+spec:
+  group: observability.example.org
+  names:
+    kind: DashboardBundle
+    plural: dashboardbundles
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required: [url, digest, folder]
+            properties:
+              url:
+                description: Where the bundle is published, a zip archive of dashboard JSON files.
+                type: string
+              digest:
+                description: >-
+                  The bundle's sha256, the pin: a bundle with any other content
+                  is refused, so a moved tag never changes what is applied.
+                type: string
+                pattern: '^sha256:[0-9a-f]{64}$'
+              folder:
+                description: The Grafana folder the dashboards land in.
+                type: string
+          status:
+            type: object
+            properties:
+              dashboards:
+                description: The dashboards composed from the bundle.
+                type: object
+                properties:
+                  count:
+                    description: How many dashboards the bundle holds.
+                    type: integer
+                  digest:
+                    description: The verified digest they were composed from.
+                    type: string

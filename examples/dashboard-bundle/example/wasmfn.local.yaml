@@ -1,0 +1,19 @@
+# The manifest a local render runs this module under (module.manifestPath in
+# composition.yaml): the published wasmfn.yaml, but asking for the fixture
+# server render.sh starts on 127.0.0.1:9480 instead of artifacts.example.com,
+# so the example renders without the internet.
+abi: 2
+name: dashboard-bundle
+version: 0.1.0
+requires:
+  filesystem:
+    privateTmp: true
+  egress:
+    http:
+    - host: 127.0.0.1
+      methods: [GET]
+      pathPrefix: /bundles/
+config:
+  schema:
+    type: object
+    additionalProperties: false
