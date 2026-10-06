@@ -1,4 +1,4 @@
-// Vendored from wasmtime-wasi-http 48.0.1 (src/p3/wit/deps): wasi:http@0.3.0 (types + client; the service/middleware worlds trimmed).
+// Vendored from wasmtime-wasi-http 49.0.2 (src/p3/wit/deps): wasi:http@0.3.0 (types + client; the service/middleware worlds trimmed).
 // Keep in step with the wasmtime the runtime pins.
 package wasi:http@0.3.0;
 
