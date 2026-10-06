@@ -84,6 +84,8 @@ no separate SDK version to bump.
 `.tmpl`). Move each to its latest release: function-sdk-go
 (`FALLBACK_SDK_VERSION` in `crates/guestfn/src/main.rs`, plus the
 `sdk_version` in `scaffold.rs`'s tests), the go and tinygo `go.mod.tmpl`
+(the go one's grpc floor too, dropped once a function-sdk-go release
+requires grpc v1.83 or newer)
 (after a protobuf or vtprotobuf move, regenerate the tinygo codec with
 `make -C examples/hello-tinygo generate` and copy it into the templates),
 the rust `Cargo.toml.tmpl`, the zig and c `build.zig.zon.tmpl`
