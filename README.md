@@ -452,15 +452,20 @@ does and lists, on a `credentials:` line, the step credentials its request
 would carry (with none listed it receives none); `--function-name` keeps only the steps of one function; `--output json` prints one JSON object per step for
 CI annotations; `-` reads stdin. Warnings (a `Path` source in a
 Composition, egress granted without `--cosign-key`, a limit equal to its
-ceiling, a field the runtime would silently ignore) are printed under the
-step and never change the exit code: 0 when every step is admitted, 1 when
+ceiling, a field the runtime would silently ignore, the deprecated
+`v1beta1` apiVersion) are printed under the step and never change the
+exit code: 0 when every step is admitted, 1 when
 at least one is refused, 2 when the tool itself failed (unreadable file,
 unparsable YAML, a bad flag). `make -C examples/pdb-addon render` runs it
 over the example first.
 
 ## Input reference
 
-`apiVersion: wasm.fn.crossplane.io/v1`, `kind: Input`.
+`apiVersion: wasm.fn.crossplane.io/v1`, `kind: Input`. A step that still
+says `wasm.fn.crossplane.io/v1beta1` (the same fields) is accepted
+throughout 1.x: `function validate` prints a warning under it and the
+runtime logs one line per request naming `v1`; 2.0.0 removes it
+([Compatibility](#compatibility)).
 
 ```yaml
 module:                        # required

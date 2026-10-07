@@ -364,7 +364,7 @@ fn find_steps(file: &str, docs: &[serde_json::Value], function_name: Option<&str
     };
     for (i, doc) in docs.iter().enumerate() {
         let (api_version, kind) = (str_of(doc, "apiVersion"), str_of(doc, "kind"));
-        if api_version == input::API_VERSION && kind == input::KIND {
+        if input::is_input(&api_version, &kind) {
             if function_name.is_none() {
                 let name = doc
                     .get("metadata")
@@ -396,13 +396,16 @@ fn find_steps(file: &str, docs: &[serde_json::Value], function_name: Option<&str
             .cloned()
             .unwrap_or_default();
         for (j, entry) in pipeline.iter().enumerate() {
-            let Some(input) = entry.get("input").and_then(|v| v.as_object()) else {
+            let Some(input_value) = entry.get("input") else {
                 continue;
             };
-            if input.get("apiVersion").and_then(|v| v.as_str()) != Some(input::API_VERSION) {
+            let Some(input) = input_value.as_object() else {
                 continue;
-            }
-            if input.get("kind").and_then(|v| v.as_str()) != Some(input::KIND) {
+            };
+            if !input::is_input(
+                &str_of(input_value, "apiVersion"),
+                &str_of(input_value, "kind"),
+            ) {
                 continue;
             }
             let function = entry
@@ -673,6 +676,9 @@ impl Validator {
     /// The short fixed list of accepted-but-unwise findings.
     fn warnings(&self, input: &Input) -> Vec<String> {
         let mut out = Vec::new();
+        if input.api_version == crate::input::API_VERSION_V1BETA1 {
+            out.push(crate::input::V1BETA1_DEPRECATION.to_string());
+        }
         if input.module.r#type == "Path" {
             out.push("module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest".to_string());
         }

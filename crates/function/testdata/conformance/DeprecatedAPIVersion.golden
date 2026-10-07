@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+testdata/validate/v1beta1.yaml: Composition/before-1-0 pipeline[0] greet: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a, limits timeout 5s)
+  warning: apiVersion wasm.fn.crossplane.io/v1beta1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: wasm.fn.crossplane.io/v1 (the same fields)
+testdata/validate/v1beta1.yaml: Input[1] bare: OK (http https://example.com/fn.wasm)
+  warning: apiVersion wasm.fn.crossplane.io/v1beta1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: wasm.fn.crossplane.io/v1 (the same fields)
+--- stderr

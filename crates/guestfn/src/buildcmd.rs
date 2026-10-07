@@ -145,21 +145,35 @@ fn warn_example_config(dir: &Path, m: &Manifest) {
     if !path.is_file() || m.config.as_ref().is_none_or(|c| c.schema.is_none()) {
         return;
     }
-    match example_config(&path) {
+    match example_step(&path) {
         Err(e) => println!("warning: cannot read {}: {e}", path.display()),
         Ok(None) => {}
-        Ok(Some(config)) => {
-            if let Err(e) = m.validate_config(config.as_ref()) {
+        Ok(Some(step)) => {
+            // The runtime's words on every request carrying such a step.
+            if step.api_version == function_wasm::input::API_VERSION_V1BETA1 {
+                println!(
+                    "warning: {}: {}",
+                    path.display(),
+                    function_wasm::input::V1BETA1_DEPRECATION
+                );
+            }
+            if let Err(e) = m.validate_config(step.config.as_ref()) {
                 println!("warning: {}: {e}", path.display());
             }
         }
     }
 }
 
-/// The config block of the first function-wasm step of a Composition file,
-/// as the runtime receives it; None without such a step.
-#[allow(clippy::type_complexity)]
-fn example_config(path: &Path) -> Result<Option<Option<serde_json::Value>>, String> {
+/// The first function-wasm step of a Composition file, as the runtime
+/// receives it.
+struct ExampleStep {
+    api_version: String,
+    config: Option<serde_json::Value>,
+}
+
+/// None without a function-wasm step (the current apiVersion or the
+/// deprecated one, as the runtime accepts).
+fn example_step(path: &Path) -> Result<Option<ExampleStep>, String> {
     let raw = std::fs::read(path).map_err(|e| e.to_string())?;
     let doc: serde_json::Value = serde_yaml::from_slice(&raw).map_err(|e| e.to_string())?;
     let steps = doc
@@ -167,15 +181,22 @@ fn example_config(path: &Path) -> Result<Option<Option<serde_json::Value>>, Stri
         .and_then(|p| p.as_array())
         .cloned()
         .unwrap_or_default();
+    let str_of = |v: &serde_json::Value, key: &str| -> String {
+        v.get(key)
+            .and_then(|s| s.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
     for step in steps {
         let input = step.get("input").cloned().unwrap_or_default();
-        if input.get("apiVersion").and_then(|v| v.as_str())
-            != Some(function_wasm::input::API_VERSION)
-            || input.get("kind").and_then(|v| v.as_str()) != Some(function_wasm::input::KIND)
-        {
+        let api_version = str_of(&input, "apiVersion");
+        if !function_wasm::input::is_input(&api_version, &str_of(&input, "kind")) {
             continue;
         }
-        return Ok(Some(input.get("config").cloned()));
+        return Ok(Some(ExampleStep {
+            api_version,
+            config: input.get("config").cloned(),
+        }));
     }
     Ok(None)
 }
@@ -397,5 +418,33 @@ mod tests {
         let wasm = wat::parse_str(r#"(module (@custom "component-type:x" "nope"))"#).expect("wat");
         let err = componentize_if_needed(wasm).expect_err("malformed section");
         assert!(err.starts_with("cannot componentize module: "), "{err}");
+    }
+
+    /// The example-config check finds the step under the current apiVersion
+    /// and under the deprecated one the runtime still serves, and reads
+    /// which it was so the build line can say so.
+    #[test]
+    fn the_example_step_is_found_under_either_api_version() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("composition.yaml");
+        for (api_version, want) in [
+            (function_wasm::input::API_VERSION, true),
+            (function_wasm::input::API_VERSION_V1BETA1, true),
+            ("pt.fn.crossplane.io/v1beta1", false),
+        ] {
+            std::fs::write(
+                &path,
+                format!(
+                    "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nspec:\n  pipeline:\n  - step: s\n    input:\n      apiVersion: {api_version}\n      kind: Input\n      config: {{greeting: hi}}\n"
+                ),
+            )
+            .expect("write");
+            let step = example_step(&path).expect("read");
+            assert_eq!(step.is_some(), want, "{api_version}");
+            if let Some(step) = step {
+                assert_eq!(step.api_version, api_version);
+                assert_eq!(step.config, Some(serde_json::json!({"greeting": "hi"})));
+            }
+        }
     }
 }

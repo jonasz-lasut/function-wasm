@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use function_sdk_rust::proto::v1::function_runner_service_client::FunctionRunnerServiceClient;
 use function_sdk_rust::proto::v1::{RequestMeta, RunFunctionRequest};
 use function_sdk_rust::resource;
+use function_wasm::input::{API_VERSION, API_VERSION_V1BETA1, V1BETA1_DEPRECATION};
 
 const GUEST_MSG: &str = "a debug record from the guest";
 
@@ -56,6 +57,17 @@ fn logging_guest() -> Vec<u8> {
 /// Serves the guest with the given flags and environment, runs it once and
 /// returns every log line the process wrote (the subscriber writes to stdout).
 fn serve_and_run(flags: &[&str], rust_log: Option<&str>) -> Vec<String> {
+    serve_and_run_input(flags, rust_log, API_VERSION, GUEST_MSG)
+}
+
+/// serve_and_run with the Input's apiVersion, waiting for the line that
+/// settles the run's output before the lines are read back.
+fn serve_and_run_input(
+    flags: &[&str],
+    rust_log: Option<&str>,
+    api_version: &str,
+    settled_by: &str,
+) -> Vec<String> {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join("fn.wasm"), logging_guest()).expect("write");
     let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -107,7 +119,7 @@ fn serve_and_run(flags: &[&str], rust_log: Option<&str>) -> Vec<String> {
             }),
             input: Some(resource::json_to_struct(
                 serde_json::json!({
-                    "apiVersion": "wasm.fn.crossplane.io/v1",
+                    "apiVersion": api_version,
                     "kind": "Input",
                     "module": {"type": "Path", "path": "fn.wasm"},
                 })
@@ -132,7 +144,7 @@ fn serve_and_run(flags: &[&str], rust_log: Option<&str>) -> Vec<String> {
             .lock()
             .expect("lock")
             .iter()
-            .any(|l| l.contains(GUEST_MSG))
+            .any(|l| l.contains(settled_by))
     {
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -213,6 +225,42 @@ fn without_debug_the_runtime_logs_json_at_info() {
     assert!(
         served.starts_with('{') && served.contains("\"level\":\"INFO\""),
         "the pod's lines are JSON: {served}"
+    );
+}
+
+/// The deprecation policy's runtime half (README, "Compatibility"): a
+/// v1beta1 Input is served as a v1 one with one WARN line per request
+/// naming the replacement, and a v1 Input is served without it.
+#[test]
+fn a_v1beta1_input_is_served_with_one_warning_per_request() {
+    fn deprecations(lines: &[String]) -> Vec<&String> {
+        lines
+            .iter()
+            .filter(|l| l.contains(V1BETA1_DEPRECATION))
+            .collect()
+    }
+
+    let lines = serve_and_run_input(&[], None, API_VERSION_V1BETA1, V1BETA1_DEPRECATION);
+    let warned = deprecations(&lines);
+    assert_eq!(
+        warned.len(),
+        1,
+        "one request, one deprecation line:\n{}",
+        lines.join("\n")
+    );
+    assert!(
+        warned[0].contains("\"level\":\"WARN\"") && warned[0].contains("\"tag\":\"t\""),
+        "logged at WARN with the request's tag: {}",
+        warned[0]
+    );
+
+    // "Running function" is logged right before the warning would be, and
+    // the pipe is drained after the response, so its absence is proven.
+    let lines = serve_and_run_input(&[], None, API_VERSION, "Running function");
+    assert!(
+        deprecations(&lines).is_empty(),
+        "a v1 Input is not deprecated:\n{}",
+        lines.join("\n")
     );
 }
 

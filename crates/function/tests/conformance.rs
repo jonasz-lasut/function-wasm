@@ -84,6 +84,16 @@ fn cases() -> Vec<Case> {
             stdin: "",
         },
         Case {
+            name: "DeprecatedAPIVersion",
+            args: &["testdata/validate/v1beta1.yaml"],
+            stdin: "",
+        },
+        Case {
+            name: "DeprecatedAPIVersion-json",
+            args: &["testdata/validate/v1beta1.yaml", "--output", "json"],
+            stdin: "",
+        },
+        Case {
             name: "LimitsEqualCeiling",
             args: &[
                 "testdata/validate/ok.yaml",
