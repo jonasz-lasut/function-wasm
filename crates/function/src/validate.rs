@@ -597,6 +597,11 @@ impl Validator {
             imports: inspection.host_imports,
             manifest: None,
         });
+        // What the runtime logs on every load of this module.
+        if module_abi == 1 {
+            r.warnings
+                .push(function_wasm_engine::ABI_V1_DEPRECATION.to_string());
+        }
 
         // The module's manifest: its requests decided by the three layers -
         // with the principal from --xr when one is given - then held against

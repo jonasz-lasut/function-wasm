@@ -90,6 +90,10 @@ struct ModuleInfo {
     exports: Vec<ExternInfo>,
     imports: Vec<ExternInfo>,
     memories: Vec<MemoryInfo>,
+    /// What the runtime says of a module it accepts, beyond the verdict:
+    /// ABI v1's deprecation.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -270,6 +274,9 @@ impl InspectCmd {
                 }
                 println!("{line}");
             }
+            for warning in &m.warnings {
+                println!("  warning: {warning}");
+            }
         }
         Ok(())
     }
@@ -334,11 +341,18 @@ fn describe_module(wasm: &[u8]) -> Result<ModuleInfo, String> {
         None => (format!("v{}", shape.abi_version), String::new()),
         Some(e) => (String::new(), e.clone()),
     };
+    // A refused module gets the refusal alone; an accepted ABI v1 module
+    // gets what the runtime logs on every load of it.
+    let warnings = match (shape.abi_version, &shape.abi_error) {
+        (1, None) => vec![function_wasm_engine::ABI_V1_DEPRECATION.to_string()],
+        _ => Vec::new(),
+    };
     Ok(ModuleInfo {
         size: wasm.len(),
         abi_version: shape.abi_version,
         abi,
         abi_error,
+        warnings,
         exports: shape
             .exports
             .iter()
