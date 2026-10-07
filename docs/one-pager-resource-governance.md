@@ -111,8 +111,8 @@ pinned at the bound is the sign the queue is the bottleneck.
 
 ## Sizing
 
-Per module class (linux/arm64, review measurements — the README carries the
-full table):
+Per module class (linux/arm64, review measurements: the Sizing page,
+`docs/operators/sizing.md`, carries the full table):
 
 - **Memory** ≈ base + Σ resident modules (Go ~90 MB, raw-proto Go ~40 MB,
   TinyGo 3.5 MB, Rust 0.7 MB) + `--max-concurrent-compiles` × 1 GB +

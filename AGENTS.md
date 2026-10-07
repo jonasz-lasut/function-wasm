@@ -363,6 +363,11 @@ package/                    crossplane.yaml + the checked-in Input CRD (document
                             by hand now that the Go types that generated it are gone)
 docs/abi-v2.md              the host/guest contract: the component world every scaffold targets
                             (ABI v1, core modules, was removed in 1.0.0)
+book.toml, docs/SUMMARY.md  the documentation site (mdBook over docs/; "Documentation site" below):
+                            the manual's pages under docs/guests, docs/operators, docs/contract and
+                            docs/project, the one-pagers and docs/abi-v2.md listed beside them,
+                            docs/theme/wasm.css the accent stylesheet; .github/workflows/docs.yml
+                            builds, link-checks and deploys it
 ```
 
 ## Key Concepts
@@ -376,7 +381,7 @@ The function receives an `Input` (`wasm.fn.crossplane.io/v1`; a `v1beta1` docume
 - `limits` — `timeout`, `memory`, `concurrency`, each ≤ the runtime's ceiling flag (concurrency silently capped)
 - `config` — opaque; the guest reads it via `GetConfig` - non-secret module configuration lives here
 
-There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The user-facing field reference lives in `README.md` ("Input reference"); keep it in sync with `input.rs` and the CRD under `package/input/`.
+There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs` and the CRD under `package/input/`.
 
 ### ABI v2
 
@@ -394,7 +399,7 @@ The Go implementation was the reference until 2026-08; the contract is **logical
 
 `crates/function/tests/conformance.rs` runs `function validate` over the fixture corpus and generated modules/servers/registries and compares stdout, stderr and exit codes against goldens under `testdata/conformance/`. The goldens were recorded from this runtime the day it last diffed **byte-identical** against the Go runtime's own `function validate` (the original differential harness, retired with the Go tree), so they carry the Go runtime's words wherever parity held. A change fails the suite until re-recorded deliberately with `UPDATE_CONFORMANCE=1 cargo test` — treat a re-record as a user-visible behaviour change and say so in the commit.
 
-The README's "Compatibility" section is the 1.x promise the goldens enforce: the pinned wording, the Input's fields, the flags and their defaults, `function validate`'s exit codes and JSON field names change only at a major, and a minor may only add or widen. A deprecation runs for at least one minor with a `function validate` warning and one runtime line per load or request before the next major removes it: `input::V1BETA1_DEPRECATION` is the pattern, ABI v1 the precedent.
+`docs/contract/compatibility.md` ("Compatibility" on the documentation site) is the 1.x promise the goldens enforce: the pinned wording, the Input's fields, the flags and their defaults, `function validate`'s exit codes and JSON field names change only at a major, and a minor may only add or widen. A deprecation runs for at least one minor with a `function validate` warning and one runtime line per load or request before the next major removes it: `input::V1BETA1_DEPRECATION` is the pattern, ABI v1 the precedent.
 
 ### Admission and validation
 
@@ -487,13 +492,17 @@ make -C examples/dashboard-bundle lint              # dotnet format (in the .NET
 - Errors that reach users are `String`s carrying the runtime's exact refusal wording — the wording is contract (conformance goldens); route new refusals through the same phrasing patterns.
 - The `internal/wasmfn` glue must stay buildable natively (portable `Register`/`NewLogger`/`GetConfig`/`HTTPClient`) so a guest's own tests run natively; only the world's wiring (`host_wasip2.go`: the run export's slot, the typed `log` import, `wasi:http@0.2` behind `HTTPClient`, over the bindings under `internal/bindings`) is `//go:build wasip1`. Edit it in `examples/pdb-addon/internal/wasmfn`, then mirror to `crates/guestfn/templates/go/internal/wasmfn/*.go.tmpl`; the examples-share-the-scaffold-plumbing test keeps them in step.
 
+### Documentation site
+
+The user manual is an mdBook under `docs/`: `book.toml` at the repository root (`src = "docs"`), `docs/SUMMARY.md` the table of contents, the pages under `docs/guests/`, `docs/operators/`, `docs/contract/` and `docs/project/`, with `docs/abi-v2.md` and the one-pagers listed from where they are (the code and the conformance goldens name them by path, so they never move). It is published at <https://jonasz-lasut.github.io/function-wasm/> by `.github/workflows/docs.yml`: a pull request touching `docs/**`, `book.toml`, `README.md` or `SECURITY.md` builds it and link-checks the rendered site offline (lychee, every internal link and anchor), a push to `main` deploys it to GitHub Pages. Build it locally with `cargo install mdbook --locked --version 0.5.4` and `mdbook build` (output under `book/`, ignored); the workflow pins the same version by checksum. User-facing behaviour is documented in `docs/`: a new capability, flag, field or refusal lands on its page there, and the README is the landing page only - the pitch, the install snippet, a quick start and links into the site - so it needs no update when a feature lands.
+
 ## Common Development Tasks
 
 ### Adding an Input Field
 
 1. Add the field to `crates/function/src/input.rs` (serde) and enforce its rules at runtime — `admission::admit`, the resolver, or `from.rs` for something the XR may choose (never read `compositionPolicy` or `limits` from the composite). A new *capability* is not an Input field at all: it is a manifest requirement (`manifest.rs` `Requires` + its shape check) decided by `admission::admit_requires` under both Cedar layers (`authz.rs`: a new action in the shared schema, permits on both policies) → engine `RunOptions` + the sandbox wiring
 2. Everything `admit`/`admit_requires` checks is what `function validate` checks — add a fixture under `testdata/validate/` and a conformance golden for the new refusal; a new ceiling flag goes into `main.rs` so `serve` and `validate` share it
-3. Update the hand-maintained CRD under `package/input/` and the README's "Input reference" table
+3. Update the hand-maintained CRD under `package/input/` and the "Input reference" table in `docs/operators/input-reference.md`
 
 ### Adding a host import
 
@@ -571,43 +580,12 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 
 ## Troubleshooting
 
-- **Fatal `cannot instantiate module: trap: …` from a Go guest**: the guest panicked during package init (the wasip1 adapter runs the reactor's `_initialize` at instantiation); its stack is in the function pod's stderr.
-- **`component does not implement the wasmfn:function world: …`**: the component's `run` export or its imports do not typecheck against `wit/wasmfn-function.wit` - a stale vendored world (a `log` enum without `warn`/`error`), a missing `run`, an import the v2 linker does not provide; rebuild against the current `wit/`. `guestfn inspect fn.wasm` lists what it exports and imports.
-- **`cannot load module …: module is a core module, which function-wasm 1.0.0 no longer runs (ABI v1 was removed); build it as an ABI v2 component (docs/abi-v2.md)`**: a wasip1 core module reached the runtime - the ABI v1 shape (`wasmfn_run`, `wasmfn_alloc`, the `wasmfn.*` imports) every guest had before #114, or a bare reactor. For a Go guest on the current scaffold that is the reactor `go build` emits on its own: `guestfn build` (the embed and the wrap) writes the component the runtime expects. A guest built before 1.0.0 is rebuilt on a current scaffold (`guestfn init`, then move the function over); `guestfn inspect` and `function validate --resolve` print the same sentence for one. `guestfn inspect` and `guestfn push` add "it carries wit-bindgen's component-type section, which guestfn build wraps into a component" when that is the case (`componentize::carries_component_type`), so a guest built outside guestfn is told it is one wrap away.
-- **First request slow, then fast**: expected — compile is per digest; the artifact under `/tmp/function-wasm-cache/compiled` makes the next process fast too if that path is on a volume.
-- **`module.oci.ref … tags are not supported`**: pin the reference to the manifest digest — `repo@sha256:…` or `repo:tag@sha256:…`, as `guestfn push` prints it.
-- **`module layer is a tar archive without /fn.wasm`**: a `FROM scratch` image must `COPY` the module to `/fn.wasm` exactly. Prefer `guestfn push` / `oras push` (a raw `application/wasm` layer).
-- **`guestfn build` says `built fn.wasm, but the runtime would refuse it: …`** (or `guestfn push` refuses): the module lacks the ABI; the message is the runtime's own load-time refusal. `guestfn inspect fn.wasm` lists what the module exports and imports.
-- **`module oci … requires egress GET to host "x" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit`** (or `… which the compositionPolicy does not permit`; the same pair for the private /tmp and env forms; or `requires runtime vX or newer, this is vY`): the module's manifest declares a need the named policy layer does not permit - add a `permit` to that layer or use a module that needs less.
-- **`module oci … requires credential "cmdb" (requires.credentials[0]), which the operator policy (--sandbox-policy-file) does not permit`** (or `… which the compositionPolicy does not permit`, or `… but the runtime has no --sandbox-policy-file, which is required to grant step credentials (spendCredential)`): the module reads that step credential from its request, and the named layer has no `spendCredential` permit for `Credential::"cmdb"` - add one, or use a module that needs less.
-- **A module stops seeing a step credential it used to read** (a Go-era module, or one whose manifest does not declare it): the runtime forwards only the credentials a module was granted. Declare it in the manifest - `requires.credentials: [name]` for the whole credential, or a `requires.env` binding for one key - and permit `spendCredential` for it in the operator policy (and in a `compositionPolicy` that scopes the action). `function validate --resolve` lists what each step's module receives; the runtime logs the withheld names at debug level.
-- **`module … requires.credentials[0]: the request carries no credential "cmdb"; declare it on the pipeline step`**: the module requires a credential the step does not pass - add it to the step's `credentials`.
-- **`module oci … config does not match the module's schema: /greeting: got number, want string`**: the Input's `config` fails the module's `config.schema`.
-- **`function validate` exits 1**: at least one step is refused - the line names the runtime's reason; exit 2 is the tool's own failure. Run it with the flags the runtime is started with.
-- **`module.path is refused`**: the runtime was started without `--module-dir`.
-- **`module.from: … names a OCI source, but the Input has no compositionPolicy`**: a `module.from` OCI/HTTP source requires a `compositionPolicy` whose `pullModule` permits its repository; add the policy, or name the source statically.
-- **`module.from: cannot read status.module from the composite resource: module: no such field`**: the XR has not set the field the step reads. Set it, or add `module.allowEmpty: true` to let the step run nothing until it is set (the pod then logs `No module chosen by the composite resource` and counts `requests_total{outcome="skipped"}`).
-- **`module.allowEmpty is set but module.from is not`**: `allowEmpty` only makes sense for a field the composite resource may leave unset; a static source always resolves. Remove it, or switch the step to `module.from`.
-- **`apiVersion wasm.fn.crossplane.io/v1beta1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: wasm.fn.crossplane.io/v1 (the same fields)`** (a `function validate` warning, a runtime WARN line per request, a `guestfn build` warning): the step still carries the pre-1.0 apiVersion. Change the one line; nothing else about the Input moves.
-- **`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`** (or `limits.timeout … --module-timeout`): lower the limit or raise the flag.
-- **`module … requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities`** (and the env/egress forms): mount a Cedar `--sandbox-policy-file` with a matching permit or use a module that requires nothing.
-- **`the operator policy grants a private /tmp (usePrivateTmp), but the runtime cannot create one under …`** at startup: point `TMPDIR` at a writable directory (an `emptyDir`; tmpfs with `sizeLimit` bounds what a module may write).
-- **Guest gets `EPERM` under `/tmp`**: its path left the private `/tmp`; there is no other directory to reach.
-- **`cannot verify module oci …: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it`**: add `--cosign-key`, or narrow the `requireSignature` rule. The runtime warns loudly at startup when `--cosign-key` is set but the policy requires nothing.
-- **`cannot verify module oci …: <ref> carries no cosign signature (no Sigstore bundle among its referrers)`**: nothing among the manifest's OCI 1.1 referrers (the referrers API, or the `sha256-<hex>` tag index where the registry has no API) carries a Sigstore bundle naming this digest. Sign it with cosign 3 (`cosign sign --key cosign.key <repo>@sha256:…`). A module signed only with cosign 2 or `--new-bundle-format=false` (a `sha256-<hex>.sig` tag) lands here too: the legacy format is not read - re-sign it.
-- **`cannot verify module oci …: no valid cosign signature for <ref>: signature does not verify with the configured keys`**: a bundle is there but no `--cosign-key` key signed it - a different key, or a keyless signature (not verified yet, #116; countersign it with your key). Other reasons in the same list: `signed statement's predicate type is "https://slsa.dev/provenance/v1", not https://sigstore.dev/cosign/sign/v1` (an attestation, not a signature), `signed statement is for another digest` (a bundle copied from another manifest), and fetch, size or digest failures of a bundle.
-- **`operator policy …: dialAddress rule "…" must scope the action as == Action::"dialAddress"`** (or another Cedar/ip-rule load error): the `--sandbox-policy-file` is malformed and refused at load. A `dialAddress` condition accepts only `context.ip.isInRange(ip("CIDR"))`, `context.ip.isLoopback()`, or a `||` of them.
-- **A guest's request fails with `sandbox.egress: <host> resolves to an address the egress policy blocks`**: the host refuses private, loopback, link-local and cluster ranges by default; the address and block-list entry stay operator-side in the audit line. Add the range to the policy's `allowedCIDRs` to permit an in-cluster service.
-- **A guest's request fails with `wasmfn: sandbox.egress: HTTP egress is not granted to this module`**: the module calls the HTTP helper but its manifest requires no egress; the import always exists, the grant decides.
-- **A guest's request fails with `sandbox.egress: the module's request rate exceeds the egress policy's rateLimit`**: raise `--egress-rate-limit-per-minute`/`-burst`, or reduce the module's request frequency.
-- **Cannot create /tmp/function-wasm-cache at startup**: the pod's filesystem is read-only there — mount an emptyDir at that path through a `DeploymentRuntimeConfig`.
-- **`module … failed: waiting for a run slot: deadline exceeded`** (or the step-slot / run-memory forms): the named bound is set and the request's deadline passed while waiting; nothing ran. Raise the bound, shorten runs, or read `function_wasm_module_runs_in_flight`.
-- **`Cannot warm module` at startup**: a `--warm-modules` entry did not load — the log line carries the entry and the reason. The pod serves anyway; that module is loaded on its first request.
-- **Readiness probe fails for a while after start**: the pod is warming `--warm-modules`; gRPC health and `/readyz` flip when warm-up ends.
+The refusals, fatal results and symptoms, each with what it means and what to do, are on the documentation site's operators page, `docs/operators/troubleshooting.md` (operators never read AGENTS.md).
+A new refusal gets its entry there, beside its fixture under `testdata/validate/` and its conformance golden.
 
 ## Key Reference Documents
 
-- `README.md` — user-facing behaviour, the Input reference, runtime flags, trust model
+- `docs/` (the documentation site: `book.toml`, `docs/SUMMARY.md`): user-facing behaviour - `docs/operators/input-reference.md` (the Input reference), `docs/operators/runtime-flags.md`, `docs/operators/trust-model.md`, `docs/contract/compatibility.md`, `docs/operators/troubleshooting.md`; `README.md` is the landing page only
 - `docs/abi-v2.md` - the host/guest contract (ABI v2, the component world; ABI v1 was removed in 1.0.0)
 - `docs/one-pager-abi-v2.md` — ABI v2 on the component model and this Rust host (the port delivered its phases 1-4; the v2 spike is issue #65)
 - `docs/one-pager-three-layer-authz.md`, `docs/one-pager-trust-model.md`, `docs/one-pager-sandbox.md` — the authorization and sandbox model

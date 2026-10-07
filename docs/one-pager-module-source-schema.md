@@ -87,7 +87,7 @@ The shape above is implemented in `input/v1beta1/input.go`, enforced by
   only and refused without `from`: the Composition decides whether a step
   may be left empty, the composite resource only whether it is. A field
   that is set is read, fenced and run exactly as without it. This is the
-  reserved hook of the README's first use case before any tenant fills it
+  reserved hook of the first use case (`docs/use-cases.md`) before any tenant fills it
   in, and a smoke test of a deployed runtime that needs no module built.
 - `compositionPolicy` is raw Cedar over the same schema as the operator's
   policy, compiled at admission (content-hash cached; malformed Cedar is a
@@ -219,4 +219,4 @@ Cedar, sandbox grants become the module manifest's `requires`.
 | `source: {kind, oci, http, path}` nested one level down | same as the chosen shape with an extra level; nothing gained |
 | `type` + typed object, `from` inside the typed object (`oci: {from: status.module}`) | reads well for one kind, but `path: {from: …}` turns a string into an object and the credentials rule needs "if from is set" inside each object |
 | `policy` and `limits` under `module` | ties Composition-owned policy to the thing an XR may choose; as top-level siblings they are visibly not part of what `from` reads |
-| drop `*From` sources altogether | removes the whole class of XR-author decisions; loses the per-tenant use case the README leads with |
+| drop `*From` sources altogether | removes the whole class of XR-author decisions; loses the per-tenant use case `docs/use-cases.md` leads with |

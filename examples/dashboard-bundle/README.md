@@ -178,7 +178,7 @@ guestfn push ghcr.io/example/dashboard-bundle:v0.1.0
 The operator grants both capabilities in the runtime's
 `--sandbox-policy-file`, and bounds the private `/tmp` through the runtime's
 `DeploymentRuntimeConfig` (`TMPDIR` on a tmpfs `emptyDir` with a
-`sizeLimit`, as the function-wasm README shows):
+`sizeLimit`, as function-wasm's [runtime flags](https://jonasz-lasut.github.io/function-wasm/operators/runtime-flags.html) page shows):
 
 ```cedar
 permit (principal, action == Action::"usePrivateTmp", resource);

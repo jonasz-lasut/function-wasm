@@ -282,4 +282,4 @@ module.
   unless a use case appears that the request cannot carry.
 - Private `/tmp` size cap: a byte quota is not something WASI pre-opens give
   us; a tmpfs volume with a size limit behind `$TMPDIR` is the answer for
-  now (documented in the README's flags table).
+  now (documented in the runtime flags table, `docs/operators/runtime-flags.md`).
