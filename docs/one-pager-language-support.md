@@ -54,7 +54,14 @@ joined on 2026-10-07 as an example only, after #155's spike
 (`examples/hello-odin`, ~71 KB): the `c` flavour's bindings and nanopb codec
 through Odin's foreign interface, a freestanding wasm32 object linked by
 `zig cc` and wrapped by `guestfn build` through the `c` path; the decision
-of that day is no further scaffolds unless an issue asks for one.
+of that day is no further scaffolds unless an issue asks for one. MoonBit
+joined the same day, an example only too (#155, `hello-moonbit`, no
+scaffold): wit-bindgen's `moonbit` backend over the c scaffold's world,
+`protoc-gen-mbt` with the `moonbitlang/protobuf` runtime for the codec,
+`moon build --target wasm` to a 101 KB core module that `guestfn build`
+embeds UTF-16 (MoonBit's string encoding) and wraps with no adapter into a
+107 KB component the engine compiles in ~170 ms; the MoonBit row below
+describes the v1-era survey.
 
 ## What the host requires
 

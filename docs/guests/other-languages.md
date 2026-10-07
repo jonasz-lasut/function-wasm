@@ -13,9 +13,11 @@ and .NET
 A language is *tested* when this repository works with it: a scaffold or an
 example here, built and run through the host by the guest suite and the render
 jobs on every `/e2e`. Tested on ABI v2: Go, Rust, Zig, C, TypeScript,
-Python, C# and Odin - every scaffold and example here, since
+Python, C#, Odin and MoonBit - every scaffold and example here, since
 [#114](https://github.com/jonasz-lasut/function-wasm/issues/114) moved the
-last of them (Go, 2026-10-07) off ABI v1. A
+last of them (Go, 2026-10-07) off ABI v1 and
+[#155](https://github.com/jonasz-lasut/function-wasm/issues/155) added
+MoonBit as an example. A
 supported language that is not tested is expected to work, and a
 guest we can run is what moves it into the tested set. A language with no
 component path is not supported: AssemblyScript was retired for that reason
@@ -92,6 +94,33 @@ warns; and a panic traps without a message on the freestanding runtime. Its
 unit tests run natively (`make test`, over the C half compiled for the
 host), and `guestfn` builds it but does not scaffold it.
 
+A **MoonBit** ABI v2 guest is an example only too
+([`examples/hello-moonbit`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-moonbit),
+~107 KB; `moon` 0.1.20260920, the one binary that compiles, builds, tests
+and fetches packages): the greeting guest over
+[wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s MoonBit
+bindings (0.62.0, checked in; `make gen-bindings` to redo) and
+[protoc-gen-mbt](https://github.com/moonbitlang/protoc-gen-mbt)'s codec
+(0.2.0, run through `moonx`, checked in; `make gen-proto` to redo) with the
+well-known types from the `moonbitlang/protobuf` runtime, its module's one
+dependency. `moon build --target wasm` links a 101 KB core module over
+linear memory in about a second; `guestfn build` detects the project by its
+`moon.mod` (or `moon.mod.json`), embeds the world from `wit/` stated
+**UTF-16**, how MoonBit stores strings, so the canonical ABI transcodes
+every string the guest lowers, and wraps it with no adapter (nothing
+imports `wasi_snapshot_preview1`); the runtime compiles the component in
+about 170 ms. `run` is sync-lifted, like the C and Zig guests'; the async
+lift works too (wit-bindgen's callback-driven `[async-lift]run` over its
+bundled `async-core` scheduler, when the world declares `run` async), but
+`--async=all` does not, as it async-lowers the sync imports. Its unit tests
+run on `moonrun` with the host injected (any package that links the
+bindings imports the world's `log`). Two caveats: moon now writes `moon.mod`
+and `moon.pkg` and deprecates the `.json` manifests the generators still
+write, which `moon fmt` migrates in place (the example keeps the generated
+packages' JSON and its own in the new format); and a guest must never
+`println`, which imports `spectest.print_char`. `guestfn init` does not
+scaffold it.
+
 The **TypeScript** flavour (`npm install` is the whole toolchain) is typed
 end to end (protobuf-es generated types, `tsc --noEmit` in the test gate),
 and its greeting is fetched with the platform's own `fetch()`, which the
@@ -111,12 +140,15 @@ like the TypeScript guest; `guestfn build` makes the venv from
 targeting `wasm32-wasip3`; a `build.zig` → zig, for the zig and c guests
 alike; a `package.json` → npm, for the
 TypeScript guest; a `requirements.txt` → a venv with componentize-py, for
-the Python guest; a `go.mod` → go)
-or takes `--lang`. When a build leaves a core module carrying wit-bindgen's
+the Python guest; a `go.mod` → go; a `moon.mod` or `moon.mod.json` → moon,
+for the MoonBit example)
+or takes `--lang` (`build` takes `moonbit` too; `init` scaffolds the six
+above). When a build leaves a core module carrying wit-bindgen's
 `component-type` section (what its C generator links in: the `zig` and `c`
-flavours' `zig build`; for a `go` project `guestfn build` embeds the
-world from its `wit/` into the module `go build` emits first, since
-wit-bindgen's Go generator writes bindings only), `guestfn build`
+flavours' `zig build`; for a `go` or MoonBit project `guestfn build` embeds
+the world from its `wit/` into the module `go build` or `moon build` emits
+first, since wit-bindgen's Go and MoonBit generators write bindings only,
+UTF-16 for MoonBit), `guestfn build`
 wraps it into an ABI v2 component itself, linking the wasip1 adapter of the
 runtime's own wasmtime when the module imports `wasi_snapshot_preview1`:
 no wasm-tools install, no adapter download, and an adapter that cannot
@@ -135,14 +167,9 @@ with and without an egress grant.
 **Possible, untested.** A 2026-10-07 survey
 ([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)) found
 these paths to a component; none has a guest in this repository yet, so none
-is in the tested set, and none needs a world change:
+is in the tested set, and none needs a world change (MoonBit and Odin,
+surveyed the same day, have their examples above):
 
-- **MoonBit**: wit-bindgen's first-party `moonbit` backend (async supported),
-  `moon build --target wasm` to a linear-memory core module, the world
-  embedded with UTF-16 strings and wrapped with no adapter; MoonBit's own
-  measurement is a 27 KB component. `protoc-gen-mbt` for the codec, its
-  well-known types unverified. A guest must never `println` (it imports
-  `spectest.print_char`). The spike is tracked in #155.
 - **D**: wit-bindgen's `d` backend (since 0.61.0) with `ldc2 -betterC`, the
   core module wrapped like a Go guest; LDC 1.43 brings druntime to wasip1 and
   wasip2; nanopb for the codec.

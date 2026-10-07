@@ -666,6 +666,132 @@ jobs:
       - name: Render the Odin Guest
         run: make -C examples/hello-odin render-check
 
+  # The same guest in MoonBit, an ABI v2 component: protoc-gen-mbt's codec
+  # over the vendored proto (the well-known types from the moonbitlang/protobuf
+  # runtime) and wit-bindgen's MoonBit bindings over its world, built by moon
+  # into a core module that guestfn embeds the world into (UTF-16, MoonBit's
+  # string encoding) and wraps (no wasm-tools, no adapter), rendered through
+  # the runtime. moon is pinned to the release the example was written
+  # against, by checksum like xprin; protoc (with protoc-gen-mbt through
+  # moonx) and wit-bindgen are only needed to regenerate the checked-in codec
+  # and bindings, which this job does to catch drift.
+  render-moonbit:
+    name: render (moonbit)
+    runs-on: ubuntu-26.04
+    needs:
+      - start
+      - build-tools
+    env:
+      XP_CHANNEL: stable
+      XP_VERSION: 'v2.5.0'
+      # The toolchain release: moonc's version string names it on
+      # cli.moonbitlang.com (moon 0.1.20260920, moonc v0.10.14+7d59c7ec9),
+      # the toolchain and its core as two tarballs the installer would fetch.
+      MOON_VERSION: 0.10.14+7d59c7ec9
+      MOON_SHA256: 9226694de9ff978db1ecf820b7710c4224e84ec7a76b19a222d96f0cd4e31b6a
+      MOON_CORE_SHA256: 6f18b8fdea18f85e628a75e4a1bd3977c5a5c9c6a836fd8824192b0e6bd91b14
+      # The wit-bindgen that wrote the checked-in bindings (their header
+      # names it), as a release binary pinned by checksum like xprin.
+      WIT_BINDGEN_VERSION: 0.62.0
+      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
+
+      # The runtime, guestfn and xprin come from build-tools; render.sh and
+      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
+      # of building or installing them.
+      - name: Download the Runtime, guestfn and xprin
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: e2e-tools
+          path: ${{ runner.temp }}/e2e-tools
+
+      - name: Use the Prebuilt Runtime, guestfn and xprin
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
+            "${RUNNER_TEMP}/e2e-tools/xprin"
+          {
+            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
+            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
+            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
+          } >> "$GITHUB_ENV"
+
+      # What the official installer does for one pinned release: the
+      # toolchain tarball under ~/.moon, the core beside it, bundled for the
+      # wasm and wasm-gc targets (the latter runs moon test), checksums
+      # verified first. The '+' in the release is URL-encoded.
+      - name: Setup MoonBit
+        run: |
+          version="${MOON_VERSION/+/%2B}"
+          curl -fsSL -o "${RUNNER_TEMP}/moonbit.tar.gz" \
+            "https://cli.moonbitlang.com/binaries/${version}/moonbit-linux-x86_64.tar.gz"
+          echo "${MOON_SHA256}  ${RUNNER_TEMP}/moonbit.tar.gz" | sha256sum -c -
+          curl -fsSL -o "${RUNNER_TEMP}/core.tar.gz" \
+            "https://cli.moonbitlang.com/cores/core-${version}.tar.gz"
+          echo "${MOON_CORE_SHA256}  ${RUNNER_TEMP}/core.tar.gz" | sha256sum -c -
+          mkdir -p "${HOME}/.moon/lib"
+          tar -xzf "${RUNNER_TEMP}/moonbit.tar.gz" -C "${HOME}/.moon"
+          tar -xzf "${RUNNER_TEMP}/core.tar.gz" -C "${HOME}/.moon/lib"
+          chmod +x "${HOME}/.moon/bin/"* "${HOME}/.moon/bin/internal/tcc"
+          ln -sfn moon "${HOME}/.moon/bin/moonx"
+          export PATH="${HOME}/.moon/bin:${PATH}"
+          moon -C "${HOME}/.moon/lib/core" bundle --warn-list -a --all
+          moon -C "${HOME}/.moon/lib/core" bundle --warn-list -a --target wasm-gc --quiet
+          echo "${HOME}/.moon/bin" >> "$GITHUB_PATH"
+          moon version --all
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # protoc-gen-mbt is not installed: the Makefile runs the pinned release
+      # through moonx, which fetches it into ~/.moon's registry.
+      - name: Check Generated Codec
+        working-directory: examples/hello-moonbit
+        run: |
+          make gen-proto
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/hello-moonbit/src/fnv1 is not up to date with its proto; commit the result of make gen-proto:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Setup wit-bindgen
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Check Generated Bindings
+        working-directory: examples/hello-moonbit
+        run: |
+          make gen-bindings
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/hello-moonbit/src bindings are not up to date with its wit; commit the result of make gen-bindings:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Lint and Test the MoonBit Guest
+        run: make -C examples/hello-moonbit lint test
+
+      - name: Setup the Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/crossplane
+
+      - name: Render the MoonBit Guest
+        run: make -C examples/hello-moonbit render-check
+
   # The TypeScript guest, an ABI v2 component (jco): the policy-gate use
   # case, the last step after function-go-templating (which render runs in
   # Docker). It asks for its environment's EnvironmentConfig through
@@ -894,7 +1020,7 @@ jobs:
 
   report:
     runs-on: ubuntu-26.04
-    needs: [start, guest-suite, render-go, render-rust, render-zig, render-c, render-odin, render-ts, render-python, render-dotnet, e2e-oci]
+    needs: [start, guest-suite, render-go, render-rust, render-zig, render-c, render-odin, render-moonbit, render-ts, render-python, render-dotnet, e2e-oci]
     if: always() && needs.start.result == 'success'
     permissions:
       statuses: write
@@ -908,7 +1034,7 @@ jobs:
           for result in "${{ needs.guest-suite.result }}" "${{ needs.render-go.result }}" \
             "${{ needs.render-rust.result }}" \
             "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}" \
-            "${{ needs.render-odin.result }}" "${{ needs.render-ts.result }}" \
+            "${{ needs.render-odin.result }}" "${{ needs.render-moonbit.result }}" "${{ needs.render-ts.result }}" \
             "${{ needs.render-python.result }}" "${{ needs.render-dotnet.result }}" \
             "${{ needs.e2e-oci.result }}"; do
             if [ "$result" != "success" ]; then

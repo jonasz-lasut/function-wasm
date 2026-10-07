@@ -1,0 +1,4 @@
+import {
+  "moonbitlang/protobuf" @lib,
+  "moonbitlang/protobuf/google/protobuf",
+}

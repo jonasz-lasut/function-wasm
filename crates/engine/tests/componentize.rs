@@ -7,7 +7,9 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use function_wasm_engine::componentize::{carries_component_type, componentize, embed_world};
+use function_wasm_engine::componentize::{
+    StringEncoding, carries_component_type, componentize, embed_world,
+};
 use function_wasm_engine::{Config, Engine, RunOptions};
 
 /// The runtime's own wit/ directory: the world the engine compiles.
@@ -62,7 +64,13 @@ const FD_WRITE: &str =
 /// sync ABI, since async-ness is a canonical option, not part of the
 /// component type.
 fn with_world(wasm: Vec<u8>) -> Vec<u8> {
-    embed_world(&wasm, Path::new(RUNTIME_WIT), "function").expect("embed the world")
+    embed_world(
+        &wasm,
+        Path::new(RUNTIME_WIT),
+        "function",
+        StringEncoding::Utf8,
+    )
+    .expect("embed the world")
 }
 
 fn engine() -> Engine {
@@ -167,20 +175,38 @@ fn embed_world_takes_a_bare_core_module_once() {
     let embedded = with_world(bare.clone());
     assert!(carries_component_type(&embedded));
 
-    let err = embed_world(&embedded, Path::new(RUNTIME_WIT), "function").expect_err("twice");
+    let err = embed_world(
+        &embedded,
+        Path::new(RUNTIME_WIT),
+        "function",
+        StringEncoding::Utf8,
+    )
+    .expect_err("twice");
     assert_eq!(
         err.to_string(),
         "cannot embed the world into module: it already carries a component-type custom section"
     );
 
     let component = componentize(&embedded).expect("componentize").wasm;
-    let err = embed_world(&component, Path::new(RUNTIME_WIT), "function").expect_err("component");
+    let err = embed_world(
+        &component,
+        Path::new(RUNTIME_WIT),
+        "function",
+        StringEncoding::Utf8,
+    )
+    .expect_err("component");
     assert_eq!(
         err.to_string(),
         "cannot embed the world into module: it is already a component"
     );
 
-    let err = embed_world(&bare, Path::new(RUNTIME_WIT), "no-such-world").expect_err("world");
+    let err = embed_world(
+        &bare,
+        Path::new(RUNTIME_WIT),
+        "no-such-world",
+        StringEncoding::Utf8,
+    )
+    .expect_err("world");
     let msg = err.to_string();
     assert!(
         msg.starts_with("cannot embed the world into module: ") && msg.contains("no-such-world"),
@@ -188,7 +214,7 @@ fn embed_world_takes_a_bare_core_module_once() {
     );
 
     let missing = Path::new(RUNTIME_WIT).join("no-such-dir");
-    let err = embed_world(&bare, &missing, "function").expect_err("dir");
+    let err = embed_world(&bare, &missing, "function", StringEncoding::Utf8).expect_err("dir");
     let msg = err.to_string();
     assert!(
         msg.starts_with(&format!(
@@ -197,6 +223,77 @@ fn embed_world_takes_a_bare_core_module_once() {
         )),
         "{msg}"
     );
+}
+
+/// A core module whose `run` returns `err(string)` with the string laid
+/// out in UTF-16 (two code units per character here, the length counted
+/// in code units), the way MoonBit stores its strings.
+fn erring_module(utf16: &[u8], units: usize) -> String {
+    format!(
+        r#"(module
+  (memory (export "memory") 4)
+  (global $next (mut i32) (i32.const 131072))
+  (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
+    (local $p i32)
+    global.get $next
+    local.set $p
+    global.get $next
+    local.get 3
+    i32.add
+    global.set $next
+    local.get $p)
+  (func (export "run") (param i32 i32) (result i32)
+    (i32.store8 (i32.const 64) (i32.const 1))
+    (i32.store (i32.const 68) (i32.const 1024))
+    (i32.store (i32.const 72) (i32.const {units}))
+    (i32.const 64))
+  (data (i32.const 1024) "{data}"))"#,
+        data = wat_bytes(utf16),
+    )
+}
+
+/// The embed states the guest's string encoding and the canonical ABI
+/// transcodes by it: the same bytes a MoonBit guest lowers reach the host
+/// as the string they are under a UTF-16 embed, and as something else
+/// under the UTF-8 one the Go path uses (here, an invalid sequence the
+/// canonical ABI traps on).
+#[test]
+fn the_embed_states_the_string_encoding() {
+    let message = "héllo";
+    let utf16: Vec<u8> = message
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect();
+    let bare = wat::parse_str(erring_module(&utf16, message.encode_utf16().count())).expect("wat");
+    let e = engine();
+
+    let utf16_embed = embed_world(
+        &bare,
+        Path::new(RUNTIME_WIT),
+        "function",
+        StringEncoding::Utf16,
+    )
+    .expect("embed utf16");
+    let c = componentize(&utf16_embed).expect("componentize").wasm;
+    let m = e.compile(&c).expect("compile");
+    let err = e
+        .run(&m, b"", RunOptions::default())
+        .expect_err("run returns an error");
+    assert_eq!(err.to_string(), format!("run returned an error: {message}"));
+
+    let utf8_embed = embed_world(
+        &bare,
+        Path::new(RUNTIME_WIT),
+        "function",
+        StringEncoding::Utf8,
+    )
+    .expect("embed utf8");
+    let c = componentize(&utf8_embed).expect("componentize").wasm;
+    let m = e.compile(&c).expect("compile");
+    let err = e
+        .run(&m, b"", RunOptions::default())
+        .expect_err("run fails");
+    assert_ne!(err.to_string(), format!("run returned an error: {message}"));
 }
 
 /// A section that is there but says nothing wit-component can read is a

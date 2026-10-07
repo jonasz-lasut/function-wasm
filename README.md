@@ -110,9 +110,11 @@ implementing the world can target the runtime:
 | `ts` | node + npm (esbuild, jco) | ~14 MB | [`examples/policy-gate`](examples/policy-gate) |
 | `python` | `python3` (componentize-py) | ~21 MB | [`examples/team-tags`](examples/team-tags) |
 
-C# and Odin are examples only ([`examples/dashboard-bundle`](examples/dashboard-bundle),
+C#, Odin and MoonBit are examples only ([`examples/dashboard-bundle`](examples/dashboard-bundle),
 ~4.5 MB; [`examples/hello-odin`](examples/hello-odin), ~71 KB, on the `c`
-flavour's bindings and codec). The supported, tested and untested languages, with what each
+flavour's bindings and codec; [`examples/hello-moonbit`](examples/hello-moonbit),
+~107 KB, which `guestfn build` builds and `guestfn init` does not scaffold).
+The supported, tested and untested languages, with what each
 toolchain brings, are on
 [Other languages](https://jonasz-lasut.github.io/function-wasm/guests/other-languages.html).
 
