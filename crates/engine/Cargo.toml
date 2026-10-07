@@ -31,8 +31,8 @@ wasmtime-wasi-http = { version = "49.0.2", default-features = false, features = 
 # are the versions wasmtime's own bindgen already pulls, so no second copy is
 # compiled. Renovate's wasmtime group moves the three together.
 wasi-preview1-component-adapter-provider = "49.0.2"
-wasmparser = { version = "0.258.3", default-features = false }
-wit-component = "0.258.3"
+wasmparser = { version = "0.261.0", default-features = false }
+wit-component = "0.261.0"
 
 [dev-dependencies]
 function-sdk-rust = "0.3.0"
@@ -40,4 +40,4 @@ prost = "0.14"
 wat = "1"
 # The componentize tests embed the runtime's own world into a core module the
 # way wit-bindgen does.
-wit-parser = "0.258.3"
+wit-parser = "0.261.0"
