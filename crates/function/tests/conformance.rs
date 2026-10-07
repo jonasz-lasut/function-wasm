@@ -162,6 +162,17 @@ struct Output {
 }
 
 fn run_validate(bin: &Path, args: &[&str], stdin: &str, cwd: &Path) -> Output {
+    run_validate_env(bin, args, stdin, cwd, &[])
+}
+
+/// run_validate with extra environment, e.g. a DOCKER_CONFIG to pull with.
+fn run_validate_env(
+    bin: &Path,
+    args: &[&str],
+    stdin: &str,
+    cwd: &Path,
+    env: &[(&str, &str)],
+) -> Output {
     let mut cmd = Command::new(bin);
     cmd.arg("validate")
         .args(args)
@@ -181,6 +192,7 @@ fn run_validate(bin: &Path, args: &[&str], stdin: &str, cwd: &Path) -> Output {
     ] {
         cmd.env_remove(var);
     }
+    cmd.envs(env.iter().copied());
     let mut child = cmd.spawn().expect("spawn");
     child
         .stdin
@@ -767,6 +779,7 @@ fn validate_resolve_cosign_matches_the_goldens() {
         blobs: [(digest_of(&wasm), wasm.clone())].into(),
         bearer: false,
         referrers_api: false,
+        basic: false,
     };
     let key = TestKey::from_seed(5);
     attach(
@@ -806,6 +819,64 @@ fn validate_resolve_cosign_matches_the_goldens() {
         if let Some(f) = assert_golden(&format!("Cosign/{name}"), &rust_out, &subs) {
             failures.push(f);
         }
+    }
+
+    // A registry behind Basic auth, which only the local Docker config can
+    // read: the signature check must read the referrers with the same
+    // credential the pull uses, or a signed module is refused as unreadable.
+    let mut private = TestRegistry {
+        manifests: [(signed_digest.clone(), module_manifest("signed"))].into(),
+        blobs: [(digest_of(&wasm), wasm.clone())].into(),
+        bearer: false,
+        referrers_api: false,
+        basic: true,
+    };
+    attach(
+        &mut private,
+        &signed_digest,
+        &key.bundle(&signed_digest, COSIGN_SIGN_PREDICATE),
+        Shape::ArtifactType,
+    );
+    let private_addr = serve(private);
+    let docker = dir.path().join("docker");
+    std::fs::create_dir_all(&docker).expect("docker config dir");
+    {
+        use base64::Engine as _;
+        use function_wasm::oci::testregistry::{BASIC_PASSWORD, BASIC_USER};
+        let auth = base64::engine::general_purpose::STANDARD
+            .encode(format!("{BASIC_USER}:{BASIC_PASSWORD}"));
+        std::fs::write(
+            docker.join("config.json"),
+            serde_json::json!({"auths": {private_addr.clone(): {"auth": auth}}}).to_string(),
+        )
+        .expect("write docker config");
+    }
+    let file = dir.path().join("SignedBehindAuth.yaml");
+    std::fs::write(
+        &file,
+        composition("SignedBehindAuth", &signed_digest).replace(&addr, &private_addr),
+    )
+    .expect("write");
+    let file = file.display().to_string();
+    let docker = docker.display().to_string();
+    let rust_out = run_validate_env(
+        rust,
+        &[
+            file.as_str(),
+            "--resolve",
+            "--cosign-key",
+            key_path.as_str(),
+        ],
+        "",
+        &cwd,
+        &[("DOCKER_CONFIG", docker.as_str())],
+    );
+    let subs = [
+        (dir.path().display().to_string(), "<DIR>"),
+        (private_addr.to_string(), "<REGISTRY>"),
+    ];
+    if let Some(f) = assert_golden("Cosign/SignedBehindAuth", &rust_out, &subs) {
+        failures.push(f);
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }

@@ -1,0 +1,81 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: webapps-oci-e2e.platform.example.org
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: WebApp
+  mode: Pipeline
+  pipeline:
+  # The platform's own step: the workload every WebApp gets.
+  - step: webapp
+    functionRef:
+      name: function-go-templating
+    input:
+      apiVersion: gotemplating.fn.crossplane.io/v1beta1
+      kind: GoTemplate
+      source: Inline
+      inline:
+        template: |
+          {{- $xr := .observed.composite.resource }}
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            annotations:
+              {{ setResourceNameAnnotation "deployment" }}
+          spec:
+            replicas: {{ $xr.spec.replicas }}
+            selector:
+              matchLabels:
+                app: {{ $xr.metadata.name }}
+            template:
+              metadata:
+                labels:
+                  app: {{ $xr.metadata.name }}
+              spec:
+                containers:
+                - name: app
+                  image: {{ $xr.spec.image }}
+                  ports:
+                  - containerPort: {{ $xr.spec.port }}
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            annotations:
+              {{ setResourceNameAnnotation "service" }}
+          spec:
+            selector:
+              app: {{ $xr.metadata.name }}
+            ports:
+            - port: {{ $xr.spec.port }}
+              targetPort: {{ $xr.spec.port }}
+  # The hook under test: the add-on the WebApp names in spec.addOn, an OCI
+  # source pinned by digest in the e2e registry (run.sh pushes it there),
+  # pulled with the step credential `registry`. The compositionPolicy fences
+  # what a WebApp may name: only repositories under localhost:5005/team-a, and
+  # the pull credential only for them.
+  - step: add-on
+    functionRef:
+      name: function-wasm
+    credentials:
+    - name: registry
+      source: Secret
+      secretRef:
+        namespace: crossplane-system
+        name: e2e-registry
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        type: OCI
+        from: spec.addOn
+        allowEmpty: true
+      compositionPolicy: |
+        permit (principal, action == Action::"pullModule",
+                resource in Repository::"localhost:5005/team-a");
+        permit (principal, action == Action::"spendCredential",
+                resource == Credential::"registry")
+        when { context.repository in Repository::"localhost:5005/team-a" };

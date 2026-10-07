@@ -291,6 +291,12 @@ examples/hello-assemblyscript  the same guest, AssemblyScript + as-proto (exampl
                             four files hand-written where as-proto-gen 1.3.0 gets this proto
                             wrong (the Value oneof, proto3 optional presence, packed repeated
                             enums), stub runtime with a bump allocator, ~30 KB - the smallest guest
+test/e2e/                   end-to-end scenarios against real infrastructure (README.md: the tiers
+                            and conventions): oci/ pushes examples/pdb-addon to a registry behind
+                            basic auth, signs it with cosign and renders a WebApp that names it
+                            through module.from (pull by digest with a step credential, the
+                            pullModule fence, requireSignature); run.sh sets the stage, xprin and
+                            function validate's JSON assert; the /e2e job e2e (oci) runs it
 examples/render.sh          shared: cargo-build the runtime, function validate every example/xr*.yaml,
                             serve the example dir (example/policy.cedar as the operator policy,
                             example/fixtures/ on a local HTTP server for egress), then crossplane
@@ -400,7 +406,7 @@ make -C examples/dashboard-bundle test    # dotnet test (in the .NET SDK contain
 
 Goldens: `UPDATE_CONFORMANCE=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
 
-CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml` (its `build-tools` job compiles the release runtime and `guestfn` once per run, fetches xprin pinned by checksum, and hands all three to every render job as an artifact, which `examples/render.sh` and pdb-addon's Makefile pick up from `FUNCTION_BIN`, `GUESTFN` and `XPRIN`; without them they build from the tree and take xprin from PATH), hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push.
+CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml` (its `build-tools` job compiles the release runtime and `guestfn` once per run, fetches xprin pinned by checksum, and hands all three to every render job as an artifact, which `examples/render.sh` and pdb-addon's Makefile pick up from `FUNCTION_BIN`, `GUESTFN` and `XPRIN`; without them they build from the tree and take xprin from PATH), hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push. `e2e.yml`'s `e2e (oci)` job runs `test/e2e/oci/run.sh` (`test/e2e/README.md`: unit and integration tests use in-memory stand-ins for registries and signatures; a scenario there is where the real thing must agree with them).
 
 ### Test Patterns
 

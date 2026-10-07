@@ -105,7 +105,7 @@ impl Resolver {
                     .as_ref()
                     .expect("validated: an OCI source has its object");
                 let reference = crate::location::parse_oci_reference(&oci.r#ref)?;
-                let auth = auth.or_else(|| crate::oci::keychain_auth(&reference.registry));
+                let auth = crate::oci::pull_auth(&reference.registry, auth);
                 Ok(Resolved {
                     digest: reference.digest.clone(),
                     description: format!("oci {}", oci.r#ref),

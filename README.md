@@ -1164,6 +1164,7 @@ cargo build --workspace && cargo test --workspace   # engine, runtime, guestfn -
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 (cd examples/pdb-addon && go test ./...)            # the Go example and its vendored internal/wasmfn glue
 make -C examples/pdb-addon render-check             # function validate, then the example's xprin suite through the real runtime
+test/e2e/oci/run.sh                                 # the OCI path end to end: registry, cosign, module.from (test/e2e/README.md)
 ```
 
 The workspace tests build every scaffold (what `guestfn init` writes) and the

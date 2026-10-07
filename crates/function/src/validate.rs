@@ -559,7 +559,12 @@ impl Validator {
                     .r#ref,
             )
             .expect("validated");
-            let client = crate::oci::RegistryClient::new(&reference, None);
+            // The pull's credential: this tool reads no step Secret, so the
+            // local Docker config, as for the pull above.
+            let client = crate::oci::RegistryClient::new(
+                &reference,
+                crate::oci::pull_auth(&reference.registry, None),
+            );
             if let Err(e) = verifier.verify(&client, &reference) {
                 refuse!(format!(
                     "cannot verify module {}: {e}",

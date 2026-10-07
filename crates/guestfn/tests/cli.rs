@@ -54,6 +54,7 @@ fn empty_registry() -> String {
         blobs: Default::default(),
         bearer: false,
         referrers_api: false,
+        basic: false,
     })
 }
 
