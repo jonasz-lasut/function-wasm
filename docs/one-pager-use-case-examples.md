@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.0
+* Status: Implemented, revision 1.1
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/112
 
 ## Context
@@ -73,10 +73,13 @@ Design choices worth keeping:
 - **Tenancy comes from the namespace, never from the spec.** `team-tags` keys
   the shared Secret by the XR's namespace, which cluster RBAC sets; keying by a
   spec field would let an XR in team A's namespace spend team B's token.
-- **Every step credential except the pull credential reaches the guest
-  today**, so `team-tags`' boundary is egress.
-  [#122](https://github.com/jonasz-lasut/function-wasm/issues/122) withholds
-  credentials a module was not granted.
+- **A module sees only the credentials its manifest names.** `team-tags`
+  declares `requires.credentials: [cmdb]`, and the runtime forwards that
+  credential only where both policy layers permit `spendCredential`; the pull
+  credential and every other step credential are edited out of the request
+  before the run
+  ([#122](https://github.com/jonasz-lasut/function-wasm/issues/122)). The
+  tokens' boundary is then egress, which the same two layers fence.
 
 ### Considered and dropped
 
@@ -119,6 +122,13 @@ rust scaffold and `cloudflare-origin` cover Rust as a component.
   lives in the unit tests. `examples/render.sh` runs the runtime's side:
   `function validate` over every `example/xr*.yaml`, the operator policy in
   `example/policy.cedar`, and the fixture server for `example/fixtures/`.
+- **The OCI path has an end-to-end scenario at the same render tier**,
+  `test/e2e/oci/run.sh`: `pdb-addon` pushed to a registry behind basic auth
+  and signed with cosign, a `WebApp` naming it by digest through
+  `module.from`, and the runtime pulling it with the step credential the XR
+  names, behind `pullModule` and `requireSignature`. The script sets the
+  stage; xprin and `function validate --output json` assert.
+  `test/e2e/README.md` sets out the tiers and the conventions.
 
 ## Publishing
 
@@ -153,9 +163,10 @@ with their module manifests, by `publish-pkg.yml`'s `publish-examples` job:
 
 ## Open
 
-- A separate E2E test for the OCI path: a module pushed to a registry, pulled
-  by digest, chosen by the XR through `module.from` and fenced by `pullModule`.
-  The render tests serve modules from `--module-dir`, so `pdb-addon`'s
-  `spec.addOn` stays untyped until then (#112).
-- The world's `log` levels gain `warn` and `error` before the 2.0.0 freeze
-  ([#77](https://github.com/jonasz-lasut/function-wasm/issues/77)).
+- The 2.0.0 world freeze
+  ([#77](https://github.com/jonasz-lasut/function-wasm/issues/77)): the
+  component examples target `wasmfn:function@2.0.0-draft` until then.
+- A cluster-tier E2E, Crossplane installing the package in a kind cluster:
+  mTLS, the operator policy from a mounted ConfigMap, readiness and warm-up,
+  in-cluster egress. The tool is open: kyverno/chainsaw, or the Crossplane
+  CLI's own test command once it ships upstream.
