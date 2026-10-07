@@ -15,13 +15,13 @@ prost-types = "0.14"
 
 # The component bindings (src/bindings.rs) exist only in the wasm build.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wit-bindgen = "0.61"
+wit-bindgen = "0.62"
 
 [build-dependencies]
 prost-build = "0.14"
 
 [dev-dependencies]
-pollster = "0.4"
+pollster = "1"
 
 [profile.release]
 opt-level = "s"

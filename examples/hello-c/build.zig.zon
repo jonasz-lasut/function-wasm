@@ -8,8 +8,8 @@
         // (PB_ENABLE_MALLOC) over the structs nanopb_generator writes from the
         // vendored proto (src/fnv1).
         .nanopb = .{
-            .url = "https://github.com/nanopb/nanopb/archive/refs/tags/0.4.9.1.tar.gz",
-            .hash = "N-V-__8AAICJKABy-UAs4DC7b9y5IYGo9oikvDkYpvL9fnhc",
+            .url = "https://github.com/nanopb/nanopb/archive/refs/tags/0.4.9.2.tar.gz",
+            .hash = "N-V-__8AAC4aKQDfYc_SoLQzYD5EUMZ2mN6f8qXQy--vmpFN",
         },
     },
     .paths = .{
