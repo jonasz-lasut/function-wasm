@@ -9,11 +9,18 @@
 #
 # `make vendor-proto` takes the release from the headers (the rust template's);
 # `make vendor-proto VERSION=vX.Y.Z` vendors one Renovate has not proposed.
-.PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens tools tools-clean
+#
+# `make gen-bindings` is the same loop for the c guest's wit-bindgen C
+# bindings (examples/hello-c/src/gen, generated from its wit/): it runs the
+# pinned wit-bindgen, mirrors the result into the c template and refreshes
+# the goldens - after a change to the guest's world, a re-vendoring of the
+# WASI WIT, or a wit-bindgen bump (the generated files' header names the
+# version; e2e.yml's drift check installs the same one).
+.PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens gen-bindings tools tools-clean
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:
 
-# Only the two generators the guests invoke bare from PATH are pinned here;
+# Only the three generators the guests invoke bare from PATH are pinned here;
 # the rest are pinned where each guest builds them: zig-protobuf (and the
 # protoc it downloads) by hello-zig's build.zig.zon, protoc-gen-es by
 # policy-gate's package-lock.json.
@@ -23,17 +30,23 @@
 # PROTOC_VERSION must not pass the runtime the python template's
 # requirements.txt pins (team-tags's is the same file). NANOPB_VERSION is
 # the nanopb release hello-c's build.zig.zon compiles and e2e.yml's codec
-# drift check installs.
+# drift check installs. WIT_BINDGEN_VERSION is the wit-bindgen-cli release
+# that wrote hello-c's checked-in bindings and e2e.yml's bindings drift
+# check installs.
 PROTOC_VERSION := 35.1
 NANOPB_VERSION := 0.4.9.1
+WIT_BINDGEN_VERSION := 0.62.0
 
 PROTOC_OS := $(if $(filter Darwin,$(shell uname -s)),osx,linux)
 PROTOC_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),aarch_64,x86_64)
+WIT_BINDGEN_OS := $(if $(filter Darwin,$(shell uname -s)),macos,linux)
+WIT_BINDGEN_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),aarch64,x86_64)
 TOOLS := $(CURDIR)/.cache/tools/$(PROTOC_OS)-$(PROTOC_ARCH)
 PROTOC := $(TOOLS)/protoc-$(PROTOC_VERSION)/bin/protoc
 NANOPB_GENERATOR := $(TOOLS)/nanopb-$(NANOPB_VERSION)/bin/nanopb_generator
-# Only the two pinned binaries, never the nanopb venv's bin/ (its python3 would
-# shadow the system one), go in front of PATH.
+WIT_BINDGEN := $(TOOLS)/wit-bindgen-$(WIT_BINDGEN_VERSION)/bin/wit-bindgen
+# Only the three pinned binaries, never the nanopb venv's bin/ (its python3
+# would shadow the system one), go in front of PATH.
 WITH_TOOLS := PATH="$(TOOLS)/bin:$$PATH"
 
 PROTO_COPIES := $(shell git ls-files '*/proto/run_function.proto')
@@ -83,10 +96,18 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 vendor-proto-goldens: ## Refresh the guestfn scaffold goldens from the templates
 	UPDATE_GOLDENS=1 cargo test -p guestfn
 
-tools: $(PROTOC) $(NANOPB_GENERATOR) ## Install the pinned protoc and nanopb_generator under .cache/tools
+# The bindings are mirrored whole: wit-bindgen writes exactly the three files
+# the template carries (function.c, function.h, function_component_type.o).
+gen-bindings: tools ## Regenerate hello-c's wit-bindgen C bindings with the pinned wit-bindgen, mirror them into the c template and refresh the goldens
+	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-bindings
+	rm -rf crates/guestfn/templates/c/src/gen && cp -R examples/hello-c/src/gen crates/guestfn/templates/c/src/gen
+	$(MAKE) vendor-proto-goldens
+
+tools: $(PROTOC) $(NANOPB_GENERATOR) $(WIT_BINDGEN) ## Install the pinned protoc, nanopb_generator and wit-bindgen under .cache/tools
 	@mkdir -p "$(TOOLS)/bin"
 	@ln -sf "$(PROTOC)" "$(TOOLS)/bin/protoc"
 	@ln -sf "$(NANOPB_GENERATOR)" "$(TOOLS)/bin/nanopb_generator"
+	@ln -sf "$(WIT_BINDGEN)" "$(TOOLS)/bin/wit-bindgen"
 
 $(PROTOC):
 	@set -e; \
@@ -103,6 +124,18 @@ $(NANOPB_GENERATOR):
 	@echo "installing nanopb $(NANOPB_VERSION)"
 	@python3 -m venv "$(TOOLS)/nanopb-$(NANOPB_VERSION)"
 	@"$(TOOLS)/nanopb-$(NANOPB_VERSION)/bin/pip" install --quiet "nanopb==$(NANOPB_VERSION)"
+
+# The release tarball (one per OS and architecture, the binary at its top
+# level beside the licences), as e2e.yml fetches the linux one.
+$(WIT_BINDGEN):
+	@set -e; \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	echo "installing wit-bindgen $(WIT_BINDGEN_VERSION) ($(WIT_BINDGEN_OS)-$(WIT_BINDGEN_ARCH))"; \
+	mkdir -p "$(dir $(WIT_BINDGEN))"; \
+	curl -fsSL -o "$$tmp/wit-bindgen.tar.gz" \
+		https://github.com/bytecodealliance/wit-bindgen/releases/download/v$(WIT_BINDGEN_VERSION)/wit-bindgen-$(WIT_BINDGEN_VERSION)-$(WIT_BINDGEN_ARCH)-$(WIT_BINDGEN_OS).tar.gz; \
+	tar -xzf "$$tmp/wit-bindgen.tar.gz" -C "$$tmp"; \
+	cp "$$tmp/wit-bindgen-$(WIT_BINDGEN_VERSION)-$(WIT_BINDGEN_ARCH)-$(WIT_BINDGEN_OS)/wit-bindgen" "$(WIT_BINDGEN)"
 
 tools-clean: ## Remove the installed tools
 	rm -rf .cache/tools

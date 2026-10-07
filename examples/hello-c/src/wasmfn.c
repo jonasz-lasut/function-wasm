@@ -1,46 +1,31 @@
-// The function-wasm ABI glue (see wasmfn.h). Memory discipline: a fresh wasm
-// instance serves each request and the host drops it afterwards, so nothing
-// here is ever freed except scratch the glue itself allocated.
+// The function-wasm ABI v2 glue (see wasmfn.h). Memory discipline: a fresh
+// component instance serves each request and the host drops it afterwards, so
+// nothing here is ever freed except scratch the glue itself allocated - and
+// what the canonical ABI owns: the request buffer the host lowered into our
+// memory (freed once decoded) and the response buffer we return (freed by the
+// generated cabi_post_run after the host has read it).
 #include "wasmfn.h"
 
-#include <cJSON.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "fn.h"
 #include "run_function.pb.h"
 
-enum { default_ttl_seconds = 60 };
-
-char *(*wasmfn_test_host)(const char *request_json) = NULL;
-
-// ─── the host imports ───────────────────────────────────────────────────────
-
 #ifdef __wasi__
-__attribute__((import_module("wasmfn"), import_name("log"))) void wasmfn_host_log(uint32_t level, uint32_t ptr, uint32_t len);
-__attribute__((import_module("wasmfn"), import_name("http"))) uint64_t wasmfn_host_http(uint32_t ptr, uint32_t len);
+// The wit-bindgen c bindings of this guest's world (src/gen): the run export
+// shim, the log import and the wasi:http@0.2 client interfaces.
+#include "function.h"
 #endif
 
-// ─── ABI v1 exports ─────────────────────────────────────────────────────────
+enum { default_ttl_seconds = 60, read_chunk = 64 * 1024, write_chunk = 4096 };
 
-#ifdef __wasi__
-// The host allocates its wasmfn.http answers through this export too,
-// re-entrantly while wasmfn_run is on the stack; libc's malloc is fine with
-// that.
-__attribute__((export_name("wasmfn_alloc"))) uint32_t wasmfn_alloc(uint32_t size) {
-	return (uint32_t)(uintptr_t)malloc(size ? size : 1);
-}
-
-__attribute__((export_name("wasmfn_run"))) uint64_t wasmfn_run(uint32_t ptr, uint32_t len) {
-	size_t n = 0;
-	uint8_t *out = wasmfn_handle((const uint8_t *)(uintptr_t)ptr, len, &n);
-	return ((uint64_t)(uintptr_t)out << 32) | (uint64_t)(uint32_t)n;
-}
-#endif
+bool (*wasmfn_test_host)(const wasmfn_http_request *req, wasmfn_http_response *rsp, char **err) = NULL;
 
 // ─── the handle ─────────────────────────────────────────────────────────────
 
@@ -103,6 +88,28 @@ uint8_t *wasmfn_handle(const uint8_t *in, size_t in_len, size_t *out_len) {
 	return encode(&rsp, out_len);
 }
 
+// ─── the run export ─────────────────────────────────────────────────────────
+
+#ifdef __wasi__
+// The world's run, behind the generated shim: the host lowered the request
+// bytes into a buffer of ours (cabi_realloc), the encoded response goes back
+// as an owned list the generated cabi_post_run frees once the host has copied
+// it out. An error string here becomes the request's fatal result on the
+// host's side; the glue only reaches it when it cannot even encode a reply.
+bool exports_function_run(function_list_u8_t *request, function_list_u8_t *ret, function_string_t *err) {
+	size_t n = 0;
+	uint8_t *out = wasmfn_handle(request->ptr, request->len, &n);
+	function_list_u8_free(request);
+	if (!out) {
+		function_string_dup(err, "cannot encode RunFunctionResponse");
+		return false;
+	}
+	ret->ptr = out;
+	ret->len = n;
+	return true;
+}
+#endif
+
 // ─── strings ────────────────────────────────────────────────────────────────
 
 char *wasmfn_sprintf(const char *format, ...) {
@@ -130,221 +137,375 @@ static bool fail(char **err, const char *msg) {
 	return false;
 }
 
-// ─── wasmfn.log ─────────────────────────────────────────────────────────────
+// ─── log ────────────────────────────────────────────────────────────────────
 
-static void emit(uint32_t level, const char *payload) {
+enum { level_debug = 0, level_info = 1, level_warn = 2, level_error = 3 };
+
+// log_record sends msg with the alternating key/value pairs of kv at level:
+// typed values straight to the host's log import, no payload encoding.
+static void log_record(int level, const char *msg, va_list kv) {
+	va_list count;
+	va_copy(count, kv);
+	size_t pairs = 0;
+	for (const char *key; (key = va_arg(count, const char *)) != NULL; pairs++) {
+		(void)va_arg(count, const char *);
+	}
+	va_end(count);
 #ifdef __wasi__
-	wasmfn_host_log(level, (uint32_t)(uintptr_t)payload, (uint32_t)strlen(payload));
+	function_tuple2_string_string_t *items = pairs ? calloc(pairs, sizeof *items) : NULL;
+	if (pairs && !items) {
+		return;
+	}
+	for (size_t i = 0; i < pairs; i++) {
+		const char *key = va_arg(kv, const char *);
+		const char *value = va_arg(kv, const char *);
+		function_string_set(&items[i].f0, key);
+		function_string_set(&items[i].f1, value ? value : "");
+	}
+	function_string_t m;
+	function_string_set(&m, msg);
+	function_list_tuple2_string_string_t list = {items, pairs};
+	function_log((function_log_level_t)level, &m, &list);
+	free(items);
 #else
-	(void)level;
-	fprintf(stderr, "wasmfn log %s\n", payload);
+	static const char *const names[] = {"debug", "info", "warn", "error"};
+	fprintf(stderr, "wasmfn log %s: %s", names[level], msg);
+	for (size_t i = 0; i < pairs; i++) {
+		const char *key = va_arg(kv, const char *);
+		const char *value = va_arg(kv, const char *);
+		fprintf(stderr, " %s=%s", key, value ? value : "");
+	}
+	fputc('\n', stderr);
 #endif
 }
 
-// log_record sends {"msg": msg, "kv": [k, v, ...]} at level.
-static void log_record(uint32_t level, const char *msg, va_list kv) {
-	cJSON *record = cJSON_CreateObject();
-	if (!record) {
-		return;
-	}
-	cJSON_AddStringToObject(record, "msg", msg);
-	cJSON *pairs = cJSON_AddArrayToObject(record, "kv");
-	for (const char *key; pairs && (key = va_arg(kv, const char *)) != NULL;) {
-		const char *value = va_arg(kv, const char *);
-		cJSON_AddItemToArray(pairs, cJSON_CreateString(key));
-		cJSON_AddItemToArray(pairs, cJSON_CreateString(value ? value : ""));
-	}
-	char *payload = cJSON_PrintUnformatted(record);
-	cJSON_Delete(record);
-	if (payload) {
-		emit(level, payload);
-		free(payload);
-	}
+#define LOG_AT(level)                   \
+	do {                                \
+		va_list kv;                     \
+		va_start(kv, msg);              \
+		log_record((level), msg, kv);   \
+		va_end(kv);                     \
+	} while (0)
+
+void wasmfn_log_debug(const char *msg, ...) {
+	LOG_AT(level_debug);
 }
 
 void wasmfn_log_info(const char *msg, ...) {
-	va_list kv;
-	va_start(kv, msg);
-	log_record(0, msg, kv);
-	va_end(kv);
+	LOG_AT(level_info);
 }
 
-void wasmfn_log_debug(const char *msg, ...) {
-	va_list kv;
-	va_start(kv, msg);
-	log_record(1, msg, kv);
-	va_end(kv);
+void wasmfn_log_warn(const char *msg, ...) {
+	LOG_AT(level_warn);
 }
 
-// ─── base64 (standard alphabet, padded: how the host renders body bytes) ────
-
-static const char b64_alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static char *base64_encode(const uint8_t *in, size_t n) {
-	char *out = malloc((n + 2) / 3 * 4 + 1);
-	if (!out) {
-		return NULL;
-	}
-	char *p = out;
-	for (size_t i = 0; i < n; i += 3) {
-		uint32_t v = (uint32_t)in[i] << 16;
-		if (i + 1 < n) {
-			v |= (uint32_t)in[i + 1] << 8;
-		}
-		if (i + 2 < n) {
-			v |= in[i + 2];
-		}
-		*p++ = b64_alphabet[v >> 18 & 63];
-		*p++ = b64_alphabet[v >> 12 & 63];
-		*p++ = i + 1 < n ? b64_alphabet[v >> 6 & 63] : '=';
-		*p++ = i + 2 < n ? b64_alphabet[v & 63] : '=';
-	}
-	*p = '\0';
-	return out;
+void wasmfn_log_error(const char *msg, ...) {
+	LOG_AT(level_error);
 }
 
-static int b64_index(char c) {
-	const char *at = c ? strchr(b64_alphabet, c) : NULL;
-	return at ? (int)(at - b64_alphabet) : -1;
-}
+// ─── HTTP over wasi:http@0.2 ────────────────────────────────────────────────
 
-// base64_decode returns the decoded bytes (NUL-terminated for convenience),
-// or NULL when s is not base64.
-static uint8_t *base64_decode(const char *s, size_t *n) {
-	size_t len = strlen(s);
-	uint8_t *out = malloc(len / 4 * 3 + 3);
-	if (!out) {
-		return NULL;
-	}
-	size_t written = 0;
-	uint32_t acc = 0;
-	int bits = 0;
-	for (size_t i = 0; i < len; i++) {
-		if (s[i] == '=') {
-			break;
-		}
-		int v = b64_index(s[i]);
-		if (v < 0) {
-			free(out);
-			return NULL;
-		}
-		acc = acc << 6 | (uint32_t)v;
-		bits += 6;
-		if (bits >= 8) {
-			bits -= 8;
-			out[written++] = (uint8_t)(acc >> bits & 0xff);
-		}
-	}
-	out[written] = '\0';
-	*n = written;
-	return out;
-}
-
-// ─── wasmfn.http ────────────────────────────────────────────────────────────
-
-// call_host hands the JSON request to the host and returns its JSON answer
-// (*n bytes), which lives in a buffer the host obtained from wasmfn_alloc.
-static char *call_host(const char *payload, size_t *n, char **err) {
 #ifdef __wasi__
-	uint64_t packed = wasmfn_host_http((uint32_t)(uintptr_t)payload, (uint32_t)strlen(payload));
-	if (packed == 0) {
-		fail(err, "the host returned no response");
-		return NULL;
+// The WIT names of wasi:http's error-code cases, in tag order.
+static const char *const error_code_names[] = {
+    "dns-timeout",
+    "dns-error",
+    "destination-not-found",
+    "destination-unavailable",
+    "destination-ip-prohibited",
+    "destination-ip-unroutable",
+    "connection-refused",
+    "connection-terminated",
+    "connection-timeout",
+    "connection-read-timeout",
+    "connection-write-timeout",
+    "connection-limit-reached",
+    "tls-protocol-error",
+    "tls-certificate-error",
+    "tls-alert-received",
+    "http-request-denied",
+    "http-request-length-required",
+    "http-request-body-size",
+    "http-request-method-invalid",
+    "http-request-uri-invalid",
+    "http-request-uri-too-long",
+    "http-request-header-section-size",
+    "http-request-header-size",
+    "http-request-trailer-section-size",
+    "http-request-trailer-size",
+    "http-response-incomplete",
+    "http-response-header-section-size",
+    "http-response-header-size",
+    "http-response-body-size",
+    "http-response-trailer-section-size",
+    "http-response-trailer-size",
+    "http-response-transfer-coding",
+    "http-response-content-coding",
+    "http-response-timeout",
+    "http-upgrade-failed",
+    "http-protocol-error",
+    "loop-detected",
+    "configuration-error",
+    "internal-error",
+};
+
+// fail_with hands an allocated message to *err (or frees it when nobody
+// listens).
+static bool fail_with(char **err, char *msg) {
+	if (err) {
+		*err = msg ? msg : strdup("out of memory");
+	} else {
+		free(msg);
 	}
-	*n = (size_t)(uint32_t)packed;
-	return (char *)(uintptr_t)(uint32_t)(packed >> 32);
-#else
-	if (!wasmfn_test_host) {
-		fail(err, "no host HTTP in this build");
-		return NULL;
-	}
-	char *answer = wasmfn_test_host(payload);
-	if (!answer) {
-		fail(err, "the test host returned no response");
-		return NULL;
-	}
-	*n = strlen(answer);
-	return answer;
-#endif
+	return false;
 }
 
-// wire_request renders req as the host's JSON: method (omitted when GET), url,
-// headers as {name: [values]} and the body base64.
-static char *wire_request(const wasmfn_http_request *req) {
-	cJSON *o = cJSON_CreateObject();
-	if (!o) {
-		return NULL;
+// describe_error_code words a wasi:http error-code. internal-error carries
+// the host's own reason - the refusal of the egress grant or policy, a
+// budget, a transport failure - verbatim; every other case is named.
+static char *describe_error_code(const wasi_http_types_error_code_t *code) {
+	if (code->tag == WASI_HTTP_TYPES_ERROR_CODE_INTERNAL_ERROR && code->val.internal_error.is_some) {
+		const function_string_t *reason = &code->val.internal_error.val;
+		return strndup((const char *)reason->ptr, reason->len);
 	}
-	if (req->method && *req->method) {
-		cJSON_AddStringToObject(o, "method", req->method);
-	}
-	cJSON_AddStringToObject(o, "url", req->url ? req->url : "");
-	if (req->headers && req->headers[0]) {
-		cJSON *headers = cJSON_AddObjectToObject(o, "headers");
-		for (size_t i = 0; headers && req->headers[i] && req->headers[i + 1]; i += 2) {
-			cJSON *values = cJSON_GetObjectItemCaseSensitive(headers, req->headers[i]);
-			if (!values) {
-				values = cJSON_AddArrayToObject(headers, req->headers[i]);
-			}
-			if (values) {
-				cJSON_AddItemToArray(values, cJSON_CreateString(req->headers[i + 1]));
-			}
-		}
-	}
-	if (req->body && req->body_len) {
-		char *b64 = base64_encode(req->body, req->body_len);
-		if (b64) {
-			cJSON_AddStringToObject(o, "body", b64);
-			free(b64);
-		}
-	}
-	char *payload = cJSON_PrintUnformatted(o);
-	cJSON_Delete(o);
-	return payload;
+	size_t known = sizeof error_code_names / sizeof *error_code_names;
+	return wasmfn_sprintf("wasi:http error-code %s", code->tag < known ? error_code_names[code->tag] : "unknown");
 }
 
-bool wasmfn_http_send(const wasmfn_http_request *req, wasmfn_http_response *rsp, char **err) {
-	char *payload = wire_request(req);
-	if (!payload) {
-		return fail(err, "cannot encode the request");
+static bool split_url(const char *url, wasi_http_types_scheme_t *scheme, function_string_t *authority, function_string_t *path, char **err) {
+	const char *rest;
+	if (url && strncmp(url, "https://", 8) == 0) {
+		scheme->tag = WASI_HTTP_TYPES_SCHEME_HTTPS;
+		rest = url + 8;
+	} else if (url && strncmp(url, "http://", 7) == 0) {
+		scheme->tag = WASI_HTTP_TYPES_SCHEME_HTTP;
+		rest = url + 7;
+	} else {
+		return fail(err, "only http and https URLs work");
 	}
-	size_t n = 0;
-	const char *raw = call_host(payload, &n, err);
-	free(payload);
-	if (!raw) {
-		return false;
+	const char *slash = strchr(rest, '/');
+	size_t authority_len = slash ? (size_t)(slash - rest) : strlen(rest);
+	if (!authority_len) {
+		return fail(err, "the URL has no host");
 	}
-	cJSON *answer = cJSON_ParseWithLength(raw, n);
-	if (!answer) {
-		return fail(err, "the host's HTTP response could not be decoded");
+	function_string_dup_n(authority, rest, authority_len);
+	function_string_dup(path, slash ? slash : "/");
+	return true;
+}
+
+static void method_of(const char *name, wasi_http_types_method_t *method) {
+	static const struct {
+		const char *name;
+		uint8_t tag;
+	} standard[] = {
+	    {"GET", WASI_HTTP_TYPES_METHOD_GET},         {"HEAD", WASI_HTTP_TYPES_METHOD_HEAD},
+	    {"POST", WASI_HTTP_TYPES_METHOD_POST},       {"PUT", WASI_HTTP_TYPES_METHOD_PUT},
+	    {"DELETE", WASI_HTTP_TYPES_METHOD_DELETE},   {"CONNECT", WASI_HTTP_TYPES_METHOD_CONNECT},
+	    {"OPTIONS", WASI_HTTP_TYPES_METHOD_OPTIONS}, {"TRACE", WASI_HTTP_TYPES_METHOD_TRACE},
+	    {"PATCH", WASI_HTTP_TYPES_METHOD_PATCH},
+	};
+	if (!name || !*name) {
+		method->tag = WASI_HTTP_TYPES_METHOD_GET;
+		return;
 	}
-	const cJSON *status = cJSON_GetObjectItemCaseSensitive(answer, "status");
-	rsp->status = cJSON_IsNumber(status) ? status->valueint : 0;
-	if (rsp->status == 0) {
-		// The host did not perform the request: refused, over a budget, or failed.
-		const cJSON *reason = cJSON_GetObjectItemCaseSensitive(answer, "error");
-		fail(err, cJSON_IsString(reason) && reason->valuestring[0] ? reason->valuestring : "the host returned no status and no error");
-		cJSON_Delete(answer);
-		return false;
+	for (size_t i = 0; i < sizeof standard / sizeof *standard; i++) {
+		if (strcmp(standard[i].name, name) == 0) {
+			method->tag = standard[i].tag;
+			return;
+		}
 	}
-	rsp->headers = cJSON_DetachItemFromObjectCaseSensitive(answer, "headers");
-	if (!rsp->headers) {
-		rsp->headers = cJSON_CreateObject();
-	}
-	const cJSON *body = cJSON_GetObjectItemCaseSensitive(answer, "body");
-	rsp->body_len = 0;
-	rsp->body = cJSON_IsString(body) ? base64_decode(body->valuestring, &rsp->body_len) : (uint8_t *)strdup("");
-	cJSON_Delete(answer);
-	if (!rsp->body) {
-		return fail(err, "the host's HTTP response body is not base64");
+	method->tag = WASI_HTTP_TYPES_METHOD_OTHER;
+	function_string_dup(&method->val.other, name);
+}
+
+// request_headers builds the fields resource of the request's headers.
+static bool request_headers(const wasmfn_http_request *req, wasi_http_types_own_fields_t *headers, char **err) {
+	*headers = wasi_http_types_constructor_fields();
+	for (size_t i = 0; req->headers && req->headers[i] && req->headers[i + 1]; i += 2) {
+		wasi_http_types_field_name_t name;
+		function_string_set(&name, req->headers[i]);
+		wasi_http_types_field_value_t value = {(uint8_t *)req->headers[i + 1], strlen(req->headers[i + 1])};
+		wasi_http_types_header_error_t herr;
+		if (!wasi_http_types_method_fields_append(wasi_http_types_borrow_fields(*headers), &name, &value, &herr)) {
+			return fail_with(err, wasmfn_sprintf("the host refused the request header %s", req->headers[i]));
+		}
 	}
 	return true;
 }
 
+// write_body streams the request body and finishes it; the request has
+// already been handed to the handler, which reads as we write.
+static bool write_body(wasi_http_types_own_outgoing_body_t body, const uint8_t *bytes, size_t len, char **err) {
+	wasi_http_types_own_output_stream_t stream;
+	if (!wasi_http_types_method_outgoing_body_write(wasi_http_types_borrow_outgoing_body(body), &stream)) {
+		return fail(err, "the request body stream was already taken");
+	}
+	for (size_t off = 0; off < len; off += write_chunk) {
+		size_t n = len - off < write_chunk ? len - off : write_chunk;
+		function_list_u8_t chunk = {(uint8_t *)bytes + off, n};
+		wasi_io_streams_stream_error_t serr;
+		if (!wasi_io_streams_method_output_stream_blocking_write_and_flush(wasi_io_streams_borrow_output_stream(stream), &chunk, &serr)) {
+			wasi_io_streams_output_stream_drop_own(stream);
+			return fail(err, "writing the request body failed");
+		}
+	}
+	wasi_io_streams_output_stream_drop_own(stream);
+	wasi_http_types_error_code_t code;
+	if (!wasi_http_types_static_outgoing_body_finish(body, NULL, &code)) {
+		return fail_with(err, describe_error_code(&code));
+	}
+	return true;
+}
+
+// response_headers copies the response's headers out as alternating
+// name/value C strings (values are bytes on the wire; a NUL inside one ends
+// it here).
+static bool response_headers(wasi_http_types_borrow_incoming_response_t response, const char ***out) {
+	wasi_http_types_own_headers_t headers = wasi_http_types_method_incoming_response_headers(response);
+	wasi_http_types_list_tuple2_field_name_field_value_t entries;
+	wasi_http_types_method_fields_entries(wasi_http_types_borrow_fields(headers), &entries);
+	const char **pairs = calloc(2 * entries.len + 1, sizeof *pairs);
+	if (pairs) {
+		for (size_t i = 0; i < entries.len; i++) {
+			pairs[2 * i] = strndup((const char *)entries.ptr[i].f0.ptr, entries.ptr[i].f0.len);
+			pairs[2 * i + 1] = strndup((const char *)entries.ptr[i].f1.ptr, entries.ptr[i].f1.len);
+		}
+	}
+	wasi_http_types_list_tuple2_field_name_field_value_free(&entries);
+	wasi_http_types_fields_drop_own(headers);
+	*out = pairs;
+	return pairs != NULL;
+}
+
+// read_body drains the response body stream into one NUL-terminated buffer.
+static bool read_body(wasi_http_types_borrow_incoming_response_t response, uint8_t **out, size_t *out_len, char **err) {
+	wasi_http_types_own_incoming_body_t body;
+	if (!wasi_http_types_method_incoming_response_consume(response, &body)) {
+		return fail(err, "the response body was already taken");
+	}
+	wasi_http_types_own_input_stream_t stream;
+	if (!wasi_http_types_method_incoming_body_stream(wasi_http_types_borrow_incoming_body(body), &stream)) {
+		wasi_http_types_incoming_body_drop_own(body);
+		return fail(err, "the response body stream was already taken");
+	}
+	uint8_t *buf = malloc(1);
+	size_t len = 0;
+	bool ok = buf != NULL;
+	while (ok) {
+		function_list_u8_t chunk;
+		wasi_io_streams_stream_error_t serr;
+		if (!wasi_io_streams_method_input_stream_blocking_read(wasi_io_streams_borrow_input_stream(stream), read_chunk, &chunk, &serr)) {
+			ok = serr.tag == WASI_IO_STREAMS_STREAM_ERROR_CLOSED || fail(err, "reading the response body failed");
+			break;
+		}
+		uint8_t *grown = realloc(buf, len + chunk.len + 1);
+		if (!grown) {
+			ok = fail(err, "out of memory");
+			function_list_u8_free(&chunk);
+			break;
+		}
+		buf = grown;
+		memcpy(buf + len, chunk.ptr, chunk.len);
+		len += chunk.len;
+		function_list_u8_free(&chunk);
+	}
+	wasi_io_streams_input_stream_drop_own(stream);
+	wasi_http_types_future_trailers_drop_own(wasi_http_types_static_incoming_body_finish(body));
+	if (!ok) {
+		free(buf);
+		return false;
+	}
+	buf[len] = '\0';
+	*out = buf;
+	*out_len = len;
+	return true;
+}
+
+// send_through_host performs req over wasi:http/outgoing-handler: build the
+// request, hand it to the handler, stream the body, block on the response
+// future, then read status, headers and body.
+static bool send_through_host(const wasmfn_http_request *req, wasmfn_http_response *rsp, char **err) {
+	wasi_http_types_scheme_t scheme;
+	function_string_t authority, path;
+	if (!split_url(req->url, &scheme, &authority, &path, err)) {
+		return false;
+	}
+	wasi_http_types_own_fields_t headers;
+	if (!request_headers(req, &headers, err)) {
+		return false;
+	}
+	wasi_http_types_own_outgoing_request_t request = wasi_http_types_constructor_outgoing_request(headers);
+	wasi_http_types_borrow_outgoing_request_t r = wasi_http_types_borrow_outgoing_request(request);
+	wasi_http_types_method_t method;
+	method_of(req->method, &method);
+	if (!wasi_http_types_method_outgoing_request_set_method(r, &method)) {
+		return fail(err, "the host refused the request method");
+	}
+	if (!wasi_http_types_method_outgoing_request_set_scheme(r, &scheme) ||
+	    !wasi_http_types_method_outgoing_request_set_authority(r, &authority) ||
+	    !wasi_http_types_method_outgoing_request_set_path_with_query(r, &path)) {
+		return fail(err, "the host refused the URL");
+	}
+	bool has_body = req->body && req->body_len;
+	wasi_http_types_own_outgoing_body_t body;
+	if (has_body && !wasi_http_types_method_outgoing_request_body(r, &body)) {
+		return fail(err, "the request body was already taken");
+	}
+
+	wasi_http_outgoing_handler_own_future_incoming_response_t future;
+	wasi_http_outgoing_handler_error_code_t code;
+	if (!wasi_http_outgoing_handler_handle(request, NULL, &future, &code)) {
+		return fail_with(err, describe_error_code(&code));
+	}
+	if (has_body && !write_body(body, req->body, req->body_len, err)) {
+		return false;
+	}
+
+	wasi_http_types_borrow_future_incoming_response_t f = wasi_http_types_borrow_future_incoming_response(future);
+	wasi_io_poll_own_pollable_t ready = wasi_http_types_method_future_incoming_response_subscribe(f);
+	wasi_io_poll_method_pollable_block(wasi_io_poll_borrow_pollable(ready));
+	wasi_io_poll_pollable_drop_own(ready);
+	wasi_http_types_result_result_own_incoming_response_error_code_void_t got;
+	if (!wasi_http_types_method_future_incoming_response_get(f, &got)) {
+		return fail(err, "the host answered nothing");
+	}
+	wasi_http_types_future_incoming_response_drop_own(future);
+	if (got.is_err) {
+		return fail(err, "the response was already taken");
+	}
+	if (got.val.ok.is_err) {
+		return fail_with(err, describe_error_code(&got.val.ok.val.err));
+	}
+	wasi_http_types_own_incoming_response_t response = got.val.ok.val.ok;
+	wasi_http_types_borrow_incoming_response_t ir = wasi_http_types_borrow_incoming_response(response);
+	rsp->status = wasi_http_types_method_incoming_response_status(ir);
+	if (!response_headers(ir, &rsp->headers)) {
+		return fail(err, "out of memory");
+	}
+	bool ok = read_body(ir, &rsp->body, &rsp->body_len, err);
+	wasi_http_types_incoming_response_drop_own(response);
+	return ok;
+}
+#endif
+
+bool wasmfn_http_send(const wasmfn_http_request *req, wasmfn_http_response *rsp, char **err) {
+#ifdef __wasi__
+	return send_through_host(req, rsp, err);
+#else
+	if (!wasmfn_test_host) {
+		return fail(err, "no host HTTP in this build");
+	}
+	return wasmfn_test_host(req, rsp, err);
+#endif
+}
+
 const char *wasmfn_http_header(const wasmfn_http_response *rsp, const char *name) {
-	const cJSON *values = rsp->headers ? cJSON_GetObjectItem(rsp->headers, name) : NULL;
-	const cJSON *first = cJSON_IsArray(values) ? cJSON_GetArrayItem(values, 0) : NULL;
-	return cJSON_IsString(first) ? first->valuestring : NULL;
+	for (size_t i = 0; rsp->headers && rsp->headers[i] && rsp->headers[i + 1]; i += 2) {
+		if (strcasecmp(rsp->headers[i], name) == 0) {
+			return rsp->headers[i + 1];
+		}
+	}
+	return NULL;
 }
 
 char *wasmfn_http_get_text(const char *url, char **err) {

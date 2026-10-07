@@ -1,8 +1,10 @@
 //! Renders a new guest project in one of six flavours: Go with
 //! function-sdk-go (its ABI glue vendored in internal/wasmfn), Rust with
 //! prost, Zig with zig-protobuf, C
-//! with nanopb (built by zig cc), TypeScript with protobuf-es (componentized
-//! by jco), or Python with protobuf (componentized by componentize-py). Each
+//! with nanopb over wit-bindgen's C bindings (built by zig cc, the core
+//! module componentized by guestfn build), TypeScript with protobuf-es
+//! (componentized by jco), or Python with protobuf (componentized by
+//! componentize-py). Each
 //! template set is a minimal greeting project; the example guests of this
 //! repository solve their own use cases on the same plumbing (the vendored
 //! glue, codecs, proto and WIT), which tests keep identical.
@@ -293,7 +295,15 @@ mod tests {
             ),
             (
                 "hello-c",
-                &["proto/", "src/fnv1/", "src/structpb.", "src/wasmfn."],
+                &[
+                    "proto/",
+                    "wit/",
+                    "src/fnv1/",
+                    "src/gen/",
+                    "src/structpb.",
+                    "src/wasmfn.",
+                    "build.zig",
+                ],
                 Options {
                     lang: LANG_C.into(),
                     name: "hello-c".into(),

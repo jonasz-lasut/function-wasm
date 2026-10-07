@@ -1,11 +1,13 @@
-// The hello-c guest: a Crossplane composition function in C, compiled to a
-// wasip1 reactor by zig cc and run by function-wasm. It composes a ConfigMap
-// greeting the composite resource.
+// The hello-c guest: a Crossplane composition function in C, compiled by
+// zig cc into the core module guestfn build wraps into an ABI v2 component,
+// run by function-wasm. It composes a ConfigMap greeting the composite
+// resource.
 //
 // run_function is ordinary C over the structs nanopb generated from the
-// vendored crossplane proto (src/fnv1); the ABI exports and the wasmfn.log /
-// wasmfn.http host imports live in wasmfn.c. Nothing here is wasi-specific, so
-// the logic also builds and tests natively (zig build test).
+// vendored crossplane proto (src/fnv1); the world's run export and the log /
+// wasi:http host imports live in wasmfn.c, behind the bindings wit-bindgen
+// generated from wit/ (src/gen). Nothing here is wasi-specific, so the logic
+// also builds and tests natively (zig build test).
 #include "fn.h"
 
 #include <stdlib.h>

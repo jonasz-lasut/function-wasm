@@ -8,6 +8,9 @@ const codec_sources = [_][]const u8{
     "src/fnv1/google/protobuf/struct.pb.c",
     "src/fnv1/google/protobuf/duration.pb.c",
 };
+// The bindings wit-bindgen c wrote from wit/ (zig build gen-bindings): the
+// run export shim, the log import, the wasi:http client and cabi_realloc.
+const binding_sources = [_][]const u8{"src/gen/function.c"};
 // Every C file sees the same nanopb configuration: heap-allocated dynamic
 // fields and 32-bit sizes, so a string, a map or a bytes field is never
 // bounded by the codec. The guest's own sources are held to -Werror; gnu11
@@ -20,14 +23,22 @@ pub fn build(b: *std.Build) void {
     const native = b.standardTargetOptions(.{});
     const wasm = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .wasi });
 
-    // The wasip1 reactor the runtime loads.
-    const exe = b.addExecutable(.{ .name = "fn", .root_module = guestModule(b, wasm, optimize, &.{}) });
-    exe.entry = .disabled;
-    exe.rdynamic = true;
-    exe.wasi_exec_model = .reactor;
-    b.installArtifact(exe);
+    // The core module, zig-out/bin/fn.wasm: a wasip1 reactor whose exports
+    // are the canonical ABI's (run, cabi_post_run, cabi_realloc) and which
+    // carries the component-type custom section of the bindings' object file
+    // - the guest's world, encoded. guestfn build wraps it into the component
+    // the runtime loads; it imports nothing from wasi_snapshot_preview1, so
+    // no adapter is linked in.
+    const core = b.addExecutable(.{ .name = "fn", .root_module = guestModule(b, wasm, optimize, &.{}) });
+    core.entry = .disabled;
+    core.wasi_exec_model = .reactor;
+    core.root_module.addIncludePath(b.path("src/gen"));
+    core.root_module.addCSourceFiles(.{ .files = &binding_sources, .flags = &pb_flags });
+    core.root_module.addObjectFile(b.path("src/gen/function_component_type.o"));
+    b.installArtifact(core);
 
-    // Native unit tests: fn_test.c is their main.
+    // Native unit tests: fn_test.c is their main. The bindings are wasi-only
+    // (behind __wasi__ in wasmfn.c), so no generated code is linked here.
     const tests = b.addExecutable(.{ .name = "fn_test", .root_module = guestModule(b, native, optimize, &.{"src/fn_test.c"}) });
     b.step("test", "Run unit tests").dependOn(&b.addRunArtifact(tests).step);
 
@@ -46,21 +57,26 @@ pub fn build(b: *std.Build) void {
     });
     generator.setCwd(b.path(""));
     gen.dependOn(&generator.step);
+
+    // Regenerate the world's bindings: zig build gen-bindings (needs
+    // wit-bindgen on PATH at the version the checked-in src/gen names in its
+    // header, wit-bindgen-cli 0.62.0).
+    const gen_bindings = b.step("gen-bindings", "generate src/gen from wit/ with wit-bindgen c");
+    const bindgen = b.addSystemCommand(&.{ "wit-bindgen", "c", "wit", "--world", "function", "--out-dir", "src/gen" });
+    bindgen.setCwd(b.path(""));
+    gen_bindings.dependOn(&bindgen.step);
 }
 
 // guestModule is the guest compiled for target: its sources, the generated
-// codec, nanopb and cJSON from the build.zig.zon dependencies, and libc (the
-// wasm build links zig's wasi-libc for malloc and string.h).
+// codec, nanopb from the build.zig.zon dependency, and libc (the wasm build
+// links zig's wasi-libc for malloc and string.h).
 fn guestModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, extra: []const []const u8) *std.Build.Module {
     const nanopb = b.dependency("nanopb", .{});
-    const cjson = b.dependency("cjson", .{});
     const mod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
     mod.addIncludePath(b.path("src"));
     mod.addIncludePath(b.path("src/fnv1"));
     mod.addIncludePath(nanopb.path(""));
-    mod.addIncludePath(cjson.path(""));
     mod.addCSourceFiles(.{ .root = nanopb.path(""), .files = &.{ "pb_common.c", "pb_decode.c", "pb_encode.c" }, .flags = &pb_flags });
-    mod.addCSourceFiles(.{ .root = cjson.path(""), .files = &.{"cJSON.c"}, .flags = &pb_flags });
     mod.addCSourceFiles(.{ .files = &codec_sources, .flags = &pb_flags });
     mod.addCSourceFiles(.{ .files = &guest_sources, .flags = &guest_flags });
     mod.addCSourceFiles(.{ .files = extra, .flags = &guest_flags });

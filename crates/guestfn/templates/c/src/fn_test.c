@@ -119,11 +119,19 @@ static void test_bad_config_is_an_error(void) {
 	EXPECT_STR("cannot read config: greeting must be a string", run_function(&req, &rsp));
 }
 
-static char *fake_host(const char *request_json) {
-	if (strstr(request_json, "\"url\":\"https://greetings.example.com/en\"")) {
-		return strdup("{\"status\":200,\"headers\":{\"Content-Type\":[\"text/plain\"]},\"body\":\"aG93ZHkK\"}"); // "howdy\n"
+// fake_host answers like the runtime's egress: a greeting for the one URL the
+// grant admits, the policy's refusal for any other.
+static bool fake_host(const wasmfn_http_request *req, wasmfn_http_response *rsp, char **err) {
+	if (strcmp(req->url, "https://greetings.example.com/en") == 0) {
+		static const char *headers[] = {"content-type", "text/plain", NULL};
+		rsp->status = 200;
+		rsp->headers = headers;
+		rsp->body = (uint8_t *)strdup("howdy\n");
+		rsp->body_len = 6;
+		return true;
 	}
-	return strdup("{\"status\":0,\"error\":\"sandbox.egress: no rule admits host \\\"evil.example.com\\\"\"}");
+	*err = strdup("sandbox.egress: no rule admits host \"evil.example.com\"");
+	return false;
 }
 
 static void test_greeting_from_url_through_the_host(void) {

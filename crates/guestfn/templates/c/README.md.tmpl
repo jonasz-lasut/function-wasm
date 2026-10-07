@@ -1,36 +1,48 @@
 # [[ .Name ]]
 
-A [Crossplane](https://crossplane.io) composition function in C, compiled to a
-wasip1 reactor of about 70 KB by `zig cc` and run by
+A [Crossplane](https://crossplane.io) composition function in C on
+[ABI v2](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md):
+a WebAssembly component of about 65 KB, compiled by `zig cc` and run by
 [function-wasm](https://github.com/jonasz-lasut/function-wasm). No wasi-sdk:
 the one `zig` binary is the C toolchain, the build system and the package
-fetcher.
+fetcher, and `guestfn build` wraps the core module it links into the
+component - no wasm-tools, no adapter download.
 
+- `wit/world.wit` is this guest's world: the `wasmfn:function` contract
+  restated in a `local:guest` package with `run` declared sync (a sync-lifted
+  `run` satisfies the runtime's async world) and
+  `wasi:http/outgoing-handler@0.2.12` imported for the greeting fetch;
+  `wit/deps/` carries the WASI 0.2.12 packages. `zig build gen-bindings` runs
+  [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C
+  generator (`wit-bindgen-cli` 0.62.0) over it into `src/gen` - `function.h`,
+  `function.c` and `function_component_type.o`, the object carrying the
+  component-type custom section `guestfn build` reads - checked in, so a
+  plain `zig build` needs only zig.
 - `proto/run_function.proto` is crossplane's `RunFunction` contract, vendored
   (with the `google/protobuf` types it imports); `zig build gen-proto` compiles
   it with [nanopb](https://jpa.kapsi.fi/nanopb/)'s generator (`pip install
-  nanopb`) into `src/fnv1`, which is checked in so a plain `zig build` needs
-  only zig. The `.options` files beside the protos make every string, map and
-  repeated field heap allocated, so no field is bounded by the codec.
+  nanopb`) into `src/fnv1`, checked in as well. The `.options` files beside
+  the protos make every string, map and repeated field heap allocated, so no
+  field is bounded by the codec.
 - `src/fn.c` - `run_function` over the generated structs (edit this).
   `src/structpb.h` reads and builds `google.protobuf.Struct` values (the
-  Input's `config`, every resource); `src/wasmfn.h` is the function-wasm
-  [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md)
-  glue: the `wasmfn_alloc` / `wasmfn_run` exports, the handle (decode, run,
-  encode; errors become fatal results), the `wasmfn.log` logger and the
-  `wasmfn.http` client. Only the exports and the host imports are
-  wasi-specific, so `zig build test` runs `src/fn_test.c` natively (a fake host
-  is installed for the `wasmfn.http` tests). `config.greetingUrl` fetches the
-  greeting through the host, within the egress grant of the module's manifest.
-- `build.zig` builds both (a wasm32-wasi reactor and the native test binary)
-  from the same sources, nanopb and cJSON from `build.zig.zon`.
+  Input's `config`, every resource); `src/wasmfn.h` is the ABI glue: the
+  world's `run` export (decode, run, encode; errors become fatal results), the
+  typed `log` import as a logger and a `wasi:http` client (`wasmfn_http_send`,
+  `wasmfn_http_get_text`). Only the export and the imports are wasi-specific,
+  so `zig build test` runs `src/fn_test.c` natively (a fake host is installed
+  for the HTTP tests). `config.greetingUrl` fetches the greeting through the
+  host, within the egress grant of the module's manifest.
+- `build.zig` links the core module (the guest, nanopb, the bindings and the
+  component-type object: a wasip1 reactor that imports nothing from
+  `wasi_snapshot_preview1`) and the native test binary from the same sources.
 
 ```shell
 # Unit tests run natively.
 zig build test
 
-# Compile to a wasip1 module.
-guestfn build                       # zig build -Doptimize=ReleaseSmall → fn.wasm
+# Compile to a component: zig build, then guestfn wraps zig-out/bin/fn.wasm.
+guestfn build                       # → fn.wasm (ABI v2, exports run, imports wasi:http@0.2.12 and log)
 
 # Publish it as an OCI artifact; it prints the module block for the Composition.
 guestfn push ghcr.io/example/[[ .Name ]]:v0.1.0
