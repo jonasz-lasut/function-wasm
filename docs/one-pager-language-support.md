@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.4
+* Status: Draft, revision 0.5
 
 Which languages a function-wasm module can be written in today, which could
 come next and at what cost, which are blocked and by what, and what
@@ -11,6 +11,17 @@ on 2026-08-16 (fifteen toolchains evaluated against ABI v1; Zig and C proven
 with probe modules run through `internal/engine`) and on the Extism
 evaluation recorded in AGENTS.md ("Not Extism"): the ABI is host-agnostic
 and small, so breadth comes from templates, not from a different runtime.
+
+**Update, 2026-10-07.** Guests are moving to ABI v2 (components targeting
+`wasmfn:function`) and ABI v1 is deprecated from v0.6.0 (#114, #129), so what
+"supporting a language" means moved with them: a language is *supported* when
+its toolchain produces a component implementing the world, and *tested* when
+a scaffold or example here runs through the guest suite and the render jobs
+(the README's "Other languages" states both sets). AssemblyScript, shipped
+below as a v1 example, was retired after #114's spike: no wit-bindgen backend,
+the project declines the component model, and hand-written canonical-ABI glue
+carries `run` and `log` (17.9 KB) but makes `wasi:http` a hand-maintained
+cost. The rows about it are history.
 
 ## What the host requires
 

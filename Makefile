@@ -19,8 +19,8 @@
 # protoc it downloads) by hello-zig's build.zig.zon, as-proto-gen and
 # protoc-gen-es by the package-lock.json files.
 #
-# protoc stamps its version into the AssemblyScript and Python codecs, and the
-# Python one refuses to load on a protobuf runtime older than that stamp, so
+# protoc stamps its version into the Python codec, which refuses to load on a
+# protobuf runtime older than that stamp, so
 # PROTOC_VERSION must not pass the runtime the python template's
 # requirements.txt pins (team-tags's is the same file). NANOPB_VERSION is
 # the nanopb release hello-c's build.zig.zon compiles and e2e.yml's codec
@@ -72,7 +72,6 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-tinygo generate
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-assemblyscript gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/team-tags gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/policy-gate gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/dashboard-bundle gen-proto

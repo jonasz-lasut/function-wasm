@@ -215,7 +215,6 @@
       matchFileNames: [
         'examples/cloudflare-origin/Cargo.toml',
         'examples/policy-gate/package.json',
-        'examples/hello-assemblyscript/package.json',
       ],
       enabled: true,
     },

@@ -1,7 +1,7 @@
 //! The guests - the same greeting function written with function-sdk-go
 //! (Go), with TinyGo and vtprotobuf, in Zig with zig-protobuf, in C with
-//! nanopb, in AssemblyScript with as-proto, as an ABI v2 component in async
-//! Rust with wit-bindgen, and as components in TypeScript and Python -
+//! nanopb, as an ABI v2 component in async Rust with wit-bindgen, and as
+//! components in TypeScript and Python -
 //! through the whole host: path and OCI sources, compile, per-request
 //! instance, egress through wasmfn.http or wasi:http, guest logging. Every
 //! guest must produce the same response.
@@ -10,8 +10,7 @@
 //! golden under crates/guestfn/testdata, which the scaffold tests keep
 //! byte-identical to the templates), so this suite proves the projects users
 //! start from; the examples under examples/ solve their own use cases and are
-//! checked by their render jobs. A guest without a scaffold (AssemblyScript)
-//! is built from its example.
+//! checked by their render jobs.
 //!
 //! A guest whose toolchain is not on PATH is skipped, like the Go tree's
 //! guest tests skip without theirs.
@@ -59,15 +58,9 @@ static LOGS: LazyLock<Arc<Mutex<Vec<u8>>>> = LazyLock::new(|| {
     buf
 });
 
-fn examples() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
-}
-
-/// Where a guest is built: a fresh copy of its scaffold's golden, or its
-/// example when the language has no scaffold.
+/// Where a guest is built: a fresh copy of its scaffold's golden.
 fn guest_dir(guest: &str) -> PathBuf {
     let golden = match guest {
-        "assemblyscript" => return examples().join(format!("hello-{guest}")),
         "rust-v2" => "rust",
         other => other,
     };
@@ -275,19 +268,6 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 ],
                 &[("VIRTUAL_ENV", venv.as_str())],
             ) {
-                return Some(Vec::new());
-            }
-            std::fs::copy(dir.join("fn.wasm"), out).ok()?;
-            true
-        }
-        "assemblyscript" => {
-            if !on_path("npm") {
-                eprintln!("skipping: npm not on PATH");
-                return None;
-            }
-            if !command(&dir, "npm", &["ci", "--no-audit", "--no-fund"], &[])
-                || !command(&dir, "npm", &["run", "build"], &[])
-            {
                 return Some(Vec::new());
             }
             std::fs::copy(dir.join("fn.wasm"), out).ok()?;
@@ -653,9 +633,4 @@ fn zig_guest() {
 #[test]
 fn c_guest() {
     run_guest("c");
-}
-
-#[test]
-fn assemblyscript_guest() {
-    run_guest("assemblyscript");
 }

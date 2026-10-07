@@ -274,8 +274,28 @@ for byte.
 
 ### Other languages
 
+**Supported and tested.** A language is *supported* when its toolchain
+produces a WebAssembly component that implements the [ABI v2](docs/abi-v2.md)
+world, `wasmfn:function`; the runtime checks the world, never the language.
+Today that is every language with a
+[wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) backend (Rust,
+C, C++, C#, Go, MoonBit) and the componentizers for JavaScript and TypeScript
+([componentize-js](https://github.com/bytecodealliance/componentize-js)),
+Python ([componentize-py](https://github.com/bytecodealliance/componentize-py))
+and .NET
+([componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet)).
+A language is *tested* when this repository works with it: a scaffold or an
+example here, built and run through the host by the guest suite and the render
+jobs on every `/e2e`. Tested on ABI v2: Rust, TypeScript, Python and C#.
+Tested on ABI v1, and moving to v2 before v0.6.0 under
+[#114](https://github.com/jonasz-lasut/function-wasm/issues/114): Go, TinyGo,
+Zig and C. A supported language that is not tested is expected to work, and a
+guest we can run is what moves it into the tested set. A language with no
+component path is not supported: AssemblyScript was retired for that reason
+(#114, 2026-10-07).
+
 The [ABI v1](docs/abi.md) is two exports and protobuf bytes, so any wasip1
-toolchain works — and [ABI v2](docs/abi-v2.md) opens the component-model
+toolchain works, and [ABI v2](docs/abi-v2.md) opens the component-model
 toolchains beside it. `guestfn` scaffolds and builds seven flavours - the
 same greeting function each time; the `rust`, `ts` and `python` flavours
 scaffold as ABI v2 components, the rest as ABI v1 modules:
@@ -289,11 +309,6 @@ scaffold as ABI v2 components, the rest as ABI v1 modules:
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
 | `ts` | [`examples/policy-gate`](examples/policy-gate) | node + npm: [esbuild](https://esbuild.github.io) bundles, [jco](https://github.com/bytecodealliance/jco) componentizes - **an ABI v2 component**, sync-lifted `run`, `fetch()` over `wasi:http@0.2` | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto (`js+dts` codec checked in; `npm run gen-proto` + protoc to redo) | ~14 MB (SpiderMonkey) |
 | `python` | [`examples/team-tags`](examples/team-tags) | `python3` (a venv with [componentize-py](https://github.com/bytecodealliance/componentize-py)) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2` | protoc's Python codec over the vendored proto (checked in), on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
-
-An **AssemblyScript** flavour exists as an example only for now
-([`examples/hello-assemblyscript`](examples/hello-assemblyscript), ~30 KB — the
-smallest guest; `npm ci && make build`): it passes the same behaviour tests as
-the scaffolded flavours, but `guestfn init` cannot scaffold it yet.
 
 A **C#** ABI v2 guest exists as an example only as well
 ([`examples/dashboard-bundle`](examples/dashboard-bundle), ~4.5 MB; the
@@ -1167,8 +1182,8 @@ make -C examples/pdb-addon render-check             # function validate, then th
 test/e2e/oci/run.sh                                 # the OCI path end to end: registry, cosign, module.from (test/e2e/README.md)
 ```
 
-The workspace tests build every scaffold (what `guestfn init` writes) and the
-AssemblyScript example to WebAssembly and run them all through the host when
+The workspace tests build every scaffold (what `guestfn init` writes) to
+WebAssembly and run them all through the host when
 their toolchains (go, tinygo, cargo with the rust scaffold's pinned
 toolchain, zig, npm, python3) are on PATH, and skip the ones that are not. See
 [AGENTS.md](AGENTS.md) for the layout and conventions.
