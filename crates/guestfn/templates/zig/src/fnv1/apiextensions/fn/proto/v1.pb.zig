@@ -4,6 +4,7 @@ const std = @import("std");
 
 const protobuf = @import("protobuf");
 const fd = protobuf.fd;
+const fdf = protobuf.fdf;
 /// import package google.protobuf
 const google_protobuf = @import("../../../google/protobuf.pb.zig");
 
@@ -77,13 +78,27 @@ pub const RunFunctionRequest = struct {
         .required_schemas = fd(9, .{ .repeated = .submessage }),
     };
 
+    /// Options of the fields that have some (`google.protobuf.FieldOptions`).
+    pub const _field_options = .{
+        .extra_resources = .{
+            .@"#raw" = "\x18\x01",
+            .deprecated = true,
+        },
+    };
+
     pub const ExtraResourcesEntry = struct {
         key: []const u8 = &.{},
         value: ?Resources = null,
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .submessage),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -154,8 +169,14 @@ pub const RunFunctionRequest = struct {
         value: ?Credentials = null,
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .submessage),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -226,8 +247,14 @@ pub const RunFunctionRequest = struct {
         value: ?Resources = null,
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .submessage),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -298,8 +325,14 @@ pub const RunFunctionRequest = struct {
         value: ?Schema = null,
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .submessage),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -512,8 +545,14 @@ pub const CredentialData = struct {
         value: []const u8 = &.{},
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .{ .scalar = .bytes }),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -802,7 +841,7 @@ pub const RequestMeta = struct {
     capabilities: std.ArrayList(Capability) = .empty,
 
     pub const _desc_table = .{
-        .tag = fd(1, .{ .scalar = .string }),
+        .tag = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
         .capabilities = fd(2, .{ .packed_repeated = .@"enum" }),
     };
 
@@ -881,13 +920,27 @@ pub const Requirements = struct {
         .schemas = fd(3, .{ .repeated = .submessage }),
     };
 
+    /// Options of the fields that have some (`google.protobuf.FieldOptions`).
+    pub const _field_options = .{
+        .extra_resources = .{
+            .@"#raw" = "\x18\x01",
+            .deprecated = true,
+        },
+    };
+
     pub const ExtraResourcesEntry = struct {
         key: []const u8 = &.{},
         value: ?ResourceSelector = null,
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .submessage),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -958,8 +1011,14 @@ pub const Requirements = struct {
         value: ?ResourceSelector = null,
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .submessage),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -1030,8 +1089,14 @@ pub const Requirements = struct {
         value: ?SchemaSelector = null,
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .submessage),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -1166,8 +1231,8 @@ pub const SchemaSelector = struct {
     kind: []const u8 = &.{},
 
     pub const _desc_table = .{
-        .api_version = fd(1, .{ .scalar = .string }),
-        .kind = fd(2, .{ .scalar = .string }),
+        .api_version = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
+        .kind = fdf(2, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
     };
 
     /// Encodes the message to the writer
@@ -1319,15 +1384,15 @@ pub const ResourceSelector = struct {
         match_name: []const u8,
         match_labels: MatchLabels,
         pub const _desc_table = .{
-            .match_name = fd(3, .{ .scalar = .string }),
+            .match_name = fdf(3, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .match_labels = fd(4, .submessage),
         };
     };
 
     pub const _desc_table = .{
-        .api_version = fd(1, .{ .scalar = .string }),
-        .kind = fd(2, .{ .scalar = .string }),
-        .namespace = fd(5, .{ .scalar = .string }),
+        .api_version = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
+        .kind = fdf(2, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
+        .namespace = fdf(5, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
         .match = fd(null, .{ .oneof = match_union }),
     };
 
@@ -1407,8 +1472,14 @@ pub const MatchLabels = struct {
         value: []const u8 = &.{},
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
-            .value = fd(2, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
+            .value = fdf(2, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -1543,7 +1614,7 @@ pub const ResponseMeta = struct {
     ttl: ?google_protobuf.Duration = null,
 
     pub const _desc_table = .{
-        .tag = fd(1, .{ .scalar = .string }),
+        .tag = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
         .ttl = fd(2, .submessage),
     };
 
@@ -1625,8 +1696,14 @@ pub const State = struct {
         value: ?Resource = null,
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .submessage),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -1772,8 +1849,14 @@ pub const Resource = struct {
         value: []const u8 = &.{},
 
         pub const _desc_table = .{
-            .key = fd(1, .{ .scalar = .string }),
+            .key = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
             .value = fd(2, .{ .scalar = .bytes }),
+        };
+
+        /// Options of the message (`google.protobuf.MessageOptions`).
+        pub const _options = .{
+            .@"#raw" = "8\x01",
+            .map_entry = true,
         };
 
         /// Encodes the message to the writer
@@ -1911,8 +1994,8 @@ pub const Result = struct {
 
     pub const _desc_table = .{
         .severity = fd(1, .@"enum"),
-        .message = fd(2, .{ .scalar = .string }),
-        .reason = fd(3, .{ .scalar = .string }),
+        .message = fdf(2, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
+        .reason = fdf(3, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
         .target = fd(4, .@"enum"),
     };
 
@@ -1991,10 +2074,10 @@ pub const Condition = struct {
     target: ?Target = null,
 
     pub const _desc_table = .{
-        .type = fd(1, .{ .scalar = .string }),
+        .type = fdf(1, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
         .status = fd(2, .@"enum"),
-        .reason = fd(3, .{ .scalar = .string }),
-        .message = fd(4, .{ .scalar = .string }),
+        .reason = fdf(3, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
+        .message = fdf(4, .{ .scalar = .string }, .{ .utf8_validation = .verify }),
         .target = fd(5, .@"enum"),
     };
 
@@ -2071,3 +2154,12 @@ pub fn FunctionRunnerService(comptime UserDataType: type, comptime ErrorSet: typ
         RunFunction: *const fn (userdata: *UserDataType, request: RunFunctionRequest) ErrorSet!RunFunctionResponse,
     };
 }
+
+/// Options of the files of this package that have some
+/// (`google.protobuf.FileOptions`), by file name.
+pub const _file_options = .{
+    .@"run_function.proto" = .{
+        .@"#raw" = "Z/github.com/crossplane/crossplane/v2/proto/fn/v1",
+        .go_package = "github.com/crossplane/crossplane/v2/proto/fn/v1",
+    },
+};
