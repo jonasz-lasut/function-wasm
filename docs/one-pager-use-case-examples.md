@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.2
+* Status: Implemented, revision 1.3
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/112
 
 ## Context
@@ -171,9 +171,11 @@ with their module manifests, by `publish-pkg.yml`'s `publish-examples` job:
 
 ## Open
 
-- The 2.0.0 world freeze
-  ([#77](https://github.com/jonasz-lasut/function-wasm/issues/77)): the
-  component examples target `wasmfn:function@2.0.0-draft` until then.
+- The world's publication
+  ([#106](https://github.com/jonasz-lasut/function-wasm/issues/106)): the
+  examples target `wasmfn:function@2.0.0`, frozen on 2026-10-07
+  ([#77](https://github.com/jonasz-lasut/function-wasm/issues/77)), which
+  is published once the rust scaffold builds on stable Rust.
 - A cluster-tier E2E, Crossplane installing the package in a kind cluster:
   mTLS, the operator policy from a mounted ConfigMap, readiness and warm-up,
   in-cluster egress. The tool is open: kyverno/chainsaw, or the Crossplane

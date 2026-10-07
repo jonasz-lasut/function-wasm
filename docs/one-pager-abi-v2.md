@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.4
+* Status: Draft, revision 0.5
 
 The decision `docs/one-pager-language-support.md` left open ("Is ABI v2 ever
 in scope?", open question 4): yes. ABI v2 - a component-model guest contract -
@@ -103,9 +103,12 @@ wasi-libc aligning on LLVM 23:
 [rust#147205](https://github.com/rust-lang/rust/pull/147205); realistically
 late 2026/early 2027 - the scaffold pins a nightly and drops it then), and
 of the unlock languages only jco's JS path is 0.3-ready today. Affordable
-because ABI v1 carries every production guest meanwhile. The world ships as
-a draft (`wasmfn:function@2.0.0-draft`) and freezes at `2.0.0` no earlier
-than wasip3's tier-2 promotion. p3's native async matters less here than
+because ABI v1 carries every production guest meanwhile. The world shipped
+as a draft and froze at `2.0.0` on 2026-10-07 (#77), ahead of wasip3's
+tier-2 promotion: its publication (#106) waits for the rust scaffold's
+stable toolchain instead, and a wasmtime move of the WASI 0.3 interfaces
+before then is re-vendored and taken on `2.0.0` in place
+(`docs/abi-v2.md`, Versioning). p3's native async matters less here than
 for most hosts - fresh-instance-per-request needs no concurrent calls into
 one instance - so its benefit concentrates in the `wasi:http` import.
 
@@ -184,9 +187,11 @@ design.
   phase 0.
 - **Spec and toolchain youth**: 0.3.0 is ten weeks old, the Rust target is
   tier 3, and wit-bindgen's async features are new; churn is likely.
-  Mitigated by v1 carrying production, the world staying `-draft` until
-  wasip3 is tier 2, and phase 0's guests being rebuilt on toolchain bumps
-  rather than promised stability.
+  Mitigated by v1 carrying production and phase 0's guests being rebuilt
+  on toolchain bumps rather than promised stability while the world was a
+  draft; since the freeze (2026-10-07, #77) wasmtime's 0.3 disclaimer is
+  accepted explicitly: a WASI 0.3 move is re-vendored and taken on
+  `2.0.0` in place until the world is published.
 
 ## Non-goals
 
