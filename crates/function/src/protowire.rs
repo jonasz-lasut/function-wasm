@@ -2,7 +2,8 @@
 //! keeps the transparent proxy honest: the guest receives the caller's
 //! bytes (unknown fields included, which prost cannot retain through a
 //! decode), with exactly two edits the runtime is entitled to make - the
-//! pull credential removed from the forwarded request, and a meta field
+//! step credentials the module was not granted (the pull credential among
+//! them, always) removed from the forwarded request, and a meta field
 //! appended to a response that lacks one (valid protobuf: last value wins
 //! for a singular field) - and one response it produces itself, the no-op
 //! of a step with no module to run, built from the caller's own desired
@@ -23,34 +24,31 @@ const RESPONSE_DESIRED_FIELD: u64 = 2;
 /// RunFunctionResponse.context (google.protobuf.Struct).
 const RESPONSE_CONTEXT_FIELD: u64 = 4;
 
-/// Removes the credentials entries whose key is name from raw - the wire
-/// form of the Go runtime's withheld pull credential - leaving every other
-/// byte, unknown fields included, exactly as the caller sent them. Bytes
-/// that do not parse as protobuf come back unchanged: the typed decode has
-/// already succeeded by the time this runs, so this is defensive only.
-pub fn strip_credential(raw: &[u8], name: &str) -> Vec<u8> {
-    match try_strip(raw, name) {
-        Some(out) => out,
-        None => raw.to_vec(),
-    }
-}
-
-fn try_strip(raw: &[u8], name: &str) -> Option<Vec<u8>> {
+/// Keeps the credentials map entries whose key forward admits and removes
+/// every other one from raw - the wire form of withholding the step
+/// credentials a module was not granted - leaving every other byte, unknown
+/// fields included, exactly as the caller sent them. Withholding fails
+/// closed: an entry whose key cannot be read is removed, and bytes that do
+/// not parse as protobuf yield None rather than a request that might still
+/// carry a withheld secret (the typed decode has already succeeded by the
+/// time this runs, so that is defensive only).
+pub fn retain_credentials(raw: &[u8], forward: impl Fn(&str) -> bool) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(raw.len());
     let mut i = 0;
     while i < raw.len() {
         let start = i;
         let (tag, n) = varint(raw, i)?;
         i += n;
-        let field = tag >> 3;
         let wire = tag & 0x7;
         let value_end = skip_value(raw, i, wire)?;
-        if field == CREDENTIALS_FIELD && wire == 2 {
-            // A length-delimited credentials map entry: drop it when its
-            // key matches the withheld name.
-            let (len, n) = varint(raw, i)?;
-            let entry = &raw[i + n..i + n + len as usize];
-            if map_entry_key(entry) == Some(name.to_string()) {
+        if tag >> 3 == CREDENTIALS_FIELD {
+            // A map entry is length-delimited; anything else under the
+            // field cannot be a credential the module was granted.
+            let forwarded = wire == 2 && {
+                let (_, n) = varint(raw, i)?;
+                map_entry_key(&raw[i + n..value_end]).is_some_and(|key| forward(&key))
+            };
+            if !forwarded {
                 i = value_end;
                 continue;
             }
@@ -61,22 +59,24 @@ fn try_strip(raw: &[u8], name: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// The string key (field 1) of a protobuf map entry.
+/// The string key (field 1) of a protobuf map entry: its last occurrence,
+/// the one a decoder keeps, so the key judged is the key the guest reads.
+/// None for an entry without one, or one that does not parse.
 fn map_entry_key(entry: &[u8]) -> Option<String> {
+    let mut key = None;
     let mut i = 0;
     while i < entry.len() {
         let (tag, n) = varint(entry, i)?;
         i += n;
-        let field = tag >> 3;
         let wire = tag & 0x7;
-        if field == MAP_KEY_FIELD && wire == 2 {
-            let (len, n) = varint(entry, i)?;
-            let key = entry.get(i + n..i + n + len as usize)?;
-            return Some(String::from_utf8_lossy(key).into_owned());
+        let value_end = skip_value(entry, i, wire)?;
+        if tag >> 3 == MAP_KEY_FIELD && wire == 2 {
+            let (_, n) = varint(entry, i)?;
+            key = Some(String::from_utf8(entry[i + n..value_end].to_vec()).ok()?);
         }
-        i = skip_value(entry, i, wire)?;
+        i = value_end;
     }
-    None
+    key
 }
 
 /// Appends meta (an encoded ResponseMeta) to a response that lacks one, as
@@ -185,33 +185,111 @@ mod tests {
         }
     }
 
+    /// One credentials map entry on the wire: what a request carrying only
+    /// that credential encodes to.
+    fn credential_entry(name: &str, value: &[u8]) -> Vec<u8> {
+        RunFunctionRequest {
+            credentials: HashMap::from([(name.to_string(), credential(value))]),
+            ..Default::default()
+        }
+        .encode_to_vec()
+    }
+
     #[test]
-    fn strips_only_the_named_credential_and_keeps_unknown_fields() {
-        let req = RunFunctionRequest {
+    fn withholds_every_credential_not_forwarded_and_keeps_every_other_byte() {
+        let meta = RunFunctionRequest {
             meta: Some(RequestMeta {
                 tag: "t".to_string(),
                 ..Default::default()
             }),
-            credentials: HashMap::from([
-                ("pull".to_string(), credential(b"registry secret")),
-                ("api".to_string(), credential(b"guest secret")),
-            ]),
             ..Default::default()
-        };
-        let mut raw = req.encode_to_vec();
-        // A field this proto does not know: field 999, length-delimited.
+        }
+        .encode_to_vec();
+        // Fields this proto does not know (999 and 1000, length-delimited),
+        // between and after the entries.
         let unknown = [0xba, 0x3e, 0x03, b'x', b'y', b'z'];
-        raw.extend_from_slice(&unknown);
+        let unknown_too = [0xc2, 0x3e, 0x02, b'u', b'v'];
+        // (segment, kept) in wire order: the caller's bytes, with the
+        // entries the module was not granted interleaved.
+        let segments: Vec<(Vec<u8>, bool)> = vec![
+            (meta, true),
+            (credential_entry("pull", b"registry secret"), false),
+            (unknown.to_vec(), true),
+            (credential_entry("cmdb", b"granted secret"), true),
+            (credential_entry("other", b"another secret"), false),
+            (unknown_too.to_vec(), true),
+            (credential_entry("api", b"guest secret"), false),
+            (credential_entry("db", b"bound secret"), true),
+        ];
+        let raw: Vec<u8> = segments.iter().flat_map(|(s, _)| s.clone()).collect();
+        let want: Vec<u8> = segments
+            .iter()
+            .filter(|(_, kept)| *kept)
+            .flat_map(|(s, _)| s.clone())
+            .collect();
 
-        let stripped = strip_credential(&raw, "pull");
-        let decoded = RunFunctionRequest::decode(stripped.as_slice()).expect("decode");
-        assert!(!decoded.credentials.contains_key("pull"));
-        assert!(decoded.credentials.contains_key("api"));
+        let forwarded =
+            retain_credentials(&raw, |name| name == "cmdb" || name == "db").expect("parses");
+        // Exactly the withheld entries are gone; every other byte, unknown
+        // fields included, is the caller's, in the caller's order.
+        assert_eq!(forwarded, want);
+        let decoded = RunFunctionRequest::decode(forwarded.as_slice()).expect("decode");
+        let mut names: Vec<&String> = decoded.credentials.keys().collect();
+        names.sort();
+        assert_eq!(names, ["cmdb", "db"]);
         assert_eq!(decoded.meta.expect("meta").tag, "t");
-        // The unknown field survived byte-for-byte.
-        assert!(stripped.windows(unknown.len()).any(|w| w == unknown));
-        // And the secret's bytes did not.
-        assert!(!stripped.windows(15).any(|w| w == b"registry secret"));
+        for secret in [&b"registry secret"[..], b"another secret", b"guest secret"] {
+            assert!(
+                !forwarded.windows(secret.len()).any(|w| w == secret),
+                "{}",
+                String::from_utf8_lossy(secret)
+            );
+        }
+
+        // Nothing forwarded: every entry goes, nothing else does.
+        let none = retain_credentials(&raw, |_| false).expect("parses");
+        let decoded = RunFunctionRequest::decode(none.as_slice()).expect("decode");
+        assert!(decoded.credentials.is_empty());
+        assert!(none.windows(unknown.len()).any(|w| w == unknown));
+        assert!(none.windows(unknown_too.len()).any(|w| w == unknown_too));
+    }
+
+    #[test]
+    fn withholding_judges_the_key_a_decoder_reads_and_fails_closed() {
+        // An entry repeating its key: a decoder keeps the last one, so that
+        // is the one judged.
+        let mut entry = vec![0x0a, 0x04];
+        entry.extend_from_slice(b"cmdb");
+        entry.extend_from_slice(&[0x0a, 0x05]);
+        entry.extend_from_slice(b"other");
+        let mut raw = vec![(7 << 3) | 2, entry.len() as u8];
+        raw.extend_from_slice(&entry);
+        let decoded = RunFunctionRequest::decode(raw.as_slice()).expect("decode");
+        assert!(decoded.credentials.contains_key("other"));
+        assert_eq!(
+            retain_credentials(&raw, |name| name == "cmdb").expect("parses"),
+            Vec::<u8>::new()
+        );
+        assert_eq!(
+            retain_credentials(&raw, |name| name == "other").expect("parses"),
+            raw
+        );
+        // An entry without a key, or a credentials field that is not an
+        // entry at all, is never forwarded.
+        assert_eq!(
+            retain_credentials(&[(7 << 3) | 2, 0x00], |_| true).expect("parses"),
+            Vec::<u8>::new()
+        );
+        assert_eq!(
+            retain_credentials(&[7 << 3, 0x01], |_| true).expect("parses"),
+            Vec::<u8>::new()
+        );
+        // Bytes that do not parse are never forwarded.
+        assert_eq!(retain_credentials(&[0xff], |_| true), None);
+        assert_eq!(
+            retain_credentials(&[(7 << 3) | 2, 0x05, 0x0a], |_| true),
+            None
+        );
     }
 
     #[test]

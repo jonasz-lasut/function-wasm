@@ -59,12 +59,14 @@ spec:
         type: Path
         path: fn.wasm
         manifestPath: example/wasmfn.local.yaml
-      # The Composition's own policy layer. This step hands the module every
-      # team's token, so the Composition fences where it may send them: GET
-      # under /teams/ on the CMDB host alone, whatever a module's manifest
-      # asks for. The operator's policy must permit the same; in a cluster,
-      # name the CMDB's host here.
+      # The Composition's own policy layer. The module receives the cmdb
+      # credential, every team's token, because its manifest requires it and
+      # this layer permits it - and no other step credential, whatever a
+      # module's manifest asks for. The Composition fences where the tokens
+      # may go too: GET under /teams/ on the CMDB host alone. The operator's
+      # policy must permit the same; in a cluster, name the CMDB's host here.
       compositionPolicy: |
+        permit (principal, action == Action::"spendCredential", resource == Credential::"cmdb");
         permit (principal, action == Action::"grantEgress", resource == HostPattern::"127.0.0.1")
         when { context.method == "GET" && context.path like "/teams/*" };
       config:

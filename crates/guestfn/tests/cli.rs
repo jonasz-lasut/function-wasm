@@ -25,6 +25,7 @@ requires:
     http:
       - host: example.com
         methods: [GET]
+  credentials: [cmdb]
 config:
   schema:
     type: object
@@ -77,6 +78,7 @@ fn push_then_inspect_and_show() {
     );
     assert!(stdout.contains("requires:"), "{stdout}");
     assert!(stdout.contains("host: example.com"), "{stdout}");
+    assert!(stdout.contains("credentials:\n  - cmdb"), "{stdout}");
     let pinned = stdout
         .lines()
         .find_map(|l| l.strip_prefix("Pushed "))
@@ -95,7 +97,10 @@ fn push_then_inspect_and_show() {
         stdout.contains("module layer: application/wasm"),
         "{stdout}"
     );
-    assert!(stdout.contains("manifest: greeter v0.1.0"), "{stdout}");
+    assert!(
+        stdout.contains("manifest: greeter v0.1.0, requires egress example.com, credentials cmdb"),
+        "{stdout}"
+    );
     assert!(
         stdout.contains("org.opencontainers.image.title=greeter"),
         "{stdout}"
@@ -112,6 +117,7 @@ fn push_then_inspect_and_show() {
     assert!(ok, "manifest show failed: {stderr}");
     assert!(stdout.contains("name: greeter"), "{stdout}");
     assert!(stdout.contains("host: example.com"), "{stdout}");
+    assert!(stdout.contains("- cmdb"), "{stdout}");
 }
 
 #[test]
@@ -163,7 +169,9 @@ fn manifest_validate() {
     let (stdout, stderr, ok) = guestfn(dir.path(), &["manifest", "validate"]);
     assert!(ok, "{stderr}");
     assert!(
-        stdout.contains("wasmfn.yaml: valid (greeter v0.1.0"),
+        stdout.contains(
+            "wasmfn.yaml: valid (greeter v0.1.0, requires egress example.com, credentials cmdb;"
+        ),
         "{stdout}"
     );
 
@@ -270,6 +278,10 @@ fn scaffold_composition_from_a_file() {
     assert!(stdout.contains("greeting: hello"), "{stdout}");
     assert!(
         stdout.contains("#   permit (principal, action == Action::\"grantEgress\", resource in HostPattern::\"example.com\");"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("#   permit (principal, action == Action::\"spendCredential\", resource == Credential::\"cmdb\");"),
         "{stdout}"
     );
 

@@ -179,10 +179,27 @@ fn composition_policy_skeleton(src: &Source, m: Option<&Manifest>) -> Option<Str
                 "permit (principal, action == Action::\"usePrivateTmp\", resource);".to_string(),
             );
         }
+        let bound = credential_names(&r.env);
         if !r.env.is_empty() {
             body.push("// the env the module binds from step credentials:".to_string());
             body.push("permit (principal, action == Action::\"setEnv\", resource);".to_string());
-            for name in credential_names(&r.env) {
+            for name in &bound {
+                body.push(format!(
+                    "permit (principal, action == Action::\"spendCredential\", resource == Credential::\"{name}\");"
+                ));
+            }
+        }
+        let whole: Vec<&String> = r
+            .credentials
+            .iter()
+            .filter(|name| !bound.contains(name))
+            .collect();
+        if !whole.is_empty() {
+            body.push(
+                "// the step credentials the module reads from its request (it receives no other):"
+                    .to_string(),
+            );
+            for name in whole {
                 body.push(format!(
                     "permit (principal, action == Action::\"spendCredential\", resource == Credential::\"{name}\");"
                 ));

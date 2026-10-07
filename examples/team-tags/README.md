@@ -53,25 +53,27 @@ the one request it declares:
   writes the spec, so a team named there would let an author in one team's
   namespace spend another team's token - a confused deputy. In Crossplane
   v2 composite resources are namespaced and cluster RBAC decides who may
-  create one where, so the namespace is the team. A missing credential, or
-  no key for the namespace, is a fatal result naming both.
-- **The boundary today is egress.** Every step credential reaches the guest
-  in its request, as it would reach any function (the runtime withholds
-  only the credential that pulled the module), so the module holds every
-  team's token. What keeps them in place is where it may send them: the
-  module cannot open a socket, its manifest (`wasmfn.yaml`) requests `GET`
-  to `cmdb.example.org` under `/teams/`, and the runtime makes the request
-  on its behalf only where the Composition's `compositionPolicy` and the
-  operator's Cedar policy both permit it, after checking the resolved
-  address against its block list, writing one audit line per request. The
-  Composition, which hands the module the tokens, fences that host and path
-  in its own `compositionPolicy` too, whatever a module's manifest asks
-  for. Nothing but the module's code, pinned by digest, keeps a token out
-  of the desired state it returns.
-  [#122](https://github.com/jonasz-lasut/function-wasm/issues/122) proposes
-  withholding the credentials a module was not granted, through a
-  `requires.credentials` manifest requirement this module would then
-  declare for `cmdb`.
+  create one where, so the namespace is the team. A step that does not
+  pass the credential is refused before the module runs; no key for the
+  namespace is a fatal result naming both.
+- **The module sees the tokens only because it asks, and both policies
+  agree.** The runtime forwards a module only the step credentials its
+  manifest names, so `wasmfn.yaml` declares `requires.credentials: [cmdb]`,
+  and the request carries `cmdb` only where the Composition's
+  `compositionPolicy` and the operator's Cedar policy both permit
+  `spendCredential` for it. Every other credential of the step - the one
+  that pulls the module above all - is edited out of the request before the
+  module runs. The tokens it does receive are every team's, though, so
+  what keeps them in place is where it may send them: the module cannot
+  open a socket, its manifest requests `GET` to `cmdb.example.org` under
+  `/teams/`, and the runtime makes the request on its behalf only where the
+  `compositionPolicy` and the operator's policy both permit it, after
+  checking the resolved address against its block list, writing one audit
+  line per request. The Composition, which hands the module the tokens,
+  fences the credential, that host and that path in its own
+  `compositionPolicy`, whatever a module's manifest asks for. Nothing but
+  the module's code, pinned by digest, keeps a token out of the desired
+  state it returns.
 - **The CMDB is the record.** The composite resource's namespace names its
   team, never the team's owner or cost center: a value an earlier step set
   for one of the three keys gives way to the CMDB's, with a warning. The
@@ -104,16 +106,16 @@ A local render needs no CMDB and no AWS account. `example/` holds:
 - `composition.yaml`: function-go-templating's bucket step, then the
   module, served from this directory under `example/wasmfn.local.yaml`, a
   manifest that asks for the fixture server instead of `cmdb.example.org`;
-  the step names the credential `cmdb`, and its `compositionPolicy` fences
-  the fixture host and path.
+  the step names the credential `cmdb`, and its `compositionPolicy` permits
+  the module that credential and fences the fixture host and path.
 - `function-credentials.yaml`: `cmdb-tokens`, the shared Secret, with a
   fake token per namespace.
 - `fixtures/teams/`: the two teams' records, which `../render.sh` serves on
   `127.0.0.1:9480`. The fixture server does not check the token; the unit
   tests assert which one goes out, and in which header.
 - `policy.cedar`: the operator policy the runtime runs under, granting the
-  fixture host and permitting loopback, which the egress block list refuses
-  by default.
+  credential `cmdb` and the fixture host and permitting loopback, which the
+  egress block list refuses by default.
 - `crds/`: provider-upjet-aws's namespaced S3 `Bucket` CRD, vendored, so
   the render test validates the composed bucket against the provider's own
   schema.
@@ -161,18 +163,25 @@ stringData:
           ref: ghcr.io/example/team-tags:v0.1.0@sha256:…
           credentials: registry
       compositionPolicy: |
+        permit (principal, action == Action::"spendCredential", resource == Credential::"cmdb");
         permit (principal, action == Action::"grantEgress", resource == HostPattern::"cmdb.example.org")
         when { context.method == "GET" && context.path like "/teams/*" };
       config:
         cmdbUrl: https://cmdb.example.org
 ```
 
-The operator grants the request in the runtime's `--sandbox-policy-file`:
+The operator grants the credential and the request in the runtime's
+`--sandbox-policy-file`:
 
 ```cedar
+permit (principal, action == Action::"spendCredential", resource == Credential::"cmdb");
+
 permit (principal, action == Action::"grantEgress", resource == HostPattern::"cmdb.example.org")
 when { context.method == "GET" && context.path like "/teams/*" };
 ```
+
+`function validate --resolve` (which `make render` runs first) reports
+`credentials: cmdb` for the step: what the module's request carries.
 
 The tagged bucket needs a
 [provider-upjet-aws](https://github.com/crossplane-contrib/provider-upjet-aws)

@@ -58,8 +58,11 @@ the grant, never at load.
    no heap, no open handles — so a guest never has to be reentrant or clean up.
 
 The whole request is forwarded (input, observed and desired state, context,
-credentials, required resources and schemas) and the whole response is
-returned to Crossplane unchanged (desired state, results, conditions,
+required resources and schemas, and the step credentials the module was
+granted - those its manifest names in `requires.env` bindings and
+`requires.credentials` and both policy layers permit; the host edits every
+other one out of the request bytes, the pull credential always) and the
+whole response is returned to Crossplane unchanged (desired state, results, conditions,
 requirements, context, output, TTL). A guest is a complete composition
 function; the host adds nothing to its response except a `meta` block when
 the guest omitted one.
@@ -93,12 +96,13 @@ By default a guest sees no filesystem and no environment. A module may be
 granted some by declaring them in its manifest (`requires`; the policy
 layers must permit - `docs/one-pager-three-layer-authz.md`,
 `docs/one-pager-sandbox.md`), and the grant reaches the guest through WASI
-alone — no new import, nothing language-specific:
+or its request alone: no new import, nothing language-specific:
 
 | granted requirement | what the guest sees |
 |---|---|
 | `requires.filesystem.privateTmp: true` | an empty, writable directory pre-opened at `/tmp` — where Go's `os.TempDir()` and Rust's `env::temp_dir()` point on WASI — created for this request and removed after it, whatever the outcome. Nothing written there survives to the next request or is visible to another. It is the only directory a guest is ever given: host directories are not mountable, a path that would leave `/tmp` (`/tmp/../etc/passwd`) never reaches the host filesystem — wasmtime resolves paths inside the pre-open and answers `EPERM` — and language runtimes that clean absolute paths against the pre-opens fail even earlier (Go: `EBADF`, no pre-open matches `/etc/passwd`) |
-| `requires.env` credential bindings | exactly the bound variables, resolved from the pipeline step's credentials, through `environ_sizes_get`/`environ_get` (`os.Getenv`, `std::env::var`); the host's environment is never inherited |
+| `requires.env` credential bindings | exactly the bound variables, resolved from the pipeline step's credentials, through `environ_sizes_get`/`environ_get` (`os.Getenv`, `std::env::var`); the host's environment is never inherited. The bound credential is also in the request, whole |
+| `requires.credentials: [name, …]` | those step credentials in the request's `credentials` map, whole; a guest is never sent a step credential its manifest does not name |
 
 The private `/tmp` is pre-opened as descriptor 3, but that number is not
 part of the contract: a guest that talks to WASI directly should discover

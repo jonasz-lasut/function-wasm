@@ -72,8 +72,8 @@ world function {
 ```
 
 - **`run`** - one request. The host passes the caller's raw
-  `RunFunctionRequest` bytes (the withheld pull credential edited out, as
-  for v1) and returns the guest's `RunFunctionResponse` bytes verbatim.
+  `RunFunctionRequest` bytes (the step credentials the module was not
+  granted, the pull credential always among them, edited out, as for v1) and returns the guest's `RunFunctionResponse` bytes verbatim.
   `run` is `async`: a guest may await its imports (`wasi:http` above all)
   while the host meters its compute. A **sync-lifted** implementation also
   satisfies the world - the canonical ABI accepts a sync function where an

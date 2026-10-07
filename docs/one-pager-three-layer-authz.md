@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.0 (the inline `request` for manifest-less
+* Status: Implemented, revision 1.1 (the inline `request` for manifest-less
   sources stays a separate Draft: docs/one-pager-manifest-less-sources.md)
 
 ## Summary
@@ -21,7 +21,11 @@ grant(capability) =
 
 `capability` ∈ { `pullModule` (repo of a `from`-chosen source), `spendCredential`,
 `grantEgress` (host/method/path), `usePrivateTmp`, `setEnv`/read a credential-bound
-env var }.
+env var, read a step credential whole from the request (`spendCredential`) }.
+
+Revision 1.1 makes `spendCredential` decide what the module *sees*, not only
+what reaches its environment: the request it receives carries only the step
+credentials it was granted (see "Step credentials" below).
 
 This unifies, and lets us delete, a pile of bespoke Input fields:
 
@@ -62,10 +66,13 @@ separately (docs/one-pager-manifest-less-sources.md).
 a *narrower* for sandbox and a *required fence* for XR-chosen sources - exactly
 what `sandbox` and the allowlists do today:
 
-- Sandbox capabilities (`grantEgress`, `usePrivateTmp`, `setEnv`): **scoped
-  default-permit.** If the composition policy is absent, or contains no rule
-  scoping that action, the layer permits (no narrowing - operator ∧ manifest
-  govern). If it contains any rule for that action, that action becomes
+- Sandbox capabilities (`grantEgress`, `usePrivateTmp`, `setEnv`, and
+  `spendCredential` for a credential the module reads from its request - an
+  env binding's or a `requires.credentials` entry, judged with no
+  `context.repository`): **scoped default-permit.** If the composition
+  policy is absent, or contains no rule scoping that action, the layer
+  permits (no narrowing - operator ∧ manifest govern). If it contains any
+  rule for that action, that action becomes
   default-deny *within the composition layer* (the author has opted into
   narrowing it). Detected the way `HasSignatureRules`/`HasPrivateTmpRules` scan
   for an action today.
@@ -78,7 +85,7 @@ what `sandbox` and the allowlists do today:
 
 Worked table (S = sandbox cap, F = from-source fence):
 
-| composition policy state | S: grantEgress/usePrivateTmp/setEnv | F: pullModule/spendCredential (from) |
+| composition policy state | S: grantEgress/usePrivateTmp/setEnv/spendCredential (request) | F: pullModule/spendCredential (from) |
 |---|---|---|
 | absent | permit (operator ∧ manifest decide) | deny (from-source refused) |
 | present, no rule for the action | permit | deny |
@@ -108,6 +115,30 @@ So `env.valueFrom.credential` and `envFrom.credential` both disappear from the
 Input; their one useful behaviour (inject a named credential key as a named env
 var) survives as a manifest binding, gated by Cedar. That closes the duplication
 question and the "a module cannot request env for itself" gap in one move.
+
+## Step credentials (revision 1.1)
+
+A pipeline step's credentials arrive in every `RunFunctionRequest`. Before
+revision 1.1 the runtime forwarded all of them but the pull credential, as
+Crossplane hands them to a native function (and as the Go runtime did), so
+`spendCredential` gated an env binding - a convenience - while the module
+could read the same key from its request. Now the request is edited, at the
+wire level, to carry only the credentials the module was granted:
+
+- the credential each admitted `requires.env` binding reads, whole;
+- each credential the manifest requires whole, `requires.credentials:
+  [cmdb]` - a shared Secret the module picks a key from - admitted by
+  `spendCredential` under both layers, exactly as an env binding's
+  credential is;
+- nothing else: a module with no manifest, or one requiring no credential,
+  sees none, and the pull credential is never forwarded (a manifest naming
+  it is refused).
+
+A required credential either layer does not permit is a fatal result
+before the run (`… requires credential "cmdb" (requires.credentials[0]),
+which the operator policy (--sandbox-policy-file) does not permit`); so is
+one the step does not carry, as for an env binding. `function validate
+--resolve` lists the credentials an admitted step's module receives.
 
 ## Cedar schema (unchanged, reused for both layers)
 

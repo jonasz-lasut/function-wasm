@@ -5,6 +5,7 @@
 //! with a message naming it - never silently ignored, so nothing runs wider
 //! than the Go runtime would allow.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,9 +45,9 @@ pub fn admit(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<A
     Ok(admitted)
 }
 
-/// What one run gets of the sandbox: the module's requests, each permitted
-/// by the composition and operator layers. The default is the default
-/// sandbox: nothing.
+/// What one run gets of the sandbox and of its request's step credentials:
+/// the module's requests, each permitted by the composition and operator
+/// layers. The default is the default sandbox and no step credential.
 #[derive(Default)]
 pub struct Capabilities {
     pub private_tmp: bool,
@@ -57,6 +58,9 @@ pub struct Capabilities {
     pub grant: Option<crate::egress::Grant>,
     /// The module's env bindings the layers admitted, for materialize.
     pub env: Vec<EnvBinding>,
+    /// The step credentials the module reads whole from its request
+    /// (requires.credentials) that the layers admitted.
+    pub credentials: Vec<String>,
 }
 
 impl Capabilities {
@@ -66,7 +70,20 @@ impl Capabilities {
             private_tmp: self.private_tmp,
             http: self.rules.clone(),
             env: self.env.clone(),
+            credentials: self.credentials.clone(),
         }
+    }
+
+    /// The step credentials the run's request carries to the guest: the one
+    /// each admitted env binding reads and each one the module requires
+    /// whole. The request's every other credential is withheld - the pull
+    /// credential always, which neither may name.
+    pub fn forwarded_credentials(&self) -> BTreeSet<String> {
+        self.env
+            .iter()
+            .map(|b| b.from_credential.name.clone())
+            .chain(self.credentials.iter().cloned())
+            .collect()
     }
 }
 
@@ -116,6 +133,10 @@ pub fn admit_requires(
     if !r.env.is_empty() {
         admit_env(&r.env, policy, comp, principal)?;
         out.env = r.env.clone();
+    }
+    if !r.credentials.is_empty() {
+        admit_credentials(&r.credentials, policy, comp, principal)?;
+        out.credentials = r.credentials.clone();
     }
     Ok(out)
 }
@@ -229,6 +250,43 @@ fn admit_env(
             return Err(format!(
                 "requires env {} from credential {:?}, which the operator policy (--sandbox-policy-file) does not permit (spendCredential)",
                 b.name, b.from_credential.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Runs both policy layers over the step credentials the module reads whole
+/// from its request: spendCredential once per credential, the composition
+/// layer first and whole, as for egress. A credential read from the request
+/// is spent with no repository in play, as an env binding's is, so the
+/// composition layer sees no context.repository.
+fn admit_credentials(
+    names: &[String],
+    policy: Option<&OperatorPolicy>,
+    comp: Option<&CompositionPolicy>,
+    principal: &Principal,
+) -> Result<(), String> {
+    if scopes(comp, ACTION_SPEND_CREDENTIAL) {
+        let comp = comp.expect("scoped");
+        for (i, name) in names.iter().enumerate() {
+            if !comp.permits_spend_credential(principal, name, "") {
+                return Err(format!(
+                    "requires credential {name:?} (requires.credentials[{i}]), which the compositionPolicy does not permit"
+                ));
+            }
+        }
+    }
+    let Some(policy) = policy else {
+        return Err(format!(
+            "requires credential {:?} (requires.credentials[0]), but the runtime has no --sandbox-policy-file, which is required to grant step credentials (spendCredential)",
+            names[0]
+        ));
+    };
+    for (i, name) in names.iter().enumerate() {
+        if !policy.permits_spend_credential(principal, name) {
+            return Err(format!(
+                "requires credential {name:?} (requires.credentials[{i}]), which the operator policy (--sandbox-policy-file) does not permit"
             ));
         }
     }
@@ -502,6 +560,111 @@ mod tests {
         for (name, input, want) in cases {
             let err = admit(input, &ceilings()).expect_err(name);
             assert_eq!(&err, want, "{name}");
+        }
+    }
+
+    #[test]
+    fn required_credentials_are_decided_by_both_layers() {
+        use crate::authz::compile_composition_policy;
+
+        let requires = Requires {
+            env: vec![EnvBinding {
+                name: "API_TOKEN".to_string(),
+                from_credential: crate::sandboxenv::CredentialKey {
+                    name: "apikeys".to_string(),
+                    key: "token".to_string(),
+                },
+            }],
+            credentials: vec!["cmdb".to_string(), "db".to_string()],
+            ..Default::default()
+        };
+        let operator = |doc: &str| OperatorPolicy::new("test.cedar", doc).expect("policy");
+        let comp = |doc: &str| {
+            compile_composition_policy(doc)
+                .expect("compile")
+                .expect("present")
+        };
+        let permissive = operator(
+            r#"permit (principal, action == Action::"setEnv", resource);
+               permit (principal, action == Action::"spendCredential", resource);"#,
+        );
+        let principal = Principal::default();
+
+        // Both layers permit: the env binding's credential and the required
+        // ones are forwarded, nothing else.
+        let caps = admit_requires(Some(&requires), None, Some(&permissive), None, &principal)
+            .expect("admitted");
+        assert_eq!(caps.credentials, requires.credentials);
+        assert_eq!(
+            caps.forwarded_credentials().into_iter().collect::<Vec<_>>(),
+            ["apikeys", "cmdb", "db"]
+        );
+        // No manifest, or one requiring nothing: no credential at all.
+        let none =
+            admit_requires(None, None, Some(&permissive), None, &principal).expect("admitted");
+        assert!(none.forwarded_credentials().is_empty());
+
+        let only_creds = Requires {
+            credentials: requires.credentials.clone(),
+            ..Default::default()
+        };
+        let cases: &[(&str, Option<OperatorPolicy>, Option<&str>, &str)] = &[
+            (
+                "NoPolicyFile",
+                None,
+                None,
+                r#"requires credential "cmdb" (requires.credentials[0]), but the runtime has no --sandbox-policy-file, which is required to grant step credentials (spendCredential)"#,
+            ),
+            (
+                "OperatorDenies",
+                Some(operator(
+                    r#"permit (principal, action == Action::"spendCredential", resource == Credential::"cmdb");"#,
+                )),
+                None,
+                r#"requires credential "db" (requires.credentials[1]), which the operator policy (--sandbox-policy-file) does not permit"#,
+            ),
+            (
+                // The composition layer is read first and whole, so its
+                // author sees their own refusal even where the operator
+                // would deny too.
+                "CompositionDenies",
+                None,
+                Some(
+                    r#"permit (principal, action == Action::"spendCredential", resource == Credential::"cmdb");"#,
+                ),
+                r#"requires credential "db" (requires.credentials[1]), which the compositionPolicy does not permit"#,
+            ),
+        ];
+        for (name, policy, composition, want) in cases {
+            let composition = composition.map(comp);
+            let err = admit_requires(
+                Some(&only_creds),
+                None,
+                policy.as_ref(),
+                composition.as_deref(),
+                &principal,
+            )
+            .err()
+            .unwrap_or_else(|| panic!("{name}: admitted"));
+            assert_eq!(&err, want, "{name}");
+        }
+
+        // A composition layer that scopes no spendCredential rule does not
+        // narrow; one that permits the credential admits it.
+        for doc in [
+            r#"permit (principal, action == Action::"grantEgress", resource);"#,
+            r#"permit (principal, action == Action::"spendCredential", resource)
+               when { resource == Credential::"cmdb" || resource == Credential::"db" };"#,
+        ] {
+            let composition = comp(doc);
+            admit_requires(
+                Some(&only_creds),
+                None,
+                Some(&permissive),
+                Some(&composition),
+                &principal,
+            )
+            .unwrap_or_else(|e| panic!("{doc}: {e}"));
         }
     }
 

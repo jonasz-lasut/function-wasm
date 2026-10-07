@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.5
+* Status: Implemented, revision 1.6
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. Written after the 2026-08-16 review,
@@ -22,8 +22,12 @@ manifest's `requires`, and every capability is the AND of manifest ∧
 composition layer ∧ operator layer. Revision 1.5 records the signature
 format: the runtime verifies cosign 3's key-based Sigstore bundles, found
 among the OCI 1.1 referrers of the module's manifest, and no longer reads
-cosign 2's legacy `sha256-<hex>.sig` signatures. Everything below is
-implemented.
+cosign 2's legacy `sha256-<hex>.sig` signatures. Revision 1.6 makes
+`spendCredential` a confidentiality boundary: a module's request carries
+only the step credentials its manifest names (`requires.env` bindings and
+`requires.credentials`) and both Cedar layers permit, every other one
+edited out at the wire level - the Go runtime forwarded every step
+credential but the pull credential. Everything below is implemented.
 
 
 ## Parties
@@ -45,9 +49,11 @@ implemented.
   spend what it may not: `compositionPolicy` and `limits` are read from
   the Input only.
 - A **module author** publishes signed or unsigned artifacts, declaring in
-  the manifest what the module cannot run without (`requires`); their code
-  runs in the sandbox with whatever the request carries, and a manifest
-  can only make a run fail earlier, never widen it.
+  the manifest what the module cannot run without (`requires`), the step
+  credentials it reads among them; their code runs in the sandbox with
+  whatever the request carries less the step credentials it was not
+  granted, and a manifest can only make a run fail earlier, never widen
+  it.
 
 ## What pins the code
 
@@ -150,17 +156,34 @@ is trusted with it. `internal/module/policy.go` is the one place the rule
 lives.
 
 The credential that pulled the module is the host's: it is removed from the
-request before the guest sees it. Every other step credential is forwarded,
-as it would be to a native function — the Composition author declared them
-for the step. Without an egress grant the guest cannot phone home with
-them (no network); with one, it can reach only the hosts its manifest
-listed, within both Cedar layers — the grant is the policy layers' alone,
-so nothing an XR author writes widens where a credential may go.
+request before the guest sees it, and a manifest that binds it to an env
+variable or requires it whole is refused. Of the step's other credentials
+the guest receives only those it was granted: each its manifest names - a
+`requires.env` binding's credential, or one it reads whole
+(`requires.credentials`) - and both Cedar layers permit (`spendCredential`,
+the composition layer's scoped default-permit, with no
+`context.repository`, and the operator's default-deny). The runtime edits
+every other one out of the forwarded request at the wire level
+(`protowire.rs`: only those map entries change, so fields newer than the
+vendored proto still reach the guest); a module with no manifest, or one
+requiring no credential, sees none. A credential the manifest requires that
+the step does not carry is a fatal result before the run, as an env
+binding's is. This is a deliberate divergence from the Go runtime and from
+a native function, which receive every step credential the Composition
+declared: declaring a credential for the step no longer hands it to any
+module that runs there, so `spendCredential` keeps a secret from a module,
+not only out of its environment. A credential the guest was granted can
+leave only where egress is granted: without a grant it cannot phone home
+(no network); with one, it can reach only the hosts its manifest listed,
+within both Cedar layers - the grant is the policy layers' alone, so
+nothing an XR author writes widens where a credential may go.
 
 ## What the guest sees and can do
 
-The whole `RunFunctionRequest` less the pull credential: observed and
-desired state, context, extra resources, `config`. It runs in a fresh
+The whole `RunFunctionRequest` less every step credential it was not
+granted (the pull credential always): observed and desired state, context,
+extra resources, `config`, and the credentials its manifest names that both
+Cedar layers permit. It runs in a fresh
 wasmtime store with WASI preview 1 and no sockets, two host imports
 (`wasmfn.log`, and `wasmfn.http`, which performs a request only within an
 egress grant its manifest requires and both Cedar layers permit
@@ -209,7 +232,7 @@ own security fixes are judged alone.
 | XR author aims a credential at their host | refused unless a `compositionPolicy` `spendCredential` permit names the credential and a `pullModule` permit admits the host (above) |
 | XR author widens the policy, limits or sandbox through the XR | impossible: `compositionPolicy` and `limits` are top-level Input fields, only `module.from` is read from the XR, and the sandbox is the manifest's ask under both Cedar layers |
 | XR author picks unsigned code | `--cosign-key` refuses it |
-| module exfiltrates a step credential | no network by default; the pull credential is withheld. Where both Cedar layers permit egress (`grantEgress`) a module reaches only the hosts, methods and paths its own manifest's `requires.egress.http` rules declare, over a default block list covering loopback, link-local, private and cluster ranges (`dialAddress` adds more) - every resolved address is judged, the checked address is dialled, and every request leaves an audit line with the module digest; `--cosign-key` is strongly recommended wherever egress is granted |
+| module reads or exfiltrates a step credential | a module sees only the step credentials its manifest names and both Cedar layers permit (`spendCredential`); every other one, the pull credential always, is edited out of its request before it runs. No network by default. Where both Cedar layers permit egress (`grantEgress`) a module reaches only the hosts, methods and paths its own manifest's `requires.egress.http` rules declare, over a default block list covering loopback, link-local, private and cluster ranges (`dialAddress` adds more) - every resolved address is judged, the checked address is dialled, and every request leaves an audit line with the module digest; `--cosign-key` is strongly recommended wherever egress is granted |
 | module attacks the host | wasmtime sandbox; guest-controlled offsets are bounds-checked and sliced without overflow; host panics are recovered |
 | module reads or writes host files | never: host directories are not mountable into a module (no flag offers it); the only directory a module can be granted is its private `/tmp` — a fresh directory per request, removed afterwards, bounded by the filesystem behind `$TMPDIR`, with `..` escapes refused by wasmtime inside the pre-open (`EPERM`) |
 | module reads the runtime's environment | never: WASI environ is empty, or exactly the manifest's `requires.env` bindings resolved from step credentials the request already carried |
@@ -224,8 +247,9 @@ the host, environment variables — that widen what a module can reach (host
 mounts were built and then removed: a module's inputs come through the
 request). All of them are implemented under the rules here: the ask is the
 module manifest's, the grant the policy layers' (never read from the XR),
-egress keeps step credentials from leaving through any host the manifest
-did not list and a layer refuses (the rules name hosts, methods and paths;
+a module sees only the step credentials it was granted, and egress keeps
+those from leaving through any host the manifest did not list and a layer
+refuses (the rules name hosts, methods and paths;
 the operator's policy caps the hosts and blocks internal ranges), and
 `--cosign-key` is strongly recommended wherever egress is granted.
 

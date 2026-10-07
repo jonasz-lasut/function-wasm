@@ -1,7 +1,9 @@
-//! Environment bindings - the Rust port of `internal/sandbox`'s binding.go
-//! and materialize.go: the shape a manifest's requires.env carries, its
-//! validation, and the resolution of admitted bindings against the request's
-//! step credentials. Refusal strings match the Go runtime.
+//! Environment bindings and step credentials - the Rust port of
+//! `internal/sandbox`'s binding.go and materialize.go: the shape a manifest's
+//! requires.env carries, its validation, and the resolution of admitted
+//! bindings against the request's step credentials; and the step credentials
+//! a manifest requires whole (requires.credentials), held against the same
+//! request. Refusal strings match the Go runtime where it had the check.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -55,6 +57,26 @@ pub fn validate_bindings(field: &str, bindings: &[EnvBinding]) -> Result<(), Str
     Ok(())
 }
 
+/// Checks the shape of the step credentials a module reads whole from its
+/// request - a manifest's requires.credentials - naming a wrong one as
+/// field[i]: a credential name, required at most once.
+pub fn validate_credentials(field: &str, names: &[String]) -> Result<(), String> {
+    let mut seen: HashMap<&str, String> = HashMap::new();
+    for (i, name) in names.iter().enumerate() {
+        let entry = format!("{field}[{i}]");
+        if name.is_empty() {
+            return Err(format!("{entry} must not be empty"));
+        }
+        if let Some(prev) = seen.get(name.as_str()) {
+            return Err(format!(
+                "{entry}: credential {name:?} is already required by {prev}"
+            ));
+        }
+        seen.insert(name, entry);
+    }
+    Ok(())
+}
+
 /// Whether s is an environment variable identifier.
 pub fn valid_env_key(s: &str) -> bool {
     let mut chars = s.chars();
@@ -98,6 +120,60 @@ pub fn materialize(
     Ok(env)
 }
 
+/// Holds the step credentials a module was admitted to read whole
+/// (requires.credentials) against the request: none may be the pull
+/// credential, and the request must carry every one - the invariants
+/// materialize keeps for an env binding's credential, so a module that
+/// cannot run as declared fails before it runs, naming the credential.
+pub fn check_credentials(required: &[String], src: &Sources<'_>) -> Result<(), String> {
+    refuse_pull_credential(&[], required, src.withheld)?;
+    for (i, name) in required.iter().enumerate() {
+        if !src.credentials.contains_key(name) {
+            return Err(format!(
+                "requires.credentials[{i}]: the request carries no credential {name:?}; declare it on the pipeline step"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Refuses an admitted env binding or required credential that names the
+/// pull credential (withheld; empty when the module is pulled without one):
+/// the secret that fetched a module never reaches it, in its environ or in
+/// its request. The pull credential is named by the Input, so function
+/// validate refuses this offline, in the runtime's words.
+pub fn refuse_pull_credential(
+    bindings: &[EnvBinding],
+    required: &[String],
+    withheld: &str,
+) -> Result<(), String> {
+    if withheld.is_empty() {
+        return Ok(());
+    }
+    for (i, b) in bindings.iter().enumerate() {
+        if b.from_credential.name == withheld {
+            return Err(pull_source_refusal(
+                &format!("requires.env[{i}] ({})", b.name),
+                withheld,
+            ));
+        }
+    }
+    for (i, name) in required.iter().enumerate() {
+        if name == withheld {
+            return Err(format!(
+                "requires.credentials[{i}]: credential {name:?} is the pull credential and is never forwarded to the module"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn pull_source_refusal(field: &str, cred_name: &str) -> String {
+    format!(
+        "{field}: credential {cred_name:?} is the pull credential and cannot be used as a source"
+    )
+}
+
 fn resolve_credential(
     field: &str,
     cred_name: &str,
@@ -105,9 +181,7 @@ fn resolve_credential(
     src: &Sources<'_>,
 ) -> Result<String, String> {
     if cred_name == src.withheld {
-        return Err(format!(
-            "{field}: credential {cred_name:?} is the pull credential and cannot be used as a source"
-        ));
+        return Err(pull_source_refusal(field, cred_name));
     }
     let Some(cred) = src.credentials.get(cred_name) else {
         return Err(format!(
@@ -193,6 +267,63 @@ mod tests {
                 want
             );
         }
+    }
+
+    #[test]
+    fn checks_required_credentials_against_the_request() {
+        let creds = credentials("cmdb", "payments", b"token");
+        let src = |withheld| Sources {
+            credentials: &creds,
+            withheld,
+        };
+        assert!(check_credentials(&["cmdb".to_string()], &src("")).is_ok());
+        assert!(check_credentials(&[], &src("cmdb")).is_ok());
+        assert_eq!(
+            check_credentials(&["cmdb".to_string(), "other".to_string()], &src(""))
+                .expect_err("refuse"),
+            r#"requires.credentials[1]: the request carries no credential "other"; declare it on the pipeline step"#
+        );
+        assert_eq!(
+            check_credentials(&["cmdb".to_string()], &src("cmdb")).expect_err("refuse"),
+            r#"requires.credentials[0]: credential "cmdb" is the pull credential and is never forwarded to the module"#
+        );
+    }
+
+    #[test]
+    fn refuses_the_pull_credential_offline() {
+        let bindings = [binding("TOKEN", "registry", "password")];
+        assert!(refuse_pull_credential(&bindings, &["registry".to_string()], "").is_ok());
+        assert!(refuse_pull_credential(&bindings, &["cmdb".to_string()], "other").is_ok());
+        // The env binding's refusal is materialize's, word for word.
+        assert_eq!(
+            refuse_pull_credential(&bindings, &[], "registry").expect_err("refuse"),
+            r#"requires.env[0] (TOKEN): credential "registry" is the pull credential and cannot be used as a source"#
+        );
+        assert_eq!(
+            refuse_pull_credential(
+                &[],
+                &["cmdb".to_string(), "registry".to_string()],
+                "registry"
+            )
+            .expect_err("refuse"),
+            r#"requires.credentials[1]: credential "registry" is the pull credential and is never forwarded to the module"#
+        );
+    }
+
+    #[test]
+    fn validates_credential_shapes() {
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(validate_credentials("requires.credentials", &names(&["cmdb", "db"])).is_ok());
+        assert_eq!(
+            validate_credentials("requires.credentials", &names(&["cmdb", ""]))
+                .expect_err("refuse"),
+            "requires.credentials[1] must not be empty"
+        );
+        assert_eq!(
+            validate_credentials("requires.credentials", &names(&["cmdb", "db", "cmdb"]))
+                .expect_err("refuse"),
+            r#"requires.credentials[2]: credential "cmdb" is already required by requires.credentials[0]"#
+        );
     }
 
     #[test]
