@@ -36,11 +36,15 @@ hands the response back. Three parties, in the order they decide:
           resource in HostPattern::"googleapis.com" &&
           ["GET", "HEAD"].contains(context.method) };
 
-   // Block an internal range, then open one service inside it.
-   forbid (principal, action == Action::"dialAddress", resource)
-   when { context.ip.isInRange(ip("10.0.0.0/8")) };
+   // Open one in-cluster service range: the default block list already
+   // refuses 10.0.0.0/8, and a permit punches a hole in it.
    permit (principal, action == Action::"dialAddress", resource)
    when { context.ip.isInRange(ip("10.96.0.0/12")) };
+   // Block a public range the default list does not cover. A forbid wins
+   // over any permit for the same address, so never pair it with a hole
+   // inside it.
+   forbid (principal, action == Action::"dialAddress", resource)
+   when { context.ip.isInRange(ip("203.0.113.0/24")) };
    ```
 
    Each `dialAddress` condition is one ip test - `context.ip.isInRange(ip("CIDR"))`,
