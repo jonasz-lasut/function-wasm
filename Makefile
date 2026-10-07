@@ -1,6 +1,6 @@
 # Re-vendoring crossplane/crossplane's proto/fn/v1/run_function.proto (AGENTS.md
 # "Changing the scaffold"). Every tracked proto/run_function.proto - the files
-# Renovate's version-header rule reads: five templates, five goldens, six
+# Renovate's version-header rule reads: five templates, five goldens, seven
 # examples - is the upstream file byte for byte under a five-line header whose
 # first line names the release. A Renovate bump moves that version in every
 # header but can neither re-download the file nor regenerate the codecs checked
@@ -10,10 +10,11 @@
 # `make vendor-proto` takes the release from the headers (the rust template's);
 # `make vendor-proto VERSION=vX.Y.Z` vendors one Renovate has not proposed.
 #
-# `make gen-bindings` is the same loop for the wit-bindgen bindings: the c
-# and zig guests' C bindings (examples/hello-c/src/gen and
-# examples/hello-zig/src/gen: one generator's output over one world, which
-# the guestfn tests hold identical) and the go guest's Go bindings
+# `make gen-bindings` is the same loop for the wit-bindgen bindings: the c,
+# zig and odin guests' C bindings (examples/hello-c/src/gen,
+# examples/hello-zig/src/gen and examples/hello-odin/src/gen: one generator's
+# output over one world, which the guestfn tests hold identical) and the go
+# guest's Go bindings
 # (examples/pdb-addon/internal/bindings, over its own world). It runs the
 # pinned wit-bindgen in each, mirrors each result into its template (the go
 # one with the module path templated as [[ .Module ]]) and refreshes the
@@ -33,10 +34,10 @@
 # protobuf runtime older than that stamp, so
 # PROTOC_VERSION must not pass the runtime the python template's
 # requirements.txt pins (team-tags's is the same file). NANOPB_VERSION is
-# the nanopb release hello-c's build.zig.zon compiles and e2e.yml's codec
-# drift check installs. WIT_BINDGEN_VERSION is the wit-bindgen-cli release
-# that wrote hello-c's, hello-zig's and pdb-addon's checked-in bindings and
-# e2e.yml's bindings drift checks install.
+# the nanopb release hello-c's and hello-odin's build.zig.zon compile and
+# e2e.yml's codec drift checks install. WIT_BINDGEN_VERSION is the
+# wit-bindgen-cli release that wrote hello-c's, hello-zig's, hello-odin's and
+# pdb-addon's checked-in bindings and e2e.yml's bindings drift checks install.
 PROTOC_VERSION := 35.1
 NANOPB_VERSION := 0.4.9.1
 WIT_BINDGEN_VERSION := 0.62.0
@@ -82,11 +83,14 @@ vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(VERSION)
 # rust and rust-v2 have no checked-in codec (build.rs runs prost-build); the
 # zig, c, ts and python codecs are mirrored into their guestfn
 # templates, which examples_share_the_scaffold_plumbing holds identical to
-# the examples. The ts and python codecs are copied file by file: a gen/ directory
-# may hold a __pycache__ the templates must not embed.
+# the examples (hello-odin regenerates the c codec over its own copy of the
+# proto, and the same test holds it to the c template's). The ts and python
+# codecs are copied file by file: a gen/ directory may hold a __pycache__ the
+# templates must not embed.
 vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the pinned generators and mirror them into the templates
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/hello-odin gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/team-tags gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/policy-gate gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/dashboard-bundle gen-proto
@@ -109,9 +113,10 @@ vendor-proto-goldens: ## Refresh the guestfn scaffold goldens from the templates
 # is copied as it is.
 GO_MODULE := github.com/jonasz-lasut/function-wasm/examples/pdb-addon
 GO_BINDINGS := crates/guestfn/templates/go/internal/bindings
-gen-bindings: tools ## Regenerate hello-c's, hello-zig's and pdb-addon's wit-bindgen bindings with the pinned wit-bindgen, mirror them into the c, zig and go templates and refresh the goldens
+gen-bindings: tools ## Regenerate hello-c's, hello-zig's, hello-odin's and pdb-addon's wit-bindgen bindings with the pinned wit-bindgen, mirror the c, zig and go ones into their templates and refresh the goldens
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-bindings
+	$(WITH_TOOLS) $(MAKE) -C examples/hello-odin gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/pdb-addon gen-bindings
 	rm -rf crates/guestfn/templates/c/src/gen && cp -R examples/hello-c/src/gen crates/guestfn/templates/c/src/gen
 	rm -rf crates/guestfn/templates/zig/src/gen && cp -R examples/hello-zig/src/gen crates/guestfn/templates/zig/src/gen

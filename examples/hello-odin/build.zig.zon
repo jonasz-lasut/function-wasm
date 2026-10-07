@@ -1,0 +1,22 @@
+.{
+    .name = .hello_odin,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x8d5386f1d695af51,
+    .dependencies = .{
+        // The protobuf codec: three C files, heap-allocating decode/encode
+        // (PB_ENABLE_MALLOC) over the structs nanopb_generator writes from the
+        // vendored proto (src/fnv1), which src/fnv1.odin mirrors.
+        .nanopb = .{
+            .url = "https://github.com/nanopb/nanopb/archive/refs/tags/0.4.9.2.tar.gz",
+            .hash = "N-V-__8AAC4aKQDfYc_SoLQzYD5EUMZ2mN6f8qXQy--vmpFN",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "proto",
+        "wit",
+    },
+}
