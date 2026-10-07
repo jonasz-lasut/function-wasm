@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.3
+* Status: Implemented, revision 1.4
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/112
 
 ## Context
@@ -105,7 +105,12 @@ scaffold and `hello-tinygo` were retired the same day: TinyGo builds the world
 on its own `wasip2` target, but its bindings generator is unmaintained and the
 Go flavour cannot share it. The `go` scaffold and `pdb-addon` moved to ABI v2
 the same day, over wit-bindgen's Go bindings, with `guestfn build` embedding
-the world and wrapping the wasip1 module `go build` emits.
+the world and wrapping the wasip1 module `go build` emits. MoonBit joined
+as a third unpublished hello example, `hello-moonbit`
+([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)): no
+scaffold, `guestfn build` detects and builds it, the same greeting guest
+over wit-bindgen's MoonBit bindings and `protoc-gen-mbt`, proven by its
+render job.
 
 ## Testing
 
