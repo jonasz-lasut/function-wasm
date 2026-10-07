@@ -118,6 +118,16 @@ when the Input's `compositionPolicy` and the operator's Cedar
 `--sandbox-policy-file` both permit it; a step credential a module was not
 granted is edited out of the request it receives.
 
+function-wasm does not support Crossplane Operations in 1.0 (decided
+2026-10-07). The package declares only the `composition` capability
+(`package/crossplane.yaml`), so Crossplane refuses the function in an
+Operation pipeline rather than running it with a request it was not
+written for. Support would need two things defined first: what
+`module.from` and `allowEmpty` mean for a request with no composite
+resource, and how operator grants scoped to an XR principal (`namespace`,
+`xrKind`) apply when there is none. The sandbox does not care what kind of
+pipeline calls it: this is a scope line, not a limitation of the sandbox.
+
 ### Worked examples
 
 Each guest language under [`examples/`](examples) solves one of these, built,
