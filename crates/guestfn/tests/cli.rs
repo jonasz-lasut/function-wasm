@@ -153,7 +153,7 @@ fn push_refuses_a_module_the_runtime_would_refuse() {
         "{stderr}"
     );
     assert!(
-        stderr.contains("component does not implement the wasmfn:function@2.0.0-draft world"),
+        stderr.contains("component does not implement the wasmfn:function@2.0.0 world"),
         "{stderr}"
     );
 }

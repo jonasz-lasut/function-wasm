@@ -6,7 +6,7 @@
 package local:guest;
 
 world function {
-    include wasmfn:function/function@2.0.0-draft;
+    include wasmfn:function/function@2.0.0;
 
     import wasi:http/client@0.3.0;
 }

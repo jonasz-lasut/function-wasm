@@ -160,9 +160,10 @@ jobs:
   # artifact (wkg's format) at ghcr.io/jonasz-lasut/wasmfn/function:<world
   # version>, signed and attested like the image, plus a
   # wasmfn-wit-<world version>.tar.gz on this release (#106). The world
-  # version moves independently of the runtime's: a pre-release version
-  # (2.0.0-draft) is never published, and a published version is never
-  # pushed again - its tag stays immutable.
+  # version moves independently of the runtime's: a pre-release version is
+  # never published, no version is while the rust scaffold builds on a beta
+  # toolchain (the gate below, which goes with the pin), and a published
+  # version is never pushed again - its tag stays immutable.
   publish-wit:
     runs-on: ubuntu-26.04
     needs:
@@ -204,12 +205,32 @@ jobs:
               ;;
           esac
 
+      # wasmfn:function@2.0.0 is final, but a guest fetches a published world
+      # by version to build against it on stable Rust, and the rust scaffold
+      # cannot yet: wasm32-wasip3 reaches stable with Rust 1.100.0 (#129),
+      # until when the scaffold's rust-toolchain.toml pins a beta channel.
+      # The gate goes with the pin: once the file is gone (or its channel is
+      # off beta) the next release publishes the world.
+      - name: Hold the World While the Rust Scaffold Is on Beta
+        id: toolchain
+        if: steps.world.outputs.publish == 'true'
+        env:
+          RUST_TOOLCHAIN: crates/guestfn/templates/rust/rust-toolchain.toml
+          WORLD_VERSION: ${{ steps.world.outputs.version }}
+        run: |
+          if [ -f "${RUST_TOOLCHAIN}" ] && grep -Eq '^channel[[:space:]]*=[[:space:]]*"beta' "${RUST_TOOLCHAIN}"; then
+            echo "::notice::wasmfn:function@${WORLD_VERSION} is final, but the rust scaffold still builds on a beta toolchain (${RUST_TOOLCHAIN}); the world is published once the scaffold is on stable Rust"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # 200: published already, 404: not yet (also for a repository that does
       # not exist yet); anything else stops the job rather than risk pushing
       # over a published tag.
       - name: Skip a Published World
         id: registry
-        if: steps.world.outputs.publish == 'true'
+        if: steps.toolchain.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WORLD_VERSION: ${{ steps.world.outputs.version }}

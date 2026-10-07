@@ -1,7 +1,7 @@
 # function-wasm guest ABI v2
 
 ABI v2 is the guest contract of function-wasm: a guest is a WebAssembly
-**component** targeting the WIT world `wasmfn:function@2.0.0-draft`
+**component** targeting the WIT world `wasmfn:function@2.0.0`
 ([`wit/wasmfn-function.wit`](../wit/wasmfn-function.wit)). The payload is
 protobuf: `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out,
 so payload evolution stays protobuf's job; the canonical ABI owns memory
@@ -11,10 +11,41 @@ module exporting `wasmfn_run`, with JSON host imports) was deprecated in
 v0.6.0 and removed in 1.0.0 (#114, #129); the runtime refuses a core
 module at load (below).
 
-The world is a **draft**: it freezes at `wasmfn:function@2.0.0` no earlier
-than `wasm32-wasip3`'s tier-2 promotion in Rust
-(`docs/one-pager-abi-v2.md`). Until then a runtime release may require
-guests rebuilt against the current draft.
+## Versioning
+
+`wasmfn:function@2.0.0` is the contract from function-wasm 1.0.0 on; the
+runtime names the world it serves in every typecheck refusal (`component
+does not implement the wasmfn:function@2.0.0 world: …`). The world's
+version moves on its own, by what a change asks of guests:
+
+- A **2.x minor** may add imports a guest may use - a new interface or a
+  new function - and nothing else. A component imports only what it uses,
+  so the runtime serves a guest built against an earlier 2.x unchanged; a
+  guest that imports the addition needs the runtime that provides it (its
+  manifest's `minRuntime` says which).
+- `run`'s signature, the `log` import (the `log-level` cases included) and
+  anything already in the world stay as they are within 2.x; changing or
+  removing any of them is `3.0.0`, a world every guest is rebuilt against.
+- Payload evolution stays protobuf's: a new field of `RunFunctionRequest`
+  or `RunFunctionResponse` moves no world version.
+
+The world names no WASI imports; the WASI 0.2 and 0.3 interfaces a guest
+imports beside it are vendored under its `wit/deps/` from the
+wasmtime-wasi-http release the runtime builds on, and each runtime release
+states the WASI versions its wasmtime serves. A guest built against an
+older vendored set keeps running as long as the runtime's wasmtime serves
+those versions, which the release notes say. wasmtime calls its WASI 0.3
+support experimental, and function-wasm takes that on explicitly (Jonasz,
+2026-10-07, #77): while `2.0.0` is unpublished, a wasmtime release that
+moves the 0.3 interfaces (one may come with Rust 1.100) is re-vendored and
+taken on `2.0.0` in place, the guests rebuilt, because nothing fetched by
+that version exists yet to break.
+
+A new world version ships with the release that brings it, signed and
+attested (Getting the world). `2.0.0` itself is published once the rust
+scaffold builds on stable Rust - `wasm32-wasip3` reaches it with Rust
+1.100.0; until then `publish-wit` skips the world while the scaffold's
+`rust-toolchain.toml` pins a beta channel (#106, #129).
 
 ## Getting the world
 
@@ -32,15 +63,16 @@ wit-bindgen C bindings the `c` and `zig` scaffolds share take, and the one
 stock Go builds through wit-bindgen's Go bindings - which satisfies the
 world (below).
 
-From `2.0.0` on, a release that brings a new world version also publishes
-it, signed and attested:
+A release that brings a new world version publishes it, signed and
+attested:
 
 - as an OCI artifact in the CNCF Wasm OCI layout (wkg's format):
   `ghcr.io/jonasz-lasut/wasmfn/function:<version>`;
 - as `wasmfn-wit-<version>.tar.gz` on that GitHub release.
 
-A pre-release world (the current `2.0.0-draft`) is never published, and a
-published version is never pushed again. To fetch it with
+A published version is never pushed again, and `2.0.0` is not published
+yet: its publication waits for the rust scaffold's stable toolchain
+(Versioning). To fetch a published world with
 [wkg](https://github.com/bytecodealliance/wasm-pkg-tools), map the
 namespace in wkg's configuration:
 
@@ -73,7 +105,7 @@ ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 1`).
 ## The world
 
 ```wit
-package wasmfn:function@2.0.0-draft;
+package wasmfn:function@2.0.0;
 
 world function {
     enum log-level { debug, info, warn, error }
@@ -96,9 +128,9 @@ world function {
   a payload the guest encodes. The host attaches the module's identity to
   every line and renders it at the runtime's level of the same name:
   `debug` lines only under `--debug`, `info`, `warn` and `error` always.
-  The runtime typechecks the enum exactly, so a new case refuses every
-  guest built without it - a component built against the two-level draft
-  (`debug`, `info`) must be rebuilt.
+  The runtime typechecks the enum exactly, so a new case would refuse
+  every guest built without it: `log` changes only with `3.0.0`
+  (Versioning).
 - **WASI** - the world names no WASI imports; a guest brings whatever its
   toolchain emits. The host links WASI 0.3 and WASI 0.2 (components built for
   WASI 0.2 - jco, componentize-py, Rust's `wasm32-wasip2`, the wasip1
@@ -143,10 +175,3 @@ before the run: its whole footprint, the initial memory included, is
 charged as the guest's memories are claimed, and a growth the pool cannot
 serve fails inside the run (`memory.grow` returns -1) rather than before
 it.
-
-## Compatibility
-
-Payload evolution is protobuf's (and the world's types are additive-only
-while draft). A mechanics change is a new world version; the runtime names
-the world it serves in every typecheck refusal (`component does not
-implement the wasmfn:function@2.0.0-draft world: …`).

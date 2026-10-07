@@ -4,9 +4,10 @@
 /// is the ABI version (a component is ABI v2, a core module is ABI v1). The
 /// payload contract is v1's, unchanged: protobuf RunFunctionRequest bytes in,
 /// RunFunctionResponse bytes out - payload evolution stays protobuf's job.
-/// The world is a draft: it freezes at 2.0.0 no earlier than wasm32-wasip3's
-/// tier-2 promotion (docs/one-pager-abi-v2.md).
-package wasmfn:function@2.0.0-draft;
+/// The world is final: 2.0.0 is the contract from function-wasm 1.0.0 on. A
+/// 2.x minor may add imports a guest may use and nothing else; run, log and
+/// anything already here change only with 3.0.0 (docs/abi-v2.md, Versioning).
+package wasmfn:function@2.0.0;
 
 world function {
     /// The level of a guest log line, rendered at the runtime's level of the

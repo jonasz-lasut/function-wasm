@@ -581,7 +581,7 @@ fn world_typecheck_refusals() {
             .expect_err(name);
         assert!(
             err.to_string()
-                .starts_with("component does not implement the wasmfn:function@2.0.0-draft world:"),
+                .starts_with("component does not implement the wasmfn:function@2.0.0 world:"),
             "{name}: unexpected: {err}"
         );
     }
