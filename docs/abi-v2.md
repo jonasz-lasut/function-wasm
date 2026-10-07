@@ -1,7 +1,7 @@
 # function-wasm guest ABI v2
 
 ABI v2 is the guest contract of function-wasm: a guest is a WebAssembly
-**component** targeting the WIT world `wasmfn:function@2.0.0-draft`
+**component** targeting the WIT world `wasmfn:function@2.0.0`
 ([`wit/wasmfn-function.wit`](../wit/wasmfn-function.wit)). The payload is
 protobuf: `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out,
 so payload evolution stays protobuf's job; the canonical ABI owns memory
@@ -73,7 +73,7 @@ ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 1`).
 ## The world
 
 ```wit
-package wasmfn:function@2.0.0-draft;
+package wasmfn:function@2.0.0;
 
 world function {
     enum log-level { debug, info, warn, error }
@@ -149,4 +149,4 @@ it.
 Payload evolution is protobuf's (and the world's types are additive-only
 while draft). A mechanics change is a new world version; the runtime names
 the world it serves in every typecheck refusal (`component does not
-implement the wasmfn:function@2.0.0-draft world: …`).
+implement the wasmfn:function@2.0.0 world: …`).

@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// The world a guest implements, named in refusals.
-pub const ABI_V2_WORLD: &str = "wasmfn:function@2.0.0-draft";
+pub const ABI_V2_WORLD: &str = "wasmfn:function@2.0.0";
 
 /// The world's one host import beyond WASI, as the component names it.
 pub(crate) const LOG_IMPORT: &str = "log";
