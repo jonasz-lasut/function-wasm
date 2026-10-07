@@ -14,10 +14,9 @@
 .NOTPARALLEL:
 
 # Only the two generators the guests invoke bare from PATH are pinned here;
-# the rest are pinned where each guest builds them: protoc-gen-go and
-# protoc-gen-go-vtproto by examples/hello-tinygo/go.mod, zig-protobuf (and the
-# protoc it downloads) by hello-zig's build.zig.zon, as-proto-gen and
-# protoc-gen-es by the package-lock.json files.
+# the rest are pinned where each guest builds them: zig-protobuf (and the
+# protoc it downloads) by hello-zig's build.zig.zon, protoc-gen-es by
+# policy-gate's package-lock.json.
 #
 # protoc stamps its version into the Python codec, which refuses to load on a
 # protobuf runtime older than that stamp, so
@@ -64,20 +63,16 @@ vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(VERSION)
 	done
 
 # rust and rust-v2 have no checked-in codec (build.rs runs prost-build); the
-# tinygo, zig, c, ts and python codecs are mirrored into their guestfn
+# zig, c, ts and python codecs are mirrored into their guestfn
 # templates, which examples_share_the_scaffold_plumbing holds identical to
 # the examples. The ts and python codecs are copied file by file: a gen/ directory
 # may hold a __pycache__ the templates must not embed.
 vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the pinned generators and mirror them into the templates
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-tinygo generate
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/team-tags gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/policy-gate gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/dashboard-bundle gen-proto
-	for f in run_function.pb.go run_function_vtproto.pb.go; do \
-		cp "examples/hello-tinygo/internal/fnv1/$$f" "crates/guestfn/templates/tinygo/internal/fnv1/$$f.tmpl"; \
-	done
 	rm -rf crates/guestfn/templates/zig/src/fnv1 && cp -R examples/hello-zig/src/fnv1 crates/guestfn/templates/zig/src/fnv1
 	rm -rf crates/guestfn/templates/c/src/fnv1 && cp -R examples/hello-c/src/fnv1 crates/guestfn/templates/c/src/fnv1
 	for f in run_function_pb.js run_function_pb.d.ts; do \

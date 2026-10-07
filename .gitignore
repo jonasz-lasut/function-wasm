@@ -5,7 +5,6 @@
 # Native builds of the example guests (`go build` in their directories names
 # the binary after the directory); only their fn.wasm is meaningful.
 /examples/pdb-addon/pdb-addon
-/examples/hello-tinygo/hello-tinygo
 .zig-cache
 zig-out
 zig-pkg

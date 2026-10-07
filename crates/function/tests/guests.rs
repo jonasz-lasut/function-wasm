@@ -1,5 +1,5 @@
 //! The guests - the same greeting function written with function-sdk-go
-//! (Go), with TinyGo and vtprotobuf, in Zig with zig-protobuf, in C with
+//! (Go), in Zig with zig-protobuf, in C with
 //! nanopb, as an ABI v2 component in async Rust with wit-bindgen, and as
 //! components in TypeScript and Python -
 //! through the whole host: path and OCI sources, compile, per-request
@@ -156,27 +156,6 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                     "go",
                     &["build", "-buildmode=c-shared", "-o", &out_s, "."],
                     &[("GOOS", "wasip1"), ("GOARCH", "wasm")],
-                )
-        }
-        "tinygo" => {
-            if !on_path("tinygo") {
-                eprintln!("skipping: tinygo not on PATH");
-                return None;
-            }
-            command(&dir, "go", &["mod", "tidy"], &[])
-                && command(
-                    &dir,
-                    "tinygo",
-                    &[
-                        "build",
-                        "-target=wasip1",
-                        "-buildmode=c-shared",
-                        "-no-debug",
-                        "-o",
-                        &out_s,
-                        ".",
-                    ],
-                    &[],
                 )
         }
         "rust-v2" => {
@@ -603,11 +582,6 @@ fn run_guest(guest: &str) {
 #[test]
 fn go_guest() {
     run_guest("go");
-}
-
-#[test]
-fn tinygo_guest() {
-    run_guest("tinygo");
 }
 
 #[test]

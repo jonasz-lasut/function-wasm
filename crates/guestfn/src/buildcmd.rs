@@ -21,9 +21,8 @@ pub struct BuildCmd {
 
     /// Toolchain to use. auto picks rust for a Cargo.toml, zig for a
     /// build.zig (zig and c guests), ts for a package.json, python for a
-    /// requirements.txt, tinygo for a go.mod
-    /// that requires vtprotobuf, go otherwise.
-    #[arg(long, default_value = "auto", value_parser = ["auto", "go", "tinygo", "rust", "zig", "c", "ts", "python"])]
+    /// requirements.txt, go for a go.mod.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "go", "rust", "zig", "c", "ts", "python"])]
     lang: String,
 
     /// Run wasm-opt -Oz on the result (binaryen must be on PATH).
@@ -131,8 +130,7 @@ fn example_config(path: &Path) -> Result<Option<Option<serde_json::Value>>, Stri
 
 /// Tells the language of a project from its files: a Cargo.toml is Rust; a
 /// build.zig builds with zig (zig and c guests); a package.json builds with
-/// npm (the TypeScript flavour); a go.mod that requires vtprotobuf is the
-/// TinyGo flavour; any other go.mod is Go.
+/// npm (the TypeScript flavour); a go.mod is Go.
 fn detect_lang(dir: &Path) -> Result<String, String> {
     if dir.join("Cargo.toml").exists() {
         return Ok(scaffold::LANG_RUST.to_string());
@@ -146,16 +144,13 @@ fn detect_lang(dir: &Path) -> Result<String, String> {
     if dir.join("requirements.txt").exists() {
         return Ok(scaffold::LANG_PYTHON.to_string());
     }
-    let gomod = std::fs::read_to_string(dir.join("go.mod")).map_err(|_| {
-        format!(
-            "cannot tell the project's language: no Cargo.toml, build.zig, package.json, requirements.txt or go.mod in {} (use --lang)",
-            dir.display()
-        )
-    })?;
-    if gomod.contains("github.com/planetscale/vtprotobuf") {
-        return Ok(scaffold::LANG_TINYGO.to_string());
+    if dir.join("go.mod").exists() {
+        return Ok(scaffold::LANG_GO.to_string());
     }
-    Ok(scaffold::LANG_GO.to_string())
+    Err(format!(
+        "cannot tell the project's language: no Cargo.toml, build.zig, package.json, requirements.txt or go.mod in {} (use --lang)",
+        dir.display()
+    ))
 }
 
 /// Runs the language's compiler and leaves the module at out.
@@ -181,25 +176,6 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
             if !status.success() {
                 return Err(format!("go build failed: {status}"));
             }
-        }
-        scaffold::LANG_TINYGO => {
-            which(
-                "tinygo",
-                "install it from https://tinygo.org/getting-started/install/",
-            )?;
-            crate::run_in(
-                dir,
-                "tinygo",
-                &[
-                    "build",
-                    "-target=wasip1",
-                    "-buildmode=c-shared",
-                    "-no-debug",
-                    "-o",
-                    &out_s,
-                    ".",
-                ],
-            )?;
         }
         scaffold::LANG_RUST => {
             // The scaffold emits an ABI v2 component (wasm32-wasip3, the

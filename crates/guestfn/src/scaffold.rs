@@ -1,6 +1,6 @@
-//! Renders a new guest project in one of seven flavours: Go with
-//! function-sdk-go (its ABI glue vendored in internal/wasmfn), TinyGo over
-//! generated protobuf messages, Rust with prost, Zig with zig-protobuf, C
+//! Renders a new guest project in one of six flavours: Go with
+//! function-sdk-go (its ABI glue vendored in internal/wasmfn), Rust with
+//! prost, Zig with zig-protobuf, C
 //! with nanopb (built by zig cc), TypeScript with protobuf-es (componentized
 //! by jco), or Python with protobuf (componentized by componentize-py). Each
 //! template set is a minimal greeting project; the example guests of this
@@ -15,7 +15,6 @@ use include_dir::{Dir, include_dir};
 static TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
 pub const LANG_GO: &str = "go";
-pub const LANG_TINYGO: &str = "tinygo";
 pub const LANG_RUST: &str = "rust";
 pub const LANG_ZIG: &str = "zig";
 pub const LANG_C: &str = "c";
@@ -23,15 +22,7 @@ pub const LANG_TS: &str = "ts";
 pub const LANG_PYTHON: &str = "python";
 
 /// The scaffoldable languages, default first.
-pub const LANGS: [&str; 7] = [
-    LANG_GO,
-    LANG_TINYGO,
-    LANG_RUST,
-    LANG_ZIG,
-    LANG_C,
-    LANG_TS,
-    LANG_PYTHON,
-];
+pub const LANGS: [&str; 6] = [LANG_GO, LANG_RUST, LANG_ZIG, LANG_C, LANG_TS, LANG_PYTHON];
 
 /// Options parameterise a scaffold.
 #[derive(Debug, Default, Clone)]
@@ -39,8 +30,8 @@ pub struct Options {
     /// The template set; empty means go.
     pub lang: String,
     /// The Go module path of the guest, e.g. github.com/me/my-fn. Required
-    /// for Go and TinyGo; Rust, Zig, C, TypeScript and Python projects have
-    /// no module path.
+    /// for Go; Rust, Zig, C, TypeScript and Python projects have no module
+    /// path.
     pub module: String,
     /// The guest's short name: the crate name for Rust, the package name
     /// for TypeScript, and what docs and the example Composition call the
@@ -70,7 +61,7 @@ pub fn render(mut o: Options) -> Result<BTreeMap<String, Vec<u8>>, String> {
             LANGS.join(", ")
         ));
     }
-    if o.module.is_empty() && (o.lang == LANG_GO || o.lang == LANG_TINYGO) {
+    if o.module.is_empty() && o.lang == LANG_GO {
         return Err("a module path is required".to_string());
     }
     if o.name.is_empty() {
@@ -271,32 +262,13 @@ mod tests {
     /// README, the example manifests) is the example's own.
     #[test]
     fn examples_share_the_scaffold_plumbing() {
-        let examples: [(&str, &[&str], Options); 7] = [
+        let examples: [(&str, &[&str], Options); 6] = [
             (
                 "pdb-addon",
                 &["internal/wasmfn/"],
                 Options {
                     lang: LANG_GO.into(),
                     module: "github.com/jonasz-lasut/function-wasm/examples/pdb-addon".into(),
-                    go_version: "1.26.6".into(),
-                    ..Default::default()
-                },
-            ),
-            (
-                "hello-tinygo",
-                &[
-                    "internal/fnv1/",
-                    "proto/",
-                    "abi_wasip1.go",
-                    "generate.go",
-                    "http.go",
-                    "http_wasip1.go",
-                    "log.go",
-                    "log_other.go",
-                ],
-                Options {
-                    lang: LANG_TINYGO.into(),
-                    module: "github.com/jonasz-lasut/function-wasm/examples/hello-tinygo".into(),
                     go_version: "1.26.6".into(),
                     ..Default::default()
                 },
@@ -410,7 +382,7 @@ mod tests {
         .expect_err("unknown language");
         assert_eq!(
             err,
-            "unsupported language \"cobol\"; one of go, tinygo, rust, zig, c, ts, python"
+            "unsupported language \"cobol\"; one of go, rust, zig, c, ts, python"
         );
 
         // The C flavour builds with zig, so build.zig.zon gets the project's
