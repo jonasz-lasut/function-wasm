@@ -159,6 +159,26 @@ gh release create "$NEW_VERSION" --target "$NEW_BRANCH" \
 (`--target` only matters if the tag doesn't already exist; the `Tag` workflow
 already created it, so this is just documentation-by-flag.)
 
+The notes state what the release serves, as `docs/abi-v2.md`'s versioning
+policy promises: the world (`wit/wasmfn-function.wit`'s package line),
+wasmtime (its entry in `Cargo.lock`) and the WASI interface versions the
+scaffolds vendor under `wit/deps/`, which are what a guest imports beside
+the world. Read them from the tree being released:
+
+```bash
+sed -nE 's/^package (wasmfn:function@[^;]+);/\1/p' wit/wasmfn-function.wit
+rg -n '^name = "wasmtime"$' -A1 Cargo.lock | rg -o 'version = ".*"'
+rg -I -o --no-heading '^package wasi:(cli|clocks|http|io)@[0-9][^;]*' \
+  crates/guestfn/templates/*/wit/deps | sed 's/package //' | sort -u
+```
+
+One sentence in the notes carries them, for example: `Serves
+wasmfn:function@2.0.0 on wasmtime 49.0.2: WASI 0.2.12 (cli, clocks, http,
+io) for the sync scaffolds and WASI 0.3.0 (clocks, http) for the rust
+scaffold.` A guest keeps running as long as the runtime's wasmtime serves
+the versions it was built against, so a release that moves any of them
+says which, and what a guest does about it (re-vendor `wit/deps/`, rebuild).
+
 ### 8. Publish the package — `Publish Function Package`, from the new tag
 
 ```bash
@@ -251,6 +271,8 @@ superseded release branches, if any, were deleted.
   `main` since the release branch was cut.
 - Triggering step 8 or 9 before the prior workflow run has actually finished
   — the tag or image it depends on won't exist yet.
+- Release notes that do not state the served world, wasmtime and WASI
+  versions: the versioning policy in `docs/abi-v2.md` promises them.
 - Using this skill for a patch bump (`vX.Y.Z+1`) — that path belongs to
   `remediate-cves`, which reuses an existing branch instead of cutting one.
 - Leaving a superseded `release-0.Y` branch behind after the new line
