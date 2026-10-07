@@ -10,12 +10,14 @@
 # `make vendor-proto` takes the release from the headers (the rust template's);
 # `make vendor-proto VERSION=vX.Y.Z` vendors one Renovate has not proposed.
 #
-# `make gen-bindings` is the same loop for the c guest's wit-bindgen C
-# bindings (examples/hello-c/src/gen, generated from its wit/): it runs the
-# pinned wit-bindgen, mirrors the result into the c template and refreshes
-# the goldens - after a change to the guest's world, a re-vendoring of the
-# WASI WIT, or a wit-bindgen bump (the generated files' header names the
-# version; e2e.yml's drift check installs the same one).
+# `make gen-bindings` is the same loop for the c and zig guests' wit-bindgen
+# C bindings (examples/hello-c/src/gen and examples/hello-zig/src/gen: one
+# generator's output over one world, which the guestfn tests hold
+# identical): it runs the pinned wit-bindgen in both, mirrors each result
+# into its template and refreshes the goldens - after a change to the world,
+# a re-vendoring of the WASI WIT, or a wit-bindgen bump (the generated
+# files' header names the version; e2e.yml's drift checks install the same
+# one).
 .PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens gen-bindings tools tools-clean
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:
@@ -31,8 +33,8 @@
 # requirements.txt pins (team-tags's is the same file). NANOPB_VERSION is
 # the nanopb release hello-c's build.zig.zon compiles and e2e.yml's codec
 # drift check installs. WIT_BINDGEN_VERSION is the wit-bindgen-cli release
-# that wrote hello-c's checked-in bindings and e2e.yml's bindings drift
-# check installs.
+# that wrote hello-c's and hello-zig's checked-in bindings and e2e.yml's
+# bindings drift checks install.
 PROTOC_VERSION := 35.1
 NANOPB_VERSION := 0.4.9.1
 WIT_BINDGEN_VERSION := 0.62.0
@@ -97,10 +99,12 @@ vendor-proto-goldens: ## Refresh the guestfn scaffold goldens from the templates
 	UPDATE_GOLDENS=1 cargo test -p guestfn
 
 # The bindings are mirrored whole: wit-bindgen writes exactly the three files
-# the template carries (function.c, function.h, function_component_type.o).
-gen-bindings: tools ## Regenerate hello-c's wit-bindgen C bindings with the pinned wit-bindgen, mirror them into the c template and refresh the goldens
+# the templates carry (function.c, function.h, function_component_type.o).
+gen-bindings: tools ## Regenerate hello-c's and hello-zig's wit-bindgen C bindings with the pinned wit-bindgen, mirror them into the c and zig templates and refresh the goldens
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-bindings
+	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-bindings
 	rm -rf crates/guestfn/templates/c/src/gen && cp -R examples/hello-c/src/gen crates/guestfn/templates/c/src/gen
+	rm -rf crates/guestfn/templates/zig/src/gen && cp -R examples/hello-zig/src/gen crates/guestfn/templates/zig/src/gen
 	$(MAKE) vendor-proto-goldens
 
 tools: $(PROTOC) $(NANOPB_GENERATOR) $(WIT_BINDGEN) ## Install the pinned protoc, nanopb_generator and wit-bindgen under .cache/tools

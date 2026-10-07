@@ -1,8 +1,8 @@
 //! The guests - the same greeting function written with function-sdk-go
-//! (Go), in Zig with zig-protobuf, as ABI v2 components in C with nanopb
-//! over wit-bindgen's C bindings (sync-lifted; zig cc emits the core module
-//! and the suite wraps it as guestfn build does) and in async Rust with
-//! wit-bindgen, and as components in TypeScript and Python -
+//! (Go), as ABI v2 components in Zig with zig-protobuf and in C with nanopb
+//! (both over wit-bindgen's C bindings, sync-lifted; zig emits the core
+//! module and the suite wraps it as guestfn build does) and in async Rust
+//! with wit-bindgen, and as components in TypeScript and Python -
 //! through the whole host: path and OCI sources, compile, per-request
 //! instance, egress through wasmfn.http or wasi:http, guest logging. Every
 //! guest must produce the same response.
@@ -262,8 +262,8 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 return Some(Vec::new());
             }
             // zig emits a core module. One carrying wit-bindgen's
-            // component-type section (the c scaffold) is wrapped into its
-            // component here, as guestfn build wraps it for a user.
+            // component-type section (the zig and c scaffolds) is wrapped
+            // into its component here, as guestfn build wraps it for a user.
             let built = std::fs::read(dir.join("zig-out/bin/fn.wasm")).ok()?;
             let wasm = if componentize::carries_component_type(&built) {
                 componentize::componentize(&built)

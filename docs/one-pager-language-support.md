@@ -30,8 +30,16 @@ scaffold and `hello-c` are components over wit-bindgen's C bindings
 (sync-lifted `run`, egress over `wasi:http@0.2`), still compiled by `zig cc`
 with nanopb for the protobuf, the core module wrapped by `guestfn build`
 (no wasm-tools, no adapter download); cJSON, which only served v1's JSON host
-payloads, is gone, and the module shrank from ~70 KB to ~62 KB. The C rows
-below describe its v1 era.
+payloads, is gone, and the module shrank from ~70 KB to ~62 KB. Zig followed
+the same day, after #114's Zig spike: the `zig` scaffold and `hello-zig` are
+components over the same wit-bindgen C bindings (byte for byte the `c`
+scaffold's, one `make gen-bindings` for both), read through translate-c as a
+Zig module and compiled beside the guest's own glue, `src/wasmfn.zig` - the
+`run` export, the typed `log`, a `wasi:http@0.2` client, and the generated
+C's `realloc`/`free`/`abort`/`strlen` served from the guest's bump heap, so
+the core module links no libc and imports no preview1 and `guestfn build`
+wraps it with no adapter; zig-protobuf stays, and the module shrank from
+~95 KB to ~60 KB. The C and Zig rows below describe their v1 era.
 
 ## What the host requires
 

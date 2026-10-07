@@ -73,8 +73,8 @@ struct InitCmd {
     dir: PathBuf,
 
     /// Language of the project: go (function-sdk-go), rust (prost, an ABI
-    /// v2 component), zig
-    /// (zig-protobuf, ~95 KB), c (nanopb, built by zig cc, ~70 KB), ts
+    /// v2 component), zig (zig-protobuf over wit-bindgen's C bindings, an
+    /// ABI v2 component, ~60 KB), c (nanopb, built by zig cc, ~70 KB), ts
     /// (protobuf-es, an ABI v2 component built by jco, ~14 MB) or python
     /// (protobuf, an ABI v2 component built by componentize-py, ~21 MB).
     #[arg(long, default_value = "go", value_parser = scaffold::LANGS)]

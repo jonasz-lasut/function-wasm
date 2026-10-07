@@ -1,5 +1,7 @@
 # The example's render test (https://github.com/crossplane-contrib/xprin),
-# run by `make render-check` against the runtime serving this directory.
+# run by `make render-check` against the runtime serving this directory with
+# example/policy.cedar as the operator policy and example/fixtures/ on the
+# fixture server.
 tests:
 - name: greeting
   inputs:
@@ -17,3 +19,19 @@ tests:
       field: data.greeting
       operator: is
       value: hi example-xr
+- name: greeting fetched through the host's egress
+  inputs:
+    xr: xr.yaml
+    composition: composition-egress.yaml
+    functions: functions.yaml
+  assertions:
+    xprin:
+    - name: the module composes the greeting ConfigMap
+      type: Count
+      value: 2
+    - name: the ConfigMap carries the greeting the fixture server answered
+      type: FieldValue
+      resource: ConfigMap
+      field: data.greeting
+      operator: is
+      value: howdy example-xr
