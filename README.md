@@ -352,7 +352,12 @@ targeting `wasm32-wasip3` when the project carries a `wit/` directory and
 alike; a `package.json` → npm, for the
 TypeScript guest; a `requirements.txt` → a venv with componentize-py, for
 the Python guest; a `go.mod` → go)
-or takes `--lang`. Every flavour carries
+or takes `--lang`. When a build leaves a core module carrying wit-bindgen's
+`component-type` section (what its C generator links in), `guestfn build`
+wraps it into an ABI v2 component itself, linking the wasip1 adapter of the
+runtime's own wasmtime when the module imports `wasi_snapshot_preview1`:
+no wasm-tools install, no adapter download, and an adapter that cannot
+drift from the runtime. Every flavour carries
 its ABI glue in the open: the Go scaffold vendors it under `internal/wasmfn`,
 Zig and C carry theirs beside the module, with a small HTTP
 helper over `wasmfn.http`; each example
