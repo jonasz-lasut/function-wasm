@@ -146,7 +146,7 @@ pub async fn warm(entries: &[String], resolver: &Arc<Resolver>, cache: &ModuleCa
         let fetch_resolver = Arc::clone(resolver);
         let target = resolved.clone();
         let loaded = cache
-            .get(&resolved.digest, move || {
+            .get(&resolved.digest, &resolved.description, move || {
                 fetch_resolver
                     .fetch(&target)
                     .map_err(|e| format!("cannot fetch module: {e}"))
@@ -220,7 +220,7 @@ mod tests {
             )
             .expect("resolve");
         cache
-            .get(&resolved.digest, || {
+            .get(&resolved.digest, &resolved.description, || {
                 panic!("the warm-up should have cached this")
             })
             .await

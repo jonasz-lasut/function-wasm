@@ -221,6 +221,18 @@ pub static MEMORY_DENIALS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     )
 });
 
+/// Module loads by ABI: a wasmtime compile or a compiled-artifact read,
+/// what a memory-cache hit is not. Additive to the Go runtime's series: it
+/// says how much ABI v1 a deployment still serves while the deprecation
+/// runs, without a module label (bounded values only).
+pub static MODULE_LOADS: LazyLock<LabeledCounter> = LazyLock::new(|| {
+    LabeledCounter::new(
+        "function_wasm_module_loads",
+        "Module loads (a wasmtime compile or a compiled-artifact read; memory-cache hits are not loads), by abi (1 = a wasip1 core module, deprecated; 2 = a component).",
+        &["abi"],
+    )
+});
+
 /// Requests by outcome.
 pub static REQUESTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
