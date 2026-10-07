@@ -29,7 +29,9 @@ wasmtime-wasi-http = { version = "49.0.2", default-features = false, features = 
 # version, so the adapter linked into a guest is always the one the
 # wasmtime-wasi that serves it was released with; wit-component and wasmparser
 # are the versions wasmtime's own bindgen already pulls, so no second copy is
-# compiled. Renovate's wasmtime group moves the three together.
+# compiled. Renovate moves the adapter with the wasmtime group and ignores the
+# other two: bump them by hand in that PR to what `cargo tree -i wit-component`
+# shows wasmtime pulling.
 wasi-preview1-component-adapter-provider = "49.0.2"
 wasmparser = { version = "0.258.3", default-features = false }
 wit-component = "0.258.3"

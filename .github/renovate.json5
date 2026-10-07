@@ -162,6 +162,17 @@
       groupName: 'wasmtime',
       rangeStrategy: 'bump',
     },
+    // wit-component, wasmparser and wit-parser are pinned to the versions
+    // wasmtime's own bindgen pulls (crates/engine/Cargo.toml), so no second
+    // copy is compiled. Renovate leaves them alone: a bump on their own
+    // would only add that copy (#140). They move by hand in the wasmtime
+    // group's PR, to whatever `cargo tree -i wit-component` shows wasmtime
+    // pulling after the bump.
+    {
+      matchManagers: ['cargo'],
+      matchPackageNames: ['wit-component', 'wasmparser', 'wit-parser'],
+      enabled: false,
+    },
 
     // Dockerfile: the rust build stage floats by design; the runtime base is
     // pinned to a digest that moves with Chainguard's daily rebuilds - one PR
