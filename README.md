@@ -274,6 +274,26 @@ for byte.
 
 ### Other languages
 
+**Supported and tested.** A language is *supported* when its toolchain
+produces a WebAssembly component that implements the [ABI v2](docs/abi-v2.md)
+world, `wasmfn:function`; the runtime checks the world, never the language.
+Today that is every language with a
+[wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) backend (Rust,
+C, C++, C#, Go, MoonBit) and the componentizers for JavaScript and TypeScript
+([componentize-js](https://github.com/bytecodealliance/componentize-js)),
+Python ([componentize-py](https://github.com/bytecodealliance/componentize-py))
+and .NET
+([componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet)).
+A language is *tested* when this repository works with it: a scaffold or an
+example here, built and run through the host by the guest suite and the render
+jobs on every `/e2e`. Tested on ABI v2: Rust, TypeScript, Python and C#.
+Tested on ABI v1, and moving to v2 before v0.6.0 under
+[#114](https://github.com/jonasz-lasut/function-wasm/issues/114): Go, TinyGo,
+Zig and C. A supported language that is not tested is expected to work, and a
+guest we can run is what moves it into the tested set. A language with no
+component path is not supported: AssemblyScript was retired for that reason
+(#114, 2026-10-07).
+
 The [ABI v1](docs/abi.md) is two exports and protobuf bytes, so any wasip1
 toolchain works, and [ABI v2](docs/abi-v2.md) opens the component-model
 toolchains beside it. `guestfn` scaffolds and builds seven flavours - the
