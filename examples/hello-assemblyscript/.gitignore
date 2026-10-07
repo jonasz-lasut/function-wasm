@@ -1,4 +1,0 @@
-node_modules/
-fn.wasm
-*.wasm
-*.tmp.ts

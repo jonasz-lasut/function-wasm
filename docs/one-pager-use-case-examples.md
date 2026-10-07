@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.1
+* Status: Implemented, revision 1.2
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/112
 
 ## Context
@@ -94,10 +94,13 @@ Design choices worth keeping:
 
 ### Languages not rewritten
 
-TinyGo, Zig, C and AssemblyScript stay unpublished hello examples while
+TinyGo, Zig and C stay unpublished hello examples while
 [#114](https://github.com/jonasz-lasut/function-wasm/issues/114) decides their
 path to ABI v2 or their retirement. The ABI v1 Rust example was removed: the
-rust scaffold and `cloudflare-origin` cover Rust as a component.
+rust scaffold and `cloudflare-origin` cover Rust as a component. The
+AssemblyScript example was retired (2026-10-07): no component-model path
+exists, and #114's spike showed that hand-written canonical-ABI glue carries
+`run` and `log` but makes `wasi:http` a hand-maintained cost.
 
 ## Testing
 

@@ -20,8 +20,8 @@ pub struct BuildCmd {
     output: PathBuf,
 
     /// Toolchain to use. auto picks rust for a Cargo.toml, zig for a
-    /// build.zig (zig and c guests), ts for a package.json (without an
-    /// asconfig.json), python for a requirements.txt, tinygo for a go.mod
+    /// build.zig (zig and c guests), ts for a package.json, python for a
+    /// requirements.txt, tinygo for a go.mod
     /// that requires vtprotobuf, go otherwise.
     #[arg(long, default_value = "auto", value_parser = ["auto", "go", "tinygo", "rust", "zig", "c", "ts", "python"])]
     lang: String,
@@ -130,10 +130,9 @@ fn example_config(path: &Path) -> Result<Option<Option<serde_json::Value>>, Stri
 }
 
 /// Tells the language of a project from its files: a Cargo.toml is Rust; a
-/// build.zig builds with zig (zig and c guests); a package.json without an
-/// asconfig.json builds with npm (the TypeScript flavour; AssemblyScript
-/// projects build with npm directly); a go.mod that requires vtprotobuf is
-/// the TinyGo flavour; any other go.mod is Go.
+/// build.zig builds with zig (zig and c guests); a package.json builds with
+/// npm (the TypeScript flavour); a go.mod that requires vtprotobuf is the
+/// TinyGo flavour; any other go.mod is Go.
 fn detect_lang(dir: &Path) -> Result<String, String> {
     if dir.join("Cargo.toml").exists() {
         return Ok(scaffold::LANG_RUST.to_string());
@@ -141,7 +140,7 @@ fn detect_lang(dir: &Path) -> Result<String, String> {
     if dir.join("build.zig").exists() {
         return Ok(scaffold::LANG_ZIG.to_string());
     }
-    if dir.join("package.json").exists() && !dir.join("asconfig.json").exists() {
+    if dir.join("package.json").exists() {
         return Ok(scaffold::LANG_TS.to_string());
     }
     if dir.join("requirements.txt").exists() {
