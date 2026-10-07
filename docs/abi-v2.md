@@ -138,5 +138,6 @@ before it.
 
 Payload evolution is protobuf's (and the world's types are additive-only
 while draft). A mechanics change is a new world version. ABI v1 modules
-keep running unmodified, indefinitely, on the same runtime; nothing about
-v1 changed when v2 arrived.
+keep running unmodified on the same runtime until 1.0.0 (v1 is deprecated
+from v0.6.0, #114 and #129); nothing about v1's mechanics changed when v2
+arrived.

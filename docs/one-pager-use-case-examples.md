@@ -94,9 +94,9 @@ Design choices worth keeping:
 
 ### Languages not rewritten
 
-Zig and C stay unpublished hello examples while
-[#114](https://github.com/jonasz-lasut/function-wasm/issues/114) decides their
-path to ABI v2 or their retirement. The ABI v1 Rust example was removed: the
+Zig and C stay unpublished hello examples; both moved to ABI v2 on
+2026-10-07 ([#114](https://github.com/jonasz-lasut/function-wasm/issues/114)),
+over wit-bindgen's C bindings. The ABI v1 Rust example was removed: the
 rust scaffold and `cloudflare-origin` cover Rust as a component. The
 AssemblyScript example was retired (2026-10-07): no component-model path
 exists, and #114's spike showed that hand-written canonical-ABI glue carries
