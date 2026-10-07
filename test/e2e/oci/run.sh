@@ -49,7 +49,7 @@ for p in 9443 "$port"; do
 done
 
 work=$(mktemp -d)
-trap 'kill "${fn_pid:-}" 2>/dev/null || true; docker stop "$container" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+trap 'kill "${fn_pid:-}" 2>/dev/null || true; docker rm -f "$container" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 
 if [[ -n "${FUNCTION_BIN:-}" ]]; then
   cp "$FUNCTION_BIN" "$work/function"
@@ -64,10 +64,15 @@ if [[ ! -f "$addon/fn.wasm" ]]; then
 fi
 
 echo "==> a registry behind basic auth on $registry" >&2
-docker run -d --rm --name "$container" -p "127.0.0.1:${port}:5000" \
-  -v "$here/htpasswd:/auth/htpasswd:ro" \
-  -e REGISTRY_AUTH=htpasswd -e REGISTRY_AUTH_HTPASSWD_REALM=e2e -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+# The password file is copied in, not bind-mounted: Docker Desktop shares only
+# some host paths, and a checkout outside them would mount an empty directory,
+# which the registry answers with 400s.
+docker create --name "$container" -p "127.0.0.1:${port}:5000" \
+  -e REGISTRY_AUTH=htpasswd -e REGISTRY_AUTH_HTPASSWD_REALM=e2e \
+  -e REGISTRY_AUTH_HTPASSWD_PATH=/etc/distribution/htpasswd \
   registry:3 >/dev/null
+docker cp "$here/htpasswd" "$container:/etc/distribution/htpasswd"
+docker start "$container" >/dev/null
 wait_for "$port" || { echo "the registry did not start" >&2; exit 1; }
 
 # A Docker config of the run's own: guestfn, cosign and function validate log
