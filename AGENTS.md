@@ -100,6 +100,10 @@ crates/function/            the runtime crate: a library (everything below) + th
                               cache LRU to --max-cache-size + cache_bytes gauges, idle step slots,
                               idle rate limiters), the /metrics and /livez//readyz listeners, warm-up
                               (flips /readyz and gRPC health), and serves through grpc.rs
+  src/logging.rs              the log filter (#135): --debug is the function_wasm crates at DEBUG
+                              over info everywhere else (h2, wasmtime and cranelift stay quiet), a
+                              set RUST_LOG replaces it verbatim; the SDK's formats (JSON for the
+                              pod, text under --debug), not its configure, which raised every crate
   src/runner.rs               WasmFunction::handle_raw - the nine steps above, on raw request bytes;
                               fatal() logs the outcome and counts requests_total
   src/grpc.rs                 the raw-codec gRPC transport: RawCodec (bytes in/out), RawFunctionServer
