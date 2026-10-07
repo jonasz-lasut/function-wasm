@@ -134,6 +134,7 @@ from [`docs/`](docs) by mdBook:
   [Input reference](https://jonasz-lasut.github.io/function-wasm/operators/input-reference.html),
   [Runtime flags](https://jonasz-lasut.github.io/function-wasm/operators/runtime-flags.html),
   [Operator grant policy](https://jonasz-lasut.github.io/function-wasm/operators/grant-policy.html),
+  [Cedar policy reference](https://jonasz-lasut.github.io/function-wasm/operators/cedar-policy.html),
   [HTTP egress](https://jonasz-lasut.github.io/function-wasm/operators/http-egress.html),
   [Readiness and warm-up](https://jonasz-lasut.github.io/function-wasm/operators/readiness.html),
   [Sizing](https://jonasz-lasut.github.io/function-wasm/operators/sizing.html),

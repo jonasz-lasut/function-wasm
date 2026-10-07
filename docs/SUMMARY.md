@@ -19,6 +19,7 @@
 - [Input reference](operators/input-reference.md)
 - [Runtime flags](operators/runtime-flags.md)
 - [Operator grant policy](operators/grant-policy.md)
+- [Cedar policy reference](operators/cedar-policy.md)
 - [HTTP egress](operators/http-egress.md)
 - [Readiness and warm-up](operators/readiness.md)
 - [Sizing](operators/sizing.md)

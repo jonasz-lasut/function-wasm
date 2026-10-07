@@ -47,7 +47,9 @@ hands the response back. Three parties, in the order they decide:
    `context.ip.isLoopback()`, or a `||` of those - and compiles **at load** into
    an ordered prefix list, so the dial path stays a few `Prefix.Contains` and
    **Cedar never runs per resolved IP**. A malformed rule is refused at startup,
-   so `function validate` reports it too.
+   so `function validate` reports it too. What a rule may contain, and the
+   error a malformed one gets, is in the
+   [Cedar policy reference](cedar-policy.md).
 
    The default block list - loopback, link-local (the cloud metadata endpoint),
    RFC 1918, carrier-grade NAT (`100.64.0.0/10`, a common pod range), IPv6

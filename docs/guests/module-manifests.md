@@ -27,3 +27,8 @@ OCI manifest layer but may name its `wasmfn.yaml` by reference
 one too. `guestfn push` prints the `requires:` block under the `module:`
 block, `guestfn inspect <ref>` shows what a module requires, and `function
 validate --resolve` applies the same check offline.
+
+What each policy layer can say about a requirement (the actions
+`usePrivateTmp`, `setEnv`, `spendCredential` and `grantEgress`, the resource
+and context each decides on, and the exact sentence a refused requirement
+produces) is in the [Cedar policy reference](../operators/cedar-policy.md).

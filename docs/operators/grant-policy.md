@@ -15,6 +15,11 @@ on the operator boundary alone - a module's manifest can only request, and
 the Input's `compositionPolicy` can only narrow, so neither can widen past
 it.
 
+The schema both layers share (the principal, the entity types, the seven
+actions with their resources and context) and the rules by which each layer
+decides are in the [Cedar policy reference](cedar-policy.md); this page is
+the operator's side of it.
+
 The principal every rule sees is the caller: `principal.namespace` and
 `principal.xrKind` come from the observed composite resource (a
 `RunFunctionRequest` carries no Composition name, so `principal.composition`
