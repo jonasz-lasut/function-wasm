@@ -27,19 +27,18 @@ wasmtime-wasi-http = { version = "49.0.2", default-features = false, features = 
 # guestfn build's componentizing (componentize.rs) moves with wasmtime: the
 # wasip1 adapter is built in the wasmtime repository and published at its
 # version, so the adapter linked into a guest is always the one the
-# wasmtime-wasi that serves it was released with; wit-component and wasmparser
+# wasmtime-wasi that serves it was released with; wit-component, wit-parser
+# (the embed of a Go guest's world from its wit/ directory) and wasmparser
 # are the versions wasmtime's own bindgen already pulls, so no second copy is
 # compiled. Renovate moves the adapter with the wasmtime group and ignores the
-# other two: bump them by hand in that PR to what `cargo tree -i wit-component`
+# other three: bump them by hand in that PR to what `cargo tree -i wit-component`
 # shows wasmtime pulling.
 wasi-preview1-component-adapter-provider = "49.0.2"
 wasmparser = { version = "0.258.3", default-features = false }
 wit-component = "0.258.3"
+wit-parser = "0.258.3"
 
 [dev-dependencies]
 function-sdk-rust = "0.3.0"
 prost = "0.14"
 wat = "1"
-# The componentize tests embed the runtime's own world into a core module the
-# way wit-bindgen does.
-wit-parser = "0.258.3"

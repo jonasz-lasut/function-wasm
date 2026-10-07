@@ -6,6 +6,10 @@ require (
 	github.com/crossplane/crossplane-runtime/v2 v2.3.3
 	github.com/crossplane/function-sdk-go v0.7.1
 	github.com/google/go-cmp v0.7.0
+	// The canonical-ABI runtime the bindings under internal/bindings call, at
+	// the version wit-bindgen 0.62.0's Go generator targets (the go
+	// template's pin; moves with the bindings, not on its own).
+	go.bytecodealliance.org/pkg v0.2.3
 	google.golang.org/protobuf v1.36.12
 	k8s.io/apimachinery v0.35.3
 )

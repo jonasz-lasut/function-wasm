@@ -5,9 +5,13 @@
 //! runtime takes for an ABI v2 guest - inspect's verdict and a run both say.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
-use function_wasm_engine::componentize::{carries_component_type, componentize};
+use function_wasm_engine::componentize::{carries_component_type, componentize, embed_world};
 use function_wasm_engine::{Config, Engine, RunOptions};
+
+/// The runtime's own wit/ directory: the world the engine compiles.
+const RUNTIME_WIT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../wit");
 
 /// Escapes bytes for a WAT data-segment string.
 fn wat_bytes(b: &[u8]) -> String {
@@ -52,25 +56,13 @@ const FD_WRITE: &str =
     r#"(import "wasi_snapshot_preview1" "fd_write" (func (param i32 i32 i32 i32) (result i32)))"#;
 
 /// The runtime's world (wit/wasmfn-function.wit) embedded into the module
-/// as wit-bindgen embeds it. The world is taken as is, its `run` declared
-/// async: wit-component lifts a plain `run` export with the sync ABI, since
-/// async-ness is a canonical option, not part of the component type.
-fn with_world(mut wasm: Vec<u8>) -> Vec<u8> {
-    let mut resolve = wit_parser::Resolve::default();
-    let (pkg, _) = resolve
-        .push_path(concat!(env!("CARGO_MANIFEST_DIR"), "/../../wit"))
-        .expect("parse the runtime's world");
-    let world = resolve
-        .select_world(&[pkg], Some("function"))
-        .expect("select the world");
-    wit_component::embed_component_metadata(
-        &mut wasm,
-        &resolve,
-        world,
-        wit_component::StringEncoding::UTF8,
-    )
-    .expect("embed the world");
-    wasm
+/// as wit-bindgen embeds it - through the engine's own embed, the one
+/// guestfn build runs over a Go guest's wit/. The world is taken as is, its
+/// `run` declared async: wit-component lifts a plain `run` export with the
+/// sync ABI, since async-ness is a canonical option, not part of the
+/// component type.
+fn with_world(wasm: Vec<u8>) -> Vec<u8> {
+    embed_world(&wasm, Path::new(RUNTIME_WIT), "function").expect("embed the world")
 }
 
 fn engine() -> Engine {
@@ -163,6 +155,50 @@ fn only_a_core_module_with_the_section_is_componentized() {
     );
 
     assert!(!carries_component_type(b"not wasm at all"));
+}
+
+/// The embed takes a bare core module once: a module that already carries
+/// a section (another generator's, or an earlier embed) and a component are
+/// refused, as are a wit/ directory that is not there and a world the
+/// package does not define - each with the reason, never a module carrying
+/// two worlds.
+#[test]
+fn embed_world_takes_a_bare_core_module_once() {
+    let rsp = b"RunFunctionResponse bytes";
+    let bare = wat::parse_str(core_module(rsp, "")).expect("wat");
+    let embedded = with_world(bare.clone());
+    assert!(carries_component_type(&embedded));
+
+    let err = embed_world(&embedded, Path::new(RUNTIME_WIT), "function").expect_err("twice");
+    assert_eq!(
+        err.to_string(),
+        "cannot embed the world into module: it already carries a component-type custom section"
+    );
+
+    let component = componentize(&embedded).expect("componentize").wasm;
+    let err = embed_world(&component, Path::new(RUNTIME_WIT), "function").expect_err("component");
+    assert_eq!(
+        err.to_string(),
+        "cannot embed the world into module: it is already a component"
+    );
+
+    let err = embed_world(&bare, Path::new(RUNTIME_WIT), "no-such-world").expect_err("world");
+    let msg = err.to_string();
+    assert!(
+        msg.starts_with("cannot embed the world into module: ") && msg.contains("no-such-world"),
+        "{msg}"
+    );
+
+    let missing = Path::new(RUNTIME_WIT).join("no-such-dir");
+    let err = embed_world(&bare, &missing, "function").expect_err("dir");
+    let msg = err.to_string();
+    assert!(
+        msg.starts_with(&format!(
+            "cannot embed the world into module: cannot read {}: ",
+            missing.display()
+        )),
+        "{msg}"
+    );
 }
 
 /// A section that is there but says nothing wit-component can read is a

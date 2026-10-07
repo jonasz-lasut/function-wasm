@@ -196,23 +196,31 @@ func main() {}
 ```
 
 The scaffold also vendors a small `internal/wasmfn` package the project owns
-(there is no external SDK to depend on): it exports the entry points the
-runtime calls, decodes the request, calls your `RunFunction`, encodes the
-response, and gives you a `logging.Logger` that logs through the runtime. Your
-function knows nothing about WebAssembly, and `wasmfn.GetConfig(req, &cfg)`
-hands you the Input's `config` block. Edit it if you need to; it is yours, like
-the ABI glue the Zig and C scaffolds carry.
+(there is no external SDK to depend on): it implements the world's `run`
+export the runtime calls (over the Go bindings
+[wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) writes under
+`internal/bindings`, checked in), decodes the request, calls your
+`RunFunction`, encodes the response, and gives you a `logging.Logger` that
+logs through the runtime's typed `log` import. Your function knows nothing
+about WebAssembly, and `wasmfn.GetConfig(req, &cfg)` hands you the Input's
+`config` block. Edit it if you need to; it is yours, like the ABI glue the
+Zig and C scaffolds carry. The module is an [ABI v2](docs/abi-v2.md)
+component: `guestfn build` runs `go build` (a wasip1 reactor, since
+mainline Go has no wasip2 port), embeds the world from `wit/` and wraps the
+result, linking the wasip1 adapter of the runtime's own wasmtime - no
+componentize-go, no wasm-tools.
 
 ```shell
 go test ./...                                   # unit tests run natively
-guestfn build                                   # fn.wasm (wasip1); prints the ABI verdict and the manifest summary
+guestfn build                                   # fn.wasm (an ABI v2 component); prints the ABI verdict and the manifest summary
 guestfn inspect fn.wasm                         # size, ABI verdict, exports, imports, memory
 guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest; prints the module block and what the module requires
 ```
 
 `guestfn build` ends with the verdict the runtime reaches when it loads the
-module — `Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http wasmfn.log)`,
-followed for an ABI v1 module by the deprecation warning the runtime logs
+module — `Built fn.wasm (74.2 MB, ABI v2, imports log)`, or for an ABI v1
+module `Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http wasmfn.log)`
+followed by the deprecation warning the runtime logs
 on every load of one (see [Other languages](#other-languages))
 — and fails, in the runtime's words, on a module the runtime would refuse
 (`module does not export "wasmfn_run"`); `guestfn push` refuses to publish
@@ -226,7 +234,7 @@ ghcr.io/example/greeter:v0.1.0` describes an artifact from its manifest
 module too; `--output json` for scripts.
 
 The scaffold also has a **`wasmfn.yaml`** — the module's manifest: what it
-declares about itself (`name`, `version`, `abi: 1`), the sandbox
+declares about itself (`name`, `version`, `abi: 2`), the sandbox
 capabilities it cannot run without (`requires`: egress rules,
 `filesystem.privateTmp`, `env` credential bindings, the step `credentials`
 it reads from its request - the scaffold requires nothing; non-secret
@@ -272,9 +280,9 @@ a guest that works on the raw `RunFunctionRequest`/`RunFunctionResponse`
 (`fnv1` and `structpb`) is about 20 MB. Either way the runtime compiles a
 module once per digest and caches it.
 
-[`examples/pdb-addon`](examples/pdb-addon) is a Go module built on what
-`guestfn init` writes: its `internal/wasmfn` glue is the scaffold's, byte
-for byte.
+[`examples/pdb-addon`](examples/pdb-addon) is a Go component built on what
+`guestfn init` writes: its `internal/wasmfn` glue, its `wit/` and its
+`internal/bindings` are the scaffold's, byte for byte.
 
 ### Other languages
 
@@ -290,9 +298,10 @@ and .NET
 ([componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet)).
 A language is *tested* when this repository works with it: a scaffold or an
 example here, built and run through the host by the guest suite and the render
-jobs on every `/e2e`. Tested on ABI v2: Rust, Zig, C, TypeScript, Python
-and C#. Tested on ABI v1, and moving to v2 before v0.6.0 under
-[#114](https://github.com/jonasz-lasut/function-wasm/issues/114): Go. A
+jobs on every `/e2e`. Tested on ABI v2: Go, Rust, Zig, C, TypeScript,
+Python and C# - every scaffold and example here, since
+[#114](https://github.com/jonasz-lasut/function-wasm/issues/114) moved the
+last of them (Go, 2026-10-07) off ABI v1. A
 supported language that is not tested is expected to work, and a
 guest we can run is what moves it into the tested set. A language with no
 component path is not supported: AssemblyScript was retired for that reason
@@ -309,12 +318,11 @@ module as an ABI v2 component (docs/abi-v2.md)`) and counts in
 `function_wasm_module_loads_total{abi="1"}`; `guestfn build`, `guestfn
 inspect` and `function validate --resolve` print the same sentence for
 one. `guestfn` scaffolds and builds six flavours - the same greeting
-function each time; the `rust`, `zig`, `c`, `ts` and `python` flavours
-scaffold as ABI v2 components, `go` as an ABI v1 module:
+function each time, every one an ABI v2 component:
 
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
 |---|---|---|---|---|
-| `go` (default) | [`examples/pdb-addon`](examples/pdb-addon) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
+| `go` (default) | [`examples/pdb-addon`](examples/pdb-addon) | Go + function-sdk-go (vendored `internal/wasmfn` glue over [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s Go bindings, checked in; `make gen-bindings` + `wit-bindgen-cli` 0.62.0 to redo) - **an ABI v2 component**, sync-lifted `run`, `*http.Client` over `wasi:http@0.2`; `guestfn build` embeds the world into the wasip1 reactor `go build` emits and wraps it (no componentize-go, no wasm-tools) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
 | `rust` | [`examples/cloudflare-origin`](examples/cloudflare-origin) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) - **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary) over [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C bindings through translate-c (the `c` flavour's, checked in; `make gen-bindings` + `wit-bindgen-cli` 0.62.0 to redo) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2`; `guestfn build` wraps the core module zig links (no libc, no wasm-tools, no adapter) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto (generated codec checked in; `protoc` only to regenerate) | ~60 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk) over [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C bindings (checked in; `make gen-bindings` + `wit-bindgen-cli` 0.62.0 to redo) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2`; `guestfn build` wraps the core module zig links (no wasm-tools, no adapter) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in; `nanopb_generator` only to regenerate) | ~62 KB |
@@ -366,14 +374,18 @@ TypeScript guest; a `requirements.txt` → a venv with componentize-py, for
 the Python guest; a `go.mod` → go)
 or takes `--lang`. When a build leaves a core module carrying wit-bindgen's
 `component-type` section (what its C generator links in: the `zig` and `c`
-flavours' `zig build`), `guestfn build`
+flavours' `zig build`; for a `go` project with a `wit/` directory
+`guestfn build` embeds the world into the module `go build` emits first,
+since wit-bindgen's Go generator writes bindings only), `guestfn build`
 wraps it into an ABI v2 component itself, linking the wasip1 adapter of the
 runtime's own wasmtime when the module imports `wasi_snapshot_preview1`:
 no wasm-tools install, no adapter download, and an adapter that cannot
 drift from the runtime. Every flavour carries
-its ABI glue in the open: the Go scaffold vendors it under `internal/wasmfn`,
+its ABI glue in the open: the Go scaffold vendors it under `internal/wasmfn`
+(the world's `run` export, the typed `log`, a `wasi:http@0.2` client behind
+an `*http.Client`, over wit-bindgen's Go bindings),
 Zig and C carry theirs beside the module (`src/wasmfn.zig`, `src/wasmfn.c`)
-over wit-bindgen's bindings (the typed `log`, a `wasi:http@0.2` client);
+over wit-bindgen's C bindings (the typed `log`, a `wasi:http@0.2` client);
 each example
 has a `make render-check` that runs it through the runtime and asserts what it
 composes with an [xprin](https://github.com/crossplane-contrib/xprin) suite,
@@ -751,11 +763,12 @@ hands the response back. Three parties, in the order they decide:
 
    Inject the client into your function so native tests can substitute an
    `httptest` server; outside a wasip1 build the transport fails with
-   `wasmfn.ErrNoHostHTTP` (the import's JSON payload is in
-   [docs/abi.md](docs/abi.md#http-egress)). The Zig and C scaffolds ship the
-   same (`src/wasmfn.zig`, `src/wasmfn.c`) over `wasi:http@0.2` through
-   wit-bindgen's bindings, each with a swappable host so native tests can
-   fake it.
+   `wasmfn.ErrNoHostHTTP`, and under function-wasm it sends over
+   `wasi:http@0.2` through wit-bindgen's Go bindings. The Zig and C
+   scaffolds ship the same (`src/wasmfn.zig`, `src/wasmfn.c`) over the same
+   `wasi:http@0.2` through wit-bindgen's C bindings, each with a swappable
+   host so native tests can fake it. (ABI v1's `wasmfn.http` import and its
+   JSON payload are in [docs/abi.md](docs/abi.md#http-egress).)
    A request the host does not perform — no grant, host or method or path
    outside it, a blocked address, a budget, a transport failure — is a
    transport error naming the reason, never a trap; a status from the

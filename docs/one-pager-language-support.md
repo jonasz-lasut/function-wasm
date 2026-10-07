@@ -24,7 +24,7 @@ carries `run` and `log` (17.9 KB) but makes `wasi:http` a hand-maintained
 cost. TinyGo was retired the same day: its own `wasip2` target with
 wit-bindgen-go builds a 1.5 MB component, but that generator is unmaintained
 and TinyGo cannot use componentize-go's bindings, so the two Go flavours could
-not share one path; Go stays on componentize-go. The rows about both are
+not share one path. The rows about both are
 history. C moved to ABI v2 the same day, after #114's C spike: the `c`
 scaffold and `hello-c` are components over wit-bindgen's C bindings
 (sync-lifted `run`, egress over `wasi:http@0.2`), still compiled by `zig cc`
@@ -39,7 +39,15 @@ Zig module and compiled beside the guest's own glue, `src/wasmfn.zig` - the
 C's `realloc`/`free`/`abort`/`strlen` served from the guest's bump heap, so
 the core module links no libc and imports no preview1 and `guestfn build`
 wraps it with no adapter; zig-protobuf stays, and the module shrank from
-~95 KB to ~60 KB. The C and Zig rows below describe their v1 era.
+~95 KB to ~60 KB. Go moved last, the same day, after #114's Go spike, in
+the shape componentize-go proved but without it: the `go` scaffold and
+`pdb-addon` are components over wit-bindgen's Go bindings (checked in,
+`go.bytecodealliance.org/pkg` their runtime), `run` sync-lifted on stock Go,
+egress over `wasi:http@0.2` behind the same `*http.Client`; `go build` still
+emits a wasip1 reactor, and `guestfn build` embeds the world and wraps it
+with the runtime's own adapter (no componentize-go, no wasm-tools). The
+module's size and compile cost did not move (~74 MB, ~2 s). The Go, C and
+Zig rows below describe their v1 era; no scaffold is left on ABI v1.
 
 ## What the host requires
 

@@ -29,15 +29,15 @@ var runner Runner
 // stderr receives panic stacks; the host inherits the guest's stderr.
 var stderr io.Writer = os.Stderr
 
-// Register sets the Runner the wasmfn_run export dispatches to. Call it from
-// an init function: the wasip1 c-shared build never executes main.
+// Register sets the Runner the world's run export dispatches to. Call it
+// from an init function: the wasip1 c-shared build never executes main.
 func Register(r Runner) {
 	runner = r
 }
 
-// handle is the guest half of ABI v1: it decodes a RunFunctionRequest, runs
-// the registered Runner and encodes the RunFunctionResponse. Every failure —
-// including a returned error, a panic and an unusable request — becomes a
+// handle is the guest half of the ABI: it decodes a RunFunctionRequest, runs
+// the registered Runner and encodes the RunFunctionResponse. Every failure -
+// including a returned error, a panic and an unusable request - becomes a
 // fatal result so the host can always decode what comes back.
 func handle(ctx context.Context, in []byte) []byte {
 	req := &fnv1.RunFunctionRequest{}

@@ -10,14 +10,16 @@
 # `make vendor-proto` takes the release from the headers (the rust template's);
 # `make vendor-proto VERSION=vX.Y.Z` vendors one Renovate has not proposed.
 #
-# `make gen-bindings` is the same loop for the c and zig guests' wit-bindgen
-# C bindings (examples/hello-c/src/gen and examples/hello-zig/src/gen: one
-# generator's output over one world, which the guestfn tests hold
-# identical): it runs the pinned wit-bindgen in both, mirrors each result
-# into its template and refreshes the goldens - after a change to the world,
-# a re-vendoring of the WASI WIT, or a wit-bindgen bump (the generated
-# files' header names the version; e2e.yml's drift checks install the same
-# one).
+# `make gen-bindings` is the same loop for the wit-bindgen bindings: the c
+# and zig guests' C bindings (examples/hello-c/src/gen and
+# examples/hello-zig/src/gen: one generator's output over one world, which
+# the guestfn tests hold identical) and the go guest's Go bindings
+# (examples/pdb-addon/internal/bindings, over its own world). It runs the
+# pinned wit-bindgen in each, mirrors each result into its template (the go
+# one with the module path templated as [[ .Module ]]) and refreshes the
+# goldens - after a change to a world, a re-vendoring of the WASI WIT, or a
+# wit-bindgen bump (the generated files' header names the version; e2e.yml's
+# drift checks install the same one).
 .PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens gen-bindings tools tools-clean
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:
@@ -33,8 +35,8 @@
 # requirements.txt pins (team-tags's is the same file). NANOPB_VERSION is
 # the nanopb release hello-c's build.zig.zon compiles and e2e.yml's codec
 # drift check installs. WIT_BINDGEN_VERSION is the wit-bindgen-cli release
-# that wrote hello-c's and hello-zig's checked-in bindings and e2e.yml's
-# bindings drift checks install.
+# that wrote hello-c's, hello-zig's and pdb-addon's checked-in bindings and
+# e2e.yml's bindings drift checks install.
 PROTOC_VERSION := 35.1
 NANOPB_VERSION := 0.4.9.1
 WIT_BINDGEN_VERSION := 0.62.0
@@ -99,12 +101,26 @@ vendor-proto-goldens: ## Refresh the guestfn scaffold goldens from the templates
 	UPDATE_GOLDENS=1 cargo test -p guestfn
 
 # The bindings are mirrored whole: wit-bindgen writes exactly the three files
-# the templates carry (function.c, function.h, function_component_type.o).
-gen-bindings: tools ## Regenerate hello-c's and hello-zig's wit-bindgen C bindings with the pinned wit-bindgen, mirror them into the c and zig templates and refresh the goldens
+# the c and zig templates carry (function.c, function.h,
+# function_component_type.o), and for go a wit_bindings.go and an empty.s
+# per package plus wit_exports, beside the hand-written slot package
+# export_wit_world. A generated Go file names the guest's module path in its
+# imports, so it becomes a .go.tmpl with the path as [[ .Module ]]; the rest
+# is copied as it is.
+GO_MODULE := github.com/jonasz-lasut/function-wasm/examples/pdb-addon
+GO_BINDINGS := crates/guestfn/templates/go/internal/bindings
+gen-bindings: tools ## Regenerate hello-c's, hello-zig's and pdb-addon's wit-bindgen bindings with the pinned wit-bindgen, mirror them into the c, zig and go templates and refresh the goldens
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-bindings
+	$(WITH_TOOLS) $(MAKE) -C examples/pdb-addon gen-bindings
 	rm -rf crates/guestfn/templates/c/src/gen && cp -R examples/hello-c/src/gen crates/guestfn/templates/c/src/gen
 	rm -rf crates/guestfn/templates/zig/src/gen && cp -R examples/hello-zig/src/gen crates/guestfn/templates/zig/src/gen
+	rm -rf $(GO_BINDINGS) && cp -R examples/pdb-addon/internal/bindings $(GO_BINDINGS)
+	@set -e; \
+	for f in $$(find $(GO_BINDINGS) -name '*.go' -not -path '*/export_wit_world/*'); do \
+		sed 's#$(GO_MODULE)#[[ .Module ]]#g' "$$f" > "$$f.tmpl"; \
+		rm "$$f"; \
+	done
 	$(MAKE) vendor-proto-goldens
 
 tools: $(PROTOC) $(NANOPB_GENERATOR) $(WIT_BINDGEN) ## Install the pinned protoc, nanopb_generator and wit-bindgen under .cache/tools

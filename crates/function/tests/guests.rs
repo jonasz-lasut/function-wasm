@@ -1,5 +1,7 @@
-//! The guests - the same greeting function written with function-sdk-go
-//! (Go), as ABI v2 components in Zig with zig-protobuf and in C with nanopb
+//! The guests - the same greeting function written as ABI v2 components
+//! with function-sdk-go (Go over wit-bindgen's Go bindings, sync-lifted;
+//! go build emits the core module and the suite embeds its world and wraps
+//! it as guestfn build does), in Zig with zig-protobuf and in C with nanopb
 //! (both over wit-bindgen's C bindings, sync-lifted; zig emits the core
 //! module and the suite wraps it as guestfn build does) and in async Rust
 //! with wit-bindgen, and as components in TypeScript and Python -
@@ -151,13 +153,37 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 return None;
             }
             // A scaffold's go.mod has no go.sum yet; guestfn init tidies it.
-            command(&dir, "go", &["mod", "tidy"], &[])
-                && command(
+            // -checklinkname=0 admits the bindings runtime's linkname to
+            // runtime.sbrk, as guestfn build passes it.
+            if !command(&dir, "go", &["mod", "tidy"], &[])
+                || !command(
                     &dir,
                     "go",
-                    &["build", "-buildmode=c-shared", "-o", &out_s, "."],
+                    &[
+                        "build",
+                        "-buildmode=c-shared",
+                        "-ldflags=-checklinkname=0",
+                        "-o",
+                        &out_s,
+                        ".",
+                    ],
                     &[("GOOS", "wasip1"), ("GOARCH", "wasm")],
                 )
+            {
+                return Some(Vec::new());
+            }
+            // go build emits a wasip1 core module with no component type:
+            // the scaffold's world is embedded from its wit/ and the module
+            // wrapped (with the wasip1 adapter) here, as guestfn build does
+            // for a user.
+            let core = std::fs::read(out).ok()?;
+            let embedded = componentize::embed_world(&core, &dir.join("wit"), "function")
+                .expect("embed the go scaffold's world");
+            let wasm = componentize::componentize(&embedded)
+                .expect("componentize the go-built core module")
+                .wasm;
+            std::fs::write(out, wasm).ok()?;
+            true
         }
         "rust-v2" => {
             if !on_path("cargo") || !on_path("rustup") {

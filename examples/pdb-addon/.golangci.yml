@@ -1,0 +1,8 @@
+version: "2"
+linters:
+  exclusions:
+    # internal/bindings is wit-bindgen's output (its header says so, in the
+    # words the lax mode reads): pointer arithmetic over the wasm linear
+    # memory and exports only the host calls, which the linters would flag
+    # in code the guest did not write.
+    generated: lax

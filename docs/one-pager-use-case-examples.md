@@ -103,7 +103,9 @@ exists, and #114's spike showed that hand-written canonical-ABI glue carries
 `run` and `log` but makes `wasi:http` a hand-maintained cost. The `tinygo`
 scaffold and `hello-tinygo` were retired the same day: TinyGo builds the world
 on its own `wasip2` target, but its bindings generator is unmaintained and the
-Go flavour cannot share it, so Go stays on componentize-go alone.
+Go flavour cannot share it. The `go` scaffold and `pdb-addon` moved to ABI v2
+the same day, over wit-bindgen's Go bindings, with `guestfn build` embedding
+the world and wrapping the wasip1 module `go build` emits.
 
 ## Testing
 

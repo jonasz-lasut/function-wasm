@@ -24,11 +24,12 @@ the guest's own world, `wit/world.wit` in a `local:guest` package, includes
 it beside whatever the guest imports (the rust scaffold adds the
 `wasi:http` client). Keep the contract's file unmodified: a WIT package
 that appears twice must have the same contents, so a guest's additions
-belong in its own world. The `ts`, `python`, `c` and `zig` scaffolds restate
-the world in their `wit/world.wit` instead, with `run` declared sync - the
-shape jco and componentize-py lift today, and the one the wit-bindgen C
-bindings the `c` and `zig` scaffolds share take - which satisfies the world
-(below).
+belong in its own world. The `ts`, `python`, `c`, `zig` and `go` scaffolds
+restate the world in their `wit/world.wit` instead, with `run` declared
+sync - the shape jco and componentize-py lift today, the one the
+wit-bindgen C bindings the `c` and `zig` scaffolds share take, and the one
+stock Go builds through wit-bindgen's Go bindings - which satisfies the
+world (below).
 
 From `2.0.0` on, a release that brings a new world version also publishes
 it, signed and attested:

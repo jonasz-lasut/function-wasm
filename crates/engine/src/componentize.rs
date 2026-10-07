@@ -11,6 +11,14 @@
 //! was released with: the provider crate is published at wasmtime's version
 //! and pinned beside it, so a guest built by guestfn can never carry an
 //! adapter the runtime does not serve.
+//!
+//! wit-bindgen's Go generator (the go scaffold) emits no section either:
+//! mainline Go's wasip1 build knows nothing of components, and
+//! componentize-go embeds the world itself before wrapping. `embed_world`
+//! is that embed, over the guest's own wit/ directory, so a Go guest needs
+//! neither componentize-go nor wasm-tools.
+
+use std::path::Path;
 
 use crate::{Error, WASI_MODULE};
 
@@ -42,6 +50,46 @@ pub fn carries_component_type(wasm: &[u8]) -> bool {
             ..
         })
     )
+}
+
+/// Embeds the world named `world` of the WIT package under `wit_dir` (the
+/// guest's wit/ directory: its world and its deps) into a core module as
+/// wit-bindgen's generators embed it, the `component-type` custom section
+/// componentize consumes. For a core module that carries none: what
+/// mainline Go's `go build` leaves behind, whose wit-bindgen bindings are
+/// Go source only. A module that already carries a section, or is already
+/// a component, is refused rather than embedded twice.
+pub fn embed_world(core: &[u8], wit_dir: &Path, world: &str) -> Result<Vec<u8>, Error> {
+    let scan = scan(core)?;
+    if scan.component {
+        return Err(Error(
+            "cannot embed the world into module: it is already a component".to_string(),
+        ));
+    }
+    if scan.component_type {
+        return Err(Error(format!(
+            "cannot embed the world into module: it already carries a {COMPONENT_TYPE_SECTION} custom section"
+        )));
+    }
+    let mut resolve = wit_parser::Resolve::default();
+    let (pkg, _) = resolve.push_path(wit_dir).map_err(|e| {
+        Error(format!(
+            "cannot embed the world into module: cannot read {}: {e:#}",
+            wit_dir.display()
+        ))
+    })?;
+    let world = resolve
+        .select_world(&[pkg], Some(world))
+        .map_err(|e| Error(format!("cannot embed the world into module: {e:#}")))?;
+    let mut wasm = core.to_vec();
+    wit_component::embed_component_metadata(
+        &mut wasm,
+        &resolve,
+        world,
+        wit_component::StringEncoding::UTF8,
+    )
+    .map_err(|e| Error(format!("cannot embed the world into module: {e:#}")))?;
+    Ok(wasm)
 }
 
 /// Wraps a core module carrying wit-bindgen's `component-type*` section
