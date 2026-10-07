@@ -1,8 +1,7 @@
 exit 0
 --- stdout
 <DIR>/egress.yaml: Composition/egress pipeline[0] egress: OK (path fn.wasm)
-  module: sha256:d8f9c70dd9bca2be5b598bc81ac9dbbd4f49531eb8174e8bcdd1aa895c230ba3, 85 B, ABI v1; manifest: greeter 0.1.0, requires egress api.example.com
+  module: sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, 255 B, ABI v2; manifest: greeter 0.1.0, requires egress api.example.com
   warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
-  warning: ABI v1 is deprecated and is removed in function-wasm 1.0.0; build the module as an ABI v2 component (docs/abi-v2.md)
   warning: the module requires egress but is not signature-verified: no --cosign-key was given
 --- stderr

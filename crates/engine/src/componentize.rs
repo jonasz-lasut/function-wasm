@@ -20,7 +20,11 @@
 
 use std::path::Path;
 
-use crate::{Error, WASI_MODULE};
+use crate::Error;
+
+/// The WASI preview 1 import module a wasip1 toolchain's core module
+/// imports: what the adapter translates to WASI 0.2 in the wrap.
+const WASI_PREVIEW1_MODULE: &str = "wasi_snapshot_preview1";
 
 /// The custom section wit-bindgen embeds, matched the way wit-component
 /// matches it: by prefix, so `component-type` (older generators) and
@@ -38,9 +42,10 @@ pub struct Componentized {
 
 /// True when the bytes are a core module carrying a `component-type*`
 /// custom section - what componentize consumes. A component is already
-/// wrapped and a core module without the section is an ABI v1 guest (or no
-/// guest at all); both are left to the runtime's own verdict. Malformed
-/// bytes are false too: wasmtime refuses them with its own words.
+/// wrapped and a core module without the section is no guest at all (the
+/// runtime refuses it by name); both are left to the runtime's own
+/// verdict. Malformed bytes are false too: wasmtime refuses them with its
+/// own words.
 pub fn carries_component_type(wasm: &[u8]) -> bool {
     matches!(
         scan(wasm),
@@ -106,7 +111,7 @@ pub fn componentize(core: &[u8]) -> Result<Componentized, Error> {
     }
     if !scan.component_type {
         return Err(Error(format!(
-            "cannot componentize module: it carries no {COMPONENT_TYPE_SECTION} custom section (wit-bindgen embeds one; a core module without it is an ABI v1 guest)"
+            "cannot componentize module: it carries no {COMPONENT_TYPE_SECTION} custom section (wit-bindgen embeds one; the runtime refuses a core module without it)"
         )));
     }
     let mut encoder = wit_component::ComponentEncoder::default();
@@ -166,7 +171,7 @@ fn scan(wasm: &[u8]) -> Result<Scan, Error> {
                     let import = import.map_err(|e| {
                         Error(format!("cannot componentize module: {}", e.message()))
                     })?;
-                    if import.module == WASI_MODULE {
+                    if import.module == WASI_PREVIEW1_MODULE {
                         scan.preview1 = true;
                     }
                 }

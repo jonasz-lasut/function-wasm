@@ -258,29 +258,55 @@ fn validate_matches_the_goldens() {
 }
 
 /// The --resolve path over generated modules, the shape of the Go tree's
-/// TestValidateResolve: a valid ABI module with a wasmfn.log import, one
-/// missing wasmfn_run, one that is not wasm at all, and one missing file.
+/// TestValidateResolve: a component implementing the world and importing
+/// its log, a core module (ABI v1, removed: refused by name), one that is
+/// not wasm at all, one missing file, a compiled artifact, a plain
+/// component and one that does not implement the world.
 #[test]
 fn validate_resolve_matches_the_goldens() {
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
     let cwd = crate_dir();
 
     let dir = tempfile::tempdir().expect("tempdir");
+    // The world's log import, lowered against the memory of a core module
+    // instantiated first (the shape every log-using component takes).
     let ok = wat::parse_str(
-        r#"(module
-          (import "wasmfn" "log" (func $log (param i32 i32 i32)))
-          (memory (export "memory") 1)
+        r#"(component
+          (type $level_def (enum "debug" "info" "warn" "error"))
+          (import "level" (type $level (eq $level_def)))
+          (import "log" (func $log (param "level" $level) (param "msg" string) (param "kv" (list (tuple string string)))))
+          (core module $libc
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096))
+          (core instance $libc_inst (instantiate $libc))
+          (core func $log_lowered (canon lower (func $log) (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
+          (core module $m
+            (import "env" "memory" (memory 1))
+            (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
+            (func (export "run") (param i32 i32) (result i32)
+              (call $log (i32.const 1) (i32.const 2048) (i32.const 5) (i32.const 0) (i32.const 0))
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (i32.const 1024))
+              (i32.store (i32.const 72) (i32.const 0))
+              (i32.const 64))
+            (data (i32.const 2048) "hello"))
+          (core instance $m_inst (instantiate $m
+            (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
+            (with "host" (instance (export "log" (func $log_lowered))))))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $m_inst "run") (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
+        )"#,
+    )
+    .expect("wat");
+    // A guest built before 1.0.0: ABI v1's exports on a wasip1 core module.
+    let core_module = wat::parse_str(
+        r#"(module (memory (export "memory") 1)
           (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
           (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
     )
     .expect("wat");
-    let bad = wat::parse_str(
-        r#"(module (memory (export "memory") 1)
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8))"#,
-    )
-    .expect("wat");
     std::fs::write(dir.path().join("fn.wasm"), &ok).expect("write");
-    std::fs::write(dir.path().join("bad.wasm"), &bad).expect("write");
+    std::fs::write(dir.path().join("coremodule.wasm"), &core_module).expect("write");
     std::fs::write(dir.path().join("notwasm.wasm"), b"hello").expect("write");
     // A wasmtime compiled artifact (.cwasm) named as a module source: the
     // runtime refuses it by name rather than as malformed wasm.
@@ -291,8 +317,9 @@ fn validate_resolve_matches_the_goldens() {
         e.serialize(&m).expect("serialize")
     };
     std::fs::write(dir.path().join("precompiled.wasm"), &artifact).expect("write");
-    // ABI v2: a component implementing the wasmfn:function world, and one
-    // that does not (the world typecheck is v2's load refusal).
+    // A component implementing the wasmfn:function world with no imports,
+    // and one that does not implement it (the world typecheck is the load
+    // refusal).
     let component = wat::parse_str(
         r#"(component
           (core module $m
@@ -323,7 +350,7 @@ fn validate_resolve_matches_the_goldens() {
         format!(
             "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: resolve\nspec:\n  pipeline:\n{}{}{}{}{}",
             step("ok", "fn.wasm"),
-            step("bad", "bad.wasm"),
+            step("coremodule", "coremodule.wasm"),
             step("notwasm", "notwasm.wasm"),
             step("missing", "missing.wasm"),
             step("precompiled", "precompiled.wasm"),
@@ -363,28 +390,38 @@ fn validate_resolve_manifest_matches_the_goldens() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     let ok = wat::parse_str(
-        r#"(module (memory (export "memory") 1)
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+        r#"(component
+          (core module $m
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+            (func (export "run") (param i32 i32) (result i32)
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (i32.const 1024))
+              (i32.store (i32.const 72) (i32.const 0))
+              (i32.const 64)))
+          (core instance $i (instantiate $m))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+        )"#,
     )
     .expect("wat");
     std::fs::write(dir.path().join("fn.wasm"), &ok).expect("write");
     let manifests: &[(&str, &str)] = &[
         (
             "tmp",
-            "abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n",
+            "abi: 2\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n",
         ),
         (
             "egress",
-            "abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  egress:\n    http:\n    - host: api.example.com\n      methods: [GET]\n",
+            "abi: 2\nname: greeter\nversion: 0.1.0\nrequires:\n  egress:\n    http:\n    - host: api.example.com\n      methods: [GET]\n",
         ),
         (
             "env",
-            "abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n",
+            "abi: 2\nname: greeter\nversion: 0.1.0\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n",
         ),
-        // A v2 declaration over a v1 binary: the manifest's abi must match
-        // the module's binary format.
-        ("abimismatch", "abi: 2\nname: greeter\nversion: 0.1.0\n"),
+        // The removed ABI's declaration: refused by the manifest before
+        // the module's binary format is looked at.
+        ("abiv1", "abi: 1\nname: greeter\nversion: 0.1.0\n"),
         // An ABI this runtime does not implement at all.
         ("abiunknown", "abi: 3\nname: greeter\nversion: 0.1.0\n"),
     ];
@@ -451,9 +488,19 @@ fn validate_resolve_credentials_matches_the_goldens() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     let ok = wat::parse_str(
-        r#"(module (memory (export "memory") 1)
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+        r#"(component
+          (core module $m
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+            (func (export "run") (param i32 i32) (result i32)
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (i32.const 1024))
+              (i32.store (i32.const 72) (i32.const 0))
+              (i32.const 64)))
+          (core instance $i (instantiate $m))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+        )"#,
     )
     .expect("wat");
     std::fs::write(dir.path().join("fn.wasm"), &ok).expect("write");
@@ -508,13 +555,23 @@ fn validate_resolve_http_source_matches_the_goldens() {
     let cwd = crate_dir();
 
     let wasm = wat::parse_str(
-        r#"(module (memory (export "memory") 1)
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+        r#"(component
+          (core module $m
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+            (func (export "run") (param i32 i32) (result i32)
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (i32.const 1024))
+              (i32.store (i32.const 72) (i32.const 0))
+              (i32.const 64)))
+          (core instance $i (instantiate $m))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+        )"#,
     )
     .expect("wat");
     let manifest =
-        b"abi: 1\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n"
+        b"abi: 2\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n"
             .to_vec();
     let digest = |b: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)));
     let (wasm_digest, manifest_digest) = (digest(&wasm), digest(&manifest));
@@ -627,13 +684,23 @@ fn validate_resolve_oci_source_matches_the_goldens() {
     let cwd = crate_dir();
 
     let wasm = wat::parse_str(
-        r#"(module (memory (export "memory") 1)
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+        r#"(component
+          (core module $m
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+            (func (export "run") (param i32 i32) (result i32)
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (i32.const 1024))
+              (i32.store (i32.const 72) (i32.const 0))
+              (i32.const 64)))
+          (core instance $i (instantiate $m))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+        )"#,
     )
     .expect("wat");
     let module_manifest =
-        br#"{"abi":1,"name":"greeter","version":"0.1.0","requires":{"filesystem":{"privateTmp":true}}}"#;
+        br#"{"abi":2,"name":"greeter","version":"0.1.0","requires":{"filesystem":{"privateTmp":true}}}"#;
     let digest_of = |b: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)));
     let wasm_digest = digest_of(&wasm);
     let manifest_digest = digest_of(module_manifest);
@@ -748,9 +815,19 @@ fn validate_resolve_cosign_matches_the_goldens() {
     let cwd = crate_dir();
 
     let wasm = wat::parse_str(
-        r#"(module (memory (export "memory") 1)
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+        r#"(component
+          (core module $m
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+            (func (export "run") (param i32 i32) (result i32)
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (i32.const 1024))
+              (i32.store (i32.const 72) (i32.const 0))
+              (i32.const 64)))
+          (core instance $i (instantiate $m))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+        )"#,
     )
     .expect("wat");
     let config = br#"{}"#;

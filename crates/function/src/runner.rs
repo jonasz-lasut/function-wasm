@@ -300,11 +300,7 @@ impl WasmFunction {
                     .fetch(&target)
                     .map_err(|e| format!("cannot fetch module: {e}"))
             };
-            match self
-                .cache
-                .get(&resolved.digest, &resolved.description, fetch)
-                .await
-            {
+            match self.cache.get(&resolved.digest, fetch).await {
                 Ok(module) => module,
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
@@ -383,7 +379,6 @@ impl WasmFunction {
                 &caps.grants(),
                 input.config.as_ref(),
                 crate::manifest::runtime_version(),
-                module.abi_version(),
             )
         {
             return Ok(raw_rsp(self.fatal(
@@ -633,11 +628,21 @@ mod tests {
     use function_sdk_rust::resource;
     use function_wasm_engine::Config;
 
-    // A valid ABI v1 module whose wasmfn_run returns 0: an empty response.
-    const EMPTY_RESPONSE_WAT: &str = r#"(module
-      (memory (export "memory") 1)
-      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-      (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#;
+    // A component implementing the world whose run returns an empty
+    // response.
+    const EMPTY_RESPONSE_WAT: &str = r#"(component
+      (core module $m
+        (memory (export "memory") 1)
+        (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+        (func (export "run") (param i32 i32) (result i32)
+          (i32.store8 (i32.const 64) (i32.const 0))
+          (i32.store (i32.const 68) (i32.const 1024))
+          (i32.store (i32.const 72) (i32.const 0))
+          (i32.const 64)))
+      (core instance $i (instantiate $m))
+      (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+        (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+    )"#;
 
     fn function(dir: Option<std::path::PathBuf>) -> WasmFunction {
         let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
@@ -709,7 +714,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn runs_an_oci_module_with_its_manifest_granted() {
         let wasm = wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat");
-        let module_manifest = br#"{"abi":1,"requires":{"filesystem":{"privateTmp":true}}}"#;
+        let module_manifest = br#"{"abi":2,"requires":{"filesystem":{"privateTmp":true}}}"#;
         let (digest, addr) =
             crate::oci::testregistry::wasm_artifact(&wasm, Some(module_manifest), true);
         let mut f = function(None);
@@ -873,20 +878,25 @@ mod tests {
             .unwrap_or(0.0)
                 >= 1.0
         );
-        assert!(m("function_wasm_module_loads_total", &[("abi", "1")]).unwrap_or(0.0) >= 1.0);
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn the_proxy_is_transparent_to_unknown_fields() {
-        // An echo guest: wasmfn_run returns the request buffer itself, so
-        // the response is exactly what the runtime forwarded.
-        const ECHO_WAT: &str = r#"(module
-          (memory (export "memory") 2)
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 1024)
-          (func (export "wasmfn_run") (param i32 i32) (result i64)
-            (i64.or
-              (i64.shl (i64.extend_i32_u (local.get 0)) (i64.const 32))
-              (i64.extend_i32_u (local.get 1)))))"#;
+        // An echo guest: run returns the request list it was given, so the
+        // response is exactly what the runtime forwarded.
+        const ECHO_WAT: &str = r#"(component
+          (core module $m
+            (memory (export "memory") 2)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+            (func (export "run") (param i32 i32) (result i32)
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (local.get 0))
+              (i32.store (i32.const 72) (local.get 1))
+              (i32.const 64)))
+          (core instance $i (instantiate $m))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+        )"#;
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
             dir.path().join("fn.wasm"),
@@ -927,35 +937,41 @@ mod tests {
     /// (999) of an otherwise empty response, so a test reads back exactly
     /// what the runtime forwarded - credentials included, which an echoed
     /// request would not survive the response decode with.
-    const WRAP_WAT: &str = r#"(module
-      (memory (export "memory") 4)
-      (global $next (mut i32) (i32.const 65536))
-      (func (export "wasmfn_alloc") (param $n i32) (result i32)
-        (local $p i32)
-        (local.set $p (global.get $next))
-        (global.set $next (i32.add (global.get $next) (local.get $n)))
-        (local.get $p))
-      (func (export "wasmfn_run") (param $ptr i32) (param $len i32) (result i64)
-        (local $out i32) (local $v i32)
-        (i32.store8 (i32.const 1024) (i32.const 0xba))
-        (i32.store8 (i32.const 1025) (i32.const 0x3e))
-        (local.set $out (i32.const 1026))
-        (local.set $v (local.get $len))
-        (block $done
-          (loop $more
-            (br_if $done (i32.lt_u (local.get $v) (i32.const 0x80)))
-            (i32.store8 (local.get $out)
-              (i32.or (i32.and (local.get $v) (i32.const 0x7f)) (i32.const 0x80)))
-            (local.set $out (i32.add (local.get $out) (i32.const 1)))
-            (local.set $v (i32.shr_u (local.get $v) (i32.const 7)))
-            (br $more)))
-        (i32.store8 (local.get $out) (local.get $v))
-        (local.set $out (i32.add (local.get $out) (i32.const 1)))
-        (memory.copy (local.get $out) (local.get $ptr) (local.get $len))
-        (i64.or
-          (i64.shl (i64.const 1024) (i64.const 32))
-          (i64.extend_i32_u
-            (i32.sub (i32.add (local.get $out) (local.get $len)) (i32.const 1024))))))"#;
+    const WRAP_WAT: &str = r#"(component
+      (core module $m
+        (memory (export "memory") 4)
+        (global $next (mut i32) (i32.const 65536))
+        (func (export "cabi_realloc") (param i32 i32 i32) (param $n i32) (result i32)
+          (local $p i32)
+          (local.set $p (global.get $next))
+          (global.set $next (i32.add (global.get $next) (local.get $n)))
+          (local.get $p))
+        (func (export "run") (param $ptr i32) (param $len i32) (result i32)
+          (local $out i32) (local $v i32)
+          (i32.store8 (i32.const 1024) (i32.const 0xba))
+          (i32.store8 (i32.const 1025) (i32.const 0x3e))
+          (local.set $out (i32.const 1026))
+          (local.set $v (local.get $len))
+          (block $done
+            (loop $more
+              (br_if $done (i32.lt_u (local.get $v) (i32.const 0x80)))
+              (i32.store8 (local.get $out)
+                (i32.or (i32.and (local.get $v) (i32.const 0x7f)) (i32.const 0x80)))
+              (local.set $out (i32.add (local.get $out) (i32.const 1)))
+              (local.set $v (i32.shr_u (local.get $v) (i32.const 7)))
+              (br $more)))
+          (i32.store8 (local.get $out) (local.get $v))
+          (local.set $out (i32.add (local.get $out) (i32.const 1)))
+          (memory.copy (local.get $out) (local.get $ptr) (local.get $len))
+          (i32.store8 (i32.const 64) (i32.const 0))
+          (i32.store (i32.const 68) (i32.const 1024))
+          (i32.store (i32.const 72)
+            (i32.sub (i32.add (local.get $out) (local.get $len)) (i32.const 1024)))
+          (i32.const 64)))
+      (core instance $i (instantiate $m))
+      (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+        (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+    )"#;
 
     fn read_varint(b: &[u8], mut i: usize) -> (u64, usize) {
         let start = i;
@@ -1060,7 +1076,7 @@ mod tests {
         .expect("write");
         std::fs::write(
             dir.path().join("wasmfn.yaml"),
-            "abi: 1\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n  credentials: [cmdb]\n",
+            "abi: 2\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n  credentials: [cmdb]\n",
         )
         .expect("write");
         let f = granting_function(Some(dir.path()));
@@ -1114,7 +1130,7 @@ mod tests {
 
         let out = run_with_credentials(
             &f,
-            module(br#"{"abi":1,"requires":{"credentials":["cmdb"]}}"#),
+            module(br#"{"abi":2,"requires":{"credentials":["cmdb"]}}"#),
             &["registry", "cmdb", "other"],
         )
         .await;
@@ -1124,7 +1140,7 @@ mod tests {
         // run, as an env binding naming it is.
         let out = run_with_credentials(
             &f,
-            module(br#"{"abi":1,"requires":{"credentials":["registry"]}}"#),
+            module(br#"{"abi":2,"requires":{"credentials":["registry"]}}"#),
             &["registry", "cmdb"],
         )
         .await;
@@ -1142,11 +1158,17 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn an_expired_deadline_ends_the_run() {
-        const LOOP_WAT: &str = r#"(module (memory (export "memory") 1)
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-          (func (export "wasmfn_run") (param i32 i32) (result i64)
-            (loop $l br $l)
-            i64.const 0))"#;
+        const LOOP_WAT: &str = r#"(component
+          (core module $m
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+            (func (export "run") (param i32 i32) (result i32)
+              (loop $l br $l)
+              i32.const 64))
+          (core instance $i (instantiate $m))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+        )"#;
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
             dir.path().join("fn.wasm"),

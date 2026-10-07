@@ -1,14 +1,21 @@
-//! Engine tests over WAT fixtures implementing ABI v1, the way the Go
-//! engine's tests use WAT fixtures in the spirit of the old Go tree's
-//! internal/testwasm: a module that returns fixed
-//! response bytes, modules that misbehave in one way each, and the ABI
-//! shape refusals.
+//! Engine tests over WAT fixtures: components implementing the
+//! wasmfn:function world, in the spirit of the old Go tree's
+//! internal/testwasm - a component that returns fixed response bytes,
+//! components that misbehave in one way each, the world typecheck refusals,
+//! and the sandbox reached through WASI 0.2's own interfaces.
+//!
+//! The fixtures are hand-written component text, sync-lifted: the canonical
+//! ABI accepts a sync implementation of the world's `async` run, which is
+//! also what keeps a stable-toolchain guest possible. A host import that
+//! moves values through memory (a list or a string) is lowered against a
+//! `$libc` core module instantiated first, so the main module can import
+//! both the memory and the lowered function.
 
 use std::fmt::Write as _;
 use std::time::Duration;
 
 use function_sdk_rust::proto::v1::{Result as FnResult, RunFunctionResponse, Severity, Target};
-use function_wasm_engine::{Config, Engine, RunOptions};
+use function_wasm_engine::{CORE_MODULE_REFUSAL, Config, Engine, RunOptions};
 use prost::Message;
 
 /// Escapes bytes for a WAT data-segment string.
@@ -20,30 +27,105 @@ fn wat_bytes(b: &[u8]) -> String {
     out
 }
 
-const BUMP_ALLOC: &str = r#"
-  (global $next (mut i32) (i32.const 131072))
-  (func (export "wasmfn_alloc") (param i32) (result i32)
-    (local $ptr i32)
-    global.get $next
-    local.tee $ptr
-    local.get 0
-    i32.add
-    global.set $next
-    local.get $ptr)
+/// The core body shared by the component fixtures: a bump realloc (8-byte
+/// aligned, so any canonical-ABI allocation is accepted) and a memory.
+/// `run` is provided per fixture; a sync-lifted `run` returns the address
+/// of its result (the ok/err discriminant, then the list's pointer and
+/// length).
+const COMPONENT_CORE_PRELUDE: &str = r#"
+    (memory (export "memory") 4)
+    (global $next (mut i32) (i32.const 131072))
+    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
+      (local $p i32)
+      global.get $next
+      local.set $p
+      global.get $next
+      (i32.and (i32.add (local.get 3) (i32.const 7)) (i32.const -8))
+      i32.add
+      global.set $next
+      local.get $p)
 "#;
 
-/// A module whose wasmfn_run returns the given bytes, stored at offset 1024.
-fn fixed(rsp: &[u8]) -> String {
-    let packed = (1024u64 << 32) | rsp.len() as u64;
+/// The world's `run` export lifted from a core instance's `run`.
+fn lift_run(instance: &str, libc: &str) -> String {
     format!(
-        r#"(module
-  (memory (export "memory") 4)
-  (data (i32.const 1024) "{data}")
-  {BUMP_ALLOC}
-  (func (export "wasmfn_run") (param i32 i32) (result i64)
-    i64.const {packed}))"#,
+        r#"(func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func ${instance} "run") (memory (core memory ${libc} "memory")) (realloc (core func ${libc} "cabi_realloc"))))"#
+    )
+}
+
+/// A component whose run returns the given bytes.
+fn fixed_component(rsp: &[u8]) -> String {
+    format!(
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func (export "run") (param i32 i32) (result i32)
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72) (i32.const {len}))
+      (i32.const 64))
+    (data (i32.const 1024) "{data}"))
+  (core instance $i (instantiate $m))
+  {lift}
+)"#,
+        len = rsp.len(),
         data = wat_bytes(rsp),
-        packed = packed as i64,
+        lift = lift_run("i", "i"),
+    )
+}
+
+/// A component whose run is the given core body (returning the result
+/// address), with no imports.
+fn component_with_run(body: &str) -> String {
+    format!(
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func (export "run") (param i32 i32) (result i32)
+      {body}))
+  (core instance $i (instantiate $m))
+  {lift}
+)"#,
+        lift = lift_run("i", "i"),
+    )
+}
+
+/// A component whose main core module imports one WASI 0.2 function,
+/// lowered against a `$libc` instance whose memory the main module shares:
+/// `import_decl` is the component-level import, `lower` the canon lower
+/// (naming `$libc_inst` and `$f` for the imported function), `core_import`
+/// the core module's own import declaration of it as `$host`, and `body`
+/// run's core body.
+fn component_importing(import_decl: &str, lower: &str, core_import: &str, body: &str) -> String {
+    format!(
+        r#"(component
+  {import_decl}
+  (core module $libc
+    {COMPONENT_CORE_PRELUDE})
+  (core instance $libc_inst (instantiate $libc))
+  (core func $lowered {lower})
+  (core module $m
+    (import "env" "memory" (memory 4))
+    {core_import}
+    (func (export "run") (param i32 i32) (result i32)
+      {body}))
+  (core instance $m_inst (instantiate $m
+    (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
+    (with "host" (instance (export "f" (func $lowered))))))
+  {lift}
+)"#,
+        lift = lift_run("m_inst", "libc_inst"),
+    )
+}
+
+/// The result address for ok(list at ptr, len) stored at 64.
+fn ok_result(ptr: &str, len: &str) -> String {
+    format!(
+        r#"(i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) {ptr})
+      (i32.store (i32.const 72) {len})
+      (i32.const 64)"#
     )
 }
 
@@ -64,74 +146,62 @@ fn response_bytes() -> Vec<u8> {
     .encode_to_vec()
 }
 
+fn compile(e: &Engine, wat: &str) -> function_wasm_engine::Module {
+    e.compile(&wat::parse_str(wat).expect("wat"))
+        .expect("compile")
+}
+
 #[test]
 fn fixed_response_round_trip() {
     let e = engine();
     let rsp = response_bytes();
-    let m = e
-        .compile(&wat::parse_str(fixed(&rsp)).expect("wat"))
-        .expect("compile");
+    let m = compile(&e, &fixed_component(&rsp));
     let out = e.run(&m, b"anything", RunOptions::default()).expect("run");
     assert_eq!(out, rsp);
 }
 
+/// A core module - whatever it exports, ABI v1's shape or none - is refused
+/// at every load path with the one sentence that names the fix, never with
+/// a world typecheck message that would send its author to the wrong one.
 #[test]
-fn check_abi_refusals() {
-    let cases: &[(&str, &str, &str)] = &[
+fn a_core_module_is_refused_by_name() {
+    let e = engine();
+    let cases = [
+        ("empty", "(module)"),
         (
-            "NoRun",
+            "abi v1 shape",
             r#"(module (memory (export "memory") 1)
-              (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8))"#,
-            r#"module does not export "wasmfn_run""#,
-        ),
-        (
-            "NoMemory",
-            r#"(module
               (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
               (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
-            r#"module does not export a memory named "memory""#,
-        ),
-        (
-            "WrongAllocSignature",
-            r#"(module (memory (export "memory") 1)
-              (func (export "wasmfn_alloc") (param i32 i32) (result i32) i32.const 8)
-              (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
-            r#"export "wasmfn_alloc" has signature (i32, i32) -> (i32), ABI v1 requires (i32) -> (i32)"#,
-        ),
-        (
-            "ForeignImport",
-            r#"(module (import "env" "foo" (func))
-              (memory (export "memory") 1)
-              (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-              (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
-            "module imports env.foo, which the host does not provide",
-        ),
-        (
-            "WrongHTTPImportType",
-            r#"(module (import "wasmfn" "http" (func (param i32)))
-              (memory (export "memory") 1)
-              (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-              (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
-            "module imports wasmfn.http with the wrong type, ABI v1 requires (i32, i32) -> (i64)",
         ),
     ];
-    let e = engine();
-    for (name, wat, want) in cases {
-        let err = e
-            .compile(&wat::parse_str(wat).expect("wat"))
-            .err()
-            .unwrap_or_else(|| panic!("{name}: compile should fail"));
-        assert_eq!(&err.to_string(), want, "{name}");
+    for (name, wat) in cases {
+        let wasm = wat::parse_str(wat).expect("wat");
+        let err = e.compile(&wasm).expect_err(name);
+        assert_eq!(err.to_string(), CORE_MODULE_REFUSAL, "{name}");
+        let err = e.inspect(&wasm).expect_err(name);
+        assert_eq!(err.to_string(), CORE_MODULE_REFUSAL, "{name}: inspect");
     }
+
+    // An artifact a pre-1.0 runtime compiled from a core module, found in
+    // the cache: refused the same way, so the cache treats it as a miss and
+    // the module itself is refused at compile.
+    let wasmtime = wasmtime::Engine::default();
+    let artifact = wasmtime::Module::new(&wasmtime, "(module)")
+        .expect("core module")
+        .serialize()
+        .expect("serialize");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("core.bin");
+    std::fs::write(&path, &artifact).expect("write");
+    let err = e.deserialize_file(&path).expect_err("core artifact");
+    assert_eq!(err.to_string(), CORE_MODULE_REFUSAL);
 }
 
 #[test]
 fn a_run_observes_the_hostcall_split() {
     let e = engine();
-    let rsp = response_bytes();
-    let m = e
-        .compile(&wat::parse_str(fixed(&rsp)).expect("wat"))
-        .expect("compile");
+    let m = compile(&e, &fixed_component(&response_bytes()));
     let name = "function_wasm_module_hostcall_duration_seconds";
     let before = function_wasm_engine::metrics::sample(name, &[]).unwrap_or(0.0);
     e.run(&m, b"", RunOptions::default()).expect("run");
@@ -145,21 +215,28 @@ fn a_run_observes_the_hostcall_split() {
 fn the_stack_limit_bounds_recursion() {
     // 4000 frames fit in the default 512 KiB stack and overflow an 8 KiB
     // one; the trap carries the Go runtime's wording.
-    let wat = r#"(module (memory (export "memory") 1)
-      (func $rec (param i32) (result i64)
-        local.get 0
-        i32.eqz
-        (if (result i64)
-          (then i64.const 0)
-          (else local.get 0 i32.const 1 i32.sub call $rec)))
-      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-      (func (export "wasmfn_run") (param i32 i32) (result i64)
-        i32.const 4000
-        call $rec))"#;
-    let wasm = wat::parse_str(wat).expect("wat");
+    let wat = format!(
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func $rec (param i32) (result i32)
+      local.get 0
+      i32.eqz
+      (if (result i32)
+        (then i32.const 0)
+        (else local.get 0 i32.const 1 i32.sub call $rec)))
+    (func (export "run") (param i32 i32) (result i32)
+      (drop (call $rec (i32.const 4000)))
+      {ok}))
+  (core instance $i (instantiate $m))
+  {lift}
+)"#,
+        ok = ok_result("(i32.const 1024)", "(i32.const 0)"),
+        lift = lift_run("i", "i"),
+    );
 
     let e = engine();
-    let m = e.compile(&wasm).expect("compile");
+    let m = compile(&e, &wat);
     e.run(&m, b"", RunOptions::default())
         .expect("fits in the default stack");
 
@@ -168,23 +245,17 @@ fn the_stack_limit_bounds_recursion() {
         ..Config::default()
     })
     .expect("engine");
-    let m = small.compile(&wasm).expect("compile");
+    let m = compile(&small, &wat);
     let err = small
         .run(&m, b"", RunOptions::default())
         .expect_err("should overflow");
-    assert_eq!(
-        err.to_string(),
-        "wasmfn_run failed: trap: call stack exhausted"
-    );
+    assert_eq!(err.to_string(), "run failed: trap: call stack exhausted");
 }
 
 #[test]
 fn a_compiled_artifact_is_refused_by_name() {
     let e = engine();
-    let rsp = response_bytes();
-    let m = e
-        .compile(&wat::parse_str(fixed(&rsp)).expect("wat"))
-        .expect("compile");
+    let m = compile(&e, &fixed_component(&response_bytes()));
     let artifact = e.serialize(&m).expect("serialize");
     let err = e
         .compile(&artifact)
@@ -195,17 +266,15 @@ fn a_compiled_artifact_is_refused_by_name() {
     );
 }
 
+/// The epoch deadline interrupts a spinning guest with the message the
+/// timeout metric outcome matches on.
 #[test]
 fn run_deadline() {
     let e = engine();
-    let wat = r#"(module (memory (export "memory") 1)
-      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-      (func (export "wasmfn_run") (param i32 i32) (result i64)
-        (loop $l br $l)
-        i64.const 0))"#;
-    let m = e
-        .compile(&wat::parse_str(wat).expect("wat"))
-        .expect("compile");
+    let m = compile(
+        &e,
+        &component_with_run("(loop $l br $l)\n      i32.const 64"),
+    );
     let opts = RunOptions {
         timeout: Some(Duration::from_millis(50)),
         ..Default::default()
@@ -213,97 +282,69 @@ fn run_deadline() {
     let err = e.run(&m, b"", opts).expect_err("should time out");
     assert_eq!(
         err.to_string(),
-        "wasmfn_run failed: module exceeded its execution deadline (50ms)"
+        "run failed: module exceeded its execution deadline (50ms)"
     );
 }
 
+/// A guest that exits through WASI (`wasi:cli/exit`, what a language's
+/// `exit()` reaches) reports its status: `exit(err)` is status 1.
 #[test]
 fn run_exit_status() {
     let e = engine();
-    let wat = r#"(module
-      (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
-      (memory (export "memory") 1)
-      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-      (func (export "wasmfn_run") (param i32 i32) (result i64)
-        i32.const 7
-        call $exit
-        i64.const 0))"#;
-    let m = e
-        .compile(&wat::parse_str(wat).expect("wat"))
-        .expect("compile");
+    let wat = component_importing(
+        r#"(import "wasi:cli/exit@0.2.0" (instance $exit
+    (export "exit" (func (param "status" (result))))))"#,
+        "(canon lower (func $exit \"exit\"))",
+        r#"(import "host" "f" (func $host (param i32)))"#,
+        &format!(
+            "(call $host (i32.const 1))\n      {}",
+            ok_result("(i32.const 1024)", "(i32.const 0)")
+        ),
+    );
+    let m = compile(&e, &wat);
     let err = e
         .run(&m, b"", RunOptions::default())
         .expect_err("should exit");
-    assert_eq!(
-        err.to_string(),
-        "wasmfn_run failed: module exited with status 7"
-    );
+    assert_eq!(err.to_string(), "run failed: module exited with status 1");
 }
 
+/// The guest's Err(string) becomes a run error naming the export - the
+/// world's third channel beside a response and a trap.
 #[test]
-fn run_invalid_response_buffer() {
+fn guest_error_string() {
     let e = engine();
-    let packed = (1_000_000u64 << 32) | 10;
     let wat = format!(
-        r#"(module (memory (export "memory") 1)
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-          (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const {}))"#,
-        packed as i64
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func (export "run") (param i32 i32) (result i32)
+      (i32.store8 (i32.const 64) (i32.const 1))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72) (i32.const 4))
+      (i32.const 64))
+    (data (i32.const 1024) "boom"))
+  (core instance $i (instantiate $m))
+  {lift}
+)"#,
+        lift = lift_run("i", "i"),
     );
-    let m = e
-        .compile(&wat::parse_str(wat).expect("wat"))
-        .expect("compile");
+    let m = compile(&e, &wat);
     let err = e
         .run(&m, b"", RunOptions::default())
-        .expect_err("should refuse the buffer");
-    assert!(
-        err.to_string()
-            .starts_with("wasmfn_run returned an invalid response buffer:"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn http_without_grant_is_refused_in_band() {
-    let e = engine();
-    let request = br#"{"url":"http://example.com/x"}"#;
-    let wat = format!(
-        r#"(module
-  (import "wasmfn" "http" (func $http (param i32 i32) (result i64)))
-  (memory (export "memory") 4)
-  (data (i32.const 1024) "{data}")
-  {BUMP_ALLOC}
-  (func (export "wasmfn_run") (param i32 i32) (result i64)
-    i32.const 1024
-    i32.const {len}
-    call $http))"#,
-        data = wat_bytes(request),
-        len = request.len(),
-    );
-    let m = e
-        .compile(&wat::parse_str(wat).expect("wat"))
-        .expect("compile");
-    let out = e.run(&m, b"", RunOptions::default()).expect("run");
-    assert_eq!(
-        String::from_utf8_lossy(&out),
-        r#"{"status":0,"error":"sandbox.egress: HTTP egress is not granted to this module: its manifest requires no egress (requires.egress.http)"}"#
-    );
+        .expect_err("guest error");
+    assert_eq!(err.to_string(), "run returned an error: boom");
 }
 
 /// A guest that grows toward the exported response: empty means the grow
 /// was denied (memory.grow returned -1), one byte means it succeeded.
 fn grow_guest(pages: u32) -> String {
-    format!(
-        r#"(module (memory (export "memory") 1)
-      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-      (func (export "wasmfn_run") (param i32 i32) (result i64)
-        (i32.eq (memory.grow (i32.const {pages})) (i32.const -1))
-        (if (result i64)
-          (then i64.const {denied})
-          (else i64.const {grown}))))"#,
-        denied = (1024u64 << 32) as i64,
-        grown = ((1024u64 << 32) | 1) as i64,
-    )
+    component_with_run(&format!(
+        r#"(i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72)
+        (i32.ne (memory.grow (i32.const {pages})) (i32.const -1)))
+      (i32.const 64)"#
+    ))
 }
 
 /// The per-run memory ceiling denies growth: the guest sees memory.grow
@@ -311,13 +352,11 @@ fn grow_guest(pages: u32) -> String {
 #[test]
 fn the_memory_limit_denies_growth() {
     let e = Engine::new(Config {
-        memory_limit: 2 << 16, // two pages
+        memory_limit: 8 << 16, // eight pages
         ..Config::default()
     })
     .expect("engine");
-    let m = e
-        .compile(&wat::parse_str(grow_guest(4)).expect("wat"))
-        .expect("compile");
+    let m = compile(&e, &grow_guest(16));
     let out = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(out.len(), 0, "growth past the ceiling should be denied");
     let denied = function_wasm_engine::metrics::sample(
@@ -328,62 +367,53 @@ fn the_memory_limit_denies_growth() {
     assert!(denied >= 1.0, "the denial should be counted");
 }
 
+/// A guest that spins for the given nanoseconds on the monotonic clock
+/// (`wasi:clocks/monotonic-clock`), holding its memory meanwhile.
+fn spinning_guest(nanos: u64) -> String {
+    component_importing(
+        r#"(import "wasi:clocks/monotonic-clock@0.2.0" (instance $clock
+    (export "now" (func (result u64)))))"#,
+        "(canon lower (func $clock \"now\"))",
+        r#"(import "host" "f" (func $host (result i64)))"#,
+        &format!(
+            r#"(local $start i64)
+      (local.set $start (call $host))
+      (loop $l
+        (br_if $l (i64.lt_u (i64.sub (call $host) (local.get $start)) (i64.const {nanos}))))
+      {}"#,
+            ok_result("(i32.const 1024)", "(i32.const 0)")
+        ),
+    )
+}
+
 /// The shared pool reserves incrementally: a run holding the pool denies
 /// another run's growth (its guest sees memory.grow fail), while the
 /// second run's initial memory still fits and runs.
 #[test]
 fn the_pool_denies_growth_it_cannot_serve() {
+    // A component reserves nothing before it runs: its initial memory is
+    // charged when instantiation claims it. The prelude's four pages each
+    // fill half of the eight-page pool.
     let e = std::sync::Arc::new(
         Engine::new(Config {
-            memory_limit: 3 << 16,         // three pages
-            max_total_run_memory: 3 << 16, // the whole pool
+            memory_limit: 8 << 16,
+            max_total_run_memory: 8 << 16,
             ..Config::default()
         })
         .expect("engine"),
     );
-    // The blocker: two initial pages held for ~300ms inside wasmfn.http.
-    let request = br#"{"url":"http://example.com/x"}"#;
-    // The bump allocator starts on the second of the two pages, so the
-    // host's re-entrant allocation stays in bounds.
-    let blocker_wat = format!(
-        r#"(module
-  (import "wasmfn" "http" (func $http (param i32 i32) (result i64)))
-  (memory (export "memory") 2)
-  (data (i32.const 1024) "{data}")
-  (global $next (mut i32) (i32.const 65536))
-  (func (export "wasmfn_alloc") (param i32) (result i32)
-    (local $ptr i32)
-    global.get $next
-    local.tee $ptr
-    local.get 0
-    i32.add
-    global.set $next
-    local.get $ptr)
-  (func (export "wasmfn_run") (param i32 i32) (result i64)
-    i32.const 1024
-    i32.const {len}
-    call $http))"#,
-        data = wat_bytes(request),
-        len = request.len(),
-    );
-    let blocker = e
-        .compile(&wat::parse_str(blocker_wat).expect("wat"))
-        .expect("compile");
-    let grower = e
-        .compile(&wat::parse_str(grow_guest(1)).expect("wat"))
-        .expect("compile");
+    let blocker = compile(&e, &spinning_guest(300_000_000));
+    let grower = compile(&e, &grow_guest(1));
 
     let eb = std::sync::Arc::clone(&e);
     let blocking = std::thread::spawn(move || {
-        let opts = RunOptions {
-            http: Some(std::sync::Arc::new(SlowOk(Duration::from_millis(300)))),
-            ..Default::default()
-        };
-        eb.run(&blocker, b"", opts).expect("blocker run");
+        eb.run(&blocker, b"", RunOptions::default())
+            .expect("blocker run");
     });
     std::thread::sleep(Duration::from_millis(50));
-    // Pool: blocker holds 2 pages, the grower's initial 1 fits; its growth
-    // to 2 needs a page the pool cannot serve before the short deadline.
+    // Pool: the blocker holds four pages, the grower's initial four fit; its
+    // growth to five needs a page the pool cannot serve before the short
+    // deadline.
     let opts = RunOptions {
         timeout: Some(Duration::from_millis(100)),
         ..Default::default()
@@ -403,74 +433,15 @@ fn the_pool_denies_growth_it_cannot_serve() {
     assert!(denied >= 1.0, "the denial should be counted");
 }
 
-struct SlowOk(Duration);
-
-impl function_wasm_engine::HttpRequester for SlowOk {
-    fn do_request(
-        &self,
-        _req: &function_wasm_engine::wire::Request,
-        _deadline: std::time::Instant,
-    ) -> function_wasm_engine::wire::Response {
-        std::thread::sleep(self.0);
-        function_wasm_engine::wire::Response {
-            status: 200,
-            ..Default::default()
-        }
-    }
-}
-
-/// A guest blocked in wasmfn.http three times longer than its whole budget
-/// still finishes: the wait is credited back to the epoch deadline, so
-/// limits.timeout meters guest compute.
-#[test]
-fn http_wait_does_not_consume_the_deadline() {
-    let e = engine();
-    let rsp = response_bytes();
-    let request = br#"{"url":"http://example.com/x"}"#;
-    let packed = (4096u64 << 32) | rsp.len() as u64;
-    let wat = format!(
-        r#"(module
-  (import "wasmfn" "http" (func $http (param i32 i32) (result i64)))
-  (memory (export "memory") 4)
-  (data (i32.const 1024) "{req}")
-  (data (i32.const 4096) "{data}")
-  {BUMP_ALLOC}
-  (func (export "wasmfn_run") (param i32 i32) (result i64)
-    i32.const 1024
-    i32.const {len}
-    call $http
-    drop
-    i64.const {packed}))"#,
-        req = wat_bytes(request),
-        data = wat_bytes(&rsp),
-        len = request.len(),
-        packed = packed as i64,
-    );
-    let m = e
-        .compile(&wat::parse_str(wat).expect("wat"))
-        .expect("compile");
-    let opts = RunOptions {
-        timeout: Some(Duration::from_millis(100)),
-        http: Some(std::sync::Arc::new(SlowOk(Duration::from_millis(300)))),
-        ..Default::default()
-    };
-    let out = e.run(&m, b"", opts).expect("run should outlive the wait");
-    assert_eq!(out, rsp);
-}
-
 /// The request's own deadline is the hard wall-clock cap whatever the
 /// credit: a guest that never returns is interrupted there.
 #[test]
 fn the_request_deadline_caps_the_run() {
     let e = engine();
-    let wat = r#"(module (memory (export "memory") 1)
-      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-      (func (export "wasmfn_run") (param i32 i32) (result i64)
-        (loop $l br $l)
-        i64.const 0))"#;
-    let m = e
-        .compile(&wat::parse_str(wat).expect("wat"))
-        .expect("compile");
+    let m = compile(
+        &e,
+        &component_with_run("(loop $l br $l)\n      i32.const 64"),
+    );
     let opts = RunOptions {
         deadline: Some(std::time::Instant::now() + Duration::from_millis(80)),
         ..Default::default()
@@ -487,23 +458,44 @@ fn the_request_deadline_caps_the_run() {
     );
 }
 
+/// The environment reaches the guest through WASI 0.2
+/// (`wasi:cli/environment`), sorted by key: the guest renders every
+/// `key=value` pair, NUL-terminated, as its response.
 #[test]
 fn env_reaches_the_guest_sorted() {
     let e = engine();
-    let wat = r#"(module
-      (import "wasi_snapshot_preview1" "environ_sizes_get" (func $sizes (param i32 i32) (result i32)))
-      (import "wasi_snapshot_preview1" "environ_get" (func $get (param i32 i32) (result i32)))
-      (memory (export "memory") 1)
-      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-      (func (export "wasmfn_run") (param i32 i32) (result i64)
-        (drop (call $sizes (i32.const 0) (i32.const 4)))
-        (drop (call $get (i32.const 1024) (i32.const 2048)))
-        (i64.or
-          (i64.shl (i64.const 2048) (i64.const 32))
-          (i64.extend_i32_u (i32.load (i32.const 4))))))"#;
-    let m = e
-        .compile(&wat::parse_str(wat).expect("wat"))
-        .expect("compile");
+    let wat = component_importing(
+        r#"(import "wasi:cli/environment@0.2.0" (instance $environment
+    (export "get-environment" (func (result (list (tuple string string)))))))"#,
+        r#"(canon lower (func $environment "get-environment") (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc")))"#,
+        r#"(import "host" "f" (func $host (param i32)))"#,
+        r#"(local $i i32) (local $n i32) (local $ent i32) (local $out i32)
+      ;; the list lands at the return pointer: [entries ptr @128][len @132]
+      (call $host (i32.const 128))
+      (local.set $ent (i32.load (i32.const 128)))
+      (local.set $n (i32.load (i32.const 132)))
+      (local.set $out (i32.const 4096))
+      (block $done
+        (loop $each
+          (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+          ;; an entry is (key ptr, key len, value ptr, value len)
+          (memory.copy (local.get $out) (i32.load (local.get $ent)) (i32.load offset=4 (local.get $ent)))
+          (local.set $out (i32.add (local.get $out) (i32.load offset=4 (local.get $ent))))
+          (i32.store8 (local.get $out) (i32.const 61))
+          (local.set $out (i32.add (local.get $out) (i32.const 1)))
+          (memory.copy (local.get $out) (i32.load offset=8 (local.get $ent)) (i32.load offset=12 (local.get $ent)))
+          (local.set $out (i32.add (local.get $out) (i32.load offset=12 (local.get $ent))))
+          (i32.store8 (local.get $out) (i32.const 0))
+          (local.set $out (i32.add (local.get $out) (i32.const 1)))
+          (local.set $ent (i32.add (local.get $ent) (i32.const 16)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $each)))
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (i32.const 4096))
+      (i32.store (i32.const 72) (i32.sub (local.get $out) (i32.const 4096)))
+      (i32.const 64)"#,
+    );
+    let m = compile(&e, &wat);
     let opts = RunOptions {
         env: [
             ("B".to_string(), "2".to_string()),
@@ -517,21 +509,37 @@ fn env_reaches_the_guest_sorted() {
     assert_eq!(String::from_utf8_lossy(&out), "A=1\0B=2\0");
 }
 
+/// The private /tmp is the only pre-opened directory, mounted at /tmp
+/// (`wasi:filesystem/preopens`): the guest answers with the first
+/// pre-open's path, or nothing when the run has none.
 #[test]
 fn private_tmp_is_the_only_preopen() {
     let e = engine();
-    // fd_prestat_get(3) answers 0 (success) exactly when a directory is
-    // pre-opened at descriptor 3 - the private /tmp - and EBADF (8) when the
-    // run has none; the errno travels back as the response length.
-    let wat = r#"(module
-      (import "wasi_snapshot_preview1" "fd_prestat_get" (func $prestat (param i32 i32) (result i32)))
-      (memory (export "memory") 1)
-      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-      (func (export "wasmfn_run") (param i32 i32) (result i64)
-        (i64.extend_i32_u (call $prestat (i32.const 3) (i32.const 0)))))"#;
-    let m = e
-        .compile(&wat::parse_str(wat).expect("wat"))
-        .expect("compile");
+    let wat = component_importing(
+        r#"(import "wasi:filesystem/types@0.2.0" (instance $types
+    (export "descriptor" (type (sub resource)))))
+  (alias export $types "descriptor" (type $descriptor))
+  (import "wasi:filesystem/preopens@0.2.0" (instance $preopens
+    (alias outer 1 $descriptor (type $d))
+    (export "get-directories" (func (result (list (tuple (own $d) string)))))))"#,
+        r#"(canon lower (func $preopens "get-directories") (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc")))"#,
+        r#"(import "host" "f" (func $host (param i32)))"#,
+        r#"(local $ent i32)
+      ;; the list lands at the return pointer: [entries ptr @128][len @132]
+      (call $host (i32.const 128))
+      (local.set $ent (i32.load (i32.const 128)))
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (if (i32.eqz (i32.load (i32.const 132)))
+        (then
+          (i32.store (i32.const 68) (i32.const 1024))
+          (i32.store (i32.const 72) (i32.const 0)))
+        (else
+          ;; an entry is (descriptor handle, path ptr, path len)
+          (i32.store (i32.const 68) (i32.load offset=4 (local.get $ent)))
+          (i32.store (i32.const 72) (i32.load offset=8 (local.get $ent)))))
+      (i32.const 64)"#,
+    );
+    let m = compile(&e, &wat);
     let with_tmp = e
         .run(
             &m,
@@ -542,179 +550,15 @@ fn private_tmp_is_the_only_preopen() {
             },
         )
         .expect("run");
-    assert_eq!(with_tmp.len(), 0, "errno should be 0 with a private /tmp");
+    assert_eq!(String::from_utf8_lossy(&with_tmp), "/tmp");
     let without = e.run(&m, b"", RunOptions::default()).expect("run");
-    assert_eq!(without.len(), 8, "errno should be EBADF (8) without one");
-}
-
-// --- ABI v2: components implementing the wasmfn:function world -------------
-//
-// The fixtures are hand-written component text, sync-lifted: the canonical
-// ABI accepts a sync implementation of the world's `async` run, which is
-// also what keeps a stable-toolchain guest possible.
-
-/// The core body shared by the component fixtures: a bump realloc and a
-/// memory. `run` is provided per fixture.
-const COMPONENT_CORE_PRELUDE: &str = r#"
-    (memory (export "memory") 4)
-    (global $next (mut i32) (i32.const 131072))
-    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
-      (local $p i32)
-      global.get $next
-      local.set $p
-      global.get $next
-      local.get 3
-      i32.add
-      global.set $next
-      local.get $p)
-"#;
-
-/// A component whose run returns the given bytes.
-fn fixed_component(rsp: &[u8]) -> String {
-    format!(
-        r#"(component
-  (core module $m
-    {COMPONENT_CORE_PRELUDE}
-    (func (export "run") (param i32 i32) (result i32)
-      (i32.store8 (i32.const 64) (i32.const 0))
-      (i32.store (i32.const 68) (i32.const 1024))
-      (i32.store (i32.const 72) (i32.const {len}))
-      (i32.const 64))
-    (data (i32.const 1024) "{data}"))
-  (core instance $i (instantiate $m))
-  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-)"#,
-        len = rsp.len(),
-        data = wat_bytes(rsp),
-    )
-}
-
-#[test]
-fn component_fixed_response_round_trip() {
-    let e = engine();
-    let rsp = response_bytes();
-    let m = e
-        .compile(&wat::parse_str(fixed_component(&rsp)).expect("wat"))
-        .expect("compile");
-    assert_eq!(m.abi_version(), 2);
-    let out = e.run(&m, b"", RunOptions::default()).expect("run");
-    assert_eq!(out, rsp);
-}
-
-/// The guest's Err(string) becomes a run error naming the export - v2's
-/// third error channel, which v1 does not have.
-#[test]
-fn component_guest_error_string() {
-    let e = engine();
-    let wat = format!(
-        r#"(component
-  (core module $m
-    {COMPONENT_CORE_PRELUDE}
-    (func (export "run") (param i32 i32) (result i32)
-      (i32.store8 (i32.const 64) (i32.const 1))
-      (i32.store (i32.const 68) (i32.const 1024))
-      (i32.store (i32.const 72) (i32.const 4))
-      (i32.const 64))
-    (data (i32.const 1024) "boom"))
-  (core instance $i (instantiate $m))
-  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-)"#
-    );
-    let m = e
-        .compile(&wat::parse_str(&wat).expect("wat"))
-        .expect("compile");
-    let err = e
-        .run(&m, b"", RunOptions::default())
-        .expect_err("guest error");
-    assert_eq!(err.to_string(), "run returned an error: boom");
-}
-
-/// The epoch deadline interrupts a spinning component with the same message
-/// as a v1 guest - the wording the timeout metric outcome matches on.
-#[test]
-fn component_run_deadline() {
-    let e = engine();
-    let wat = format!(
-        r#"(component
-  (core module $m
-    {COMPONENT_CORE_PRELUDE}
-    (func (export "run") (param i32 i32) (result i32)
-      (loop $l br $l)
-      i32.const 64))
-  (core instance $i (instantiate $m))
-  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-)"#
-    );
-    let m = e
-        .compile(&wat::parse_str(&wat).expect("wat"))
-        .expect("compile");
-    let err = e
-        .run(
-            &m,
-            b"",
-            RunOptions {
-                timeout: Some(Duration::from_millis(50)),
-                ..Default::default()
-            },
-        )
-        .expect_err("deadline");
-    assert!(
-        err.to_string()
-            .contains("module exceeded its execution deadline"),
-        "unexpected: {err}"
-    );
-}
-
-/// The run's memory ceiling denies a component's growth exactly as a core
-/// module's: the guest sees memory.grow fail.
-#[test]
-fn component_memory_limit_denies_growth() {
-    let e = engine();
-    let wat = format!(
-        r#"(component
-  (core module $m
-    {COMPONENT_CORE_PRELUDE}
-    (func (export "run") (param i32 i32) (result i32)
-      ;; try to grow by 64 MiB; on failure return err("grow denied")
-      (if (i32.eq (memory.grow (i32.const 1024)) (i32.const -1))
-        (then
-          (i32.store8 (i32.const 64) (i32.const 1))
-          (i32.store (i32.const 68) (i32.const 1024))
-          (i32.store (i32.const 72) (i32.const 11))
-          (return (i32.const 64))))
-      (i32.store8 (i32.const 64) (i32.const 0))
-      (i32.store (i32.const 68) (i32.const 1024))
-      (i32.store (i32.const 72) (i32.const 0))
-      (i32.const 64))
-    (data (i32.const 1024) "grow denied"))
-  (core instance $i (instantiate $m))
-  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-)"#
-    );
-    let m = e
-        .compile(&wat::parse_str(&wat).expect("wat"))
-        .expect("compile");
-    let err = e
-        .run(
-            &m,
-            b"",
-            RunOptions {
-                memory_limit: Some(1 << 20),
-                ..Default::default()
-            },
-        )
-        .expect_err("denied growth surfaces as the guest's error");
-    assert_eq!(err.to_string(), "run returned an error: grow denied");
+    assert_eq!(without.len(), 0, "no pre-open without a private /tmp");
 }
 
 /// A component that does not implement the world is refused at load with
-/// the world named - v2's checkABI.
+/// the world named - the ABI check.
 #[test]
-fn component_world_typecheck_refusals() {
+fn world_typecheck_refusals() {
     let e = engine();
     for (name, wat) in [
         ("empty", "(component)".to_string()),
@@ -744,8 +588,8 @@ fn component_world_typecheck_refusals() {
 }
 
 /// Records the level and message of every guest log line dispatched while it
-/// is the thread's default subscriber. A v2 run drives the guest on the
-/// calling thread, so a scoped default sees the lines its log import emits.
+/// is the thread's default subscriber. A run drives the guest on the calling
+/// thread, so a scoped default sees the lines its log import emits.
 #[derive(Clone, Default)]
 struct GuestLogLines(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
 
@@ -793,7 +637,7 @@ impl tracing::Subscriber for GuestLogLines {
 /// typed import, and each of the world's levels lands at the runtime's level
 /// of the same name.
 #[test]
-fn component_log_levels_land() {
+fn log_levels_land() {
     let e = engine();
     let rsp = response_bytes();
     let lines = [
@@ -809,14 +653,12 @@ fn component_log_levels_land() {
         let at = 2048 + 16 * i;
         let _ = write!(
             calls,
-            "\n      (call $log (i32.const {i}) (i32.const {at}) (i32.const {len}) (i32.const 0) (i32.const 0))",
+            "\n      (call $host (i32.const {i}) (i32.const {at}) (i32.const {len}) (i32.const 0) (i32.const 0))",
             len = msg.len()
         );
         let _ = write!(data, "\n    (data (i32.const {at}) \"{msg}\")");
     }
-    // The memory lives in its own core module so the lowered import can name
-    // it before the main module (which needs that import) is instantiated;
-    // the enum must reach the import's signature as an eq-bound type import
+    // The enum must reach the import's signature as an eq-bound type import
     // (a defined type is not importable directly).
     let wat = format!(
         r#"(component
@@ -826,28 +668,23 @@ fn component_log_levels_land() {
   (core module $libc
     {COMPONENT_CORE_PRELUDE})
   (core instance $libc_inst (instantiate $libc))
-  (core func $log_lowered (canon lower (func $log) (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
+  (core func $lowered (canon lower (func $log) (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
   (core module $m
     (import "env" "memory" (memory 4))
-    (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
+    (import "host" "f" (func $host (param i32 i32 i32 i32 i32)))
     (func (export "run") (param i32 i32) (result i32){calls}
-      (i32.store8 (i32.const 64) (i32.const 0))
-      (i32.store (i32.const 68) (i32.const 1024))
-      (i32.store (i32.const 72) (i32.const {len}))
-      (i32.const 64))
+      {ok})
     (data (i32.const 1024) "{rsp_data}"){data})
   (core instance $m_inst (instantiate $m
     (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
-    (with "host" (instance (export "log" (func $log_lowered))))))
-  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $m_inst "run") (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
+    (with "host" (instance (export "f" (func $lowered))))))
+  {lift}
 )"#,
-        len = rsp.len(),
+        ok = ok_result("(i32.const 1024)", &format!("(i32.const {})", rsp.len())),
         rsp_data = wat_bytes(&rsp),
+        lift = lift_run("m_inst", "libc_inst"),
     );
-    let m = e
-        .compile(&wat::parse_str(&wat).expect("wat"))
-        .expect("compile");
+    let m = compile(&e, &wat);
     let logged = GuestLogLines::default();
     let out =
         tracing::subscriber::with_default(logged.clone(), || e.run(&m, b"", RunOptions::default()))
@@ -860,35 +697,29 @@ fn component_log_levels_land() {
     assert_eq!(*logged.0.lock().expect("poisoned"), want);
 }
 
-/// A serialized component artifact loads back through the same cache path a
-/// module's does; the artifact itself says which kind it is.
+/// A serialized artifact loads back through the cache path.
 #[test]
-fn component_serialize_round_trip() {
+fn serialize_round_trip() {
     let e = engine();
     let rsp = response_bytes();
-    let m = e
-        .compile(&wat::parse_str(fixed_component(&rsp)).expect("wat"))
-        .expect("compile");
+    let m = compile(&e, &fixed_component(&rsp));
     let artifact = e.serialize(&m).expect("serialize");
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("c.bin");
     std::fs::write(&path, &artifact).expect("write");
     let loaded = e.deserialize_file(&path).expect("deserialize");
-    assert_eq!(loaded.abi_version(), 2);
     let out = e.run(&loaded, b"", RunOptions::default()).expect("run");
     assert_eq!(out, rsp);
 }
 
-/// inspect reports a component as ABI v2 with the world verdict, and a
+/// inspect reports the world verdict and the component's items, and a
 /// serialized artifact is still refused as a module source.
 #[test]
-fn component_inspection() {
+fn inspection() {
     let e = engine();
-    let rsp = response_bytes();
     let shape = e
-        .inspect(&wat::parse_str(fixed_component(&rsp)).expect("wat"))
+        .inspect(&wat::parse_str(fixed_component(&response_bytes())).expect("wat"))
         .expect("inspect");
-    assert_eq!(shape.abi_version, 2);
     assert_eq!(shape.abi_error, None);
     assert!(
         shape
@@ -896,7 +727,8 @@ fn component_inspection() {
             .iter()
             .any(|x| x.name == "run" && x.kind == "func")
     );
-    assert!(shape.memories.is_empty());
+    assert!(shape.imports.is_empty());
+    assert!(shape.host_imports.is_empty());
 
     let bad = e.inspect(b"(component)".as_ref());
     assert!(bad.is_err(), "text is not a module source");

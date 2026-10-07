@@ -1,7 +1,6 @@
 exit 1
 --- stdout
-<DIR>/abiunknown.yaml: Composition/abiunknown pipeline[0] abiunknown: refused: module module file fn.wasm has an invalid manifest: abi must be 1 or 2 (this runtime implements ABI v1 and v2), got 3
-  module: sha256:d8f9c70dd9bca2be5b598bc81ac9dbbd4f49531eb8174e8bcdd1aa895c230ba3, 85 B, ABI v1
+<DIR>/abiunknown.yaml: Composition/abiunknown pipeline[0] abiunknown: refused: module module file fn.wasm has an invalid manifest: abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 3
+  module: sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, 255 B, ABI v2
   warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
-  warning: ABI v1 is deprecated and is removed in function-wasm 1.0.0; build the module as an ABI v2 component (docs/abi-v2.md)
 --- stderr

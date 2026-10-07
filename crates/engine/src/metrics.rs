@@ -175,7 +175,7 @@ pub static RUN_DURATION: LazyLock<LabeledHistogram> = LazyLock::new(|| {
 pub static HOSTCALL_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
     plain_histogram(
         "function_wasm_module_hostcall_duration_seconds",
-        "Time one run spent inside host imports (wasmfn.log, wasmfn.http and WASI); the rest of run_duration_seconds is guest compute.",
+        "Time one run spent inside host imports (the log import, wasi:http and WASI); the rest of run_duration_seconds is guest compute.",
         &[
             0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
         ],
@@ -207,7 +207,7 @@ pub static CACHE_EVENTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
 pub static HTTP_REQUESTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
         "function_wasm_module_http_requests",
-        "HTTP requests modules made through the host (wasmfn.http), by outcome (ok = the server answered, refused = outside the grant or the egress policy, budget = over a per-run budget or the request timeout, error = the request failed).",
+        "HTTP requests modules made through the host (wasi:http), by outcome (ok = the server answered, refused = outside the grant or the egress policy, budget = over a per-run budget or the request timeout, error = the request failed).",
         &["outcome"],
     )
 });
@@ -218,18 +218,6 @@ pub static MEMORY_DENIALS: LazyLock<LabeledCounter> = LazyLock::new(|| {
         "function_wasm_module_memory_denials",
         "Guest memory growths denied, by reason (limit = the run's memory ceiling, pool = --max-total-run-memory exhausted before the run's deadline). The guest sees memory.grow fail.",
         &["reason"],
-    )
-});
-
-/// Module loads by ABI: a wasmtime compile or a compiled-artifact read,
-/// what a memory-cache hit is not. Additive to the Go runtime's series: it
-/// says how much ABI v1 a deployment still serves while the deprecation
-/// runs, without a module label (bounded values only).
-pub static MODULE_LOADS: LazyLock<LabeledCounter> = LazyLock::new(|| {
-    LabeledCounter::new(
-        "function_wasm_module_loads",
-        "Module loads (a wasmtime compile or a compiled-artifact read; memory-cache hits are not loads), by abi (1 = a wasip1 core module, deprecated; 2 = a component).",
-        &["abi"],
     )
 });
 

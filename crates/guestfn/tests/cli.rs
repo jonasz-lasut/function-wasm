@@ -7,16 +7,32 @@ use std::process::Command;
 
 use function_wasm::oci::testregistry::{TestRegistry, serve};
 
-const ABI_V1_WAT: &str = r#"(module
+/// A component implementing the world with a sync-lifted run that returns
+/// an empty response.
+const COMPONENT_WAT: &str = r#"(component
+  (core module $m
+    (memory (export "memory") 1)
+    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+    (func (export "run") (param i32 i32) (result i32)
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72) (i32.const 0))
+      (i32.const 64)))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+)"#;
+
+/// A component that does not implement the world.
+const NO_RUN_WAT: &str = "(component)";
+
+/// A core module in ABI v1's shape: what a guest built before 1.0.0 is.
+const CORE_MODULE_WAT: &str = r#"(module
   (memory (export "memory") 1)
   (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
   (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#;
 
-const NO_RUN_WAT: &str = r#"(module
-  (memory (export "memory") 1)
-  (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8))"#;
-
-const MANIFEST_YAML: &str = "abi: 1
+const MANIFEST_YAML: &str = "abi: 2
 name: greeter
 version: v0.1.0
 description: Greets the composite resource
@@ -63,7 +79,7 @@ fn push_then_inspect_and_show() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("fn.wasm"),
-        wat::parse_str(ABI_V1_WAT).expect("wat"),
+        wat::parse_str(COMPONENT_WAT).expect("wat"),
     )
     .expect("write");
     std::fs::write(dir.path().join("wasmfn.yaml"), MANIFEST_YAML).expect("write");
@@ -110,15 +126,8 @@ fn push_then_inspect_and_show() {
     // Pulled and read as the runtime would.
     let (stdout, stderr, ok) = guestfn(dir.path(), &["inspect", &pinned, "--pull"]);
     assert!(ok, "inspect --pull failed: {stderr}");
-    assert!(stdout.contains("ABI v1"), "{stdout}");
-    assert!(stdout.contains("exports: memory (memory)"), "{stdout}");
-    assert!(
-        stdout.contains(&format!(
-            "  warning: {}",
-            function_wasm_engine::ABI_V1_DEPRECATION
-        )),
-        "{stdout}"
-    );
+    assert!(stdout.contains("ABI v2"), "{stdout}");
+    assert!(stdout.contains("exports: run (func)"), "{stdout}");
 
     // The manifest layer, shown without pulling the module.
     let (stdout, stderr, ok) = guestfn(dir.path(), &["manifest", "show", &pinned]);
@@ -143,7 +152,43 @@ fn push_refuses_a_module_the_runtime_would_refuse() {
         stderr.contains("would be refused by the runtime and is not pushed"),
         "{stderr}"
     );
-    assert!(stderr.contains("wasmfn_run"), "{stderr}");
+    assert!(
+        stderr.contains("component does not implement the wasmfn:function@2.0.0-draft world"),
+        "{stderr}"
+    );
+}
+
+/// A core module - a guest built before 1.0.0 - is refused by every
+/// command that reads a module, with the runtime's own sentence.
+#[test]
+fn a_core_module_is_refused_by_name() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("fn.wasm"),
+        wat::parse_str(CORE_MODULE_WAT).expect("wat"),
+    )
+    .expect("write");
+    let (_, stderr, ok) = guestfn(dir.path(), &["inspect", "fn.wasm"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains(&format!(
+            "fn.wasm: {}",
+            function_wasm_engine::CORE_MODULE_REFUSAL
+        )),
+        "{stderr}"
+    );
+
+    let addr = empty_registry();
+    let (_, stderr, ok) = guestfn(dir.path(), &["push", &format!("{addr}/example/greeter:v1")]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("would be refused by the runtime and is not pushed"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(function_wasm_engine::CORE_MODULE_REFUSAL),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -151,35 +196,22 @@ fn inspect_a_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("fn.wasm"),
-        wat::parse_str(ABI_V1_WAT).expect("wat"),
+        wat::parse_str(COMPONENT_WAT).expect("wat"),
     )
     .expect("write");
     let (stdout, stderr, ok) = guestfn(dir.path(), &["inspect", "fn.wasm"]);
     assert!(ok, "inspect failed: {stderr}");
-    assert!(stdout.contains("ABI v1"), "{stdout}");
-    assert!(stdout.contains("wasmfn_alloc (i32) -> (i32)"), "{stdout}");
-    assert!(
-        stdout.contains("wasmfn_run (i32, i32) -> (i64)"),
-        "{stdout}"
-    );
-    // The deprecation, in the runtime's words, under the verdict.
-    assert!(
-        stdout.contains(&format!(
-            "  warning: {}",
-            function_wasm_engine::ABI_V1_DEPRECATION
-        )),
-        "{stdout}"
-    );
+    assert!(stdout.contains("ABI v2"), "{stdout}");
+    assert!(stdout.contains("exports: run (func)"), "{stdout}");
+    assert!(stdout.contains("imports: none"), "{stdout}");
 
     let (stdout, _, ok) = guestfn(dir.path(), &["inspect", "fn.wasm", "--output", "json"]);
     assert!(ok);
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(v["module"]["abi"], "v1");
-    assert_eq!(v["module"]["memories"][0]["minPages"], 1);
-    assert_eq!(
-        v["module"]["warnings"],
-        serde_json::json!([function_wasm_engine::ABI_V1_DEPRECATION])
-    );
+    assert_eq!(v["module"]["abi"], "v2");
+    assert_eq!(v["module"]["exports"][0]["name"], "run");
+    assert_eq!(v["module"]["exports"][0]["kind"], "func");
+    assert!(v["module"].get("warnings").is_none());
 }
 
 #[test]
@@ -195,7 +227,7 @@ fn manifest_validate() {
         "{stdout}"
     );
 
-    std::fs::write(dir.path().join("bad.yaml"), "abi: 1\nverion: nope\n").expect("write");
+    std::fs::write(dir.path().join("bad.yaml"), "abi: 2\nverion: nope\n").expect("write");
     let (_, stderr, ok) = guestfn(dir.path(), &["manifest", "validate", "bad.yaml"]);
     assert!(!ok);
     assert!(stderr.contains("unknown field \"verion\""), "{stderr}");
@@ -286,7 +318,7 @@ fn scaffold_composition_from_a_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("fn.wasm"),
-        wat::parse_str(ABI_V1_WAT).expect("wat"),
+        wat::parse_str(COMPONENT_WAT).expect("wat"),
     )
     .expect("write");
     std::fs::write(dir.path().join("wasmfn.yaml"), MANIFEST_YAML).expect("write");

@@ -1,7 +1,8 @@
 //! The served runtime's log filter, end to end (#135): `--debug` turns on the
 //! runtime's own DEBUG lines and nobody else's, and a `RUST_LOG` that is set
-//! wins over the flag. The guest's own debug record (`wasmfn.log` level 1,
-//! forwarded by the engine at DEBUG) is the runtime's line; the other crates'
+//! wins over the flag. The guest's own debug record (the world's `log`
+//! import at `debug`, forwarded by the engine at DEBUG) is the runtime's
+//! line; the other crates'
 //! are h2's per-frame lines on every connection and wasmtime's per-section
 //! ones on every load (cranelift's per-pass ones need a module big enough to
 //! matter, so the test asserts on the class, not on cranelift by name).
@@ -17,21 +18,37 @@ use function_sdk_rust::resource;
 
 const GUEST_MSG: &str = "a debug record from the guest";
 
-/// A guest that logs one debug record and returns an empty response.
+/// A component that logs one record at the world's `debug` level and
+/// returns an empty response. The log import is lowered against the memory
+/// of a core module instantiated first, as a toolchain's libc would be.
 fn logging_guest() -> Vec<u8> {
-    let payload = format!(r#"{{"msg":"{GUEST_MSG}","kv":[]}}"#);
-    // WAT string literals take the JSON's quotes escaped.
-    let literal = payload.replace('"', "\\\"");
     wat::parse_str(format!(
-        r#"(module
-          (import "wasmfn" "log" (func $log (param i32 i32 i32)))
-          (memory (export "memory") 1)
-          (data (i32.const 2048) "{literal}")
-          (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-          (func (export "wasmfn_run") (param i32 i32) (result i64)
-            (call $log (i32.const 1) (i32.const 2048) (i32.const {len}))
-            i64.const 0))"#,
-        len = payload.len(),
+        r#"(component
+          (type $level_def (enum "debug" "info" "warn" "error"))
+          (import "level" (type $level (eq $level_def)))
+          (import "log" (func $log (param "level" $level) (param "msg" string) (param "kv" (list (tuple string string)))))
+          (core module $libc
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096))
+          (core instance $libc_inst (instantiate $libc))
+          (core func $log_lowered (canon lower (func $log) (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
+          (core module $m
+            (import "env" "memory" (memory 1))
+            (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
+            (func (export "run") (param i32 i32) (result i32)
+              (call $log (i32.const 0) (i32.const 2048) (i32.const {len}) (i32.const 0) (i32.const 0))
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (i32.const 1024))
+              (i32.store (i32.const 72) (i32.const 0))
+              (i32.const 64))
+            (data (i32.const 2048) "{GUEST_MSG}"))
+          (core instance $m_inst (instantiate $m
+            (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
+            (with "host" (instance (export "log" (func $log_lowered))))))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $m_inst "run") (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
+        )"#,
+        len = GUEST_MSG.len(),
     ))
     .expect("wat")
 }
@@ -163,7 +180,7 @@ fn debug_is_scoped_to_the_runtime() {
         lines.join("\n")
     );
     assert!(
-        guest[0].contains("DEBUG") && guest[0].contains("function_wasm_engine::hostlog"),
+        guest[0].contains("DEBUG") && guest[0].contains("function_wasm_engine::component"),
         "the record is logged at DEBUG by the engine: {}",
         guest[0]
     );

@@ -5,7 +5,7 @@
 use function_wasm::location::parse_any_reference;
 use function_wasm::manifest::Manifest;
 use function_wasm::oci::{self, Descriptor, OciManifest, RegistryClient};
-use function_wasm_engine::{Inspection, WASI_MODULE};
+use function_wasm_engine::Inspection;
 use serde::Serialize;
 
 #[derive(clap::Args, Debug)]
@@ -77,45 +77,22 @@ struct DescriptorInfo {
 #[derive(Serialize)]
 struct ModuleInfo {
     size: usize,
-    /// The ABI the binary format names: 1 for a core module, 2 for a
-    /// component - stated even when the module fails its ABI's check.
-    #[serde(rename = "abiVersion")]
-    abi_version: u8,
-    /// "v1" or "v2" when the module passes the runtime's check; otherwise
-    /// empty, with abiError saying what the runtime says at load.
+    /// "v2" when the component passes the runtime's check; otherwise empty,
+    /// with abiError saying what the runtime says at load.
     #[serde(skip_serializing_if = "String::is_empty")]
     abi: String,
     #[serde(rename = "abiError", skip_serializing_if = "String::is_empty")]
     abi_error: String,
     exports: Vec<ExternInfo>,
     imports: Vec<ExternInfo>,
-    memories: Vec<MemoryInfo>,
-    /// What the runtime says of a module it accepts, beyond the verdict:
-    /// ABI v1's deprecation.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    warnings: Vec<String>,
 }
 
+/// One top-level item of the component: the world's `run` and `log`, a
+/// WASI interface, or whatever else the toolchain put there.
 #[derive(Serialize)]
 struct ExternInfo {
-    #[serde(skip_serializing_if = "String::is_empty")]
-    module: String,
     name: String,
     kind: String,
-    #[serde(rename = "type", skip_serializing_if = "String::is_empty")]
-    ty: String,
-}
-
-#[derive(Serialize)]
-struct MemoryInfo {
-    #[serde(rename = "minPages")]
-    min_pages: u64,
-    #[serde(rename = "maxPages", skip_serializing_if = "Option::is_none")]
-    max_pages: Option<u64>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    shared: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    memory64: bool,
 }
 
 impl InspectCmd {
@@ -239,7 +216,7 @@ impl InspectCmd {
         }
         if let Some(m) = &out.module {
             let verdict = if m.abi.is_empty() {
-                format!("not ABI v{}: {}", m.abi_version, m.abi_error)
+                format!("not ABI v2: {}", m.abi_error)
             } else {
                 format!("ABI {}", m.abi)
             };
@@ -254,29 +231,6 @@ impl InspectCmd {
             }
             println!("  exports: {}", externs_text(&m.exports));
             println!("  imports: {}", imports_text(&m.imports));
-            for mem in &m.memories {
-                let mut line = format!(
-                    "  memory: {} pages ({}) initial",
-                    mem.min_pages,
-                    pages_text(mem.min_pages)
-                );
-                match mem.max_pages {
-                    Some(max) => {
-                        line += &format!(", {max} pages ({}) maximum", pages_text(max));
-                    }
-                    None => line += ", no maximum",
-                }
-                if mem.shared {
-                    line += ", shared";
-                }
-                if mem.memory64 {
-                    line += ", 64-bit";
-                }
-                println!("{line}");
-            }
-            for warning in &m.warnings {
-                println!("  warning: {warning}");
-            }
         }
         Ok(())
     }
@@ -335,54 +289,24 @@ fn descriptor(d: &Descriptor) -> DescriptorInfo {
 }
 
 /// Compiles a module with the runtime's engine and reports what it sees.
+/// A core module never gets here: the engine refuses it by name, and the
+/// refusal is the command's error.
 fn describe_module(wasm: &[u8]) -> Result<ModuleInfo, String> {
     let shape: Inspection = crate::inspect_module(wasm)?;
     let (abi, abi_error) = match &shape.abi_error {
-        None => (format!("v{}", shape.abi_version), String::new()),
+        None => ("v2".to_string(), String::new()),
         Some(e) => (String::new(), e.clone()),
     };
-    // A refused module gets the refusal alone; an accepted ABI v1 module
-    // gets what the runtime logs on every load of it.
-    let warnings = match (shape.abi_version, &shape.abi_error) {
-        (1, None) => vec![function_wasm_engine::ABI_V1_DEPRECATION.to_string()],
-        _ => Vec::new(),
+    let item = |e: &function_wasm_engine::Extern| ExternInfo {
+        name: e.name.clone(),
+        kind: e.kind.clone(),
     };
     Ok(ModuleInfo {
         size: wasm.len(),
-        abi_version: shape.abi_version,
         abi,
         abi_error,
-        warnings,
-        exports: shape
-            .exports
-            .iter()
-            .map(|e| ExternInfo {
-                module: String::new(),
-                name: e.name.clone(),
-                kind: e.kind.clone(),
-                ty: e.ty.clone(),
-            })
-            .collect(),
-        imports: shape
-            .imports
-            .iter()
-            .map(|i| ExternInfo {
-                module: i.module.clone(),
-                name: i.name.clone(),
-                kind: i.kind.clone(),
-                ty: i.ty.clone(),
-            })
-            .collect(),
-        memories: shape
-            .memories
-            .iter()
-            .map(|m| MemoryInfo {
-                min_pages: m.min,
-                max_pages: m.max,
-                shared: m.shared,
-                memory64: m.memory64,
-            })
-            .collect(),
+        exports: shape.exports.iter().map(item).collect(),
+        imports: shape.imports.iter().map(item).collect(),
     })
 }
 
@@ -401,19 +325,16 @@ fn externs_text(xs: &[ExternInfo]) -> String {
         return "none".to_string();
     }
     xs.iter()
-        .map(|x| {
-            if x.ty.is_empty() {
-                format!("{} ({})", x.name, x.kind)
-            } else {
-                format!("{} {}", x.name, x.ty)
-            }
-        })
+        .map(|x| format!("{} ({})", x.name, x.kind))
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-/// Lists host imports one by one and WASI as a count: forty
-/// wasi_snapshot_preview1 names say nothing a reader needs.
+/// The namespace of every WASI interface a component imports.
+const WASI_NAMESPACE: &str = "wasi:";
+
+/// Lists the world's imports one by one and WASI as a count: twenty
+/// `wasi:*` interface names say nothing a reader needs.
 fn imports_text(xs: &[ExternInfo]) -> String {
     if xs.is_empty() {
         return "none".to_string();
@@ -421,29 +342,16 @@ fn imports_text(xs: &[ExternInfo]) -> String {
     let mut wasi = 0;
     let mut parts = Vec::new();
     for x in xs {
-        if x.module == WASI_MODULE {
+        if x.name.starts_with(WASI_NAMESPACE) {
             wasi += 1;
             continue;
         }
-        if x.ty.is_empty() {
-            parts.push(format!("{}.{} ({})", x.module, x.name, x.kind));
-        } else {
-            parts.push(format!("{}.{} {}", x.module, x.name, x.ty));
-        }
+        parts.push(format!("{} ({})", x.name, x.kind));
     }
     if wasi > 0 {
-        parts.insert(0, format!("{WASI_MODULE} ({wasi})"));
+        parts.insert(0, format!("{WASI_NAMESPACE}* ({wasi})"));
     }
     parts.join(", ")
-}
-
-/// Renders a page count as bytes; a count past what fits in bytes (a
-/// memory64 declaration) is shown as pages only.
-fn pages_text(pages: u64) -> String {
-    if pages > 1 << 40 {
-        return format!("{pages} pages");
-    }
-    crate::human_bytes(pages << 16)
 }
 
 fn annotations_text(a: &std::collections::BTreeMap<String, String>) -> String {

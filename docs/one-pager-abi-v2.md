@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.3
+* Status: Draft, revision 0.4
 
 The decision `docs/one-pager-language-support.md` left open ("Is ABI v2 ever
 in scope?", open question 4): yes. ABI v2 - a component-model guest contract -
@@ -79,7 +79,10 @@ today) and mainline Go (nothing beyond wasip1 until golang/go#77141,
 realistically 1-2+ years) stay on v1 - which settles the retirement
 question: **v1 is served indefinitely, by the same runtime**. wasmtime runs
 both shapes, and `Component::serialize` caches like `Module::serialize`
-under the same `compiled/<Version()>` namespace.
+under the same `compiled/<Version()>` namespace. (Superseded, rev 0.4: #114's
+spike moved every scaffold, Go included, to v2 on 2026-10-07 through
+`guestfn build`'s embed and wrap, so v1 was deprecated in v0.6.0 and
+removed in 1.0.0; the runtime refuses a core module at load.)
 
 Target version, decided (status checked 2026-08-25): **WASI 0.3 from the
 start, accepting unstable Rust for early guests**. WASI 0.3.0 shipped
@@ -112,9 +115,9 @@ The surface a 1.0 would freeze is host-language-neutral and survives
 verbatim: the Input schema, the manifest format and the three-layer
 decision, the Cedar semantics of both policy layers, digest-pinned sources
 and the three cache stores, the refusal strings, the flags, `/readyz` + gRPC
-health, the metrics series. ABI v1 modules keep running unmodified - the
-wazero probe already showed the ABI is host-agnostic, and this swap banks on
-that.
+health, the metrics series. ABI v1 modules kept running unmodified through
+the port, until 1.0.0 removed the ABI - the wazero probe already showed the
+ABI is host-agnostic, and this swap banks on that.
 
 Conformance is inherited rather than rewritten: `cmd/function/testdata/
 validate/` diffs stdout/stderr/exit codes and can drive any binary

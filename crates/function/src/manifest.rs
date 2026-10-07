@@ -15,18 +15,18 @@ use crate::sandboxenv::{self, EnvBinding};
 /// Bounds the layer and the file: a manifest is a few lines of requirements
 /// and a schema, never a document.
 pub const MAX_SIZE: usize = 64 << 10;
-/// The ABIs this runtime implements: v1 (docs/abi.md, core modules) and v2
-/// (docs/abi-v2.md, components). The binary format decides which one a
-/// module actually is; the manifest's abi is the declaration checked
-/// against it.
-pub const SUPPORTED_ABIS: [i64; 2] = [1, 2];
+/// The ABIs this runtime implements: v2 (docs/abi-v2.md, components) alone
+/// since function-wasm 1.0.0 removed v1 (core modules). A manifest still
+/// declares its abi, so a v1 manifest is refused by its declaration before
+/// its module is refused by its binary format.
+pub const SUPPORTED_ABIS: [i64; 1] = [2];
 
 /// What a module declares about itself.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Manifest {
     /// The ABI version the module implements; required, one of
-    /// SUPPORTED_ABIS, and it must match the module's binary format.
+    /// SUPPORTED_ABIS.
     pub abi: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
@@ -185,7 +185,7 @@ impl Manifest {
     pub fn validate(&self) -> Result<(), String> {
         if !SUPPORTED_ABIS.contains(&self.abi) {
             return Err(format!(
-                "abi must be 1 or 2 (this runtime implements ABI v1 and v2), got {}",
+                "abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got {}",
                 self.abi
             ));
         }
@@ -284,31 +284,19 @@ impl Manifest {
     }
 
     /// Holds the manifest against what one run was granted - narrowing only:
-    /// every requirement must be covered by g, the declared abi must be the
-    /// module's actual binary format (module_abi), the runtime must be at
-    /// least minRuntime, and config must satisfy the schema. The first miss
-    /// is the error, worded for a fatal result the caller prefixes with the
+    /// every requirement must be covered by g, the runtime must be at least
+    /// minRuntime, and config must satisfy the schema. The first miss is the
+    /// error, worded for a fatal result the caller prefixes with the
     /// module's name.
     pub fn check(
         &self,
         g: &Grants,
         config: Option<&Value>,
         runtime_version: &str,
-        module_abi: u8,
     ) -> Result<(), String> {
         if !SUPPORTED_ABIS.contains(&self.abi) {
             return Err(format!(
-                "requires ABI v{}, this runtime implements ABI v1 and v2",
-                self.abi
-            ));
-        }
-        if self.abi != i64::from(module_abi) {
-            let actual = match module_abi {
-                1 => "a core module (ABI v1)",
-                _ => "a component (ABI v2)",
-            };
-            return Err(format!(
-                "manifest says abi: {}, but the module is {actual}",
+                "requires ABI v{}, this runtime implements ABI v2 only",
                 self.abi
             ));
         }
@@ -518,7 +506,7 @@ mod tests {
     #[test]
     fn parses_and_summarises() {
         let m = manifest(
-            r#"{"abi":1,"name":"greeter","version":"0.1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
+            r#"{"abi":2,"name":"greeter","version":"0.1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
         );
         assert_eq!(
             m.summary(),
@@ -531,14 +519,21 @@ mod tests {
         let cases: &[(&str, &str)] = &[
             (
                 r#"{"abi":3}"#,
-                "abi must be 1 or 2 (this runtime implements ABI v1 and v2), got 3",
+                "abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 3",
+            ),
+            // A manifest of the removed ABI: refused by its declaration, so
+            // a v1 artifact's author reads the fix before the module's own
+            // refusal.
+            (
+                r#"{"abi":1}"#,
+                "abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 1",
             ),
             (
-                r#"{"abi":1,"requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,
+                r#"{"abi":2,"requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,
                 "requires.egress.http[0] must set exactly one of host and hostPattern",
             ),
             (
-                r#"{"abi":1,"minRuntime":"latest"}"#,
+                r#"{"abi":2,"minRuntime":"latest"}"#,
                 r#"minRuntime "latest" is not a semantic version (e.g. v0.2.0)"#,
             ),
         ];
@@ -552,17 +547,17 @@ mod tests {
         // An unknown field under requires fails closed; an unknown top-level
         // field is forward compatibility.
         assert!(
-            Manifest::parse(br#"{"abi":1,"requires":{"sockets":true}}"#)
+            Manifest::parse(br#"{"abi":2,"requires":{"sockets":true}}"#)
                 .expect_err("strict requires")
                 .starts_with("cannot parse manifest requires:")
         );
-        assert!(Manifest::parse(br#"{"abi":1,"future":true}"#).is_ok());
+        assert!(Manifest::parse(br#"{"abi":2,"future":true}"#).is_ok());
     }
 
     #[test]
     fn check_holds_requirements_against_grants() {
         let m = manifest(
-            r#"{"abi":1,"requires":{"filesystem":{"privateTmp":true},"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
+            r#"{"abi":2,"requires":{"filesystem":{"privateTmp":true},"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
         );
         let full = Grants {
             private_tmp: true,
@@ -573,10 +568,10 @@ mod tests {
             }],
             ..Default::default()
         };
-        assert!(m.check(&full, None, "", 1).is_ok());
+        assert!(m.check(&full, None, "").is_ok());
         let none = Grants::default();
         assert_eq!(
-            m.check(&none, None, "", 1).expect_err("refuse"),
+            m.check(&none, None, "").expect_err("refuse"),
             "requires egress host api.example.com methods [GET], which was not granted"
         );
     }
@@ -598,13 +593,13 @@ mod tests {
             credentials: vec!["cmdb".to_string(), "db".to_string()],
             ..Default::default()
         };
-        assert!(m.check(&granted, None, "", 2).is_ok());
+        assert!(m.check(&granted, None, "").is_ok());
         let partly = Grants {
             credentials: vec!["cmdb".to_string()],
             ..granted
         };
         assert_eq!(
-            m.check(&partly, None, "", 2).expect_err("refuse"),
+            m.check(&partly, None, "").expect_err("refuse"),
             r#"requires credential "db" (requires.credentials[1]), which was not granted"#
         );
         // Names are checked like an env binding's credential, and each is
@@ -635,26 +630,9 @@ mod tests {
     }
 
     #[test]
-    fn check_holds_abi_against_the_binary_format() {
-        let v2 = manifest(r#"{"abi":2}"#);
-        assert_eq!(
-            v2.check(&Grants::default(), None, "", 1)
-                .expect_err("refuse"),
-            "manifest says abi: 2, but the module is a core module (ABI v1)"
-        );
-        assert!(v2.check(&Grants::default(), None, "", 2).is_ok());
-        let v1 = manifest(r#"{"abi":1}"#);
-        assert_eq!(
-            v1.check(&Grants::default(), None, "", 2)
-                .expect_err("refuse"),
-            "manifest says abi: 1, but the module is a component (ABI v2)"
-        );
-    }
-
-    #[test]
     fn config_schema_validates() {
         let m = manifest(
-            r#"{"abi":1,"config":{"schema":{"type":"object","properties":{"greeting":{"type":"string"}}}}}"#,
+            r#"{"abi":2,"config":{"schema":{"type":"object","properties":{"greeting":{"type":"string"}}}}}"#,
         );
         assert!(
             m.validate_config(Some(&serde_json::json!({"greeting": "hi"})))
@@ -672,12 +650,12 @@ mod tests {
 
     #[test]
     fn min_runtime_compares() {
-        let m = manifest(r#"{"abi":1,"minRuntime":"0.2.0"}"#);
-        assert!(m.check(&Grants::default(), None, "(devel)", 1).is_ok());
-        assert!(m.check(&Grants::default(), None, "", 1).is_ok());
-        assert!(m.check(&Grants::default(), None, "v0.3.0", 1).is_ok());
+        let m = manifest(r#"{"abi":2,"minRuntime":"0.2.0"}"#);
+        assert!(m.check(&Grants::default(), None, "(devel)").is_ok());
+        assert!(m.check(&Grants::default(), None, "").is_ok());
+        assert!(m.check(&Grants::default(), None, "v0.3.0").is_ok());
         assert_eq!(
-            m.check(&Grants::default(), None, "v0.1.0", 1)
+            m.check(&Grants::default(), None, "v0.1.0")
                 .expect_err("refuse"),
             "requires runtime v0.2.0 or newer, this is v0.1.0"
         );

@@ -1,6 +1,5 @@
 exit 0
 --- stdout
 <DIR>/http-2.yaml: Composition/granted pipeline[0] granted: OK (http http://<SERVER>/fn.wasm)
-  module: sha256:d8f9c70dd9bca2be5b598bc81ac9dbbd4f49531eb8174e8bcdd1aa895c230ba3, 85 B, ABI v1; manifest: greeter 0.1.0, private /tmp
-  warning: ABI v1 is deprecated and is removed in function-wasm 1.0.0; build the module as an ABI v2 component (docs/abi-v2.md)
+  module: sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, 255 B, ABI v2; manifest: greeter 0.1.0, private /tmp
 --- stderr

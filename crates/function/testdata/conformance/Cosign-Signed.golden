@@ -1,6 +1,5 @@
 exit 0
 --- stdout
-<DIR>/Signed.yaml: Composition/Signed pipeline[0] Signed: OK (oci <REGISTRY>/example/greeter@sha256:0f49132e921c5eb22d2efacd96b5268d215f3e0c0723e5e6124830034238d74c)
-  module: sha256:0f49132e921c5eb22d2efacd96b5268d215f3e0c0723e5e6124830034238d74c, 85 B, ABI v1
-  warning: ABI v1 is deprecated and is removed in function-wasm 1.0.0; build the module as an ABI v2 component (docs/abi-v2.md)
+<DIR>/Signed.yaml: Composition/Signed pipeline[0] Signed: OK (oci <REGISTRY>/example/greeter@sha256:1ee4b1ffab4e0338f4d7affab430ffc6f8c6f580270f56c0c93c14ba1af5bff2)
+  module: sha256:1ee4b1ffab4e0338f4d7affab430ffc6f8c6f580270f56c0c93c14ba1af5bff2, 255 B, ABI v2
 --- stderr

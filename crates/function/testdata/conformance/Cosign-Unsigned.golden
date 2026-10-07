@@ -1,4 +1,4 @@
 exit 1
 --- stdout
-<DIR>/Unsigned.yaml: Composition/Unsigned pipeline[0] Unsigned: refused: cannot verify module oci <REGISTRY>/example/greeter@sha256:aaba5764eeffc713b13b5e485b0e2a77d96f83890970f27b7e5c027077b0e52c: <REGISTRY>/example/greeter@sha256:aaba5764eeffc713b13b5e485b0e2a77d96f83890970f27b7e5c027077b0e52c carries no cosign signature (no Sigstore bundle among its referrers)
+<DIR>/Unsigned.yaml: Composition/Unsigned pipeline[0] Unsigned: refused: cannot verify module oci <REGISTRY>/example/greeter@sha256:f5afd6c7bcd67711b0f9cdce9146e7481206fd17272000168e51d23129e4313d: <REGISTRY>/example/greeter@sha256:f5afd6c7bcd67711b0f9cdce9146e7481206fd17272000168e51d23129e4313d carries no cosign signature (no Sigstore bundle among its referrers)
 --- stderr
