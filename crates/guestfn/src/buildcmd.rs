@@ -97,6 +97,10 @@ impl BuildCmd {
             }
         }
         println!("{line})");
+        // The runtime's words on every load of such a module.
+        if shape.abi_version == 1 {
+            println!("warning: {}", function_wasm_engine::ABI_V1_DEPRECATION);
+        }
         if let Some(m) = &m {
             warn_example_config(&self.dir, m);
         }

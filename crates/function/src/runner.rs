@@ -300,7 +300,11 @@ impl WasmFunction {
                     .fetch(&target)
                     .map_err(|e| format!("cannot fetch module: {e}"))
             };
-            match self.cache.get(&resolved.digest, fetch).await {
+            match self
+                .cache
+                .get(&resolved.digest, &resolved.description, fetch)
+                .await
+            {
                 Ok(module) => module,
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
@@ -869,6 +873,7 @@ mod tests {
             .unwrap_or(0.0)
                 >= 1.0
         );
+        assert!(m("function_wasm_module_loads_total", &[("abi", "1")]).unwrap_or(0.0) >= 1.0);
     }
 
     #[tokio::test(flavor = "multi_thread")]

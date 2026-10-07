@@ -577,6 +577,20 @@ fn run_guest(guest: &str) {
             );
         }
     }
+    // ABI v1's deprecation is said when the module is loaded, naming it;
+    // a component is never warned about. The Path description is the
+    // guest's own file, so other guests' lines in the shared buffer do not
+    // count.
+    let all = String::from_utf8_lossy(&logs.lock().expect("poisoned")).into_owned();
+    let module_file = format!("module file {file}");
+    let deprecated = all
+        .lines()
+        .any(|l| l.contains(function_wasm_engine::ABI_V1_DEPRECATION) && l.contains(&module_file));
+    assert_eq!(
+        deprecated,
+        abi == 1,
+        "{guest}: ABI v{abi}, deprecation warned: {deprecated}"
+    );
 }
 
 #[test]

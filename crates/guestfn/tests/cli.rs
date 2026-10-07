@@ -112,6 +112,13 @@ fn push_then_inspect_and_show() {
     assert!(ok, "inspect --pull failed: {stderr}");
     assert!(stdout.contains("ABI v1"), "{stdout}");
     assert!(stdout.contains("exports: memory (memory)"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "  warning: {}",
+            function_wasm_engine::ABI_V1_DEPRECATION
+        )),
+        "{stdout}"
+    );
 
     // The manifest layer, shown without pulling the module.
     let (stdout, stderr, ok) = guestfn(dir.path(), &["manifest", "show", &pinned]);
@@ -155,12 +162,24 @@ fn inspect_a_file() {
         stdout.contains("wasmfn_run (i32, i32) -> (i64)"),
         "{stdout}"
     );
+    // The deprecation, in the runtime's words, under the verdict.
+    assert!(
+        stdout.contains(&format!(
+            "  warning: {}",
+            function_wasm_engine::ABI_V1_DEPRECATION
+        )),
+        "{stdout}"
+    );
 
     let (stdout, _, ok) = guestfn(dir.path(), &["inspect", "fn.wasm", "--output", "json"]);
     assert!(ok);
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("json");
     assert_eq!(v["module"]["abi"], "v1");
     assert_eq!(v["module"]["memories"][0]["minPages"], 1);
+    assert_eq!(
+        v["module"]["warnings"],
+        serde_json::json!([function_wasm_engine::ABI_V1_DEPRECATION])
+    );
 }
 
 #[test]

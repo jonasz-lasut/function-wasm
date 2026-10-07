@@ -211,7 +211,9 @@ guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest
 ```
 
 `guestfn build` ends with the verdict the runtime reaches when it loads the
-module — `Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http wasmfn.log)`
+module — `Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http wasmfn.log)`,
+followed for an ABI v1 module by the deprecation warning the runtime logs
+on every load of one (see [Other languages](#other-languages))
 — and fails, in the runtime's words, on a module the runtime would refuse
 (`module does not export "wasmfn_run"`); `guestfn push` refuses to publish
 such a module for the same reason. The check is the runtime's own: `guestfn`
@@ -257,8 +259,10 @@ the standard `org.opencontainers.image.*` annotations from the manifest.
 wasmfn.json:application/vnd.wasmfn.manifest.v1+json` gives the same result,
 and a `FROM scratch` image whose only layer `COPY`s the module to `/fn.wasm`
 — that exact path, nothing is guessed from the archive — works too (without
-a manifest). Any language with a wasip1 toolchain can target the
-[ABI](docs/abi.md).
+a manifest). Any language with a wasip1 toolchain can target
+[ABI v1](docs/abi.md) - deprecated from v0.6.0 in favour of
+[ABI v2](docs/abi-v2.md), the component-model contract, and removed in
+1.0.0 (see [Other languages](#other-languages)).
 
 **Module size.** A guest using function-sdk-go's `request`, `response` and
 `resource` packages is about 75 MB (13 MB compressed) — those packages bring
@@ -296,9 +300,17 @@ component path is not supported: AssemblyScript was retired for that reason
 
 The [ABI v1](docs/abi.md) is two exports and protobuf bytes, so any wasip1
 toolchain works, and [ABI v2](docs/abi-v2.md) opens the component-model
-toolchains beside it. `guestfn` scaffolds and builds seven flavours - the
-same greeting function each time; the `rust`, `ts` and `python` flavours
-scaffold as ABI v2 components, the rest as ABI v1 modules:
+toolchains beside it. **ABI v1 is deprecated** from v0.6.0 and is removed
+in 1.0.0 ([#114](https://github.com/jonasz-lasut/function-wasm/issues/114),
+[#129](https://github.com/jonasz-lasut/function-wasm/issues/129)): a v1
+module keeps running until then, and every load of one logs a warning
+(`ABI v1 is deprecated and is removed in function-wasm 1.0.0; build the
+module as an ABI v2 component (docs/abi-v2.md)`) and counts in
+`function_wasm_module_loads_total{abi="1"}`; `guestfn build`, `guestfn
+inspect` and `function validate --resolve` print the same sentence for
+one. `guestfn` scaffolds and builds six flavours - the same greeting
+function each time; the `rust`, `ts` and `python` flavours scaffold as
+ABI v2 components, the rest as ABI v1 modules:
 
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
 |---|---|---|---|---|
@@ -421,7 +433,8 @@ does and lists, on a `credentials:` line, the step credentials its request
 would carry (with none listed it receives none); `--function-name` keeps only the steps of one function; `--output json` prints one JSON object per step for
 CI annotations; `-` reads stdin. Warnings (a `Path` source in a
 Composition, egress granted without `--cosign-key`, a limit equal to its
-ceiling, a field the runtime would silently ignore) are printed under the
+ceiling, a field the runtime would silently ignore, a deprecated ABI v1
+module under `--resolve`) are printed under the
 step and never change the exit code: 0 when every step is admitted, 1 when
 at least one is refused, 2 when the tool itself failed (unreadable file,
 unparsable YAML, a bad flag). `make -C examples/pdb-addon render` runs it
@@ -1045,6 +1058,7 @@ format never changes what a dashboard sees:
 | `function_wasm_module_http_requests_total` | `outcome` = ok, refused, budget, error | HTTP requests modules made through the host (`sandbox.egress`): the server answered; refused by the grant or the egress policy; a per-run budget or the timeout was hit; the request failed. No host label — the audit log line names it |
 | `function_wasm_module_hostcall_duration_seconds` | | histogram of the slice of a run spent inside host imports (`wasmfn.log`, `wasmfn.http` and WASI); the rest of `run_duration_seconds` is guest compute. A run that is slow here is waiting on the host - usually an upstream `wasmfn.http` talks to |
 | `function_wasm_module_memory_denials_total` | `reason` = limit, pool | guest memory growths denied - at the run's ceiling (`limits.memory` or `--module-memory-limit`) or because `--max-total-run-memory` could not serve the growth before the run's deadline. The guest sees `memory.grow` fail |
+| `function_wasm_module_loads_total` | `abi` = 1, 2 | module loads by ABI - a wasmtime compile or a compiled-artifact read, once per load rather than per request (a memory-cache hit is not a load). `abi="1"` is how much deprecated ABI v1 a deployment still serves; each such load also logs the deprecation warning |
 
 No metric carries a module identity: the set of digests a Function serves is
 unbounded. Logs carry the module reference and digest.

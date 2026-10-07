@@ -70,8 +70,9 @@ impl ModuleCache {
     }
 
     /// Returns the compiled module for digest, calling fetch for its bytes
-    /// only when neither memory nor disk has it.
-    pub async fn get<F>(&self, digest: &str, fetch: F) -> Result<Module, String>
+    /// only when neither memory nor disk has it. description names the
+    /// module in the load's log lines, as the request's other lines do.
+    pub async fn get<F>(&self, digest: &str, description: &str, fetch: F) -> Result<Module, String>
     where
         F: FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
     {
@@ -90,7 +91,7 @@ impl ModuleCache {
             Arc::clone(loading.entry(digest.to_string()).or_default())
         };
         let result = cell
-            .get_or_try_init(|| self.load(digest, fetch))
+            .get_or_try_init(|| self.load(digest, description, fetch))
             .await
             .cloned();
         // The load is settled either way: drop the flight so a failure is
@@ -102,7 +103,7 @@ impl ModuleCache {
         result
     }
 
-    async fn load<F>(&self, digest: &str, fetch: F) -> Result<Module, String>
+    async fn load<F>(&self, digest: &str, description: &str, fetch: F) -> Result<Module, String>
     where
         F: FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
     {
@@ -118,7 +119,7 @@ impl ModuleCache {
                     CACHE_EVENTS
                         .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_HIT])
                         .inc();
-                    return Ok(m);
+                    return Ok(loaded_module(description, digest, m));
                 }
                 // The artifact was there but wasmtime refused it: a miss
                 // that cost a read.
@@ -140,21 +141,22 @@ impl ModuleCache {
             .expect("the semaphore is never closed");
         let engine = Arc::clone(&self.engine);
         let disk = self.disk.clone();
-        let digest = digest.to_string();
-        tokio::task::spawn_blocking(move || {
+        let key = digest.to_string();
+        let m = tokio::task::spawn_blocking(move || {
             let wasm = fetch()?;
             let m = engine.compile(&wasm).map_err(|e| e.to_string())?;
             if let Some(disk) = disk {
                 // Best effort: a full or read-only store only costs the next
                 // process the compile.
                 if let Ok(artifact) = engine.serialize(&m) {
-                    let _ = disk.put(&digest, &artifact);
+                    let _ = disk.put(&key, &artifact);
                 }
             }
-            Ok(m)
+            Ok::<Module, String>(m)
         })
         .await
-        .map_err(|e| format!("internal error while loading the module: {e}"))?
+        .map_err(|e| format!("internal error while loading the module: {e}"))??;
+        Ok(loaded_module(description, digest, m))
     }
 
     fn memory_get(&self, digest: &str) -> Option<Module> {
@@ -194,8 +196,29 @@ impl ModuleCache {
     }
 }
 
+/// Books a load - a compile or an artifact read, which a memory hit is not:
+/// the ABI is counted, and ABI v1's deprecation is said here so that it is
+/// said once per load rather than on every request.
+fn loaded_module(description: &str, digest: &str, module: Module) -> Module {
+    let abi = module.abi_version();
+    function_wasm_engine::metrics::MODULE_LOADS
+        .with_label_values(&[abi.to_string().as_str()])
+        .inc();
+    if abi == 1 {
+        tracing::warn!(
+            module = %description,
+            digest = %digest,
+            "{}",
+            function_wasm_engine::ABI_V1_DEPRECATION
+        );
+    }
+    module
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
     use super::*;
     use function_wasm_engine::Config;
 
@@ -221,7 +244,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        first.get("sha256:m", move || Ok(wasm)).await.expect("load");
+        first
+            .get("sha256:m", "module file m.wasm", move || Ok(wasm))
+            .await
+            .expect("load");
 
         // A fresh cache over the same store never fetches: the artifact is
         // mapped from disk.
@@ -233,7 +259,7 @@ mod tests {
             },
         );
         second
-            .get("sha256:m", || {
+            .get("sha256:m", "module file m.wasm", || {
                 panic!("the artifact tier should have served this")
             })
             .await
@@ -253,9 +279,12 @@ mod tests {
             },
         );
         let wasm = wat::parse_str(WAT).expect("wat");
-        cache.get("sha256:m", move || Ok(wasm)).await.expect("load");
         cache
-            .get("sha256:m", || {
+            .get("sha256:m", "module file m.wasm", move || Ok(wasm))
+            .await
+            .expect("load");
+        cache
+            .get("sha256:m", "module file m.wasm", || {
                 panic!("the artifact tier should have served this")
             })
             .await
@@ -266,14 +295,147 @@ mod tests {
     async fn a_failed_load_is_not_cached() {
         let cache = ModuleCache::new(engine(), CacheOptions::default());
         let err = cache
-            .get("sha256:m", || Err("cannot fetch module: boom".to_string()))
+            .get("sha256:m", "module file m.wasm", || {
+                Err("cannot fetch module: boom".to_string())
+            })
             .await
             .expect_err("fail");
         assert_eq!(err, "cannot fetch module: boom");
         let wasm = wat::parse_str(WAT).expect("wat");
         cache
-            .get("sha256:m", move || Ok(wasm))
+            .get("sha256:m", "module file m.wasm", move || Ok(wasm))
             .await
             .expect("retry succeeds");
+    }
+
+    /// The conformance suite's ABI v2 fixture: a component implementing the
+    /// wasmfn:function world with a sync-lifted run.
+    const COMPONENT_WAT: &str = r#"(component
+      (core module $m
+        (memory (export "memory") 1)
+        (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+        (func (export "run") (param i32 i32) (result i32)
+          (i32.store8 (i32.const 64) (i32.const 0))
+          (i32.store (i32.const 68) (i32.const 1024))
+          (i32.store (i32.const 72) (i32.const 0))
+          (i32.const 64)))
+      (core instance $i (instantiate $m))
+      (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+        (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+    )"#;
+
+    /// Every log line of the test process, captured by a global subscriber
+    /// as the guest suite does. A subscriber scoped to one test's thread
+    /// would miss lines: tracing caches a callsite's interest from whichever
+    /// thread first hits it, and a parallel test with no subscriber caches
+    /// "never".
+    static LOGS: LazyLock<Arc<Mutex<Vec<u8>>>> = LazyLock::new(|| {
+        let buf: Arc<Mutex<Vec<u8>>> = Arc::default();
+        let writer = Arc::clone(&buf);
+        struct W(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for W {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("poisoned").extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer(move || W(Arc::clone(&writer)))
+                .finish(),
+        )
+        .expect("no other global subscriber");
+        buf
+    });
+
+    /// A load - a compile or an artifact read - counts its ABI and, for ABI
+    /// v1, says the deprecation; a memory hit does neither. The log is the
+    /// deterministic witness of "once per load" (its lines are told apart
+    /// by this test's own digests); the registry is shared with every test
+    /// in this process, so the counter is asserted as wiring only.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_load_counts_its_abi_and_a_v1_load_warns() {
+        use function_wasm_engine::ABI_V1_DEPRECATION;
+        use function_wasm_engine::metrics::sample;
+
+        let logs = Arc::clone(&LOGS);
+        let captured = || String::from_utf8_lossy(&logs.lock().expect("poisoned")).into_owned();
+        let warnings = |digest: &str| {
+            captured()
+                .lines()
+                .filter(|l| l.contains(ABI_V1_DEPRECATION) && l.contains(digest))
+                .count()
+        };
+        let loads =
+            |abi: &str| sample("function_wasm_module_loads_total", &[("abi", abi)]).unwrap_or(0.0);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let disk = Arc::new(Store::open_dir(dir.path(), false).expect("store"));
+        let engine = engine();
+        let cache = ModuleCache::new(
+            Arc::clone(&engine),
+            CacheOptions {
+                disk: Some(Arc::clone(&disk)),
+                ..Default::default()
+            },
+        );
+
+        let v1_before = loads("1");
+        let wasm = wat::parse_str(WAT).expect("wat");
+        cache
+            .get("sha256:v1", "module file v1.wasm", move || Ok(wasm))
+            .await
+            .expect("compile");
+        assert!(loads("1") >= v1_before + 1.0);
+        assert_eq!(warnings("sha256:v1"), 1, "{}", captured());
+        let line = captured()
+            .lines()
+            .find(|l| l.contains(ABI_V1_DEPRECATION) && l.contains("sha256:v1"))
+            .expect("warned")
+            .to_string();
+        assert!(
+            line.contains("WARN") && line.contains("module file v1.wasm"),
+            "{line}"
+        );
+
+        // A memory hit is not a load: nothing counted, nothing said.
+        cache
+            .get("sha256:v1", "module file v1.wasm", || {
+                panic!("the memory tier should have served this")
+            })
+            .await
+            .expect("hit");
+        assert_eq!(warnings("sha256:v1"), 1, "{}", captured());
+
+        // A fresh cache over the same store reads the artifact: a load, said
+        // again.
+        let second = ModuleCache::new(
+            Arc::clone(&engine),
+            CacheOptions {
+                disk: Some(disk),
+                ..Default::default()
+            },
+        );
+        second
+            .get("sha256:v1", "module file v1.wasm", || {
+                panic!("the artifact tier should have served this")
+            })
+            .await
+            .expect("artifact");
+        assert_eq!(warnings("sha256:v1"), 2, "{}", captured());
+
+        // ABI v2 counts under its own label and is not warned about.
+        let v2_before = loads("2");
+        let component = wat::parse_str(COMPONENT_WAT).expect("wat");
+        cache
+            .get("sha256:v2", "module file v2.wasm", move || Ok(component))
+            .await
+            .expect("compile component");
+        assert!(loads("2") >= v2_before + 1.0);
+        assert_eq!(warnings("sha256:v2"), 0, "{}", captured());
     }
 }

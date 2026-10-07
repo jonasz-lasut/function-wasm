@@ -1,5 +1,19 @@
 # function-wasm guest ABI v1
 
+> [!WARNING]
+> **ABI v1 is deprecated** from function-wasm v0.6.0 and is removed in
+> 1.0.0 (issues [#114](https://github.com/jonasz-lasut/function-wasm/issues/114)
+> and [#129](https://github.com/jonasz-lasut/function-wasm/issues/129)).
+> [ABI v2](abi-v2.md), the component-model contract, replaces it: a new
+> guest targets the `wasmfn:function` world, as the `rust`, `ts` and
+> `python` scaffolds already do. A v1 module keeps running until 1.0.0;
+> until then the runtime logs a warning on every load of one (`ABI v1 is
+> deprecated and is removed in function-wasm 1.0.0; build the module as an
+> ABI v2 component (docs/abi-v2.md)`) and counts it in
+> `function_wasm_module_loads_total{abi="1"}`, and `function validate
+> --resolve`, `guestfn build` and `guestfn inspect` print the same
+> sentence.
+
 This is the contract between the function-wasm runtime (the *host*) and a
 WebAssembly module it runs (the *guest*). It is deliberately small so a guest
 can be written in any language with a wasip1 toolchain; the Go glue the

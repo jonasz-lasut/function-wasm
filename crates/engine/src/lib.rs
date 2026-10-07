@@ -43,6 +43,13 @@ pub const EXPORT_INITIALIZE: &str = "_initialize";
 pub const EXPORT_ALLOC: &str = "wasmfn_alloc";
 pub const EXPORT_RUN: &str = "wasmfn_run";
 
+/// What every tool says of an ABI v1 module - the runtime's load warning,
+/// `function validate --resolve`'s warning, `guestfn build`'s and
+/// `guestfn inspect`'s note: one sentence, so the conformance goldens pin
+/// one string. A v1 module is served until function-wasm 1.0.0 removes
+/// the ABI (issues #114 and #129).
+pub const ABI_V1_DEPRECATION: &str = "ABI v1 is deprecated and is removed in function-wasm 1.0.0; build the module as an ABI v2 component (docs/abi-v2.md)";
+
 /// The import module name of the host functions a guest may use.
 pub const HOST_MODULE: &str = "wasmfn";
 /// The structured logging import: log(level u32, ptr u32, len u32).
