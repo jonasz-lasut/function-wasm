@@ -1,7 +1,8 @@
 //! The guests - the same greeting function written with function-sdk-go
-//! (Go), in Zig with zig-protobuf, in C with
-//! nanopb, as an ABI v2 component in async Rust with wit-bindgen, and as
-//! components in TypeScript and Python -
+//! (Go), in Zig with zig-protobuf, as ABI v2 components in C with nanopb
+//! over wit-bindgen's C bindings (sync-lifted; zig cc emits the core module
+//! and the suite wraps it as guestfn build does) and in async Rust with
+//! wit-bindgen, and as components in TypeScript and Python -
 //! through the whole host: path and OCI sources, compile, per-request
 //! instance, egress through wasmfn.http or wasi:http, guest logging. Every
 //! guest must produce the same response.
@@ -29,7 +30,7 @@ use function_wasm::cache::{CacheOptions, ModuleCache};
 use function_wasm::oci::testregistry;
 use function_wasm::resolver::Resolver;
 use function_wasm::runner::WasmFunction;
-use function_wasm_engine::{Config, Engine};
+use function_wasm_engine::{Config, Engine, componentize};
 use sha2::Digest as _;
 
 /// Every log line of the process, captured by a global subscriber so lines
@@ -260,7 +261,18 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
             if !command(&dir, "zig", &["build", "-Doptimize=ReleaseSmall"], &[]) {
                 return Some(Vec::new());
             }
-            std::fs::copy(dir.join("zig-out/bin/fn.wasm"), out).ok()?;
+            // zig emits a core module. One carrying wit-bindgen's
+            // component-type section (the c scaffold) is wrapped into its
+            // component here, as guestfn build wraps it for a user.
+            let built = std::fs::read(dir.join("zig-out/bin/fn.wasm")).ok()?;
+            let wasm = if componentize::carries_component_type(&built) {
+                componentize::componentize(&built)
+                    .expect("componentize the zig-built core module")
+                    .wasm
+            } else {
+                built
+            };
+            std::fs::write(out, wasm).ok()?;
             true
         }
         _ => false,

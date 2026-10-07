@@ -11,16 +11,12 @@
             .url = "https://github.com/nanopb/nanopb/archive/refs/tags/0.4.9.1.tar.gz",
             .hash = "N-V-__8AAICJKABy-UAs4DC7b9y5IYGo9oikvDkYpvL9fnhc",
         },
-        // JSON for the wasmfn.log and wasmfn.http payloads.
-        .cjson = .{
-            .url = "https://github.com/DaveGamble/cJSON/archive/refs/tags/v1.7.19.tar.gz",
-            .hash = "N-V-__8AAH5pEwA4X-pmguJGYCCUHeSluUGR7r3S4_kUSzW0",
-        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
         "proto",
+        "wit",
     },
 }

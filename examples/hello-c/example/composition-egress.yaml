@@ -1,0 +1,28 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: hello-c-egress
+spec:
+  compositeTypeRef:
+    apiVersion: example.crossplane.io/v1
+    kind: XR
+  mode: Pipeline
+  pipeline:
+  - step: hello-c
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1beta1
+      kind: Input
+      module:
+        # The egress case: the same module under a manifest that requires GET
+        # on the fixture server (wasmfn.local.yaml), which the operator policy
+        # render.sh serves (policy.cedar) permits. The composition layer is
+        # default-permit for sandbox capabilities, so no compositionPolicy is
+        # needed; one could narrow the grant here.
+        type: Path
+        path: fn.wasm
+        manifestPath: example/wasmfn.local.yaml
+      config:
+        # The fixture server render.sh starts, serving example/fixtures/.
+        greetingUrl: http://127.0.0.1:9480/en
