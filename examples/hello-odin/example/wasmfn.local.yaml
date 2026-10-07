@@ -1,0 +1,19 @@
+# The manifest the egress render case runs this module under
+# (module.manifestPath in composition-egress.yaml): the published wasmfn.yaml
+# plus an egress requirement for the fixture server render.sh starts on
+# 127.0.0.1:9480, so the greeting is fetched through the host's egress.
+abi: 2
+name: hello-odin
+version: 0.1.0
+requires:
+  egress:
+    http:
+    - host: 127.0.0.1
+      methods: [GET]
+config:
+  schema:
+    type: object
+    properties:
+      greeting: {type: string}
+      greetingUrl: {type: string, format: uri}
+    additionalProperties: false

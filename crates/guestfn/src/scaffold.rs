@@ -267,7 +267,7 @@ mod tests {
     /// README, the example manifests) is the example's own.
     #[test]
     fn examples_share_the_scaffold_plumbing() {
-        let examples: [(&str, &[&str], Options); 6] = [
+        let examples: [(&str, &[&str], Options); 7] = [
             (
                 "pdb-addon",
                 &[
@@ -323,6 +323,18 @@ mod tests {
                 Options {
                     lang: LANG_C.into(),
                     name: "hello-c".into(),
+                    ..Default::default()
+                },
+            ),
+            // The Odin example has no scaffold of its own: it implements
+            // the world through the c flavour's bindings and codec, which
+            // it carries byte for byte; its glue and build are its own.
+            (
+                "hello-odin",
+                &["proto/", "wit/", "src/fnv1/", "src/gen/"],
+                Options {
+                    lang: LANG_C.into(),
+                    name: "hello-odin".into(),
                     ..Default::default()
                 },
             ),

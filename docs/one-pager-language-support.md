@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.5
+* Status: Draft, revision 0.6
 
 Which languages a function-wasm module can be written in today, which could
 come next and at what cost, which are blocked and by what, and what
@@ -49,7 +49,12 @@ egress over `wasi:http@0.2` behind the same `*http.Client`; `go build` still
 emits a wasip1 reactor, and `guestfn build` embeds the world and wraps it
 with the runtime's own adapter (no componentize-go, no wasm-tools). The
 module's size and compile cost did not move (~74 MB, ~2 s). The Go, C and
-Zig rows below describe their v1 era; no scaffold is left on ABI v1.
+Zig rows below describe their v1 era; no scaffold is left on ABI v1. Odin
+joined on 2026-10-07 as an example only, after #155's spike
+(`examples/hello-odin`, ~71 KB): the `c` flavour's bindings and nanopb codec
+through Odin's foreign interface, a freestanding wasm32 object linked by
+`zig cc` and wrapped by `guestfn build` through the `c` path; the decision
+of that day is no further scaffolds unless an issue asks for one.
 
 ## What the host requires
 

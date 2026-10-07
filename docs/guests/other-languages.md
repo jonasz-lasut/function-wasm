@@ -13,7 +13,7 @@ and .NET
 A language is *tested* when this repository works with it: a scaffold or an
 example here, built and run through the host by the guest suite and the render
 jobs on every `/e2e`. Tested on ABI v2: Go, Rust, Zig, C, TypeScript,
-Python and C# - every scaffold and example here, since
+Python, C# and Odin - every scaffold and example here, since
 [#114](https://github.com/jonasz-lasut/function-wasm/issues/114) moved the
 last of them (Go, 2026-10-07) off ABI v1. A
 supported language that is not tested is expected to work, and a
@@ -67,6 +67,31 @@ macOS compiler, so on macOS the Makefile builds in the .NET SDK container
 and its render test cover it rather than the behaviour tests the other
 flavours share, and `guestfn` neither scaffolds nor builds it yet.
 
+An **Odin** ABI v2 guest is an example only too
+([`examples/hello-odin`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-odin),
+~71 KB; Odin dev-2026-10 and Zig 0.16, `make build`): the hello guest again,
+on the `c` flavour's plumbing - its wit-bindgen C bindings, nanopb codec,
+WIT and proto byte for byte, held identical by the plumbing test. `odin
+build -target:freestanding_wasm32 -build-mode:obj` compiles the guest to one
+object in 0.2 s, `zig cc` compiles the C half and links the core module (a
+wasip1 reactor that imports nothing from `wasi_snapshot_preview1`), and
+`guestfn build` takes the project for a `c` one by its `build.zig` and wraps
+the result with no adapter: about 7 s cold, 0.2 s warm, and the runtime
+compiles the component in about 10 ms, as it does the C and Zig ones. The
+Odin side defines the bindings' `exports_function_run` through Odin's
+foreign interface, declares nanopb's generated structs again with their
+wasm32 layout held by `#assert`s, and reaches the host's HTTP egress through
+the `c` glue's `wasi:http@0.2` client; its allocator is wasi-libc's heap,
+the module's one heap, so what Odin allocates may be handed to the canonical
+ABI and freed there. `core:fmt` is left out on purpose: its reflection
+tables would make the module 198 KB. Two things to know: Odin's runtime
+defines `bzero` on every wasm target with a return value where libc's has
+none, which `wasm-ld` reports as a signature mismatch and `zig build-exe`
+treats as an error, so the example links through `zig cc`, which only
+warns; and a panic traps without a message on the freestanding runtime. Its
+unit tests run natively (`make test`, over the C half compiled for the
+host), and `guestfn` builds it but does not scaffold it.
+
 The **TypeScript** flavour (`npm install` is the whole toolchain) is typed
 end to end (protobuf-es generated types, `tsc --noEmit` in the test gate),
 and its greeting is fetched with the platform's own `fetch()`, which the
@@ -118,10 +143,6 @@ is in the tested set, and none needs a world change:
   measurement is a 27 KB component. `protoc-gen-mbt` for the codec, its
   well-known types unverified. A guest must never `println` (it imports
   `spectest.print_char`). The spike is tracked in #155.
-- **Odin**: its `wasi_wasm32` target over the c flavour's C bindings through
-  Odin's foreign interface, linked by `zig cc` and wrapped like the c guest;
-  nanopb through the FFI or a small hand-written codec. The spike is tracked
-  in #155.
 - **D**: wit-bindgen's `d` backend (since 0.61.0) with `ldc2 -betterC`, the
   core module wrapped like a Go guest; LDC 1.43 brings druntime to wasip1 and
   wasip2; nanopb for the codec.

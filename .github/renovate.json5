@@ -110,7 +110,7 @@
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
       // and cloudflare-origin, its wit/deps for the python, c, zig and go
-      // scaffolds, team-tags, hello-c, hello-zig, pdb-addon and
+      // scaffolds, team-tags, hello-c, hello-zig, hello-odin, pdb-addon and
       // dashboard-bundle (templates and goldens included: the
       // files are plain .wit in all of them). Same tripwire as the proto: a
       // bump PR moves the version in every header at once; it does NOT
@@ -208,7 +208,8 @@
     },
     // The WASI WIT headers, for the same reason: one dep across the rust,
     // python, c, zig and go templates, their goldens, cloudflare-origin,
-    // team-tags, hello-c, hello-zig, pdb-addon and dashboard-bundle.
+    // team-tags, hello-c, hello-zig, hello-odin, pdb-addon and
+    // dashboard-bundle.
     // Their group is the wasmtime one above.
     {
       matchManagers: ['custom.regex'],
@@ -281,9 +282,10 @@
     // time (the cut-release skill), never in this batch - pip_requirements
     // is not an enabled manager.
     //
-    // hello-zig and hello-c name their dependencies in build.zig.zon by URL
-    // and content hash, which no Renovate manager reads: they move by hand,
-    // with the zig and c templates, at release time.
+    // hello-zig, hello-c and hello-odin name their dependencies in
+    // build.zig.zon by URL and content hash, which no Renovate manager
+    // reads: they move by hand, with the zig and c templates, at release
+    // time (hello-odin's nanopb pin is hello-c's).
     //
     // One batch, early on the 1st of the month. Renovate does not group lock
     // file maintenance with other updates - a grouped one gets its own
