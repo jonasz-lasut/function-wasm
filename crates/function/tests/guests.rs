@@ -177,8 +177,13 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
             // wrapped (with the wasip1 adapter) here, as guestfn build does
             // for a user.
             let core = std::fs::read(out).ok()?;
-            let embedded = componentize::embed_world(&core, &dir.join("wit"), "function")
-                .expect("embed the go scaffold's world");
+            let embedded = componentize::embed_world(
+                &core,
+                &dir.join("wit"),
+                "function",
+                componentize::StringEncoding::Utf8,
+            )
+            .expect("embed the go scaffold's world");
             let wasm = componentize::componentize(&embedded)
                 .expect("componentize the go-built core module")
                 .wasm;

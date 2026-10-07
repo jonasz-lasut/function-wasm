@@ -16,11 +16,35 @@
 //! mainline Go's wasip1 build knows nothing of components, and
 //! componentize-go embeds the world itself before wrapping. `embed_world`
 //! is that embed, over the guest's own wit/ directory, so a Go guest needs
-//! neither componentize-go nor wasm-tools.
+//! neither componentize-go nor wasm-tools. wit-bindgen's MoonBit generator
+//! is the same case with one difference: MoonBit strings are UTF-16 in
+//! linear memory, so the embed states that encoding, or the host would
+//! read every string the guest lowers (a log line, `run`'s error) as UTF-8.
 
 use std::path::Path;
 
 use crate::Error;
+
+/// How a guest lays its strings out in linear memory, stated in the
+/// embedded world so the canonical ABI transcodes them: what wit-bindgen's
+/// generators embed for their language (`wasm-tools component embed
+/// --encoding`). Every C-family toolchain and Go use UTF-8; MoonBit stores
+/// UTF-16.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StringEncoding {
+    #[default]
+    Utf8,
+    Utf16,
+}
+
+impl From<StringEncoding> for wit_component::StringEncoding {
+    fn from(encoding: StringEncoding) -> Self {
+        match encoding {
+            StringEncoding::Utf8 => wit_component::StringEncoding::UTF8,
+            StringEncoding::Utf16 => wit_component::StringEncoding::UTF16,
+        }
+    }
+}
 
 /// The WASI preview 1 import module a wasip1 toolchain's core module
 /// imports: what the adapter translates to WASI 0.2 in the wrap.
@@ -62,9 +86,16 @@ pub fn carries_component_type(wasm: &[u8]) -> bool {
 /// wit-bindgen's generators embed it, the `component-type` custom section
 /// componentize consumes. For a core module that carries none: what
 /// mainline Go's `go build` leaves behind, whose wit-bindgen bindings are
-/// Go source only. A module that already carries a section, or is already
-/// a component, is refused rather than embedded twice.
-pub fn embed_world(core: &[u8], wit_dir: &Path, world: &str) -> Result<Vec<u8>, Error> {
+/// Go source only - or MoonBit's `moon build`, whose bindings are MoonBit
+/// source only too. `encoding` is how the guest stores its strings. A
+/// module that already carries a section, or is already a component, is
+/// refused rather than embedded twice.
+pub fn embed_world(
+    core: &[u8],
+    wit_dir: &Path,
+    world: &str,
+    encoding: StringEncoding,
+) -> Result<Vec<u8>, Error> {
     let scan = scan(core)?;
     if scan.component {
         return Err(Error(
@@ -87,13 +118,8 @@ pub fn embed_world(core: &[u8], wit_dir: &Path, world: &str) -> Result<Vec<u8>, 
         .select_world(&[pkg], Some(world))
         .map_err(|e| Error(format!("cannot embed the world into module: {e:#}")))?;
     let mut wasm = core.to_vec();
-    wit_component::embed_component_metadata(
-        &mut wasm,
-        &resolve,
-        world,
-        wit_component::StringEncoding::UTF8,
-    )
-    .map_err(|e| Error(format!("cannot embed the world into module: {e:#}")))?;
+    wit_component::embed_component_metadata(&mut wasm, &resolve, world, encoding.into())
+        .map_err(|e| Error(format!("cannot embed the world into module: {e:#}")))?;
     Ok(wasm)
 }
 

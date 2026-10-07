@@ -203,6 +203,7 @@ fn a_core_module_with_the_section_is_told_to_build() {
         &bare,
         std::path::Path::new(wit),
         "function",
+        function_wasm_engine::componentize::StringEncoding::Utf8,
     )
     .expect("embed the world");
     std::fs::write(dir.path().join("fn.wasm"), with_section).expect("write");

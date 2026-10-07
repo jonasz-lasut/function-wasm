@@ -12,9 +12,24 @@ use function_wasm_engine::componentize;
 
 use crate::scaffold;
 
-/// The world a Go project's wit/ declares (the go scaffold's
-/// wit/world.wit): what is embedded into the core module go build emits.
-const GO_WORLD: &str = "function";
+/// The world a Go or MoonBit project's wit/ declares (the go scaffold's
+/// wit/world.wit, and the moonbit example's): what is embedded into the
+/// core module go build or moon build emits.
+const GUEST_WORLD: &str = "function";
+
+/// The MoonBit toolchain, detected by its module file - moon.mod (what moon
+/// writes today) or moon.mod.json (what wit-bindgen 0.62 still writes, and
+/// moon still reads): an example here, not a scaffold yet (#155).
+const LANG_MOONBIT: &str = "moonbit";
+
+/// moon's build directory, passed explicitly (--target-dir) because its
+/// default moved from target/ to _build/ between moon releases.
+const MOON_TARGET_DIR: &str = "_build";
+
+/// Where `moon build --target wasm --release` leaves the linked module of
+/// the package that carries wit-bindgen's `link` section (the generated
+/// `gen` package): under the build directory, named after the package.
+const MOON_OUTPUT: &str = "_build/wasm/release/build/gen/gen.wasm";
 
 #[derive(clap::Args, Debug)]
 pub struct BuildCmd {
@@ -28,8 +43,9 @@ pub struct BuildCmd {
 
     /// Toolchain to use. auto picks rust for a Cargo.toml, zig for a
     /// build.zig (zig and c guests), ts for a package.json, python for a
-    /// requirements.txt, go for a go.mod.
-    #[arg(long, default_value = "auto", value_parser = ["auto", "go", "rust", "zig", "c", "ts", "python"])]
+    /// requirements.txt, go for a go.mod, moonbit for a moon.mod or
+    /// moon.mod.json.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "go", "rust", "zig", "c", "ts", "python", "moonbit"])]
     lang: String,
 
     /// Run wasm-opt -Oz on the result (binaryen must be on PATH).
@@ -203,7 +219,7 @@ fn example_step(path: &Path) -> Result<Option<ExampleStep>, String> {
 
 /// Tells the language of a project from its files: a Cargo.toml is Rust; a
 /// build.zig builds with zig (zig and c guests); a package.json builds with
-/// npm (the TypeScript flavour); a go.mod is Go.
+/// npm (the TypeScript flavour); a go.mod is Go; a moon.mod.json is MoonBit.
 fn detect_lang(dir: &Path) -> Result<String, String> {
     if dir.join("Cargo.toml").exists() {
         return Ok(scaffold::LANG_RUST.to_string());
@@ -220,8 +236,11 @@ fn detect_lang(dir: &Path) -> Result<String, String> {
     if dir.join("go.mod").exists() {
         return Ok(scaffold::LANG_GO.to_string());
     }
+    if dir.join("moon.mod").exists() || dir.join("moon.mod.json").exists() {
+        return Ok(LANG_MOONBIT.to_string());
+    }
     Err(format!(
-        "cannot tell the project's language: no Cargo.toml, build.zig, package.json, requirements.txt or go.mod in {} (use --lang)",
+        "cannot tell the project's language: no Cargo.toml, build.zig, package.json, requirements.txt, go.mod or moon.mod in {} (use --lang)",
         dir.display()
     ))
 }
@@ -269,8 +288,13 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
             // wasip1 adapter.
             let core =
                 std::fs::read(out).map_err(|e| format!("cannot read {}: {e}", out.display()))?;
-            let embedded = componentize::embed_world(&core, &dir.join("wit"), GO_WORLD)
-                .map_err(|e| format!("built {}, but {e}", out.display()))?;
+            let embedded = componentize::embed_world(
+                &core,
+                &dir.join("wit"),
+                GUEST_WORLD,
+                componentize::StringEncoding::Utf8,
+            )
+            .map_err(|e| format!("built {}, but {e}", out.display()))?;
             std::fs::write(out, embedded).map_err(|e| e.to_string())?;
         }
         scaffold::LANG_RUST => {
@@ -351,6 +375,41 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
                 return Err(format!("componentize-py failed: {status}"));
             }
         }
+        LANG_MOONBIT => {
+            // moon's wasm target is a core module over linear memory (wasm-gc
+            // has no canonical ABI); wit-bindgen's MoonBit bindings carry no
+            // component type, so the world is embedded from the project's
+            // wit/ as for Go - stated UTF-16, how MoonBit stores strings.
+            // Nothing is imported from wasi_snapshot_preview1, so the wrap
+            // below links no adapter.
+            which(
+                "moon",
+                "install MoonBit from https://www.moonbitlang.com/download",
+            )?;
+            crate::run_in(
+                dir,
+                "moon",
+                &[
+                    "build",
+                    "--target",
+                    "wasm",
+                    "--release",
+                    "--target-dir",
+                    MOON_TARGET_DIR,
+                ],
+            )?;
+            let built = dir.join(MOON_OUTPUT);
+            let core = std::fs::read(&built)
+                .map_err(|e| format!("moon build produced no {MOON_OUTPUT}: {e}"))?;
+            let embedded = componentize::embed_world(
+                &core,
+                &dir.join("wit"),
+                GUEST_WORLD,
+                componentize::StringEncoding::Utf16,
+            )
+            .map_err(|e| format!("built {}, but {e}", built.display()))?;
+            std::fs::write(out, embedded).map_err(|e| e.to_string())?;
+        }
         scaffold::LANG_ZIG | scaffold::LANG_C => {
             which(
                 "zig",
@@ -418,6 +477,34 @@ mod tests {
         let wasm = wat::parse_str(r#"(module (@custom "component-type:x" "nope"))"#).expect("wat");
         let err = componentize_if_needed(wasm).expect_err("malformed section");
         assert!(err.starts_with("cannot componentize module: "), "{err}");
+    }
+
+    /// The toolchain is told from the project's marker file, one per
+    /// language: MoonBit by either spelling of its module file (moon.mod is
+    /// what moon writes today, moon.mod.json what wit-bindgen 0.62 still
+    /// writes), and a project with none is refused naming every marker.
+    #[test]
+    fn the_language_is_told_from_the_project() {
+        let cases: [(&str, &str); 7] = [
+            ("Cargo.toml", scaffold::LANG_RUST),
+            ("build.zig", scaffold::LANG_ZIG),
+            ("package.json", scaffold::LANG_TS),
+            ("requirements.txt", scaffold::LANG_PYTHON),
+            ("go.mod", scaffold::LANG_GO),
+            ("moon.mod", LANG_MOONBIT),
+            ("moon.mod.json", LANG_MOONBIT),
+        ];
+        for (marker, want) in cases {
+            let dir = tempfile::tempdir().expect("tempdir");
+            std::fs::write(dir.path().join(marker), b"").expect("write");
+            assert_eq!(detect_lang(dir.path()).as_deref(), Ok(want), "{marker}");
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = detect_lang(dir.path()).expect_err("no marker");
+        assert!(
+            err.starts_with("cannot tell the project's language: no Cargo.toml, build.zig, package.json, requirements.txt, go.mod or moon.mod in "),
+            "{err}"
+        );
     }
 
     /// The example-config check finds the step under the current apiVersion
