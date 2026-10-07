@@ -191,6 +191,41 @@ fn a_core_module_is_refused_by_name() {
     );
 }
 
+/// A core module carrying wit-bindgen's component-type section is what a
+/// C, Zig or Go guest built outside guestfn is: the refusal says that
+/// guestfn build wraps it.
+#[test]
+fn a_core_module_with_the_section_is_told_to_build() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bare = wat::parse_str(CORE_MODULE_WAT).expect("wat");
+    let wit = concat!(env!("CARGO_MANIFEST_DIR"), "/../../wit");
+    let with_section = function_wasm_engine::componentize::embed_world(
+        &bare,
+        std::path::Path::new(wit),
+        "function",
+    )
+    .expect("embed the world");
+    std::fs::write(dir.path().join("fn.wasm"), with_section).expect("write");
+    let (_, stderr, ok) = guestfn(dir.path(), &["inspect", "fn.wasm"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains(function_wasm_engine::CORE_MODULE_REFUSAL),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("; it carries wit-bindgen's component-type section, which guestfn build wraps into a component"),
+        "{stderr}"
+    );
+
+    let addr = empty_registry();
+    let (_, stderr, ok) = guestfn(dir.path(), &["push", &format!("{addr}/example/greeter:v1")]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("which guestfn build wraps into a component"),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn inspect_a_file() {
     let dir = tempfile::tempdir().expect("tempdir");

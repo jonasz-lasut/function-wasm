@@ -223,8 +223,25 @@ fn go_version() -> String {
 pub(crate) fn inspect_module(wasm: &[u8]) -> Result<function_wasm_engine::Inspection, String> {
     let engine = function_wasm_engine::Engine::new(function_wasm_engine::Config::default())
         .map_err(|e| e.to_string())?;
-    engine.inspect(wasm).map_err(|e| e.to_string())
+    engine.inspect(wasm).map_err(|e| {
+        let e = e.to_string();
+        // A core module that carries wit-bindgen's component-type section
+        // is a guest built outside guestfn (zig build, go build): one wrap
+        // away, which is worth more than the refusal alone.
+        if e == function_wasm_engine::CORE_MODULE_REFUSAL
+            && function_wasm_engine::componentize::carries_component_type(wasm)
+        {
+            format!("{e}; {WRAP_HINT}")
+        } else {
+            e
+        }
+    })
 }
+
+/// What inspect and push add to the core-module refusal when the module
+/// carries the section guestfn build wraps by.
+pub(crate) const WRAP_HINT: &str =
+    "it carries wit-bindgen's component-type section, which guestfn build wraps into a component";
 
 /// The runtime's own load-time check: the shape, or the refusal the runtime
 /// would give at load.

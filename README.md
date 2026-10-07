@@ -225,8 +225,10 @@ module the runtime would refuse (`component does not implement the
 wasmfn:function world: …`; for a core module, the ABI v1 shape a guest
 built before 1.0.0 has, `module is a core module, which function-wasm
 1.0.0 no longer runs (ABI v1 was removed); build it as an ABI v2 component
-(docs/abi-v2.md)`); `guestfn push` refuses to publish such a module for
-the same reason. The check is the runtime's own: `guestfn`
+(docs/abi-v2.md)`, and when that module carries wit-bindgen's
+component-type section, as a `zig build` or `go build` output does, the
+refusal adds that `guestfn build` wraps it); `guestfn push` refuses to
+publish such a module for the same reason. The check is the runtime's own: `guestfn`
 compiles the module with the same wasmtime engine (a couple of seconds for a
 large Go module), so what it prints is what a load says.
 `guestfn inspect fn.wasm` shows what the runtime sees: size, verdict,
