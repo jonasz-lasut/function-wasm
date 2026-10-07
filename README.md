@@ -408,6 +408,47 @@ composes with an [xprin](https://github.com/crossplane-contrib/xprin) suite,
 and the root tests build every scaffold and run it through the host as well -
 with and without an egress grant.
 
+**Possible, untested.** A 2026-10-07 survey
+([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)) found
+these paths to a component; none has a guest in this repository yet, so none
+is in the tested set, and none needs a world change:
+
+- **MoonBit**: wit-bindgen's first-party `moonbit` backend (async supported),
+  `moon build --target wasm` to a linear-memory core module, the world
+  embedded with UTF-16 strings and wrapped with no adapter; MoonBit's own
+  measurement is a 27 KB component. `protoc-gen-mbt` for the codec, its
+  well-known types unverified. A guest must never `println` (it imports
+  `spectest.print_char`). The spike is tracked in #155.
+- **Odin**: its `wasi_wasm32` target over the c flavour's C bindings through
+  Odin's foreign interface, linked by `zig cc` and wrapped like the c guest;
+  nanopb through the FFI or a small hand-written codec. The spike is tracked
+  in #155.
+- **D**: wit-bindgen's `d` backend (since 0.61.0) with `ldc2 -betterC`, the
+  core module wrapped like a Go guest; LDC 1.43 brings druntime to wasip1 and
+  wasip2; nanopb for the codec.
+- **C++**: hello-c's C bindings compile as C++ with `zig c++`; the separate
+  community `cpp` backend needs C++20 or newer and has no async.
+- **Kotlin/Wasm**: Kotlin 2.4.0's experimental Component Model support through
+  JetBrains' wit-bindgen fork, a WasmGC module plus the wasip1 adapter (this
+  runtime's wasmtime enables GC); no `.proto` codec with well-known types yet.
+- **Swift**: the official Swift SDK for WebAssembly (6.2 and later) exports a
+  reactor over the C bindings; swift-protobuf does not build for Wasm today
+  and Foundation costs about 50 MB.
+- **Haskell**: GHC's wasm backend (a tech preview) as a `foreign export ccall`
+  reactor over the C bindings; a protobuf library under it is unverified.
+- **Lua, Ruby, PHP**: an interpreter embedded in a C reactor; all three need
+  setjmp/longjmp, which `zig cc` cannot build for wasm (wasi-sdk's sjlj plus
+  the exception-handling proposal can); Ruby is tens of MB, PHP has no
+  maintained WASI build.
+- **Scala** through the scala-wasm fork (WASIp2 on WasmGC); **Nim** and **V**
+  through their C output and a community WASI recipe; any compile-to-JS
+  language through the `ts` flavour's componentize-js path.
+
+Ruled out for now: AssemblyScript (its project marks the Component Model as
+harmful), Java (TeaVM dropped WASI, GraalVM targets browser WasmGC), Dart,
+OCaml, Grain, Elixir, Julia, Perl, R and Crystal, each for want of a
+WASI-hosted reactor path.
+
 ### Render locally
 
 Build the module, then run the runtime from a checkout serving your project
