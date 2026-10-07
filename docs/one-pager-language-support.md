@@ -25,7 +25,13 @@ cost. TinyGo was retired the same day: its own `wasip2` target with
 wit-bindgen-go builds a 1.5 MB component, but that generator is unmaintained
 and TinyGo cannot use componentize-go's bindings, so the two Go flavours could
 not share one path; Go stays on componentize-go. The rows about both are
-history.
+history. C moved to ABI v2 the same day, after #114's C spike: the `c`
+scaffold and `hello-c` are components over wit-bindgen's C bindings
+(sync-lifted `run`, egress over `wasi:http@0.2`), still compiled by `zig cc`
+with nanopb for the protobuf, the core module wrapped by `guestfn build`
+(no wasm-tools, no adapter download); cJSON, which only served v1's JSON host
+payloads, is gone, and the module shrank from ~70 KB to ~62 KB. The C rows
+below describe its v1 era.
 
 ## What the host requires
 
