@@ -13,6 +13,7 @@
 
 mod abi;
 mod component;
+pub mod componentize;
 pub mod concurrency;
 pub mod duration;
 mod hosthttp;
