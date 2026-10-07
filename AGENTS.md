@@ -170,6 +170,13 @@ crates/engine/              the wasmtime engine - the only crate that imports wa
                               detection, the world typecheck (v2's checkABI), the typed log import,
                               the async run path (driven on the tokio runtime), the v2 store data
                               (WASI 0.3+0.2 + the same limiter/deadline/call-hook as v1)
+  src/componentize.rs         guestfn build's wrap: a core module carrying wit-bindgen's
+                              component-type section (what its C generator links in) becomes a
+                              component through wit-component, the wasip1 reactor adapter
+                              (wasi-preview1-component-adapter-provider, published at wasmtime's
+                              version) linked in only when it imports wasi_snapshot_preview1; it
+                              lives here so the adapter is pinned beside the wasmtime-wasi that
+                              serves it (carries_component_type is the cheap wasmparser detection)
   src/abi.rs, sandbox.rs,     checkABI (exports and both imports' exact types), the private /tmp and
   hostlog.rs, hosthttp.rs,    env wiring, the wasmfn.log and wasmfn.http host imports, the JSON
   wire.rs, duration.rs,       payload shapes, Go-style duration parse/format, per-digest step slots
@@ -183,8 +190,12 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
                               wasip1 without; package.json sans asconfig.json → ts via npm - npm ci
                               with a package-lock.json, npm install without; requirements.txt →
                               python via componentize-py; build.zig → zig/c; go.mod → go), the
-                              builds, the ABI verdict, wasmfn.yaml validation,
-                              the example-config warning
+                              builds, the wrap (a built core module carrying wit-bindgen's
+                              component-type section goes through the engine's componentize and
+                              is written back as a component, one line saying so, adapter or
+                              not; a component or a plain core module passes through; a failed
+                              wrap is an error with wit-component's words), the ABI verdict,
+                              wasmfn.yaml validation, the example-config warning
   src/push.rs                 the CNCF wasm OCI artifact (wasm layer, manifest layer, layerDigests
                               config, OCI annotations, SOURCE_DATE_EPOCH-reproducible), upload
   src/inspect.rs              file → engine.inspect; reference → manifest, layers, annotations, the
@@ -462,6 +473,7 @@ By hand: `cargo run -p function-wasm -- --insecure --debug --module-dir=examples
 ## Key Dependencies
 
 - `wasmtime` / `wasmtime-wasi` — the sandbox (Cranelift, pure Rust). Each major may change APIs; only `crates/engine` touches them, and `engine::version()` re-namespaces the compiled cache automatically on a bump.
+- `wit-component` / `wasi-preview1-component-adapter-provider` — `guestfn build`'s componentizing (`engine::componentize`): the wrap of a core module carrying wit-bindgen's component-type section, and the wasip1 reactor adapter it links in. Pinned in `crates/engine` beside wasmtime: the adapter is published at wasmtime's version and must be the one the engine's wasmtime-wasi was released with, and wit-component (with wasmparser) is the version wasmtime's own bindgen already pulls, so no second copy is compiled; Renovate's wasmtime group moves them together.
 - `function-sdk-rust` — the gRPC/protobuf types (prost), `request`/`response`/`resource` helpers and the CLI `Args`; the generated FunctionRunnerService *client* types serve tests, while serving goes through the raw codec.
 - `cedar-policy` — both policy layers.
 - `sigstore` (features `cosign`, `rustls-tls`, no default features): cosign key verification crypto only; fetching stays on the runtime's own registry client and the bundle, DSSE and in-toto shapes are parsed by `cosign.rs`'s own serde structs (no `bundle`/`verify` features).

@@ -151,10 +151,14 @@
     // that step and one `cargo update --workspace` moves the whole family.
     // Hence their own group, and `bump` so every update changes Cargo.toml.
     // The vendored WASI WIT headers join the group, so the PR that moves
-    // the crates is also the one that asks for the re-vendoring.
+    // the crates is also the one that asks for the re-vendoring. So does
+    // the wasip1 adapter provider: built in the wasmtime repository and
+    // published at its version, it is the adapter guestfn build links into
+    // a component (crates/engine/src/componentize.rs) and must stay the one
+    // the engine's wasmtime-wasi was released with.
     {
       matchManagers: ['cargo', 'custom.regex'],
-      matchPackageNames: ['wasmtime', 'wasmtime-*'],
+      matchPackageNames: ['wasmtime', 'wasmtime-*', 'wasi-preview1-component-adapter-provider'],
       groupName: 'wasmtime',
       rangeStrategy: 'bump',
     },

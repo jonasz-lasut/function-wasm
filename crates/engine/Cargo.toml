@@ -24,8 +24,20 @@ wasmtime-wasi = { version = "49.0.2", features = ["p3"] }
 # egress hooks implementation - a run can never fall through to an
 # unpoliced default HTTP client.
 wasmtime-wasi-http = { version = "49.0.2", default-features = false, features = ["p2", "p3"] }
+# guestfn build's componentizing (componentize.rs) moves with wasmtime: the
+# wasip1 adapter is built in the wasmtime repository and published at its
+# version, so the adapter linked into a guest is always the one the
+# wasmtime-wasi that serves it was released with; wit-component and wasmparser
+# are the versions wasmtime's own bindgen already pulls, so no second copy is
+# compiled. Renovate's wasmtime group moves the three together.
+wasi-preview1-component-adapter-provider = "49.0.2"
+wasmparser = { version = "0.258.3", default-features = false }
+wit-component = "0.258.3"
 
 [dev-dependencies]
 function-sdk-rust = "0.3.0"
 prost = "0.14"
 wat = "1"
+# The componentize tests embed the runtime's own world into a core module the
+# way wit-bindgen does.
+wit-parser = "0.258.3"

@@ -38,8 +38,9 @@ struct Cli {
 enum Command {
     /// Scaffold a new guest project.
     Init(InitCmd),
-    /// Compile a guest project to a wasip1 module, check its ABI and its
-    /// manifest (wasmfn.yaml).
+    /// Compile a guest project to a module (a core module carrying
+    /// wit-bindgen's component-type section is wrapped into a component),
+    /// check its ABI and its manifest (wasmfn.yaml).
     Build(buildcmd::BuildCmd),
     /// Push a module to an OCI registry as a wasm artifact; a module the
     /// runtime would refuse is not pushed.

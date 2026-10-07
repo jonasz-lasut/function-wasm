@@ -1,11 +1,13 @@
-//! guestfn build: compile a guest project as a wasip1 reactor with the
-//! toolchain of its language, check the result as the runtime would at
+//! guestfn build: compile a guest project with the toolchain of its
+//! language, wrap a core module that carries wit-bindgen's component-type
+//! section into a component, check the result as the runtime would at
 //! load, and validate the project's wasmfn.yaml, if any, as the manifest
 //! guestfn push will publish beside it.
 
 use std::path::{Path, PathBuf};
 
 use function_wasm::manifest::Manifest;
+use function_wasm_engine::componentize;
 
 use crate::scaffold;
 
@@ -49,6 +51,22 @@ impl BuildCmd {
         }
         let wasm =
             std::fs::read(&out).map_err(|e| format!("cannot read {}: {e}", out.display()))?;
+        let wasm = match componentize_if_needed(wasm)
+            .map_err(|e| format!("built {}, but {e}", out.display()))?
+        {
+            Output::AsBuilt(wasm) => wasm,
+            Output::Componentized { wasm, adapter } => {
+                std::fs::write(&out, &wasm)
+                    .map_err(|e| format!("cannot write {}: {e}", out.display()))?;
+                let how = if adapter {
+                    "wasip1 adapter linked"
+                } else {
+                    "no wasip1 imports, no adapter"
+                };
+                println!("Componentized {} ({how})", out.display());
+                wasm
+            }
+        };
         // The manifest is checked with the build so a broken wasmfn.yaml
         // fails here rather than at push time.
         let manifest_path = self.dir.join(function_wasm::manifest::FILE_NAME);
@@ -84,6 +102,34 @@ impl BuildCmd {
         }
         Ok(())
     }
+}
+
+/// The build output as the runtime will see it.
+#[derive(Debug, PartialEq)]
+enum Output {
+    /// A component or a plain core module (an ABI v1 guest): the toolchain's
+    /// bytes, untouched.
+    AsBuilt(Vec<u8>),
+    /// The toolchain left a core module carrying wit-bindgen's
+    /// component-type section (what the c and zig flavours link in); the
+    /// engine wrapped it, with the wasip1 adapter when the module imported
+    /// wasi_snapshot_preview1.
+    Componentized { wasm: Vec<u8>, adapter: bool },
+}
+
+/// Wraps a core module that carries wit-bindgen's component-type section
+/// into a component; anything else passes through. The wrap is the engine's,
+/// so the adapter linked in is the one the runtime's wasmtime-wasi serves -
+/// a guest needs no wasm-tools and no adapter download.
+fn componentize_if_needed(wasm: Vec<u8>) -> Result<Output, String> {
+    if !componentize::carries_component_type(&wasm) {
+        return Ok(Output::AsBuilt(wasm));
+    }
+    let c = componentize::componentize(&wasm).map_err(|e| e.to_string())?;
+    Ok(Output::Componentized {
+        wasm: c.wasm,
+        adapter: c.adapter,
+    })
 }
 
 /// Holds the scaffold's example Composition config against the manifest's
@@ -291,4 +337,40 @@ pub(crate) fn imports_suffix(shape: &function_wasm_engine::Inspection) -> String
         return String::new();
     }
     format!(", imports {}", shape.host_imports.join(" "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ABI_V1_WAT: &str = r#"(module
+      (memory (export "memory") 1)
+      (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
+      (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#;
+
+    /// Today's outputs pass through untouched: a core module without the
+    /// section is an ABI v1 guest, a component is already wrapped (the
+    /// rust, ts and python toolchains componentize themselves). The wrap of
+    /// a module that carries the section is proven in the engine's tests.
+    #[test]
+    fn passes_through_what_needs_no_wrap() {
+        for wat in [ABI_V1_WAT, "(component)"] {
+            let wasm = wat::parse_str(wat).expect("wat");
+            assert_eq!(
+                componentize_if_needed(wasm.clone()),
+                Ok(Output::AsBuilt(wasm)),
+                "{wat}"
+            );
+        }
+    }
+
+    /// A section the wrap cannot read is the engine's refusal, which the
+    /// build line prefixes - never a silent fall-through to the ABI v1
+    /// verdict.
+    #[test]
+    fn a_failed_wrap_is_an_error() {
+        let wasm = wat::parse_str(r#"(module (@custom "component-type:x" "nope"))"#).expect("wat");
+        let err = componentize_if_needed(wasm).expect_err("malformed section");
+        assert!(err.starts_with("cannot componentize module: "), "{err}");
+    }
 }
