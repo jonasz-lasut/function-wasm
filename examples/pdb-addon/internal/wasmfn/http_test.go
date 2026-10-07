@@ -2,7 +2,6 @@ package wasmfn
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -12,48 +11,56 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-// TestHTTPClient pins the codec of the wasmfn.http import: what the transport
-// hands the host for an *http.Request, and what it makes of the host's answer.
+// TestHTTPClient pins the transport behind HTTPClient: what it hands the
+// wasi:http glue for an *http.Request, and what it makes of the host's
+// answer.
 func TestHTTPClient(t *testing.T) {
 	type got struct {
 		status  int
 		headers http.Header
 		body    string
 	}
+	type sent struct {
+		method  string
+		url     string
+		headers http.Header
+		body    string
+	}
 	type want struct {
-		request hostRequest
-		got     got
-		err     string
+		sent sent
+		got  got
+		err  string
 	}
 	cases := map[string]struct {
 		reason   string
 		request  func() *http.Request
-		response string
+		response *hostResponse
+		refusal  error
 		want     want
 	}{
 		"GetOK": {
-			reason: "A GET is encoded with its URL and headers, and the host's status, headers and body come back as an http.Response.",
+			reason: "A GET is handed over with its URL and headers, and the host's status, headers and body come back as an http.Response.",
 			request: func() *http.Request {
 				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.example.com/v1/items?limit=1", nil)
 				req.Header.Set("Accept", "application/json")
 				return req
 			},
-			response: `{"status":200,"headers":{"Content-Type":["application/json"]},"body":"eyJvayI6dHJ1ZX0="}`,
+			response: &hostResponse{Status: 200, Headers: [][2]string{{"content-type", "application/json"}}, Body: []byte(`{"ok":true}`)},
 			want: want{
-				request: hostRequest{Method: "GET", URL: "https://api.example.com/v1/items?limit=1", Headers: map[string][]string{"Accept": {"application/json"}}},
-				got:     got{status: 200, headers: http.Header{"Content-Type": {"application/json"}}, body: `{"ok":true}`},
+				sent: sent{method: "GET", url: "https://api.example.com/v1/items?limit=1", headers: http.Header{"Accept": {"application/json"}}},
+				got:  got{status: 200, headers: http.Header{"Content-Type": {"application/json"}}, body: `{"ok":true}`},
 			},
 		},
 		"PostBody": {
-			reason: "A request body is read and sent as bytes (base64 on the wire).",
+			reason: "A request body is read whole and handed over as bytes.",
 			request: func() *http.Request {
 				req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://api.example.com/v1/items", strings.NewReader(`{"name":"x"}`))
 				return req
 			},
-			response: `{"status":201}`,
+			response: &hostResponse{Status: 201},
 			want: want{
-				request: hostRequest{Method: "POST", URL: "https://api.example.com/v1/items", Body: []byte(`{"name":"x"}`)},
-				got:     got{status: 201, headers: http.Header{}, body: ""},
+				sent: sent{method: "POST", url: "https://api.example.com/v1/items", headers: http.Header{}, body: `{"name":"x"}`},
+				got:  got{status: 201, headers: http.Header{}, body: ""},
 			},
 		},
 		"ServerError": {
@@ -62,51 +69,37 @@ func TestHTTPClient(t *testing.T) {
 				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.example.com/", nil)
 				return req
 			},
-			response: `{"status":503,"body":"YnVzeQ=="}`,
+			response: &hostResponse{Status: 503, Body: []byte("busy")},
 			want: want{
-				request: hostRequest{Method: "GET", URL: "https://api.example.com/"},
-				got:     got{status: 503, headers: http.Header{}, body: "busy"},
+				sent: sent{method: "GET", url: "https://api.example.com/", headers: http.Header{}},
+				got:  got{status: 503, headers: http.Header{}, body: "busy"},
 			},
 		},
 		"Refused": {
-			reason: "Status 0 with an error is the host's refusal, surfaced as an *HTTPError.",
+			reason: "A request the host did not perform is the glue's *HTTPError, carrying the host's reason.",
 			request: func() *http.Request {
 				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://evil.example.com/", nil)
 				return req
 			},
-			response: `{"status":0,"error":"sandbox.egress: no rule admits host \"evil.example.com\""}`,
+			refusal: &HTTPError{Reason: `sandbox.egress: no rule admits host "evil.example.com"`},
 			want: want{
-				request: hostRequest{Method: "GET", URL: "https://evil.example.com/"},
-				err:     `wasmfn: sandbox.egress: no rule admits host "evil.example.com"`,
-			},
-		},
-		"Garbage": {
-			reason: "A host answer that is not JSON is an error naming the decoder.",
-			request: func() *http.Request {
-				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.example.com/", nil)
-				return req
-			},
-			response: `nope`,
-			want: want{
-				request: hostRequest{Method: "GET", URL: "https://api.example.com/"},
-				err:     "wasmfn: cannot decode the host's response",
+				sent: sent{method: "GET", url: "https://evil.example.com/", headers: http.Header{}},
+				err:  `wasmfn: sandbox.egress: no rule admits host "evil.example.com"`,
 			},
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			var sent hostRequest
-			httpCall = func(payload []byte) ([]byte, error) {
-				if err := json.Unmarshal(payload, &sent); err != nil {
-					t.Fatalf("payload is not JSON: %v", err)
-				}
-				return []byte(tc.response), nil
+			var handed sent
+			httpCall = func(req hostRequest) (*hostResponse, error) {
+				handed = sent{method: req.Method, url: req.URL.String(), headers: req.Headers, body: string(req.Body)}
+				return tc.response, tc.refusal
 			}
 			t.Cleanup(func() { httpCall = hostHTTPCall })
 
 			rsp, err := HTTPClient().Do(tc.request())
 
-			if diff := cmp.Diff(tc.want.request, sent); diff != "" {
+			if diff := cmp.Diff(tc.want.sent, handed, cmp.AllowUnexported(sent{})); diff != "" {
 				t.Errorf("\n%s\nrequest handed to the host: -want, +got:\n%s", tc.reason, diff)
 			}
 			if tc.want.err != "" {
@@ -114,7 +107,7 @@ func TestHTTPClient(t *testing.T) {
 					t.Fatalf("\n%s\nDo(): want error containing %q, got %v", tc.reason, tc.want.err, err)
 				}
 				var herr *HTTPError
-				if strings.HasPrefix(tc.want.err, "wasmfn: sandbox") && !errors.As(err, &herr) {
+				if !errors.As(err, &herr) {
 					t.Errorf("\n%s\nDo(): a host refusal must be an *HTTPError, got %T", tc.reason, errors.Unwrap(err))
 				}
 				return

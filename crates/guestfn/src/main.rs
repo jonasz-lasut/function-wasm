@@ -39,8 +39,9 @@ enum Command {
     /// Scaffold a new guest project.
     Init(InitCmd),
     /// Compile a guest project to a module (a core module carrying
-    /// wit-bindgen's component-type section is wrapped into a component),
-    /// check its ABI and its manifest (wasmfn.yaml).
+    /// wit-bindgen's component-type section is wrapped into a component; a
+    /// go project's world is embedded from its wit/ first), check its ABI
+    /// and its manifest (wasmfn.yaml).
     Build(buildcmd::BuildCmd),
     /// Push a module to an OCI registry as a wasm artifact; a module the
     /// runtime would refuse is not pushed.
@@ -72,7 +73,8 @@ struct InitCmd {
     /// Directory to create the project in.
     dir: PathBuf,
 
-    /// Language of the project: go (function-sdk-go), rust (prost, an ABI
+    /// Language of the project: go (function-sdk-go, an ABI v2 component
+    /// over wit-bindgen's Go bindings), rust (prost, an ABI
     /// v2 component), zig (zig-protobuf over wit-bindgen's C bindings, an
     /// ABI v2 component, ~60 KB), c (nanopb, built by zig cc, ~70 KB), ts
     /// (protobuf-es, an ABI v2 component built by jco, ~14 MB) or python

@@ -1,0 +1,27 @@
+/// This guest's world: the wasmfn:function contract (the runtime's
+/// wit/wasmfn-function.wit) restated with two deliberate differences: `run`
+/// is declared sync (the shape stock Go builds - a sync-lifted implementation
+/// satisfies the runtime's async world, docs/abi-v2.md), and the guest
+/// imports wasi:http@0.2's outgoing-handler, what wasmfn.HTTPClient() sends
+/// through - the runtime serves both wasi:http generations through one
+/// egress policy. It lives in a local package of its own: a WIT package name
+/// must always carry the same contents, and the runtime checks a component's
+/// types, not the package its world came from. wit-bindgen's Go generator
+/// writes internal/bindings from it, and guestfn build embeds it into the
+/// core module go build emits before wrapping that into the component.
+package local:guest;
+
+world function {
+    enum log-level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    import log: func(level: log-level, msg: string, kv: list<tuple<string, string>>);
+
+    import wasi:http/outgoing-handler@0.2.12;
+
+    export run: func(request: list<u8>) -> result<list<u8>, string>;
+}

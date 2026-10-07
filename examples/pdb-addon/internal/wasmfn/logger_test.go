@@ -8,16 +8,19 @@ import (
 )
 
 type sunk struct {
-	level   int32
-	payload string
+	level Level
+	msg   string
+	pairs [][2]string
 }
 
+// TestLogger pins what reaches the world's log import: the level, the
+// message and the keys and values rendered to string pairs.
 func TestLogger(t *testing.T) {
 	var got []sunk
-	logSink = func(level int32, payload []byte) {
-		got = append(got, sunk{level: level, payload: string(payload)})
+	logSink = func(level Level, msg string, pairs [][2]string) {
+		got = append(got, sunk{level: level, msg: msg, pairs: pairs})
 	}
-	t.Cleanup(func() { logSink = stderrSink })
+	t.Cleanup(func() { logSink = hostLogSink })
 
 	log := NewLogger().WithValues("module", "hello")
 	log.Info("Running", "count", 3, "err", errors.New("nope"))
@@ -26,10 +29,10 @@ func TestLogger(t *testing.T) {
 	log.Info("Odd", "dangling")
 
 	want := []sunk{
-		{level: levelInfo, payload: `{"msg":"Running","kv":["module","hello","count",3,"err","nope"]}`},
-		{level: levelDebug, payload: `{"msg":"Details","kv":["module","hello","ok",true,"raw",{"a":[1]}]}`},
-		{level: levelInfo, payload: `{"msg":"Nested","kv":["module","hello","more",1.5]}`},
-		{level: levelInfo, payload: `{"msg":"Odd","kv":["module","hello","dangling"]}`},
+		{level: LevelInfo, msg: "Running", pairs: [][2]string{{"module", "hello"}, {"count", "3"}, {"err", "nope"}}},
+		{level: LevelDebug, msg: "Details", pairs: [][2]string{{"module", "hello"}, {"ok", "true"}, {"raw", `{"a":[1]}`}}},
+		{level: LevelInfo, msg: "Nested", pairs: [][2]string{{"module", "hello"}, {"more", "1.5"}}},
+		{level: LevelInfo, msg: "Odd", pairs: [][2]string{{"module", "hello"}, {"dangling", ""}}},
 	}
 	if diff := cmp.Diff(want, got, cmp.AllowUnexported(sunk{})); diff != "" {
 		t.Errorf("logger records: -want, +got:\n%s", diff)

@@ -3,7 +3,9 @@
 A tenant add-on for a platform's Composition: a
 [Crossplane](https://crossplane.io) composition function in Go
 ([function-sdk-go](https://github.com/crossplane/function-sdk-go)),
-compiled to a WebAssembly module (ABI v1) and run by
+compiled to a WebAssembly component (ABI v2: `go build` emits a wasip1
+reactor over wit-bindgen's Go bindings, `guestfn build` embeds the world
+and wraps it) and run by
 [function-wasm](https://github.com/jonasz-lasut/function-wasm).
 
 The platform team ships a `WebApp` Composition. Its first step composes the

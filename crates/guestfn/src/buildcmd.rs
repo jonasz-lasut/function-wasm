@@ -1,6 +1,7 @@
 //! guestfn build: compile a guest project with the toolchain of its
 //! language, wrap a core module that carries wit-bindgen's component-type
-//! section into a component, check the result as the runtime would at
+//! section into a component (embedding the world first for a Go project,
+//! whose toolchain emits none), check the result as the runtime would at
 //! load, and validate the project's wasmfn.yaml, if any, as the manifest
 //! guestfn push will publish beside it.
 
@@ -10,6 +11,10 @@ use function_wasm::manifest::Manifest;
 use function_wasm_engine::componentize;
 
 use crate::scaffold;
+
+/// The world a Go project's wit/ declares (the go scaffold's
+/// wit/world.wit): what is embedded into the core module go build emits.
+const GO_WORLD: &str = "function";
 
 #[derive(clap::Args, Debug)]
 pub struct BuildCmd {
@@ -115,8 +120,9 @@ enum Output {
     /// bytes, untouched.
     AsBuilt(Vec<u8>),
     /// The toolchain left a core module carrying wit-bindgen's
-    /// component-type section (what the c and zig flavours link in); the
-    /// engine wrapped it, with the wasip1 adapter when the module imported
+    /// component-type section (what the c and zig flavours link in, and what
+    /// the go build embeds from the project's wit/); the engine wrapped it,
+    /// with the wasip1 adapter when the module imported
     /// wasi_snapshot_preview1.
     Componentized { wasm: Vec<u8>, adapter: bool },
 }
@@ -208,12 +214,25 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
     let out_s = out.to_string_lossy().into_owned();
     match lang {
         scaffold::LANG_GO => {
+            // go build leaves an output whose build ID matches alone, and
+            // it reads that ID from the module's go.buildid section, which
+            // the component wrapped around the module below still carries:
+            // the previous build goes first, or the embed would find a
+            // component where it expects the core module.
+            if out.exists() {
+                std::fs::remove_file(out)
+                    .map_err(|e| format!("cannot remove {}: {e}", out.display()))?;
+            }
+            // Mainline Go has no wasip2 port: the guest is a wasip1 reactor.
+            // -checklinkname=0 admits the bindings runtime's linkname to
+            // runtime.sbrk (go.bytecodealliance.org/pkg, what
+            // componentize-go passes too); the linker refuses it otherwise.
             let status = std::process::Command::new("go")
                 .args([
                     "build",
                     "-buildmode=c-shared",
                     "-trimpath",
-                    "-ldflags=-s -w",
+                    "-ldflags=-s -w -checklinkname=0",
                     "-o",
                     &out_s,
                     ".",
@@ -225,6 +244,20 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
                 .map_err(|e| format!("go build failed: {e}"))?;
             if !status.success() {
                 return Err(format!("go build failed: {status}"));
+            }
+            // The scaffold is an ABI v2 guest over wit-bindgen's Go
+            // bindings, whose core module carries no component type (the
+            // generator emits Go source only): its world is embedded here
+            // from the project's wit/, and the wrap below links the wasip1
+            // adapter. A project without wit/ is an ABI v1 wasip1 guest and
+            // keeps building as one.
+            let wit = dir.join("wit");
+            if wit.is_dir() {
+                let core = std::fs::read(out)
+                    .map_err(|e| format!("cannot read {}: {e}", out.display()))?;
+                let embedded = componentize::embed_world(&core, &wit, GO_WORLD)
+                    .map_err(|e| format!("built {}, but {e}", out.display()))?;
+                std::fs::write(out, embedded).map_err(|e| e.to_string())?;
             }
         }
         scaffold::LANG_RUST => {

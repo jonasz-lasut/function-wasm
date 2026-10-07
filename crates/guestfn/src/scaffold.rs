@@ -1,10 +1,11 @@
 //! Renders a new guest project in one of six flavours: Go with
-//! function-sdk-go (its ABI glue vendored in internal/wasmfn), Rust with
-//! prost, Zig with zig-protobuf and C with nanopb - both over wit-bindgen's
-//! C bindings (Zig through translate-c), built by zig into a core module
-//! that guestfn build componentizes - TypeScript with protobuf-es
-//! (componentized by jco), or Python with protobuf (componentized by
-//! componentize-py). Each
+//! function-sdk-go (its ABI glue vendored in internal/wasmfn over
+//! wit-bindgen's Go bindings, the core module componentized by guestfn
+//! build), Rust with prost, Zig with zig-protobuf and C with nanopb - both
+//! over wit-bindgen's C bindings (Zig through translate-c), built by zig
+//! into a core module that guestfn build componentizes - TypeScript with
+//! protobuf-es (componentized by jco), or Python with protobuf
+//! (componentized by componentize-py). Each
 //! template set is a minimal greeting project; the example guests of this
 //! repository solve their own use cases on the same plumbing (the vendored
 //! glue, codecs, proto and WIT), which tests keep identical.
@@ -135,8 +136,10 @@ fn template(name: &str, text: &str, o: &Options) -> Result<String, String> {
     ] {
         out = out.replace(token, &value);
     }
-    if out.contains("[[") {
-        let at = out.find("[[").expect("just found");
+    // A delimiter is `[[ ` with its space: a bare `[[` is source (Go's
+    // generic `Result[[]byte, string]` in the go template's bindings).
+    if out.contains("[[ ") {
+        let at = out.find("[[ ").expect("just found");
         return Err(format!(
             "template {name} uses an unsupported expression near {:?}",
             &out[at..out.len().min(at + 40)]
@@ -267,7 +270,12 @@ mod tests {
         let examples: [(&str, &[&str], Options); 6] = [
             (
                 "pdb-addon",
-                &["internal/wasmfn/"],
+                &[
+                    "internal/wasmfn/",
+                    "internal/bindings/",
+                    "wit/",
+                    ".golangci.yml",
+                ],
                 Options {
                     lang: LANG_GO.into(),
                     module: "github.com/jonasz-lasut/function-wasm/examples/pdb-addon".into(),
