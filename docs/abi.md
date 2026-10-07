@@ -5,8 +5,8 @@
 > 1.0.0 (issues [#114](https://github.com/jonasz-lasut/function-wasm/issues/114)
 > and [#129](https://github.com/jonasz-lasut/function-wasm/issues/129)).
 > [ABI v2](abi-v2.md), the component-model contract, replaces it: a new
-> guest targets the `wasmfn:function` world, as the `rust`, `zig`, `c`, `ts`
-> and `python` scaffolds already do. A v1 module keeps running until 1.0.0;
+> guest targets the `wasmfn:function` world, as every scaffold does since
+> 2026-10-07 (`go` was the last to move). A v1 module keeps running until 1.0.0;
 > until then the runtime logs a warning on every load of one (`ABI v1 is
 > deprecated and is removed in function-wasm 1.0.0; build the module as an
 > ABI v2 component (docs/abi-v2.md)`) and counts it in
@@ -16,9 +16,10 @@
 
 This is the contract between the function-wasm runtime (the *host*) and a
 WebAssembly module it runs (the *guest*). It is deliberately small so a guest
-can be written in any language with a wasip1 toolchain; the Go glue the
-`guestfn` scaffold vendors into a project (`internal/wasmfn`) implements it for
-Go guests, the one scaffold still on it.
+can be written in any language with a wasip1 toolchain; no scaffold in this
+repository targets it any more (the Go glue the `guestfn` scaffold vendors
+into a project, `internal/wasmfn`, implemented it for Go guests until the
+`go` flavour moved to ABI v2 on 2026-10-07, the last to move).
 
 ## Module shape
 
@@ -190,9 +191,11 @@ the grant, each hop re-checked and audited; as in Go's `net/http`,
 `Authorization` and `Cookie` headers survive a redirect to the same host and
 are dropped on a redirect elsewhere. A refused request is never a trap.
 
-The Go glue's `wasmfn.HTTPClient()` returns an `*http.Client` whose transport
-speaks this protocol (`internal/wasmfn/http*.go`), the one implementation
-this repository still carries.
+No glue in this repository speaks this protocol any more: the Go glue's
+`wasmfn.HTTPClient()` did (`internal/wasmfn/http*.go`) until the `go` flavour
+moved to ABI v2, where the same `*http.Client` sends through `wasi:http`;
+the engine's tests (`crates/engine/tests`) exercise the import over WAT
+fixtures.
 
 ## Compatibility
 
@@ -217,27 +220,26 @@ indefinitely alongside it. The v2 contract lives in
 
 ## Examples
 
-`examples/pdb-addon` (Go with function-sdk-go and the vendored `internal/wasmfn`
-glue) is the one example left on this contract, carrying the same ABI
-plumbing as what `guestfn init --lang go` scaffolds - a deprecated reference
-guest, as the warning above says. The rust, zig, c, ts and python scaffolds
-and their examples emit ABI v2 components (`docs/abi-v2.md`), and a new
-guest in any language should too.
+No example in this repository is left on this contract: `examples/pdb-addon`,
+the last, moved with the `go` scaffold on 2026-10-07. Every scaffold and
+example emits an ABI v2 component (`docs/abi-v2.md`), and a new guest in any
+language should too; the engine's WAT fixtures (`crates/engine/tests`) are
+what still implements v1 here.
 
 ## Go guests
 
-The `internal/wasmfn` glue the `guestfn` scaffold vendors into a Go project
-implements the exports and the logger. A guest registers its function from
-`init` (Go never runs `main` in a wasip1 reactor) and builds with
-
-```shell
-GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -trimpath -ldflags "-s -w" -o fn.wasm .
-```
-
-or `guestfn build`. Expect ~75 MB (13 MB compressed) for a guest that uses
-`function-sdk-go`'s `request`/`response`/`resource` packages: they pull in
-crossplane-runtime and Kubernetes apimachinery, as a native function binary
-does. A guest that works on the raw protobuf messages (`fnv1` + `structpb`)
-through `wasmfn` alone is ~20 MB. Compilation by the host takes about two
-seconds and is cached by content digest; a request then costs about ten
-milliseconds.
+The `go` scaffold moved to ABI v2 on 2026-10-07 (#114): the
+`internal/wasmfn` glue it vendors now implements the component world over
+wit-bindgen's Go bindings, and `guestfn build` wraps the wasip1 reactor
+`go build` emits (`-buildmode=c-shared -ldflags=-checklinkname=0`; Go never
+runs `main` there, so a guest still registers its function from `init`)
+into the component, embedding the world and linking the adapter. A Go guest
+built with the earlier glue is a v1 module and keeps running until 1.0.0;
+re-scaffolding, or copying the current glue, moves it. Size and cost are
+the component's, unchanged from v1: expect ~75 MB (13 MB compressed) for a
+guest that uses `function-sdk-go`'s `request`/`response`/`resource`
+packages (they pull in crossplane-runtime and Kubernetes apimachinery, as a
+native function binary does), ~20 MB for one that works on the raw protobuf
+messages through `wasmfn` alone; compilation by the host takes about two
+seconds and is cached by content digest, and a request then costs about
+ten milliseconds.
