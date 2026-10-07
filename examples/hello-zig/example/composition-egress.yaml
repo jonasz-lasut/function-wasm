@@ -25,4 +25,4 @@ spec:
         manifestPath: example/wasmfn.local.yaml
       config:
         # The fixture server render.sh starts, serving example/fixtures/.
-        greetingUrl: http://127.0.0.1:9480/en
+        greetingUrl: http://127.0.0.1:9480/response.txt
