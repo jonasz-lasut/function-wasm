@@ -880,7 +880,13 @@ flags would admit.
 | `--ttl` | | `60s` | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
 The usual function-sdk-go flags (`--insecure`, `--debug`, `--tls-certs-dir`,
-`--address`, `--max-recv-message-size`) apply too. The caches live under
+`--address`, `--max-recv-message-size`) apply too. `--debug` turns on the
+runtime's own debug lines (guest log records sent at debug level, the
+credentials withheld from a module, trap details) in a human-readable
+format; every other crate, wasmtime and cranelift included, stays at `info`,
+so a compile under `--debug` does not print cranelift's per-pass lines. A
+`RUST_LOG` that is set replaces the flag's filter in full
+(`RUST_LOG=info,cranelift_codegen=debug` for those lines). The caches live under
 `/tmp/function-wasm-cache` (not configurable); back it with a volume through a
 `DeploymentRuntimeConfig` to keep them across pod restarts, and mount an
 emptyDir there if the pod's root filesystem is read-only. A volume shared

@@ -11,8 +11,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
-use function_sdk_rust::{Args, logging};
-use function_wasm::{authz, cache, cosign, egress, grpc, ops, resolver, runner, store, validate};
+use function_sdk_rust::Args;
+use function_wasm::{
+    authz, cache, cosign, egress, grpc, logging, ops, resolver, runner, store, validate,
+};
 use function_wasm_engine::{Config, Engine, duration};
 
 #[derive(Parser, Debug)]

@@ -14,6 +14,7 @@ pub mod grpc;
 pub mod grpcmetrics;
 pub mod input;
 pub mod location;
+pub mod logging;
 pub mod manifest;
 pub mod oci;
 pub mod ops;
