@@ -71,15 +71,15 @@ struct InitCmd {
     /// Directory to create the project in.
     dir: PathBuf,
 
-    /// Language of the project: go (function-sdk-go), tinygo (raw protobuf
-    /// messages, ~1 MB modules), rust (prost, an ABI v2 component), zig
+    /// Language of the project: go (function-sdk-go), rust (prost, an ABI
+    /// v2 component), zig
     /// (zig-protobuf, ~95 KB), c (nanopb, built by zig cc, ~70 KB), ts
     /// (protobuf-es, an ABI v2 component built by jco, ~14 MB) or python
     /// (protobuf, an ABI v2 component built by componentize-py, ~21 MB).
     #[arg(long, default_value = "go", value_parser = scaffold::LANGS)]
     lang: String,
 
-    /// Go module path of the project (go, tinygo). Defaults to the
+    /// Go module path of the project (go). Defaults to the
     /// directory's base name.
     #[arg(long)]
     module: Option<String>,
@@ -108,7 +108,7 @@ impl InitCmd {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let is_go = self.lang == scaffold::LANG_GO || self.lang == scaffold::LANG_TINYGO;
+        let is_go = self.lang == scaffold::LANG_GO;
         let (module, name) = if is_go {
             (
                 self.module.clone().unwrap_or_else(|| base.clone()),
@@ -133,7 +133,7 @@ impl InitCmd {
         scaffold::write(&self.dir, &files)?;
         let dir = self.dir.display();
         let kind = match self.lang.as_str() {
-            scaffold::LANG_GO | scaffold::LANG_TINYGO => "module",
+            scaffold::LANG_GO => "module",
             scaffold::LANG_RUST => "crate",
             scaffold::LANG_TS => "package",
             _ => "project",

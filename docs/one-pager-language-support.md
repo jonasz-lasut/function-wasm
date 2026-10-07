@@ -21,7 +21,11 @@ a scaffold or example here runs through the guest suite and the render jobs
 below as a v1 example, was retired after #114's spike: no wit-bindgen backend,
 the project declines the component model, and hand-written canonical-ABI glue
 carries `run` and `log` (17.9 KB) but makes `wasi:http` a hand-maintained
-cost. The rows about it are history.
+cost. TinyGo was retired the same day: its own `wasip2` target with
+wit-bindgen-go builds a 1.5 MB component, but that generator is unmaintained
+and TinyGo cannot use componentize-go's bindings, so the two Go flavours could
+not share one path; Go stays on componentize-go. The rows about both are
+history.
 
 ## What the host requires
 
