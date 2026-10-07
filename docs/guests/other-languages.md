@@ -167,8 +167,8 @@ with and without an egress grant.
 **Possible, untested.** A 2026-10-07 survey
 ([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)) found
 these paths to a component; none has a guest in this repository yet, so none
-is in the tested set, and none needs a world change (MoonBit, surveyed the
-same day, has its example above):
+is in the tested set, and none needs a world change (MoonBit and Odin,
+surveyed the same day, have their examples above):
 
 - **D**: wit-bindgen's `d` backend (since 0.61.0) with `ldc2 -betterC`, the
   core module wrapped like a Go guest; LDC 1.43 brings druntime to wasip1 and

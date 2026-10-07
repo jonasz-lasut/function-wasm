@@ -271,7 +271,7 @@ mod tests {
     /// header, like dashboard-bundle's.
     #[test]
     fn examples_share_the_scaffold_plumbing() {
-        let examples: [(&str, &[&str], Options); 7] = [
+        let examples: [(&str, &[&str], Options); 8] = [
             (
                 "pdb-addon",
                 &[
