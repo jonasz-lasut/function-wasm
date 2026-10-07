@@ -14,11 +14,13 @@ published package, and signed/attested artifacts. Unlike a CVE security patch
 straight from `main` HEAD, and the version bump (minor vs major) is chosen by
 the user, never inferred.
 
-The repo keeps exactly **one** `release-X.Y` branch at a time: the latest
-minor/major line, because CVE remediations only ever target that line. Cutting
-a new line therefore ends by retiring the superseded branch (step 11). Patch
-releases never retire anything — `release-1.2` survives `v1.2.1` and dies only
-when `v1.3.0` (or `v2.0.0`) ships.
+Through the 0.x line the repo kept exactly **one** `release-X.Y` branch at a
+time, the latest, because CVE remediations only ever targeted that line, so
+cutting a new line ended by retiring the superseded branch (step 11). From
+v1.0.0 on, superseded release branches **stay** (Jonasz, 2026-10-07): step 11
+retires only `release-0.*` branches, and a line that shipped as 1.0.0 or later
+is never deleted, so an older line can still take a patch. Patch releases
+never retire anything.
 
 ## When to use
 
@@ -119,9 +121,10 @@ pushing over it.
 ### 4. Confirm before anything externally visible
 
 Show the user `NEW_VERSION`, `NEW_BRANCH`, a summary of what's shipping
-(e.g. `git log --oneline "$TAG"..main`), and the existing `release-*`
+(e.g. `git log --oneline "$TAG"..main`), and the existing `release-0.*`
 branches that step 11 will delete once the release completes
-(`git ls-remote --heads origin 'release-*'`). From here on every step is
+(`git ls-remote --heads origin 'release-0.*'`; from 1.0.0 on nothing is
+deleted). From here on every step is
 externally visible (pushed branch, public tag, GitHub release, published
 package) and isn't something you can quietly undo — get explicit
 confirmation before continuing.
@@ -193,26 +196,31 @@ until-loop pattern is the sanctioned way to poll rather than a manual sleep
 loop. Only once all three have concluded successfully, move on to branch
 retirement.
 
-### 11. Retire superseded release branches — then report
+### 11. Retire superseded 0.x release branches, then report
 
-Only the latest `release-X.Y` branch may remain in the repo: CVE
-remediations (`remediate-cves`) only ever target the newest release line,
-so once `NEW_VERSION` is fully released the older branches are dead weight —
-their history is preserved by the `vX.Y.Z` tags, so nothing is lost. Delete
-every remote `release-*` branch except `NEW_BRANCH`:
+The 0.x line kept only its latest `release-0.Y` branch: CVE remediations
+(`remediate-cves`) target the newest release line, so once `NEW_VERSION` is
+fully released an older 0.x branch is dead weight (its history is preserved
+by the `v0.Y.Z` tags). Delete every remote `release-0.*` branch except
+`NEW_BRANCH`:
 
 ```bash
-git ls-remote --heads origin 'release-*' | sed 's|.*refs/heads/||' \
+git ls-remote --heads origin 'release-0.*' | sed 's|.*refs/heads/||' \
   | grep -vx "$NEW_BRANCH" \
   | while read -r OLD; do git push origin --delete "$OLD"; done
 ```
+
+From v1.0.0 on, superseded release branches stay (Jonasz, 2026-10-07): a
+`release-1.Y` or later branch is never deleted, so an older line can take a
+patch (`remediate-cves` on that branch) after a newer line has shipped. The
+command above deletes nothing once the 0.x branches are gone.
 
 Run this **only after** steps 6–9 have all concluded successfully — if the
 release dies partway, the previous line must stay patchable. (Stale local
 copies are harmless; clean them up with `git branch -D` if present.)
 
 Then report the new version released, the branch it lives on, and which
-superseded release branches were deleted.
+superseded release branches, if any, were deleted.
 
 ## Quick reference
 
@@ -223,7 +231,7 @@ superseded release branches were deleted.
 | (n/a) `gh release create` | — | tag name, `--target` branch |
 | `Publish Function Package` | the new tag (`vX.Y.0` / `vX.0.0`) | `version` |
 | `Supply Chain and Xpkg Extensions` | `main` | `version` |
-| Retire old branches | — | delete every `release-*` except the new one |
+| Retire old branches | n/a | delete every `release-0.*` except the new one; 1.0.0+ lines are kept |
 
 ## Common mistakes
 
@@ -245,8 +253,10 @@ superseded release branches were deleted.
   — the tag or image it depends on won't exist yet.
 - Using this skill for a patch bump (`vX.Y.Z+1`) — that path belongs to
   `remediate-cves`, which reuses an existing branch instead of cutting one.
-- Leaving the superseded `release-X.Y` branch behind after the new line
-  ships — the repo holds exactly one release branch, the latest.
+- Leaving a superseded `release-0.Y` branch behind after the new line
+  ships: the 0.x line holds exactly one release branch, the latest.
+- Deleting a `release-1.Y` or later branch: from 1.0.0 on every released
+  line keeps its branch.
 - Deleting the old branch before steps 6–9 have all succeeded — a
   half-finished release leaves no patchable line if the old branch is gone.
 - Retiring a release branch after a *patch* release — patches ride the
