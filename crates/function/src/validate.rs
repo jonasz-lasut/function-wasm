@@ -19,20 +19,18 @@ use function_wasm_engine::{Config, Engine, duration};
 
 use crate::admission;
 use crate::authz::OperatorPolicy;
-use crate::input::{Input, ModuleSource};
+use crate::input::{self, Input, ModuleSource};
 use crate::quantity;
 use crate::resolver::{Resolver, go_io_error};
 
-const INPUT_API_VERSION: &str = "wasm.fn.crossplane.io/v1beta1";
-const INPUT_KIND: &str = "Input";
 const COMPOSITION_API_VERSION: &str = "apiextensions.crossplane.io/v1";
 const COMPOSITION_KIND: &str = "Composition";
 
 #[derive(clap::Args, Debug)]
 pub struct ValidateArgs {
     /// Composition or Input files, YAML or JSON, multi-document; - reads
-    /// stdin. Every pipeline step whose input is a wasm.fn.crossplane.io/
-    /// v1beta1 Input is checked, and every bare Input document.
+    /// stdin. Every pipeline step whose input is a wasm.fn.crossplane.io/v1
+    /// Input is checked, and every bare Input document.
     #[arg(value_name = "file", required = true)]
     files: Vec<String>,
 
@@ -366,7 +364,7 @@ fn find_steps(file: &str, docs: &[serde_json::Value], function_name: Option<&str
     };
     for (i, doc) in docs.iter().enumerate() {
         let (api_version, kind) = (str_of(doc, "apiVersion"), str_of(doc, "kind"));
-        if api_version == INPUT_API_VERSION && kind == INPUT_KIND {
+        if api_version == input::API_VERSION && kind == input::KIND {
             if function_name.is_none() {
                 let name = doc
                     .get("metadata")
@@ -401,10 +399,10 @@ fn find_steps(file: &str, docs: &[serde_json::Value], function_name: Option<&str
             let Some(input) = entry.get("input").and_then(|v| v.as_object()) else {
                 continue;
             };
-            if input.get("apiVersion").and_then(|v| v.as_str()) != Some(INPUT_API_VERSION) {
+            if input.get("apiVersion").and_then(|v| v.as_str()) != Some(input::API_VERSION) {
                 continue;
             }
-            if input.get("kind").and_then(|v| v.as_str()) != Some(INPUT_KIND) {
+            if input.get("kind").and_then(|v| v.as_str()) != Some(input::KIND) {
                 continue;
             }
             let function = entry

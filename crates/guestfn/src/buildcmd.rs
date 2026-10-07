@@ -169,8 +169,9 @@ fn example_config(path: &Path) -> Result<Option<Option<serde_json::Value>>, Stri
         .unwrap_or_default();
     for step in steps {
         let input = step.get("input").cloned().unwrap_or_default();
-        if input.get("apiVersion").and_then(|v| v.as_str()) != Some(crate::INPUT_API_VERSION)
-            || input.get("kind").and_then(|v| v.as_str()) != Some(crate::INPUT_KIND)
+        if input.get("apiVersion").and_then(|v| v.as_str())
+            != Some(function_wasm::input::API_VERSION)
+            || input.get("kind").and_then(|v| v.as_str()) != Some(function_wasm::input::KIND)
         {
             continue;
         }

@@ -1,4 +1,4 @@
-apiVersion: wasm.fn.crossplane.io/v1beta1
+apiVersion: wasm.fn.crossplane.io/v1
 kind: Input
 module:
   type: OCI

@@ -681,7 +681,7 @@ mod tests {
 
     fn input(module: serde_json::Value) -> serde_json::Value {
         serde_json::json!({
-            "apiVersion": "wasm.fn.crossplane.io/v1beta1",
+            "apiVersion": "wasm.fn.crossplane.io/v1",
             "kind": "Input",
             "module": module,
         })
@@ -912,7 +912,7 @@ mod tests {
             }),
             input: Some(resource::json_to_struct(
                 serde_json::json!({
-                    "apiVersion": "wasm.fn.crossplane.io/v1beta1",
+                    "apiVersion": "wasm.fn.crossplane.io/v1",
                     "kind": "Input",
                     "module": {"type": "Path", "path": "fn.wasm"},
                 })
@@ -1179,7 +1179,7 @@ mod tests {
         let raw = RunFunctionRequest {
             input: Some(resource::json_to_struct(
                 serde_json::json!({
-                    "apiVersion": "wasm.fn.crossplane.io/v1beta1",
+                    "apiVersion": "wasm.fn.crossplane.io/v1",
                     "kind": "Input",
                     "module": {"type": "Path", "path": "fn.wasm"},
                 })

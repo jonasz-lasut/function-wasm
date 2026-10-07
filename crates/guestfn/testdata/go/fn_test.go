@@ -60,7 +60,7 @@ func TestRunFunction(t *testing.T) {
 			reason: "input.config.greeting replaces the default.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:     &fnv1.RequestMeta{Tag: "hello"},
-				Input:    resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"path":"fn.wasm"},"config":{"greeting":"hi"}}`),
+				Input:    resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{"path":"fn.wasm"},"config":{"greeting":"hi"}}`),
 				Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)}},
 			}},
 			want: want{rsp: &fnv1.RunFunctionResponse{
@@ -76,7 +76,7 @@ func TestRunFunction(t *testing.T) {
 			reason: "input.config.greetingUrl fetches the greeting through the function's HTTP client (the host, under function-wasm; an httptest server here).",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:     &fnv1.RequestMeta{Tag: "hello"},
-				Input:    resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"fn.wasm"},"config":{"greetingUrl":"` + srv.URL + `/en"}}`),
+				Input:    resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{"type":"Path","path":"fn.wasm"},"config":{"greetingUrl":"` + srv.URL + `/en"}}`),
 				Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)}},
 			}},
 			want: want{rsp: &fnv1.RunFunctionResponse{
@@ -92,7 +92,7 @@ func TestRunFunction(t *testing.T) {
 			reason: "A status other than 200 is a fatal result naming it.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:     &fnv1.RequestMeta{Tag: "hello"},
-				Input:    resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","path":"fn.wasm"},"config":{"greetingUrl":"` + srv.URL + `/nope"}}`),
+				Input:    resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{"type":"Path","path":"fn.wasm"},"config":{"greetingUrl":"` + srv.URL + `/nope"}}`),
 				Observed: &fnv1.State{Composite: &fnv1.Resource{Resource: resource.MustStructJSON(`{"apiVersion":"example.org/v1","kind":"XR","metadata":{"name":"my-xr"}}`)}},
 			}},
 			want: want{rsp: &fnv1.RunFunctionResponse{
@@ -108,7 +108,7 @@ func TestRunFunction(t *testing.T) {
 			reason: "A config of the wrong shape is a fatal result.",
 			args: args{req: &fnv1.RunFunctionRequest{
 				Meta:  &fnv1.RequestMeta{Tag: "hello"},
-				Input: resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","config":{"greeting":7}}`),
+				Input: resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","config":{"greeting":7}}`),
 			}},
 			want: want{rsp: &fnv1.RunFunctionResponse{
 				Meta: &fnv1.ResponseMeta{Tag: "hello", Ttl: durationpb.New(60 * time.Second)},

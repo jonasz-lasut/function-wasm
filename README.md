@@ -36,7 +36,7 @@ spec:
     functionRef:
       name: function-wasm
     input:
-      apiVersion: wasm.fn.crossplane.io/v1beta1
+      apiVersion: wasm.fn.crossplane.io/v1
       kind: Input
       module:
         type: OCI
@@ -460,7 +460,7 @@ over the example first.
 
 ## Input reference
 
-`apiVersion: wasm.fn.crossplane.io/v1beta1`, `kind: Input`.
+`apiVersion: wasm.fn.crossplane.io/v1`, `kind: Input`.
 
 ```yaml
 module:                        # required
@@ -521,7 +521,7 @@ the type and the XR field, the field holds the source, the
 
 ```yaml
     input:
-      apiVersion: wasm.fn.crossplane.io/v1beta1
+      apiVersion: wasm.fn.crossplane.io/v1
       kind: Input
       module:
         type: OCI
@@ -549,7 +549,7 @@ Credentials for a step are declared on the pipeline step:
       namespace: crossplane-system
       name: ghcr-pull
   input:
-    apiVersion: wasm.fn.crossplane.io/v1beta1
+    apiVersion: wasm.fn.crossplane.io/v1
     kind: Input
     module:
       type: OCI

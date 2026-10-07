@@ -368,7 +368,7 @@ docs/abi-v2.md              the host/guest contract: the component world every s
 
 ### Input
 
-The function receives an `Input` (`wasm.fn.crossplane.io/v1beta1`) — a KRM-like object (`crates/function/src/input.rs`):
+The function receives an `Input` (`wasm.fn.crossplane.io/v1`): a KRM-like object (`crates/function/src/input.rs`):
 
 - `module` — `type: OCI|HTTP|Path` (required) + exactly one of `oci{ref, credentials}`, `http{url, digest, manifestURL, manifestDigest}`, `path` (+ `manifestPath`), or `from` (the XR field holding that object; with `allowEmpty: true` a field the XR leaves unset - absent or null - skips the step: no module runs and the desired state goes back unchanged; refused without `from`)
 - `compositionPolicy` — raw Cedar, the composition author's layer: fences `from` sources (`pullModule`/`spendCredential`, default-deny) and may narrow sandbox capabilities (scoped default-permit); read from the Input only, never from the XR

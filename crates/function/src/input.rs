@@ -1,9 +1,14 @@
-//! The function's Input (wasm.fn.crossplane.io/v1beta1), deserialized from
-//! the request's input struct. The shape mirrors input/v1beta1/input.go; the
-//! runtime enforces every rule itself (Crossplane never installs a
-//! function's Input CRD), in admission.rs.
+//! The function's Input (wasm.fn.crossplane.io/v1), deserialized from the
+//! request's input struct. The runtime enforces every rule itself
+//! (Crossplane never installs a function's Input CRD), in admission.rs; the
+//! shape is the 1.x contract (README, "Compatibility").
 
 use serde::{Deserialize, Deserializer};
+
+/// The Input's identity in a Composition step: what `function validate`
+/// looks for and `guestfn scaffold composition` writes.
+pub const API_VERSION: &str = "wasm.fn.crossplane.io/v1";
+pub const KIND: &str = "Input";
 
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default, rename_all = "camelCase")]

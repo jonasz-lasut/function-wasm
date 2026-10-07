@@ -94,7 +94,7 @@ guestfn push ghcr.io/example/cloudflare-origin:v0.1.0
     functionRef:
       name: function-wasm
     input:
-      apiVersion: wasm.fn.crossplane.io/v1beta1
+      apiVersion: wasm.fn.crossplane.io/v1
       kind: Input
       module:
         type: OCI
