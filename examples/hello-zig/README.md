@@ -1,29 +1,48 @@
 # hello-zig
 
-A [Crossplane](https://crossplane.io) composition function in Zig, compiled to
-a wasip1 reactor of about 95 KB and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm).
+A [Crossplane](https://crossplane.io) composition function in Zig on
+[ABI v2](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md):
+a WebAssembly component of about 60 KB, built by `zig` and run by
+[function-wasm](https://github.com/jonasz-lasut/function-wasm). The one
+`zig` binary is the toolchain, the build system and the package fetcher,
+and `guestfn build` wraps the core module it links into the component - no
+wasm-tools, no adapter download.
 
+- `wit/world.wit` is this guest's world: the `wasmfn:function` contract
+  restated in a `local:guest` package with `run` declared sync (a sync-lifted
+  `run` satisfies the runtime's async world) and
+  `wasi:http/outgoing-handler@0.2.12` imported for the greeting fetch;
+  `wit/deps/` carries the WASI 0.2.12 packages. `zig build gen-bindings` runs
+  [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C
+  generator (`wit-bindgen-cli` 0.62.0) over it into `src/gen` - `function.h`,
+  `function.c` and `function_component_type.o`, the object carrying the
+  component-type custom section `guestfn build` reads - checked in, so a
+  plain `zig build` needs only zig. Zig reads the header through translate-c
+  as the `bindings` module and compiles the C file into the same module.
 - `proto/run_function.proto` is crossplane's `RunFunction` contract, vendored;
   `zig build gen-proto` compiles it with [zig-protobuf](https://github.com/Arwalk/zig-protobuf)'s
-  `protoc-gen-zig` (needs `protoc`) into `src/fnv1`, which is checked in so a
-  plain `zig build` needs only zig.
-- `src/main.zig` — `runFunction` over the generated messages (edit this),
-  `handle` (decode, run, encode; errors become fatal results), the
-  `wasmfn.log` and `wasmfn.http` host imports, and the `wasmfn_alloc` /
-  `wasmfn_run` exports of the function-wasm
-  [ABI](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi.md).
-  Only the exports and the host imports are wasi-specific, so `zig build test`
-  runs the logic natively (a fake host is installed for the `wasmfn.http`
-  tests). `config.greetingUrl` fetches the greeting through the host, within
-  the egress grant of the module's manifest.
+  `protoc-gen-zig` (needs `protoc`) into `src/fnv1`, checked in as well.
+- `src/main.zig` - `runFunction` over the generated messages (edit this).
+  `src/wasmfn.zig` is the ABI glue: the world's `run` export (decode, run,
+  encode; errors become fatal results), the typed `log` import as a logger,
+  a `wasi:http` client (`wasmfn.http.getText`) and the few libc functions
+  the generated C calls, served from the guest's own bump heap
+  (`src/libc-shim` declares them), so the core module links no libc and
+  imports nothing from `wasi_snapshot_preview1`. Only the export and the
+  imports are wasi-specific, so `zig build test` runs the logic natively (a
+  fake host is installed for the HTTP test). `config.greetingUrl` fetches
+  the greeting through the host, within the egress grant of the module's
+  manifest.
 
 ```shell
 # Unit tests run natively.
 zig build test
 
-# Compile to a wasip1 module.
-guestfn build                       # zig build -Doptimize=ReleaseSmall → fn.wasm
+# Compile to a component: zig build, then guestfn wraps zig-out/bin/fn.wasm.
+make build                          # guestfn build (from this repository) → fn.wasm
+
+# What the runtime sees.
+guestfn inspect fn.wasm             # ABI v2, exports run, imports wasi:http@0.2.12 and log
 
 # Publish it as an OCI artifact; it prints the module block for the Composition.
 guestfn push ghcr.io/example/hello-zig:v0.1.0
@@ -47,9 +66,12 @@ Reference the module from a Composition step of function-wasm:
 ```
 
 `example/` renders locally with the function-wasm runtime serving this
-directory (`--module-dir`) and `crossplane render`:
+directory (`--module-dir`) under `example/policy.cedar` and the fixture
+server `render.sh` starts; `make render-check` runs both xprin cases - the
+configured greeting, and the greeting fetched through the host's egress under
+`example/wasmfn.local.yaml`, a manifest that requires it:
 
 ```shell
-guestfn build
-crossplane render example/xr.yaml example/composition.yaml example/functions.yaml
+make render                         # crossplane render example/xr.yaml ...
+make render-check                   # example/xprin.yaml (xprin on PATH, or XPRIN)
 ```

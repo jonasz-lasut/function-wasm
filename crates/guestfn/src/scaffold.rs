@@ -1,8 +1,8 @@
 //! Renders a new guest project in one of six flavours: Go with
 //! function-sdk-go (its ABI glue vendored in internal/wasmfn), Rust with
-//! prost, Zig with zig-protobuf, C
-//! with nanopb over wit-bindgen's C bindings (built by zig cc, the core
-//! module componentized by guestfn build), TypeScript with protobuf-es
+//! prost, Zig with zig-protobuf and C with nanopb - both over wit-bindgen's
+//! C bindings (Zig through translate-c), built by zig into a core module
+//! that guestfn build componentizes - TypeScript with protobuf-es
 //! (componentized by jco), or Python with protobuf (componentized by
 //! componentize-py). Each
 //! template set is a minimal greeting project; the example guests of this
@@ -286,7 +286,15 @@ mod tests {
             ),
             (
                 "hello-zig",
-                &["proto/", "src/fnv1/"],
+                &[
+                    "proto/",
+                    "wit/",
+                    "src/fnv1/",
+                    "src/gen/",
+                    "src/libc-shim/",
+                    "src/wasmfn.zig",
+                    "build.zig",
+                ],
                 Options {
                     lang: LANG_ZIG.into(),
                     name: "hello-zig".into(),
@@ -351,6 +359,36 @@ mod tests {
                     "examples/{example}/{name} differs from the scaffold template"
                 );
             }
+        }
+    }
+
+    /// The c and zig scaffolds are one world: both consume wit-bindgen's C
+    /// bindings over the same `wit/` (Zig through translate-c), so their
+    /// `wit/` and `src/gen/` are held identical here, as the vendored proto
+    /// copies are, and one `make gen-bindings` regenerates both.
+    #[test]
+    fn c_and_zig_share_the_bindings() {
+        fn bindings(files: &BTreeMap<String, Vec<u8>>) -> BTreeMap<&String, &Vec<u8>> {
+            files
+                .iter()
+                .filter(|(name, _)| name.starts_with("wit/") || name.starts_with("src/gen/"))
+                .collect()
+        }
+        let c = render(golden(LANG_C)).expect("render c");
+        let zig = render(golden(LANG_ZIG)).expect("render zig");
+        let (c, zig) = (bindings(&c), bindings(&zig));
+        assert!(!c.is_empty(), "no bindings rendered");
+        assert_eq!(
+            c.keys().collect::<Vec<_>>(),
+            zig.keys().collect::<Vec<_>>(),
+            "the c and zig templates carry different wit/ or src/gen/ files"
+        );
+        for (name, content) in &c {
+            assert!(
+                zig.get(name) == Some(content),
+                "templates/zig/{name} differs from templates/c/{name} (one world, one wit-bindgen \
+                 output: make gen-bindings regenerates both)"
+            );
         }
     }
 
