@@ -290,10 +290,10 @@ and .NET
 ([componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet)).
 A language is *tested* when this repository works with it: a scaffold or an
 example here, built and run through the host by the guest suite and the render
-jobs on every `/e2e`. Tested on ABI v2: Rust, C, TypeScript, Python and C#.
-Tested on ABI v1, and moving to v2 before v0.6.0 under
-[#114](https://github.com/jonasz-lasut/function-wasm/issues/114): Go and
-Zig. A supported language that is not tested is expected to work, and a
+jobs on every `/e2e`. Tested on ABI v2: Rust, Zig, C, TypeScript, Python
+and C#. Tested on ABI v1, and moving to v2 before v0.6.0 under
+[#114](https://github.com/jonasz-lasut/function-wasm/issues/114): Go. A
+supported language that is not tested is expected to work, and a
 guest we can run is what moves it into the tested set. A language with no
 component path is not supported: AssemblyScript was retired for that reason
 (#114, 2026-10-07).
@@ -309,14 +309,14 @@ module as an ABI v2 component (docs/abi-v2.md)`) and counts in
 `function_wasm_module_loads_total{abi="1"}`; `guestfn build`, `guestfn
 inspect` and `function validate --resolve` print the same sentence for
 one. `guestfn` scaffolds and builds six flavours - the same greeting
-function each time; the `rust`, `c`, `ts` and `python` flavours scaffold as
-ABI v2 components, the rest as ABI v1 modules:
+function each time; the `rust`, `zig`, `c`, `ts` and `python` flavours
+scaffold as ABI v2 components, `go` as an ABI v1 module:
 
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
 |---|---|---|---|---|
 | `go` (default) | [`examples/pdb-addon`](examples/pdb-addon) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
 | `rust` | [`examples/cloudflare-origin`](examples/cloudflare-origin) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) - **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
-| `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
+| `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary) over [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C bindings through translate-c (the `c` flavour's, checked in; `make gen-bindings` + `wit-bindgen-cli` 0.62.0 to redo) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2`; `guestfn build` wraps the core module zig links (no libc, no wasm-tools, no adapter) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto (generated codec checked in; `protoc` only to regenerate) | ~60 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk) over [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C bindings (checked in; `make gen-bindings` + `wit-bindgen-cli` 0.62.0 to redo) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2`; `guestfn build` wraps the core module zig links (no wasm-tools, no adapter) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in; `nanopb_generator` only to regenerate) | ~62 KB |
 | `ts` | [`examples/policy-gate`](examples/policy-gate) | node + npm: [esbuild](https://esbuild.github.io) bundles, [jco](https://github.com/bytecodealliance/jco) componentizes - **an ABI v2 component**, sync-lifted `run`, `fetch()` over `wasi:http@0.2` | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto (`js+dts` codec checked in; `npm run gen-proto` + protoc to redo) | ~14 MB (SpiderMonkey) |
 | `python` | [`examples/team-tags`](examples/team-tags) | `python3` (a venv with [componentize-py](https://github.com/bytecodealliance/componentize-py)) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2` | protoc's Python codec over the vendored proto (checked in), on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
@@ -365,16 +365,16 @@ alike; a `package.json` → npm, for the
 TypeScript guest; a `requirements.txt` → a venv with componentize-py, for
 the Python guest; a `go.mod` → go)
 or takes `--lang`. When a build leaves a core module carrying wit-bindgen's
-`component-type` section (what its C generator links in: the `c` flavour's
-`zig build`), `guestfn build`
+`component-type` section (what its C generator links in: the `zig` and `c`
+flavours' `zig build`), `guestfn build`
 wraps it into an ABI v2 component itself, linking the wasip1 adapter of the
 runtime's own wasmtime when the module imports `wasi_snapshot_preview1`:
 no wasm-tools install, no adapter download, and an adapter that cannot
 drift from the runtime. Every flavour carries
 its ABI glue in the open: the Go scaffold vendors it under `internal/wasmfn`,
-Zig carries its own beside the module, with a small HTTP
-helper over `wasmfn.http`, C its `src/wasmfn.c` over wit-bindgen's bindings
-(the typed `log`, a `wasi:http@0.2` client); each example
+Zig and C carry theirs beside the module (`src/wasmfn.zig`, `src/wasmfn.c`)
+over wit-bindgen's bindings (the typed `log`, a `wasi:http@0.2` client);
+each example
 has a `make render-check` that runs it through the runtime and asserts what it
 composes with an [xprin](https://github.com/crossplane-contrib/xprin) suite,
 and the root tests build every scaffold and run it through the host as well -
@@ -751,11 +751,11 @@ hands the response back. Three parties, in the order they decide:
 
    Inject the client into your function so native tests can substitute an
    `httptest` server; outside a wasip1 build the transport fails with
-   `wasmfn.ErrNoHostHTTP`. The Zig scaffold ships the same (the http helper in
-   `src/main.zig`) over the `wasmfn.http` import (its JSON payload is in
-   [docs/abi.md](docs/abi.md#http-egress)), and the C scaffold's
-   `src/wasmfn.c` over `wasi:http@0.2` through wit-bindgen's bindings, each
-   with a swappable host so native tests can fake it.
+   `wasmfn.ErrNoHostHTTP` (the import's JSON payload is in
+   [docs/abi.md](docs/abi.md#http-egress)). The Zig and C scaffolds ship the
+   same (`src/wasmfn.zig`, `src/wasmfn.c`) over `wasi:http@0.2` through
+   wit-bindgen's bindings, each with a swappable host so native tests can
+   fake it.
    A request the host does not perform — no grant, host or method or path
    outside it, a blocked address, a budget, a transport failure — is a
    transport error naming the reason, never a trap; a status from the

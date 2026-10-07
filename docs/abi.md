@@ -5,8 +5,8 @@
 > 1.0.0 (issues [#114](https://github.com/jonasz-lasut/function-wasm/issues/114)
 > and [#129](https://github.com/jonasz-lasut/function-wasm/issues/129)).
 > [ABI v2](abi-v2.md), the component-model contract, replaces it: a new
-> guest targets the `wasmfn:function` world, as the `rust`, `c`, `ts` and
-> `python` scaffolds already do. A v1 module keeps running until 1.0.0;
+> guest targets the `wasmfn:function` world, as the `rust`, `zig`, `c`, `ts`
+> and `python` scaffolds already do. A v1 module keeps running until 1.0.0;
 > until then the runtime logs a warning on every load of one (`ABI v1 is
 > deprecated and is removed in function-wasm 1.0.0; build the module as an
 > ABI v2 component (docs/abi-v2.md)`) and counts it in
@@ -18,7 +18,7 @@ This is the contract between the function-wasm runtime (the *host*) and a
 WebAssembly module it runs (the *guest*). It is deliberately small so a guest
 can be written in any language with a wasip1 toolchain; the Go glue the
 `guestfn` scaffold vendors into a project (`internal/wasmfn`) implements it for
-Go guests, as the Zig scaffold does for its own.
+Go guests, the one scaffold still on it.
 
 ## Module shape
 
@@ -191,8 +191,8 @@ the grant, each hop re-checked and audited; as in Go's `net/http`,
 are dropped on a redirect elsewhere. A refused request is never a trap.
 
 The Go glue's `wasmfn.HTTPClient()` returns an `*http.Client` whose transport
-speaks this protocol; the Zig scaffold carries the same protocol over its
-own allocator export, in `src/main.zig`, the reference for other languages.
+speaks this protocol (`internal/wasmfn/http*.go`), the one implementation
+this repository still carries.
 
 ## Compatibility
 
@@ -218,11 +218,11 @@ indefinitely alongside it. The v2 contract lives in
 ## Examples
 
 `examples/pdb-addon` (Go with function-sdk-go and the vendored `internal/wasmfn`
-glue) and `examples/hello-zig` (Zig, zig-protobuf) implement this contract and
-carry the same ABI plumbing as what `guestfn init --lang go|zig` scaffolds;
-the Zig one carries the ABI glue in the open - about forty lines, plus the
-`wasmfn.http` helper - and is the reference for other languages. (The rust,
-c, ts and python scaffolds emit ABI v2 components; see `docs/abi-v2.md`.)
+glue) is the one example left on this contract, carrying the same ABI
+plumbing as what `guestfn init --lang go` scaffolds - a deprecated reference
+guest, as the warning above says. The rust, zig, c, ts and python scaffolds
+and their examples emit ABI v2 components (`docs/abi-v2.md`), and a new
+guest in any language should too.
 
 ## Go guests
 

@@ -109,8 +109,9 @@
     {
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
-      // and cloudflare-origin, its wit/deps for the python scaffold,
-      // team-tags and dashboard-bundle (templates and goldens included: the
+      // and cloudflare-origin, its wit/deps for the python, c and zig
+      // scaffolds, team-tags, hello-c, hello-zig and dashboard-bundle
+      // (templates and goldens included: the
       // files are plain .wit in all of them). Same tripwire as the proto: a
       // bump PR moves the version in every header at once; it does NOT
       // re-download the WIT, so treat the PR as the signal to re-vendor by
