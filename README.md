@@ -213,26 +213,26 @@ componentize-go, no wasm-tools.
 ```shell
 go test ./...                                   # unit tests run natively
 guestfn build                                   # fn.wasm (an ABI v2 component); prints the ABI verdict and the manifest summary
-guestfn inspect fn.wasm                         # size, ABI verdict, exports, imports, memory
+guestfn inspect fn.wasm                         # size, ABI verdict, exports, imports
 guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest; prints the module block and what the module requires
 ```
 
 `guestfn build` ends with the verdict the runtime reaches when it loads the
 module - for the Go scaffold `Componentized fn.wasm (wasip1 adapter linked)`
 (the wrap), then `Built fn.wasm (74.9 MB, ABI v2, imports log; manifest:
-greeter 0.1.0; config schema)`; for an ABI v1 module built with the pre-v2
-glue `Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http wasmfn.log)`
-followed by the deprecation warning the runtime logs on every load of one
-(see [Other languages](#other-languages)) - and fails, in the runtime's
-words, on a module the runtime would refuse (`component does not implement
-the wasmfn:function world: …`; for a core module, `module does not export
-"wasmfn_run"`); `guestfn push` refuses to publish such a module for the
-same reason. The check is the runtime's own: `guestfn`
+greeter 0.1.0; config schema)` - and fails, in the runtime's words, on a
+module the runtime would refuse (`component does not implement the
+wasmfn:function world: …`; for a core module, the ABI v1 shape a guest
+built before 1.0.0 has, `module is a core module, which function-wasm
+1.0.0 no longer runs (ABI v1 was removed); build it as an ABI v2 component
+(docs/abi-v2.md)`); `guestfn push` refuses to publish such a module for
+the same reason. The check is the runtime's own: `guestfn`
 compiles the module with the same wasmtime engine (a couple of seconds for a
 large Go module), so what it prints is what a load says.
-`guestfn inspect fn.wasm` shows what the runtime sees — size, verdict,
-exports, imports with their types, memory limits — and `guestfn inspect
-ghcr.io/example/greeter:v0.1.0` describes an artifact from its manifest
+`guestfn inspect fn.wasm` shows what the runtime sees: size, verdict,
+exports, imports (the world's by name, the WASI interfaces as a count);
+`guestfn inspect ghcr.io/example/greeter:v0.1.0` describes an artifact
+from its manifest
 (media types, layer, annotations) without pulling, `--pull` reading the
 module too; `--output json` for scripts.
 
@@ -270,10 +270,9 @@ the standard `org.opencontainers.image.*` annotations from the manifest.
 wasmfn.json:application/vnd.wasmfn.manifest.v1+json` gives the same result,
 and a `FROM scratch` image whose only layer `COPY`s the module to `/fn.wasm`
 — that exact path, nothing is guessed from the archive — works too (without
-a manifest). Any language with a wasip1 toolchain can target
-[ABI v1](docs/abi.md) - deprecated from v0.6.0 in favour of
-[ABI v2](docs/abi-v2.md), the component-model contract, and removed in
-1.0.0 (see [Other languages](#other-languages)).
+a manifest). Any language whose toolchain produces a component
+implementing the [ABI v2](docs/abi-v2.md) world can target the runtime
+(see [Other languages](#other-languages)).
 
 **Module size.** A guest using function-sdk-go's `request`, `response` and
 `resource` packages is about 75 MB (13 MB compressed) — those packages bring
@@ -310,18 +309,20 @@ guest we can run is what moves it into the tested set. A language with no
 component path is not supported: AssemblyScript was retired for that reason
 (#114, 2026-10-07).
 
-The [ABI v1](docs/abi.md) is two exports and protobuf bytes, so any wasip1
-toolchain works, and [ABI v2](docs/abi-v2.md) opens the component-model
-toolchains beside it. **ABI v1 is deprecated** from v0.6.0 and is removed
-in 1.0.0 ([#114](https://github.com/jonasz-lasut/function-wasm/issues/114),
-[#129](https://github.com/jonasz-lasut/function-wasm/issues/129)): a v1
-module keeps running until then, and every load of one logs a warning
-(`ABI v1 is deprecated and is removed in function-wasm 1.0.0; build the
-module as an ABI v2 component (docs/abi-v2.md)`) and counts in
-`function_wasm_module_loads_total{abi="1"}`; `guestfn build`, `guestfn
-inspect` and `function validate --resolve` print the same sentence for
-one. `guestfn` scaffolds and builds six flavours - the same greeting
-function each time, every one an ABI v2 component:
+The [ABI v2](docs/abi-v2.md) world is one export, one import and protobuf
+bytes, so any component-model toolchain works. **ABI v1** - a wasip1 core
+module exporting `wasmfn_run`, the contract before the component model -
+was deprecated in v0.6.0 and **is removed in 1.0.0**
+([#114](https://github.com/jonasz-lasut/function-wasm/issues/114),
+[#129](https://github.com/jonasz-lasut/function-wasm/issues/129)): the
+runtime refuses a core module at load, as a fatal result naming the module
+(`cannot load module …: module is a core module, which function-wasm 1.0.0
+no longer runs (ABI v1 was removed); build it as an ABI v2 component
+(docs/abi-v2.md)`), and `guestfn build`, `guestfn inspect` and
+`function validate --resolve` print the same sentence for one; rebuild
+such a guest on a current scaffold. `guestfn` scaffolds and builds six
+flavours - the same greeting function each time, every one an ABI v2
+component:
 
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
 |---|---|---|---|---|
@@ -370,16 +371,15 @@ like the TypeScript guest; `guestfn build` makes the venv from
 `requirements.txt` when the project has none.
 
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo,
-targeting `wasm32-wasip3` when the project carries a `wit/` directory and
-`wasm32-wasip1` otherwise; a `build.zig` → zig, for the zig and c guests
+targeting `wasm32-wasip3`; a `build.zig` → zig, for the zig and c guests
 alike; a `package.json` → npm, for the
 TypeScript guest; a `requirements.txt` → a venv with componentize-py, for
 the Python guest; a `go.mod` → go)
 or takes `--lang`. When a build leaves a core module carrying wit-bindgen's
 `component-type` section (what its C generator links in: the `zig` and `c`
-flavours' `zig build`; for a `go` project with a `wit/` directory
-`guestfn build` embeds the world into the module `go build` emits first,
-since wit-bindgen's Go generator writes bindings only), `guestfn build`
+flavours' `zig build`; for a `go` project `guestfn build` embeds the
+world from its `wit/` into the module `go build` emits first, since
+wit-bindgen's Go generator writes bindings only), `guestfn build`
 wraps it into an ABI v2 component itself, linking the wasip1 adapter of the
 runtime's own wasmtime when the module imports `wasi_snapshot_preview1`:
 no wasm-tools install, no adapter download, and an adapter that cannot
@@ -450,8 +450,7 @@ does and lists, on a `credentials:` line, the step credentials its request
 would carry (with none listed it receives none); `--function-name` keeps only the steps of one function; `--output json` prints one JSON object per step for
 CI annotations; `-` reads stdin. Warnings (a `Path` source in a
 Composition, egress granted without `--cosign-key`, a limit equal to its
-ceiling, a field the runtime would silently ignore, a deprecated ABI v1
-module under `--resolve`) are printed under the
+ceiling, a field the runtime would silently ignore) are printed under the
 step and never change the exit code: 0 when every step is admitted, 1 when
 at least one is refused, 2 when the tool itself failed (unreadable file,
 unparsable YAML, a bad flag). `make -C examples/pdb-addon render` runs it
@@ -501,7 +500,7 @@ operator's Cedar `--sandbox-policy-file` both permit it
 | `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names — an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` — e.g. `status.module`; read on every request and decoded strictly (a typo or a wrong shape is a fatal result naming the field), so each XR can choose its module. What it may choose is fenced by `compositionPolicy` (`pullModule`, default-deny). A field the XR leaves unset is a fatal result naming it, unless `module.allowEmpty` says otherwise |
 | `module.allowEmpty` | bool | *optional*, with `module.from` only - `true` lets the composite resource leave the field unset (absent, or `null`): the step then runs no module and returns the request's desired state and context unchanged, a no-op the pipeline continues past, instead of a fatal result. This is the reserved hook a platform team ships before any tenant fills it in, and the smoke test of a runtime with no module published yet. A field that is set is read, fenced and run exactly as without it. Read from the Input only, so an XR may leave a step empty only where the Composition allows it; refused without `module.from`. A skipped step is logged and counted as `requests_total{outcome="skipped"}` |
 | `compositionPolicy` | string | the composition author's own Cedar policy layer, over the same schema as the operator's `--sandbox-policy-file` (actions `pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv`; a `Request` principal carrying `namespace` and `xrKind`; `Repository`, `HostPattern`, `Capability` and `Credential` entities). AND-combined with the module's manifest and the operator's policy, so it can only narrow. Two regimes: a sandbox action it scopes no rule for is not narrowed (the operator and the manifest decide alone), while a module chosen through `module.from` is refused unless a `pullModule` permit matches its normalized location - matched over a boundary-correct `Repository` hierarchy, so `Repository::"ghcr.io/example-org"` admits `ghcr.io/example-org/mod` but never the sibling namespace `ghcr.io/example-org-other/...` - and may spend a step credential only where a `spendCredential` permit matches (`context.repository` carries the ref's location). **Required whenever `module.from` names an `OCI` or `HTTP` source** — an unfenced XR author could point the runtime at any host and read what its answer says. Read from the Input only; malformed Cedar is a fatal result at admission |
-| `limits.timeout` | duration | compute budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). Time the run spends waiting on the host's HTTP answers (`wasi:http`, or ABI v1's `wasmfn.http`) is credited back, so a slow upstream does not spend the budget; the request's own gRPC deadline is the hard wall-clock cap and still applies if shorter |
+| `limits.timeout` | duration | compute budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). Time the run spends waiting on the host's HTTP answers (`wasi:http`) is credited back, so a slow upstream does not spend the budget; the request's own gRPC deadline is the hard wall-clock cap and still applies if shorter |
 | `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`; at most `--module-memory-limit`, else a fatal result naming both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
 | `limits.concurrency` | int32 | at most N runs of this step at once, across all requests, keyed by the module's content digest. A further request waits under its own context; when the deadline passes first, it is a fatal result that consumed nothing and is not counted as a run. A value above `--max-concurrent-runs` is silently capped. No ceiling flag: this only narrows |
 | `config` | object | opaque, passed to the module untouched inside the request input; a Go guest reads it with `wasmfn.GetConfig`. Non-secret module configuration belongs here - the module's environment comes only from its manifest's `requires.env` credential bindings |
@@ -770,8 +769,7 @@ hands the response back. Three parties, in the order they decide:
    `wasi:http@0.2` through wit-bindgen's Go bindings. The Zig and C
    scaffolds ship the same (`src/wasmfn.zig`, `src/wasmfn.c`) over the same
    `wasi:http@0.2` through wit-bindgen's C bindings, each with a swappable
-   host so native tests can fake it. (ABI v1's `wasmfn.http` import and its
-   JSON payload are in [docs/abi.md](docs/abi.md#http-egress).)
+   host so native tests can fake it.
    A request the host does not perform — no grant, host or method or path
    outside it, a blocked address, a budget, a transport failure — is a
    transport error naming the reason, never a trap; a status from the
@@ -815,10 +813,9 @@ your organisation signed run.
    fetched modules on disk under `/tmp/function-wasm-cache`. Only a module
    never seen by this node is fetched (verified against its digest, written
    to disk) and compiled - about two seconds for a 75 MB Go module; a
-   component that does not implement the world, or a core module without
-   ABI v1's exports or importing what the host does not provide, is refused
-   here - and its artifact written to disk. Restarts and
-   registry outages need no network. Details in
+   component that does not implement the world, or a core module (ABI v1,
+   removed in 1.0.0), is refused here - and its artifact written to disk.
+   Restarts and registry outages need no network. Details in
    [docs/one-pager-cache.md](docs/one-pager-cache.md). The module's
    [manifest](#module-manifests), if its artifact carries one, is then the
    module's ask: each `requires` capability must be permitted by the
@@ -846,7 +843,7 @@ your organisation signed run.
    reaches its deadline while waiting for a run slot (`waiting for a run
    slot: context deadline exceeded`): it never ran.
 
-The full host/guest contract is in [docs/abi.md](docs/abi.md).
+The full host/guest contract is in [docs/abi-v2.md](docs/abi-v2.md).
 
 ## Runtime flags
 
@@ -1087,9 +1084,8 @@ format never changes what a dashboard sees:
 | `function_wasm_module_cache_events_total` | `cache` = compiled (memory), compiled-disk, blob; `event` = hit, miss, stale (compiled-disk only: an artifact wasmtime refused) | cache lookups |
 | `function_wasm_module_cache_bytes` | `cache` = compiled-disk, blob | bytes on disk per store, measured every ten minutes |
 | `function_wasm_module_http_requests_total` | `outcome` = ok, refused, budget, error | HTTP requests modules made through the host (`sandbox.egress`): the server answered; refused by the grant or the egress policy; a per-run budget or the timeout was hit; the request failed. No host label — the audit log line names it |
-| `function_wasm_module_hostcall_duration_seconds` | | histogram of the slice of a run spent inside host imports (the `log` import, HTTP egress - `wasi:http`, or ABI v1's `wasmfn.http` - and WASI); the rest of `run_duration_seconds` is guest compute. A run that is slow here is waiting on the host - usually an upstream the module's HTTP requests talk to |
+| `function_wasm_module_hostcall_duration_seconds` | | histogram of the slice of a run spent inside host imports (the `log` import, HTTP egress over `wasi:http`, and WASI); the rest of `run_duration_seconds` is guest compute. A run that is slow here is waiting on the host - usually an upstream the module's HTTP requests talk to |
 | `function_wasm_module_memory_denials_total` | `reason` = limit, pool | guest memory growths denied - at the run's ceiling (`limits.memory` or `--module-memory-limit`) or because `--max-total-run-memory` could not serve the growth before the run's deadline. The guest sees `memory.grow` fail |
-| `function_wasm_module_loads_total` | `abi` = 1, 2 | module loads by ABI - a wasmtime compile or a compiled-artifact read, once per load rather than per request (a memory-cache hit is not a load). `abi="1"` is how much deprecated ABI v1 a deployment still serves; each such load also logs the deprecation warning |
 
 No metric carries a module identity: the set of digests a Function serves is
 unbounded. Logs carry the module reference and digest.

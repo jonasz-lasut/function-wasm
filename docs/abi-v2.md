@@ -1,14 +1,15 @@
 # function-wasm guest ABI v2
 
-ABI v2 is the component-model guest contract: a guest is a WebAssembly
+ABI v2 is the guest contract of function-wasm: a guest is a WebAssembly
 **component** targeting the WIT world `wasmfn:function@2.0.0-draft`
-([`wit/wasmfn-function.wit`](../wit/wasmfn-function.wit)), run by the same
-runtime that serves [ABI v1](abi.md) core modules. The payload contract is
-v1's, unchanged - protobuf `RunFunctionRequest` bytes in,
-`RunFunctionResponse` bytes out - so payload evolution stays protobuf's job.
-What the component model removes is v1's mechanics: `wasmfn_alloc`, the
-`ptr<<32|len` packing and the re-entrant allocator are gone, because the
-canonical ABI owns memory movement.
+([`wit/wasmfn-function.wit`](../wit/wasmfn-function.wit)). The payload is
+protobuf: `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out,
+so payload evolution stays protobuf's job; the canonical ABI owns memory
+movement, so a guest carries no allocator export and no pointer packing of
+its own. It is the only ABI the runtime serves: ABI v1 (a wasip1 core
+module exporting `wasmfn_run`, with JSON host imports) was deprecated in
+v0.6.0 and removed in 1.0.0 (#114, #129); the runtime refuses a core
+module at load (below).
 
 The world is a **draft**: it freezes at `wasmfn:function@2.0.0` no earlier
 than `wasm32-wasip3`'s tier-2 promotion in Rust
@@ -53,12 +54,21 @@ wasmfn = { registry = "wasmfn", metadata = { preferredProtocol = "oci", "oci" = 
 
 ## Detection
 
-The binary format is the ABI version: a core module (layer 0 in the wasm
-header) is ABI v1, a component (layer 1) is ABI v2. There is no flag and no
-Input field; the runtime reads it off the first eight bytes. A module
-manifest declares `abi: 2`, and the runtime refuses a manifest whose
-declaration does not match the binary
-(`manifest says abi: 2, but the module is a core module (ABI v1)`).
+The runtime reads the binary format off the first eight bytes of the
+module: a component (layer 1 in the wasm header) is loaded and typechecked
+against the world; a core module (layer 0) is refused with one sentence,
+whatever it exports:
+
+```
+module is a core module, which function-wasm 1.0.0 no longer runs (ABI v1 was removed); build it as an ABI v2 component (docs/abi-v2.md)
+```
+
+The runtime reports it as a fatal result (`cannot load module <desc>: …`),
+and `guestfn build`, `guestfn inspect` and `function validate --resolve`
+print the same sentence. There is no flag and no Input field. A module
+manifest declares `abi: 2`; a manifest declaring any other value is refused
+before the module is looked at (`abi must be 2 (this runtime implements
+ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 1`).
 
 ## The world
 
@@ -76,68 +86,67 @@ world function {
 
 - **`run`** - one request. The host passes the caller's raw
   `RunFunctionRequest` bytes (the step credentials the module was not
-  granted, the pull credential always among them, edited out, as for v1) and returns the guest's `RunFunctionResponse` bytes verbatim.
-  `run` is `async`: a guest may await its imports (`wasi:http` above all)
-  while the host meters its compute. A **sync-lifted** implementation also
-  satisfies the world - the canonical ABI accepts a sync function where an
-  async one is expected - which is what keeps stable, pre-wasip3 toolchains
-  usable.
-- **`log`** - v1's `wasmfn.log` with the JSON payload replaced by typed
-  values. The host attaches the module's identity to every line and renders
-  it at the runtime's level of the same name: `debug` lines only under
-  `--debug`, `info`, `warn` and `error` always. `warn` and `error` are v2's
-  own (a v1 line is debug or info) and joined the draft before the freeze:
-  the runtime typechecks the enum exactly, so a new case refuses every
+  granted, the pull credential always among them, edited out) and returns
+  the guest's `RunFunctionResponse` bytes verbatim. `run` is `async`: a
+  guest may await its imports (`wasi:http` above all) while the host meters
+  its compute. A **sync-lifted** implementation also satisfies the world -
+  the canonical ABI accepts a sync function where an async one is expected -
+  which is what keeps stable, pre-wasip3 toolchains usable.
+- **`log`** - structured logging through the host, typed values rather than
+  a payload the guest encodes. The host attaches the module's identity to
+  every line and renders it at the runtime's level of the same name:
+  `debug` lines only under `--debug`, `info`, `warn` and `error` always.
+  The runtime typechecks the enum exactly, so a new case refuses every
   guest built without it - a component built against the two-level draft
-  must be rebuilt.
+  (`debug`, `info`) must be rebuilt.
 - **WASI** - the world names no WASI imports; a guest brings whatever its
   toolchain emits. The host links WASI 0.3 and WASI 0.2 (components built for
-  WASI 0.2 - jco, componentize-py, Rust's `wasm32-wasip2` - import 0.2
-  interfaces; a `wasm32-wasip3` build imports 0.3 only), under the
-  same sandbox as v1: no network sockets, no filesystem beyond the granted
-  private `/tmp`, env exactly as granted.
+  WASI 0.2 - jco, componentize-py, Rust's `wasm32-wasip2`, the wasip1
+  adapter `guestfn build` links into a Go, C or Zig guest - import 0.2
+  interfaces; a `wasm32-wasip3` build imports 0.3 only), under the sandbox:
+  no network sockets, no filesystem beyond the granted private `/tmp`
+  (the only pre-opened directory, mounted at `/tmp`), env exactly as
+  granted, `argv` `["function"]`.
 - **HTTP egress** - through `wasi:http/client@0.3.0` (`send: async func`),
   and equally through `wasi:http@0.2`'s `outgoing-handler` (what
   componentize-js's `fetch()` reaches for) - both generations are served by
-  one host bridge - implemented over the same egress policy as v1's
-  `wasmfn.http`:
-  the three-layer grant decides whether `send` is backed by the policy
-  client or refuses, and the SSRF block list, budgets, rate limit, audit
-  line and `http_requests_total` metric apply unchanged. Bodies are
-  complete on both sides, as under v1: the response budget acts on whole
-  responses. A failure the host reports - the grant refusal, a blocked
-  address, a budget, a transport error - reaches the guest as the
-  `internal-error` code carrying exactly the string v1 put in the wire's
-  `error` field: the refusal wording is contract, and no other `error-code`
-  variant carries a reason. Time the guest spends awaiting `send` is
-  credited back to its compute deadline, as v1 credits `wasmfn.http`.
+  one host bridge over the runtime's egress policy: the three-layer grant
+  decides whether a send is backed by the policy client or refused, and the
+  SSRF block list, budgets, rate limit, audit line and `http_requests_total`
+  metric apply to every request. Bodies are complete on both sides: the
+  response budget acts on whole responses. A failure the host reports - the
+  grant refusal, a blocked address, a budget, a transport error - reaches the
+  guest as the `internal-error` code carrying the refusal string (the
+  wording is contract, held by the conformance goldens; no other
+  `error-code` variant carries a reason). Time the guest spends awaiting a
+  send is credited back to its compute deadline.
 
 ## Errors
 
 A guest that can produce a response encodes failures into it (a fatal
-`Result`), exactly as under v1. ABI v2 adds a third channel v1 does not
-have: `run` returning `err(string)`. The host turns it into the request's
-fatal result as `module <desc> failed: run returned an error: <string>` -
-use it for failures that happen before a response can be built (a codec
-that cannot even decode the request). Traps, deadline interrupts and memory
-denials behave exactly as v1's: fatal results from the host naming the
-module, never gRPC errors.
+`Result`). `run` returning `err(string)` is the channel for failures that
+happen before a response can be built (a codec that cannot even decode the
+request): the host turns it into the request's fatal result as
+`module <desc> failed: run returned an error: <string>`. Traps, WASI exits,
+deadline interrupts and memory denials are fatal results from the host
+naming the module (`run failed: trap: …`, `run failed: module exited with
+status N`, `run failed: module exceeded its execution deadline (…)`), never
+gRPC errors.
 
 ## Sandbox and limits
 
 The three-layer capability decision, `limits`, the epoch deadline
 (`limits.timeout` metering guest compute, the request's gRPC deadline the
-hard cap), and the memory ceiling all apply unchanged. One accounting
-difference: a component exports no top-level memory, so nothing is reserved
-from `--max-total-run-memory` before the run - its whole footprint is
-charged incrementally as the guest's memories grow, and a growth the pool
-cannot serve fails inside the run (`memory.grow` returns -1) rather than
-before it.
+hard cap), and the memory ceiling apply to every run. A component exports
+no top-level memory, so nothing is reserved from `--max-total-run-memory`
+before the run: its whole footprint, the initial memory included, is
+charged as the guest's memories are claimed, and a growth the pool cannot
+serve fails inside the run (`memory.grow` returns -1) rather than before
+it.
 
 ## Compatibility
 
 Payload evolution is protobuf's (and the world's types are additive-only
-while draft). A mechanics change is a new world version. ABI v1 modules
-keep running unmodified on the same runtime until 1.0.0 (v1 is deprecated
-from v0.6.0, #114 and #129); nothing about v1's mechanics changed when v2
-arrived.
+while draft). A mechanics change is a new world version; the runtime names
+the world it serves in every typecheck refusal (`component does not
+implement the wasmfn:function@2.0.0-draft world: …`).

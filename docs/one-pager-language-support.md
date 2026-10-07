@@ -13,7 +13,9 @@ evaluation recorded in AGENTS.md ("Not Extism"): the ABI is host-agnostic
 and small, so breadth comes from templates, not from a different runtime.
 
 **Update, 2026-10-07.** Guests are moving to ABI v2 (components targeting
-`wasmfn:function`) and ABI v1 is deprecated from v0.6.0 (#114, #129), so what
+`wasmfn:function`) and ABI v1 is deprecated from v0.6.0 and removed in 1.0.0
+(#114, #129; the sections below that describe what the v1 host required, and
+`docs/abi.md` they cite, are history: the contract is `docs/abi-v2.md`), so what
 "supporting a language" means moved with them: a language is *supported* when
 its toolchain produces a component implementing the world, and *tested* when
 a scaffold or example here runs through the guest suite and the render jobs
