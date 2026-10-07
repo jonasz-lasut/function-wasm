@@ -146,7 +146,7 @@ pub async fn warm(entries: &[String], resolver: &Arc<Resolver>, cache: &ModuleCa
         let fetch_resolver = Arc::clone(resolver);
         let target = resolved.clone();
         let loaded = cache
-            .get(&resolved.digest, &resolved.description, move || {
+            .get(&resolved.digest, move || {
                 fetch_resolver
                     .fetch(&target)
                     .map_err(|e| format!("cannot fetch module: {e}"))
@@ -191,9 +191,19 @@ mod tests {
     async fn warms_path_entries_into_the_cache() {
         let dir = tempfile::tempdir().expect("tempdir");
         let wasm = wat::parse_str(
-            r#"(module (memory (export "memory") 1)
-              (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
-              (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#,
+            r#"(component
+              (core module $m
+                (memory (export "memory") 1)
+                (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+                (func (export "run") (param i32 i32) (result i32)
+                  (i32.store8 (i32.const 64) (i32.const 0))
+                  (i32.store (i32.const 68) (i32.const 1024))
+                  (i32.store (i32.const 72) (i32.const 0))
+                  (i32.const 64)))
+              (core instance $i (instantiate $m))
+              (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+                (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+            )"#,
         )
         .expect("wat");
         std::fs::write(dir.path().join("fn.wasm"), &wasm).expect("write");
@@ -220,7 +230,7 @@ mod tests {
             )
             .expect("resolve");
         cache
-            .get(&resolved.digest, &resolved.description, || {
+            .get(&resolved.digest, || {
                 panic!("the warm-up should have cached this")
             })
             .await

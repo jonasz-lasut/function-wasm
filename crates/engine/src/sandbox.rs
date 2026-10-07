@@ -1,7 +1,7 @@
 //! Sandbox mechanics of one run (docs/one-pager-sandbox.md): a WASI pre-open
 //! for the private /tmp - the only directory a guest is ever given; host
 //! directories are deliberately not mountable - and WASI environ for the
-//! environment. Nothing here touches the ABI: a guest uses its language's
+//! environment. Nothing here touches the world: a guest uses its language's
 //! file and environment APIs.
 
 use std::path::Path;

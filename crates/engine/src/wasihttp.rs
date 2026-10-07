@@ -1,6 +1,6 @@
-//! The wasi:http@0.3 host of ABI v2 (docs/abi-v2.md "HTTP egress"): the
-//! `client.send` import bridged onto the same egress seam as v1's
-//! wasmfn.http - the HttpRequester behind it applies the grant, the SSRF
+//! The wasi:http host (docs/abi-v2.md "HTTP egress"): 0.3's `client.send`
+//! and 0.2's `outgoing-handler.handle` bridged onto the egress seam
+//! (wire.rs) - the HttpRequester behind it applies the grant, the SSRF
 //! judgment, the budgets, the rate limit, the audit line and the metric.
 //! The crate builds wasmtime-wasi-http without default-send-request, so
 //! this implementation is compulsory: a run can never fall through to an
@@ -15,15 +15,19 @@ use base64::Engine as _;
 use http_body_util::BodyExt;
 use wasmtime_wasi_http::{Error as HttpError, RequestOptions, WasiBody, WasiHttpHooks};
 
-use crate::hosthttp::NO_EGRESS;
-use crate::wire;
+use crate::wire::{self, HttpRequester};
+
+/// What a send gets on a run without a grant. (A grant the operator policy
+/// does not permit never reaches a run: it is a fatal result before the
+/// module runs.)
+pub(crate) const NO_EGRESS: &str = "sandbox.egress: HTTP egress is not granted to this module: its manifest requires no egress (requires.egress.http)";
 
 /// The per-run state behind the guest's wasi:http imports. Split from the
 /// store data because wasmtime-wasi-http borrows the hooks and the resource
 /// table from it at once.
 pub(crate) struct EgressHooks {
     /// The run's grant; None refuses every send, never a trap.
-    requester: Option<Arc<dyn crate::HttpRequester>>,
+    requester: Option<Arc<dyn HttpRequester>>,
     /// The run's deadline - each request is capped by what remains of it.
     deadline: Instant,
     module: String,
@@ -39,7 +43,7 @@ pub(crate) struct EgressHooks {
 
 impl EgressHooks {
     pub(crate) fn new(
-        requester: Option<Arc<dyn crate::HttpRequester>>,
+        requester: Option<Arc<dyn HttpRequester>>,
         deadline: Instant,
         module: String,
         digest: String,
@@ -82,7 +86,7 @@ impl WasiHttpHooks for EgressHooks {
                 .with_label_values(&["refused"])
                 .inc();
             // The reason travels to the guest: wasi:http's payload-carrying
-            // code is internal-error, and v1's refusal string is contract.
+            // code is internal-error, and the refusal string is contract.
             return Box::new(async { Err(HttpError::InternalError(Some(NO_EGRESS.to_string()))) });
         };
 
@@ -101,10 +105,10 @@ impl WasiHttpHooks for EgressHooks {
 
 /// One granted send: buffer the outgoing body, hand the request to the
 /// policy client on a blocking thread (it resolves, judges, budgets, audits
-/// and counts), and map its answer back. Bodies are complete on both sides,
-/// exactly as under v1: the budget acts on whole responses.
+/// and counts), and map its answer back. Bodies are complete on both sides:
+/// the budget acts on whole responses.
 async fn send(
-    requester: Arc<dyn crate::HttpRequester>,
+    requester: Arc<dyn HttpRequester>,
     request: http::Request<WasiBody>,
     deadline: Instant,
 ) -> SendResult {
@@ -129,15 +133,15 @@ async fn send(
         body: base64::engine::general_purpose::STANDARD.encode(&collected),
     };
 
-    // The policy client is blocking (v1's whole egress stack); the guest
+    // The policy client is blocking (the whole egress stack is); the guest
     // task is suspended meanwhile, not spinning.
     let rsp =
         wasmtime_wasi::runtime::spawn_blocking(move || requester.do_request(&wreq, deadline)).await;
 
     if !rsp.error.is_empty() {
-        // What v1 told the guest in-band travels as the error's payload -
-        // the refusal wording is contract, and no other wasi:http code
-        // carries a reason.
+        // The policy client's reason travels as the error's payload - the
+        // refusal wording is contract, and no other wasi:http code carries
+        // a reason.
         return Err(HttpError::InternalError(Some(rsp.error)));
     }
 
@@ -177,7 +181,7 @@ mod tests {
         answer: wire::Response,
     }
 
-    impl crate::HttpRequester for Fake {
+    impl HttpRequester for Fake {
         fn do_request(&self, req: &wire::Request, _deadline: Instant) -> wire::Response {
             self.asked.lock().expect("lock").push(wire::Request {
                 method: req.method.clone(),
@@ -216,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn no_grant_refuses_with_the_v1_wording() {
+    fn no_grant_refuses_with_the_contract_wording() {
         let mut hooks = EgressHooks::new(
             None,
             Instant::now() + std::time::Duration::from_secs(1),
@@ -244,7 +248,7 @@ mod tests {
         });
         let counted = Arc::new(AtomicU64::new(0));
         let mut hooks = EgressHooks::new(
-            Some(fake.clone() as Arc<dyn crate::HttpRequester>),
+            Some(fake.clone() as Arc<dyn HttpRequester>),
             Instant::now() + std::time::Duration::from_secs(1),
             "m".to_string(),
             "d".to_string(),
@@ -279,7 +283,7 @@ mod tests {
             ),
         });
         let mut hooks = EgressHooks::new(
-            Some(fake as Arc<dyn crate::HttpRequester>),
+            Some(fake as Arc<dyn HttpRequester>),
             Instant::now() + std::time::Duration::from_secs(1),
             "m".to_string(),
             "d".to_string(),

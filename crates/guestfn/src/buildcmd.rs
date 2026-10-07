@@ -89,10 +89,9 @@ impl BuildCmd {
             )
         })?;
         let mut line = format!(
-            "Built {} ({}, ABI v{}{}",
+            "Built {} ({}, ABI v2{}",
             out.display(),
             crate::human_bytes(wasm.len() as u64),
-            shape.abi_version,
             imports_suffix(&shape)
         );
         if let Some(m) = &m {
@@ -102,10 +101,6 @@ impl BuildCmd {
             }
         }
         println!("{line})");
-        // The runtime's words on every load of such a module.
-        if shape.abi_version == 1 {
-            println!("warning: {}", function_wasm_engine::ABI_V1_DEPRECATION);
-        }
         if let Some(m) = &m {
             warn_example_config(&self.dir, m);
         }
@@ -116,8 +111,8 @@ impl BuildCmd {
 /// The build output as the runtime will see it.
 #[derive(Debug, PartialEq)]
 enum Output {
-    /// A component or a plain core module (an ABI v1 guest): the toolchain's
-    /// bytes, untouched.
+    /// A component, or a plain core module the runtime will refuse: the
+    /// toolchain's bytes, untouched.
     AsBuilt(Vec<u8>),
     /// The toolchain left a core module carrying wit-bindgen's
     /// component-type section (what the c and zig flavours link in, and what
@@ -245,30 +240,21 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
             if !status.success() {
                 return Err(format!("go build failed: {status}"));
             }
-            // The scaffold is an ABI v2 guest over wit-bindgen's Go
-            // bindings, whose core module carries no component type (the
-            // generator emits Go source only): its world is embedded here
-            // from the project's wit/, and the wrap below links the wasip1
-            // adapter. A project without wit/ is an ABI v1 wasip1 guest and
-            // keeps building as one.
-            let wit = dir.join("wit");
-            if wit.is_dir() {
-                let core = std::fs::read(out)
-                    .map_err(|e| format!("cannot read {}: {e}", out.display()))?;
-                let embedded = componentize::embed_world(&core, &wit, GO_WORLD)
-                    .map_err(|e| format!("built {}, but {e}", out.display()))?;
-                std::fs::write(out, embedded).map_err(|e| e.to_string())?;
-            }
+            // The guest runs over wit-bindgen's Go bindings, whose core
+            // module carries no component type (the generator emits Go
+            // source only): its world is embedded here from the project's
+            // wit/ (the scaffold writes one), and the wrap below links the
+            // wasip1 adapter.
+            let core =
+                std::fs::read(out).map_err(|e| format!("cannot read {}: {e}", out.display()))?;
+            let embedded = componentize::embed_world(&core, &dir.join("wit"), GO_WORLD)
+                .map_err(|e| format!("built {}, but {e}", out.display()))?;
+            std::fs::write(out, embedded).map_err(|e| e.to_string())?;
         }
         scaffold::LANG_RUST => {
-            // The scaffold emits an ABI v2 component (wasm32-wasip3, the
-            // wit/ directory carries its world); a project without wit/ is
-            // an ABI v1 wasip1 guest and keeps building as one.
-            let target = if dir.join("wit").is_dir() {
-                "wasm32-wasip3"
-            } else {
-                "wasm32-wasip1"
-            };
+            // The scaffold emits a component (wasm32-wasip3, the wit/
+            // directory carries its world).
+            let target = "wasm32-wasip3";
             which(
                 "cargo",
                 &format!("install Rust from https://rustup.rs and run rustup target add {target}"),
@@ -380,18 +366,19 @@ pub(crate) fn imports_suffix(shape: &function_wasm_engine::Inspection) -> String
 mod tests {
     use super::*;
 
-    const ABI_V1_WAT: &str = r#"(module
+    const CORE_MODULE_WAT: &str = r#"(module
       (memory (export "memory") 1)
       (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
       (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#;
 
-    /// Today's outputs pass through untouched: a core module without the
-    /// section is an ABI v1 guest, a component is already wrapped (the
-    /// rust, ts and python toolchains componentize themselves). The wrap of
-    /// a module that carries the section is proven in the engine's tests.
+    /// Outputs that need no wrap pass through untouched: a core module
+    /// without the section (which the runtime's check then refuses) and a
+    /// component (the rust, ts and python toolchains componentize
+    /// themselves). The wrap of a module that carries the section is proven
+    /// in the engine's tests.
     #[test]
     fn passes_through_what_needs_no_wrap() {
-        for wat in [ABI_V1_WAT, "(component)"] {
+        for wat in [CORE_MODULE_WAT, "(component)"] {
             let wasm = wat::parse_str(wat).expect("wat");
             assert_eq!(
                 componentize_if_needed(wasm.clone()),
@@ -402,8 +389,8 @@ mod tests {
     }
 
     /// A section the wrap cannot read is the engine's refusal, which the
-    /// build line prefixes - never a silent fall-through to the ABI v1
-    /// verdict.
+    /// build line prefixes - never a silent fall-through to the runtime's
+    /// core-module refusal.
     #[test]
     fn a_failed_wrap_is_an_error() {
         let wasm = wat::parse_str(r#"(module (@custom "component-type:x" "nope"))"#).expect("wat");

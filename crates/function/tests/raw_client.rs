@@ -21,13 +21,20 @@ use function_wasm::runner::WasmFunction;
 use function_wasm_engine::{Config, Engine};
 use prost::Message as _;
 
-const ECHO_WAT: &str = r#"(module
-  (memory (export "memory") 2)
-  (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 1024)
-  (func (export "wasmfn_run") (param i32 i32) (result i64)
-    (i64.or
-      (i64.shl (i64.extend_i32_u (local.get 0)) (i64.const 32))
-      (i64.extend_i32_u (local.get 1)))))"#;
+/// A component whose run returns the request list it was given.
+const ECHO_WAT: &str = r#"(component
+  (core module $m
+    (memory (export "memory") 2)
+    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+    (func (export "run") (param i32 i32) (result i32)
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (local.get 0))
+      (i32.store (i32.const 72) (local.get 1))
+      (i32.const 64)))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+)"#;
 
 /// A pass-through client codec: gRPC messages as raw bytes.
 #[derive(Default)]

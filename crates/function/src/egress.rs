@@ -1,6 +1,6 @@
 //! HTTP egress through the host - the Rust port of `internal/egress`'s
-//! ceiling, grant and per-run client: the host side of the wasmfn.http
-//! import. The guest never opens a socket: the host resolves the name,
+//! ceiling, grant and per-run client: what answers a guest's wasi:http
+//! sends. The guest never opens a socket: the host resolves the name,
 //! judges every resolved address against the block list (the operator's
 //! Cedar dialAddress rules compiled in), dials only addresses it checked,
 //! terminates TLS with its own roots, applies the module's admitted rules
@@ -1036,58 +1036,6 @@ mod tests {
             rsp.error,
             "sandbox.egress: this run already made 16 requests (maxRequests)"
         );
-    }
-
-    /// The full mechanics: a WAT guest calls wasmfn.http, the engine
-    /// re-enters its allocator with the client's answer, and the guest
-    /// returns the JSON as its response bytes - a real request through a
-    /// real socket, end to end.
-    #[test]
-    fn a_guest_reaches_a_server_through_the_engine() {
-        let addr = serve(vec![ok_response("hi from the host")]);
-        let egress = loopback_egress();
-        let client = client_for(&egress, "127.0.0.1", &["GET"]);
-
-        let request = format!(r#"{{"url":"http://127.0.0.1:{}/greet"}}"#, addr.port());
-        let wat = format!(
-            r#"(module
-  (import "wasmfn" "http" (func $http (param i32 i32) (result i64)))
-  (memory (export "memory") 4)
-  (data (i32.const 1024) "{data}")
-  (global $next (mut i32) (i32.const 131072))
-  (func (export "wasmfn_alloc") (param i32) (result i32)
-    (local $ptr i32)
-    global.get $next
-    local.tee $ptr
-    local.get 0
-    i32.add
-    global.set $next
-    local.get $ptr)
-  (func (export "wasmfn_run") (param i32 i32) (result i64)
-    i32.const 1024
-    i32.const {len}
-    call $http))"#,
-            data = request
-                .bytes()
-                .map(|b| format!("\\{b:02x}"))
-                .collect::<String>(),
-            len = request.len(),
-        );
-        let engine = function_wasm_engine::Engine::new(Default::default()).expect("engine");
-        let m = engine
-            .compile(&wat::parse_str(&wat).expect("wat"))
-            .expect("compile");
-        let opts = function_wasm_engine::RunOptions {
-            http: Some(Arc::new(client)),
-            ..Default::default()
-        };
-        let out = engine.run(&m, b"", opts).expect("run");
-        let answer: serde_json::Value = serde_json::from_slice(&out).expect("json");
-        assert_eq!(answer["status"], 200);
-        let body = base64::engine::general_purpose::STANDARD
-            .decode(answer["body"].as_str().expect("body"))
-            .expect("base64");
-        assert_eq!(body, b"hi from the host");
     }
 
     #[test]

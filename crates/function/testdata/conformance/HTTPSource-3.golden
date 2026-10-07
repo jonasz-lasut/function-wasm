@@ -1,4 +1,4 @@
 exit 1
 --- stdout
-<DIR>/http-3.yaml: Composition/bad-digest pipeline[0] bad-digest: refused: cannot load module http http://<SERVER>/fn.wasm: cannot fetch module: module content is sha256:d8f9c70dd9bca2be5b598bc81ac9dbbd4f49531eb8174e8bcdd1aa895c230ba3, want sha256:0000000000000000000000000000000000000000000000000000000000000000
+<DIR>/http-3.yaml: Composition/bad-digest pipeline[0] bad-digest: refused: cannot load module http http://<SERVER>/fn.wasm: cannot fetch module: module content is sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, want sha256:0000000000000000000000000000000000000000000000000000000000000000
 --- stderr

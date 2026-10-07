@@ -72,7 +72,6 @@ fn engine() -> Engine {
 /// The wrapped component through the runtime: inspect's verdict, then a run.
 fn assert_serves(e: &Engine, wasm: &[u8], rsp: &[u8]) -> function_wasm_engine::Inspection {
     let shape = e.inspect(wasm).expect("inspect");
-    assert_eq!(shape.abi_version, 2);
     assert_eq!(shape.abi_error, None, "the world typechecks");
     assert!(
         shape
@@ -83,7 +82,6 @@ fn assert_serves(e: &Engine, wasm: &[u8], rsp: &[u8]) -> function_wasm_engine::I
         shape.exports
     );
     let m = e.compile(wasm).expect("compile");
-    assert_eq!(m.abi_version(), 2);
     let out = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(out, rsp);
     shape
@@ -203,7 +201,7 @@ fn embed_world_takes_a_bare_core_module_once() {
 
 /// A section that is there but says nothing wit-component can read is a
 /// failed wrap carrying wit-component's words - never a silent pass-through
-/// to the ABI v1 verdict, which would name the missing wasmfn_run instead.
+/// to the runtime's core-module refusal, which would name the wrong fix.
 #[test]
 fn a_malformed_section_fails_the_wrap() {
     let wasm = wat::parse_str(r#"(module (@custom "component-type:x" "nope"))"#).expect("wat");

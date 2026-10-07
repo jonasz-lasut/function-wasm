@@ -139,6 +139,8 @@ struct StepResult {
 struct Resolved {
     digest: String,
     size: usize,
+    /// The one ABI this runtime implements, stated for readers of older
+    /// output: a module that loads is a v2 component.
     abi: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     imports: Vec<String>,
@@ -589,19 +591,13 @@ impl Validator {
                 resolved.description
             ));
         }
-        let module_abi = inspection.abi_version;
         r.resolved = Some(Resolved {
             digest: resolved.digest.clone(),
             size: wasm.len(),
-            abi: format!("v{module_abi}"),
+            abi: "v2".to_string(),
             imports: inspection.host_imports,
             manifest: None,
         });
-        // What the runtime logs on every load of this module.
-        if module_abi == 1 {
-            r.warnings
-                .push(function_wasm_engine::ABI_V1_DEPRECATION.to_string());
-        }
 
         // The module's manifest: its requests decided by the three layers -
         // with the principal from --xr when one is given - then held against
@@ -657,7 +653,6 @@ impl Validator {
             &caps.grants(),
             input.config.as_ref(),
             crate::manifest::runtime_version(),
-            module_abi,
         ) {
             refuse!(format!("module {} {e}", resolved.description));
         }

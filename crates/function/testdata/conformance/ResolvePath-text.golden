@@ -1,10 +1,9 @@
 exit 1
 --- stdout
 <DIR>/composition.yaml: Composition/resolve pipeline[0] ok: OK (path fn.wasm)
-  module: sha256:9af9dc722904bbd1851fb7bd6b6605fc2c0e7e854470ea27448482ef51c8cff1, 122 B, ABI v1, imports wasmfn.log
+  module: sha256:c576adc1a951baa7f3064683718c4bc93e70fd3f7e0a2eb6ac9112faa4497f3e, 607 B, ABI v2, imports log
   warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
-  warning: ABI v1 is deprecated and is removed in function-wasm 1.0.0; build the module as an ABI v2 component (docs/abi-v2.md)
-<DIR>/composition.yaml: Composition/resolve pipeline[1] bad: refused: cannot load module module file bad.wasm: module does not export "wasmfn_run"
+<DIR>/composition.yaml: Composition/resolve pipeline[1] coremodule: refused: cannot load module module file coremodule.wasm: module is a core module, which function-wasm 1.0.0 no longer runs (ABI v1 was removed); build it as an ABI v2 component (docs/abi-v2.md)
   warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
 <DIR>/composition.yaml: Composition/resolve pipeline[2] notwasm: refused: cannot load module module file notwasm.wasm: cannot compile module: failed to parse WebAssembly module
   warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest

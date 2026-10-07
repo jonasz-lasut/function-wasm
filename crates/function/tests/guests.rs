@@ -6,8 +6,8 @@
 //! module and the suite wraps it as guestfn build does) and in async Rust
 //! with wit-bindgen, and as components in TypeScript and Python -
 //! through the whole host: path and OCI sources, compile, per-request
-//! instance, egress through wasmfn.http or wasi:http, guest logging. Every
-//! guest must produce the same response.
+//! instance, egress through wasi:http, guest logging. Every guest must
+//! produce the same response.
 //!
 //! A language with a scaffold is built from what `guestfn init` writes (its
 //! golden under crates/guestfn/testdata, which the scaffold tests keep
@@ -434,33 +434,21 @@ fn run_guest(guest: &str) {
     };
     assert!(!wasm.is_empty(), "building the {guest} guest failed");
 
-    // What guestfn inspect and validate --resolve report: a core-module
-    // guest is ABI v1 and imports both wasmfn host functions; a component
-    // guest is ABI v2 and exports the world's run.
+    // What guestfn inspect and validate --resolve report: a component that
+    // implements the world and exports its run.
     let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
     let shape = engine.inspect(&wasm).expect("inspect");
     assert!(shape.abi_error.is_none(), "{:?}", shape.abi_error);
-    let abi = shape.abi_version;
-    if abi == 1 {
-        for import in ["wasmfn.log", "wasmfn.http"] {
-            assert!(
-                shape.host_imports.iter().any(|i| i == import),
-                "guest imports {:?}, want {import}",
-                shape.host_imports
-            );
-        }
-    } else {
-        assert!(
-            shape.exports.iter().any(|x| x.name == "run"),
-            "guest exports {:?}, want run",
-            shape.exports
-        );
-    }
+    assert!(
+        shape.exports.iter().any(|x| x.name == "run"),
+        "guest exports {:?}, want run",
+        shape.exports
+    );
 
     let greetings = greeting_server();
     let greetings_host = greetings.split(':').next().expect("host").to_string();
     let egress_manifest = format!(
-        r#"{{"abi":{abi},"requires":{{"egress":{{"http":[{{"host":"{greetings_host}","methods":["GET"]}}]}}}}}}"#
+        r#"{{"abi":2,"requires":{{"egress":{{"http":[{{"host":"{greetings_host}","methods":["GET"]}}]}}}}}}"#
     );
     // The guest with an egress request, two ways: an OCI artifact's manifest
     // layer, and a manifest a path module names by reference
@@ -615,20 +603,6 @@ fn run_guest(guest: &str) {
             );
         }
     }
-    // ABI v1's deprecation is said when the module is loaded, naming it;
-    // a component is never warned about. The Path description is the
-    // guest's own file, so other guests' lines in the shared buffer do not
-    // count.
-    let all = String::from_utf8_lossy(&logs.lock().expect("poisoned")).into_owned();
-    let module_file = format!("module file {file}");
-    let deprecated = all
-        .lines()
-        .any(|l| l.contains(function_wasm_engine::ABI_V1_DEPRECATION) && l.contains(&module_file));
-    assert_eq!(
-        deprecated,
-        abi == 1,
-        "{guest}: ABI v{abi}, deprecation warned: {deprecated}"
-    );
 }
 
 #[test]
