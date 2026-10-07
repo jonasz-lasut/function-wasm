@@ -1,0 +1,12 @@
+import {
+  "jonasz-lasut/hello-moonbit/fnv1",
+  "jonasz-lasut/hello-moonbit/hello",
+  "jonasz-lasut/hello-moonbit/world/function",
+  "jonasz-lasut/hello-moonbit/interface/wasi/http/types",
+  "jonasz-lasut/hello-moonbit/interface/wasi/http/outgoing-handler" @outgoing_handler,
+  "jonasz-lasut/hello-moonbit/interface/wasi/io/streams",
+  "moonbitlang/protobuf",
+  "moonbitlang/protobuf/google/protobuf" @wkt,
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8",
+}

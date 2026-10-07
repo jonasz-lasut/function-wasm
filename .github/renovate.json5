@@ -110,8 +110,8 @@
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
       // and cloudflare-origin, its wit/deps for the python, c, zig and go
-      // scaffolds, team-tags, hello-c, hello-zig, hello-odin, pdb-addon and
-      // dashboard-bundle (templates and goldens included: the
+      // scaffolds, team-tags, hello-c, hello-zig, hello-odin, hello-moonbit,
+      // pdb-addon and dashboard-bundle (templates and goldens included: the
       // files are plain .wit in all of them). Same tripwire as the proto: a
       // bump PR moves the version in every header at once; it does NOT
       // re-download the WIT, so treat the PR as the signal to re-vendor by
@@ -208,7 +208,7 @@
     },
     // The WASI WIT headers, for the same reason: one dep across the rust,
     // python, c, zig and go templates, their goldens, cloudflare-origin,
-    // team-tags, hello-c, hello-zig, hello-odin, pdb-addon and
+    // team-tags, hello-c, hello-zig, hello-odin, hello-moonbit, pdb-addon and
     // dashboard-bundle.
     // Their group is the wasmtime one above.
     {
@@ -285,7 +285,10 @@
     // hello-zig, hello-c and hello-odin name their dependencies in
     // build.zig.zon by URL and content hash, which no Renovate manager
     // reads: they move by hand, with the zig and c templates, at release
-    // time (hello-odin's nanopb pin is hello-c's).
+    // time (hello-odin's nanopb pin is hello-c's). hello-moonbit's one
+    // dependency (moonbitlang/protobuf in moon.mod.json) has no Renovate
+    // manager either: it moves by hand, with the generator pins in its
+    // Makefile, at release time.
     //
     // One batch, early on the 1st of the month. Renovate does not group lock
     // file maintenance with other updates - a grouped one gets its own

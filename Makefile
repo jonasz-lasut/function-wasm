@@ -13,14 +13,15 @@
 # `make gen-bindings` is the same loop for the wit-bindgen bindings: the c,
 # zig and odin guests' C bindings (examples/hello-c/src/gen,
 # examples/hello-zig/src/gen and examples/hello-odin/src/gen: one generator's
-# output over one world, which the guestfn tests hold identical) and the go
-# guest's Go bindings
-# (examples/pdb-addon/internal/bindings, over its own world). It runs the
-# pinned wit-bindgen in each, mirrors each result into its template (the go
-# one with the module path templated as [[ .Module ]]) and refreshes the
-# goldens - after a change to a world, a re-vendoring of the WASI WIT, or a
-# wit-bindgen bump (the generated files' header names the version; e2e.yml's
-# drift checks install the same one).
+# output over one world, which the guestfn tests hold identical), the go
+# guest's Go bindings (examples/pdb-addon/internal/bindings, over its own
+# world) and the moonbit example's MoonBit bindings (examples/hello-moonbit/src,
+# over the c world again; no template). It runs the pinned wit-bindgen in
+# each, mirrors each scaffold's result into its template (the go one with the
+# module path templated as [[ .Module ]]) and refreshes the goldens - after a
+# change to a world, a re-vendoring of the WASI WIT, or a wit-bindgen bump
+# (the generated files' header names the version; e2e.yml's drift checks
+# install the same one).
 .PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens gen-bindings tools tools-clean
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:
@@ -28,7 +29,9 @@
 # Only the three generators the guests invoke bare from PATH are pinned here;
 # the rest are pinned where each guest builds them: zig-protobuf (and the
 # protoc it downloads) by hello-zig's build.zig.zon, protoc-gen-es by
-# policy-gate's package-lock.json.
+# policy-gate's package-lock.json, protoc-gen-mbt by the moonx release
+# hello-moonbit's Makefile names (moon itself is not pinned here: e2e.yml
+# pins the release its render job installs).
 #
 # protoc stamps its version into the Python codec, which refuses to load on a
 # protobuf runtime older than that stamp, so
@@ -86,11 +89,14 @@ vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(VERSION)
 # the examples (hello-odin regenerates the c codec over its own copy of the
 # proto, and the same test holds it to the c template's). The ts and python
 # codecs are copied file by file: a gen/ directory may hold a __pycache__ the
-# templates must not embed.
+# templates must not embed. The moonbit codec has no template: hello-moonbit's
+# gen-proto runs the pinned protoc-gen-mbt through moonx, so moon must be on
+# PATH.
 vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the pinned generators and mirror them into the templates
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-odin gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/hello-moonbit gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/team-tags gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/policy-gate gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/dashboard-bundle gen-proto
@@ -113,11 +119,12 @@ vendor-proto-goldens: ## Refresh the guestfn scaffold goldens from the templates
 # is copied as it is.
 GO_MODULE := github.com/jonasz-lasut/function-wasm/examples/pdb-addon
 GO_BINDINGS := crates/guestfn/templates/go/internal/bindings
-gen-bindings: tools ## Regenerate hello-c's, hello-zig's, hello-odin's and pdb-addon's wit-bindgen bindings with the pinned wit-bindgen, mirror the c, zig and go ones into their templates and refresh the goldens
+gen-bindings: tools ## Regenerate hello-c's, hello-zig's, hello-odin's, pdb-addon's and hello-moonbit's wit-bindgen bindings with the pinned wit-bindgen, mirror the c, zig and go ones into their templates and refresh the goldens
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-odin gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/pdb-addon gen-bindings
+	$(WITH_TOOLS) $(MAKE) -C examples/hello-moonbit gen-bindings
 	rm -rf crates/guestfn/templates/c/src/gen && cp -R examples/hello-c/src/gen crates/guestfn/templates/c/src/gen
 	rm -rf crates/guestfn/templates/zig/src/gen && cp -R examples/hello-zig/src/gen crates/guestfn/templates/zig/src/gen
 	rm -rf $(GO_BINDINGS) && cp -R examples/pdb-addon/internal/bindings $(GO_BINDINGS)

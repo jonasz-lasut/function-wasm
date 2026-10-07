@@ -264,7 +264,11 @@ mod tests {
     /// the generated codecs, the proto and the WIT - and must carry it byte
     /// for byte, so a plumbing fix lands in the template and the example
     /// together. Everything else (the function itself, wasmfn.yaml, the
-    /// README, the example manifests) is the example's own.
+    /// README, the example manifests) is the example's own. hello-moonbit has
+    /// no scaffold of its own: its wit/ is the c scaffold's (wit-bindgen's
+    /// MoonBit generator reads the same world), and its proto copy is held
+    /// by the root Makefile's glob and Renovate's header rule under its own
+    /// header, like dashboard-bundle's.
     #[test]
     fn examples_share_the_scaffold_plumbing() {
         let examples: [(&str, &[&str], Options); 7] = [
@@ -335,6 +339,15 @@ mod tests {
                 Options {
                     lang: LANG_C.into(),
                     name: "hello-odin".into(),
+                    ..Default::default()
+                },
+            ),
+            (
+                "hello-moonbit",
+                &["wit/"],
+                Options {
+                    lang: LANG_C.into(),
+                    name: "hello-moonbit".into(),
                     ..Default::default()
                 },
             ),

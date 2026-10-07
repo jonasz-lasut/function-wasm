@@ -1,0 +1,9 @@
+import {
+  "jonasz-lasut/hello-moonbit/fnv1",
+  "moonbitlang/protobuf/google/protobuf" @wkt,
+}
+
+import {
+  "moonbitlang/protobuf",
+  "moonbitlang/core/buffer",
+} for "test"
