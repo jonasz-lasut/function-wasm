@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+{"file":"testdata/validate/v1beta1.yaml","composition":"before-1-0","document":0,"index":0,"step":"greet","function":"function-wasm","status":"ok","module":"oci ghcr.io/example/greeter:v1@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a","details":["limits timeout 5s"],"warnings":["apiVersion wasm.fn.crossplane.io/v1beta1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: wasm.fn.crossplane.io/v1 (the same fields)"]}
+{"file":"testdata/validate/v1beta1.yaml","document":1,"index":-1,"step":"bare","status":"ok","module":"http https://example.com/fn.wasm","warnings":["apiVersion wasm.fn.crossplane.io/v1beta1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: wasm.fn.crossplane.io/v1 (the same fields)"]}
+--- stderr

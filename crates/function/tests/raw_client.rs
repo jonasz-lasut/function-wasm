@@ -139,7 +139,7 @@ async fn the_served_runtime_is_byte_transparent() {
         }),
         input: Some(resource::json_to_struct(
             serde_json::json!({
-                "apiVersion": "wasm.fn.crossplane.io/v1beta1",
+                "apiVersion": "wasm.fn.crossplane.io/v1",
                 "kind": "Input",
                 "module": {"type": "Path", "path": "fn.wasm"},
             })

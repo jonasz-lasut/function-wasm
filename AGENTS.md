@@ -25,7 +25,8 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
     ↓
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ crates/function/src/runner.rs: WasmFunction::handle_raw()                    │
-│  1. decode a typed copy for admission; admission::admit(input, ceilings) -   │
+│  1. decode a typed copy for admission (a v1beta1 apiVersion: one warn line,  │
+│       input::V1BETA1_DEPRECATION); admission::admit(input, ceilings) -       │
 │       compositionPolicy compiled (content-hash cached, malformed Cedar →     │
 │       fatal); limits → engine RunOptions, or a fatal naming the limit and    │
 │       the ceiling flag; module shape checked                                 │
@@ -368,7 +369,7 @@ docs/abi-v2.md              the host/guest contract: the component world every s
 
 ### Input
 
-The function receives an `Input` (`wasm.fn.crossplane.io/v1beta1`) — a KRM-like object (`crates/function/src/input.rs`):
+The function receives an `Input` (`wasm.fn.crossplane.io/v1`; a `v1beta1` document, the same fields, is accepted throughout 1.x with `input::V1BETA1_DEPRECATION` said under the step by `function validate`, once per request by the runtime and on the build line by `guestfn build`, and is removed in 2.0.0): a KRM-like object (`crates/function/src/input.rs`):
 
 - `module` — `type: OCI|HTTP|Path` (required) + exactly one of `oci{ref, credentials}`, `http{url, digest, manifestURL, manifestDigest}`, `path` (+ `manifestPath`), or `from` (the XR field holding that object; with `allowEmpty: true` a field the XR leaves unset - absent or null - skips the step: no module runs and the desired state goes back unchanged; refused without `from`)
 - `compositionPolicy` — raw Cedar, the composition author's layer: fences `from` sources (`pullModule`/`spendCredential`, default-deny) and may narrow sandbox capabilities (scoped default-permit); read from the Input only, never from the XR
@@ -392,6 +393,8 @@ The Go implementation was the reference until 2026-08; the contract is **logical
 ### Conformance goldens
 
 `crates/function/tests/conformance.rs` runs `function validate` over the fixture corpus and generated modules/servers/registries and compares stdout, stderr and exit codes against goldens under `testdata/conformance/`. The goldens were recorded from this runtime the day it last diffed **byte-identical** against the Go runtime's own `function validate` (the original differential harness, retired with the Go tree), so they carry the Go runtime's words wherever parity held. A change fails the suite until re-recorded deliberately with `UPDATE_CONFORMANCE=1 cargo test` — treat a re-record as a user-visible behaviour change and say so in the commit.
+
+The README's "Compatibility" section is the 1.x promise the goldens enforce: the pinned wording, the Input's fields, the flags and their defaults, `function validate`'s exit codes and JSON field names change only at a major, and a minor may only add or widen. A deprecation runs for at least one minor with a `function validate` warning and one runtime line per load or request before the next major removes it: `input::V1BETA1_DEPRECATION` is the pattern, ABI v1 the precedent.
 
 ### Admission and validation
 
@@ -585,6 +588,7 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 - **`module.from: … names a OCI source, but the Input has no compositionPolicy`**: a `module.from` OCI/HTTP source requires a `compositionPolicy` whose `pullModule` permits its repository; add the policy, or name the source statically.
 - **`module.from: cannot read status.module from the composite resource: module: no such field`**: the XR has not set the field the step reads. Set it, or add `module.allowEmpty: true` to let the step run nothing until it is set (the pod then logs `No module chosen by the composite resource` and counts `requests_total{outcome="skipped"}`).
 - **`module.allowEmpty is set but module.from is not`**: `allowEmpty` only makes sense for a field the composite resource may leave unset; a static source always resolves. Remove it, or switch the step to `module.from`.
+- **`apiVersion wasm.fn.crossplane.io/v1beta1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: wasm.fn.crossplane.io/v1 (the same fields)`** (a `function validate` warning, a runtime WARN line per request, a `guestfn build` warning): the step still carries the pre-1.0 apiVersion. Change the one line; nothing else about the Input moves.
 - **`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`** (or `limits.timeout … --module-timeout`): lower the limit or raise the flag.
 - **`module … requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities`** (and the env/egress forms): mount a Cedar `--sandbox-policy-file` with a matching permit or use a module that requires nothing.
 - **`the operator policy grants a private /tmp (usePrivateTmp), but the runtime cannot create one under …`** at startup: point `TMPDIR` at a writable directory (an `emptyDir`; tmpfs with `sizeLimit` bounds what a module may write).

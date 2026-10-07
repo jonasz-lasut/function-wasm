@@ -40,7 +40,7 @@ func state(resources map[string]string) *fnv1.State {
 
 // input is the function-wasm Input of the add-on step, with config.
 func input(config string) *structpb.Struct {
-	return resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"type":"Path","from":"spec.addOn","allowEmpty":true},"config":` + config + `}`)
+	return resource.MustStructJSON(`{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{"type":"Path","from":"spec.addOn","allowEmpty":true},"config":` + config + `}`)
 }
 
 func TestRunFunction(t *testing.T) {

@@ -128,8 +128,8 @@ fn composition_step(
 ) -> Result<String, String> {
     let mut b = format!(
         "- step: {name}\n  functionRef:\n    name: {function_name}\n  input:\n    apiVersion: {}\n    kind: {}\n",
-        crate::INPUT_API_VERSION,
-        crate::INPUT_KIND
+        function_wasm::input::API_VERSION,
+        function_wasm::input::KIND
     );
     let module_yaml = match src {
         Source::Path(p) => format!("module:\n  type: Path\n  path: {p}\n"),

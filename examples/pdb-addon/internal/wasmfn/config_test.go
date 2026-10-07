@@ -27,17 +27,17 @@ func TestGetConfig(t *testing.T) {
 	}{
 		"Present": {
 			reason: "The config object decodes into the guest's struct.",
-			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"path":"x"},"config":{"replicas":3,"name":"web"}}`,
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{"path":"x"},"config":{"replicas":3,"name":"web"}}`,
 			want:   want{cfg: config{Replicas: 3, Name: "web"}, ok: true},
 		},
 		"Absent": {
 			reason: "Without a config field nothing is decoded and ok is false.",
-			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","module":{"path":"x"}}`,
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{"path":"x"}}`,
 			want:   want{ok: false},
 		},
 		"WrongShape": {
 			reason: "A config that does not fit the struct is an error.",
-			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1beta1","kind":"Input","config":{"replicas":"many"}}`,
+			input:  `{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","config":{"replicas":"many"}}`,
 			want:   want{ok: true, err: "cannot decode input.config"},
 		},
 	}

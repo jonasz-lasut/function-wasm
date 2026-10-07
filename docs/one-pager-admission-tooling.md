@@ -66,7 +66,7 @@ function validate composition.yaml [more.yaml… | -] \
 ```
 
 Input documents are found in each file: every `pipeline[].input` of kind
-`Input` in `wasm.fn.crossplane.io/v1beta1` of a `Composition`, or a bare
+`Input` in `wasm.fn.crossplane.io/v1` of a `Composition`, or a bare
 `Input` document; multi-document YAML and `-` for stdin. For each step the
 tool runs exactly what `RunFunction` runs before it resolves anything —
 the `compositionPolicy` compiled, `runOptions`, `module.Validate` — and,

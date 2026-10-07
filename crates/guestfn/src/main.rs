@@ -14,10 +14,6 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-/// The Input's identity in a Composition step.
-pub(crate) const INPUT_API_VERSION: &str = "wasm.fn.crossplane.io/v1beta1";
-pub(crate) const INPUT_KIND: &str = "Input";
-
 /// Used when go is not on PATH to say better, so a scaffold is never left
 /// without a version.
 const FALLBACK_SDK_VERSION: &str = "v0.7.1";
