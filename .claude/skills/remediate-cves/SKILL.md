@@ -37,6 +37,11 @@ git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "$TAG"
 If `origin/$BRANCH` doesn't exist yet, it must be cut from the release **tag**,
 never from `main` HEAD — a security patch must not carry unreleased changes.
 
+The latest release is the default target. From v1.0.0 on, superseded
+release branches are kept (`cut-release` step 11), so an older line can be
+patched when the user asks for it: set `TAG` to that line's latest tag
+(`gh release list`) and derive `BRANCH` from it the same way.
+
 ### 2. Pull the CVE list from code scanning
 
 Pass `ref` as an actual **query parameter**, not a client-side filter. The
