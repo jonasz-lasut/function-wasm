@@ -1,6 +1,6 @@
 # Re-vendoring crossplane/crossplane's proto/fn/v1/run_function.proto (AGENTS.md
 # "Changing the scaffold"). Every tracked proto/run_function.proto - the files
-# Renovate's version-header rule reads: six templates, six goldens, nine
+# Renovate's version-header rule reads: five templates, five goldens, six
 # examples - is the upstream file byte for byte under a five-line header whose
 # first line names the release. A Renovate bump moves that version in every
 # header but can neither re-download the file nor regenerate the codecs checked

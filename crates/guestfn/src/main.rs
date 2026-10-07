@@ -76,7 +76,8 @@ struct InitCmd {
     /// Language of the project: go (function-sdk-go, an ABI v2 component
     /// over wit-bindgen's Go bindings), rust (prost, an ABI
     /// v2 component), zig (zig-protobuf over wit-bindgen's C bindings, an
-    /// ABI v2 component, ~60 KB), c (nanopb, built by zig cc, ~70 KB), ts
+    /// ABI v2 component, ~60 KB), c (nanopb over the same C bindings, built
+    /// by zig cc, an ABI v2 component, ~62 KB), ts
     /// (protobuf-es, an ABI v2 component built by jco, ~14 MB) or python
     /// (protobuf, an ABI v2 component built by componentize-py, ~21 MB).
     #[arg(long, default_value = "go", value_parser = scaffold::LANGS)]
