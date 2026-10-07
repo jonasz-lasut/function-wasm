@@ -72,7 +72,8 @@ legitimate signal.
 
 **Bump the runtime-version references in docs to `$NEW_VERSION` before cutting**
 (there is no automated step for this): the `function-wasm` package tags in
-`README.md` (the Install snippet) and `examples/deployment-runtime-config-cedar.yaml`,
+`README.md` and `docs/operators/install.md` (the Install snippet) and
+`examples/deployment-runtime-config-cedar.yaml`,
 and any example whose Composition installs the function, should name the version
 being released, not the previous one - a copy-pasted install of a tag that does
 not exist yet fails. Find them with `git grep -n 'function-wasm:v[0-9]'` and

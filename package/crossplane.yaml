@@ -16,8 +16,9 @@ metadata:
       read from a field of the composite resource, and its config block is
       passed through untouched. One
       installed function serves any number of modules. See the
-      [README](https://github.com/jonasz-lasut/function-wasm)
-      for the guestfn CLI, the guest examples and documentation.
+      [documentation](https://jonasz-lasut.github.io/function-wasm/) for the guestfn CLI, the
+      guest examples and the operator's reference, and the
+      [repository](https://github.com/jonasz-lasut/function-wasm) for the source.
 spec:
   capabilities:
   - composition

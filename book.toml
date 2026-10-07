@@ -1,0 +1,28 @@
+# The documentation site (https://jonasz-lasut.github.io/function-wasm/),
+# built by mdBook from docs/ - the same directory the one-pagers and
+# docs/abi-v2.md live in, so nothing the code or the conformance goldens
+# name by path moves. docs/SUMMARY.md is the table of contents: mdBook
+# renders only the pages listed there. .github/workflows/docs.yml builds
+# it on every pull request that touches it and deploys main to GitHub Pages.
+[book]
+title = "function-wasm"
+description = "A Crossplane composition function that runs a WebAssembly module in a wasmtime sandbox"
+authors = ["The function-wasm Authors"]
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "book"
+
+[output.html]
+site-url = "/function-wasm/"
+git-repository-url = "https://github.com/jonasz-lasut/function-wasm"
+edit-url-template = "https://github.com/jonasz-lasut/function-wasm/edit/main/{path}"
+# The accent alludes to WebAssembly's purple over the built-in themes
+# (docs/theme/wasm.css overrides their CSS variables; no forked theme).
+default-theme = "light"
+preferred-dark-theme = "navy"
+additional-css = ["docs/theme/wasm.css"]
+
+[output.html.search]
+limit-results = 20

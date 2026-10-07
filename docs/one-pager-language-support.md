@@ -19,7 +19,7 @@ and small, so breadth comes from templates, not from a different runtime.
 "supporting a language" means moved with them: a language is *supported* when
 its toolchain produces a component implementing the world, and *tested* when
 a scaffold or example here runs through the guest suite and the render jobs
-(the README's "Other languages" states both sets). AssemblyScript, shipped
+(the "Other languages" page, `docs/guests/other-languages.md`, states both sets). AssemblyScript, shipped
 below as a v1 example, was retired after #114's spike: no wit-bindgen backend,
 the project declines the component model, and hand-written canonical-ABI glue
 carries `run` and `log` (17.9 KB) but makes `wasi:http` a hand-maintained
@@ -100,7 +100,7 @@ done for every candidate below:
    detecting the toolchain from the project (or `--lang`), the vendored
    `run_function.proto` refreshed by `vendorproto.go` where the language
    compiles it.
-3. `docs/abi.md` "Examples" and the README scaffold table (toolchain, how it
+3. `docs/abi.md` "Examples" and the scaffold table of `docs/guests/other-languages.md` (toolchain, how it
    talks protobuf, module size); the ABI glue and the `wasmfn.http` helper
    in the open (~40 and ~100 lines today) — the reference for the next
    language.

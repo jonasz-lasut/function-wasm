@@ -12,3 +12,6 @@ target/
 node_modules/
 target/
 /.cache
+
+# The mdBook output (book.toml: build-dir).
+/book

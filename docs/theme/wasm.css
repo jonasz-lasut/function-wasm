@@ -1,0 +1,81 @@
+/* The accent of the documentation site: WebAssembly's purple (#654FF0 on
+   light backgrounds, #8B74FF on dark ones), laid over mdBook's built-in
+   themes by overriding their CSS variables. Body text and backgrounds stay
+   the themes' own, so the pages read as they did; only links, the sidebar's
+   active and hovered entries, inline code, blockquote borders, the search
+   highlight, the "on this page" border and the theme menu's selection take
+   the colour. Colours only: the WebAssembly logo is a trademark and is not
+   embedded. Loaded through book.toml's additional-css. */
+
+:root {
+    --wasm-purple: #654FF0;
+    --wasm-purple-light: #8B74FF;
+}
+
+/* Light themes: the default theme, and the no-JavaScript fallback. */
+.light,
+html:not(.js) {
+    --links: var(--wasm-purple);
+    --sidebar-active: var(--wasm-purple);
+    --sidebar-header-border-color: var(--wasm-purple);
+    --inline-code-color: #4a38c2;
+    --quote-bg: #f6f4fe;
+    --quote-border: #ddd7fb;
+    --theme-hover: #ede9fe;
+    --search-mark-bg: #d6cdfb;
+    --searchresults-li-bg: #ede9fe;
+    --searchbar-shadow-color: #b9adf8;
+    --footnote-highlight: #c9bfff;
+    /* Same as --sidebar-active, for the copy button's hover. */
+    --copy-button-filter-hover: invert(31%) sepia(72%) saturate(3580%) hue-rotate(238deg) brightness(97%) contrast(96%);
+}
+
+/* The rust theme is light too; it keeps its own warm palette but takes the
+   accent where the other light theme does. */
+.rust {
+    --links: var(--wasm-purple);
+    --sidebar-active: var(--wasm-purple-light);
+    --sidebar-header-border-color: var(--wasm-purple-light);
+}
+
+/* Dark themes: navy is the preferred dark theme; coal and ayu, and the
+   no-JavaScript fallback under a dark colour scheme, take the same accent so
+   switching themes keeps the site's colour. */
+.navy,
+.coal,
+.ayu {
+    --links: var(--wasm-purple-light);
+    --sidebar-active: var(--wasm-purple-light);
+    --sidebar-header-border-color: var(--wasm-purple-light);
+    --inline-code-color: #b7a9ff;
+    --quote-bg: #232040;
+    --quote-border: #3d3575;
+    --theme-hover: #2a2748;
+    --search-mark-bg: #4a3aa8;
+    --searchresults-li-bg: #2a2748;
+    --searchbar-shadow-color: var(--wasm-purple-light);
+    --footnote-highlight: #4a3aa8;
+    /* Same as --sidebar-active, for the copy button's hover. */
+    --copy-button-filter-hover: invert(52%) sepia(44%) saturate(4262%) hue-rotate(226deg) brightness(101%) contrast(101%);
+}
+
+@media (prefers-color-scheme: dark) {
+    html:not(.js) {
+        --links: var(--wasm-purple-light);
+        --sidebar-active: var(--wasm-purple-light);
+        --sidebar-header-border-color: var(--wasm-purple-light);
+        --inline-code-color: #b7a9ff;
+        --quote-bg: #232040;
+        --quote-border: #3d3575;
+        --theme-hover: #2a2748;
+        --search-mark-bg: #4a3aa8;
+        --searchresults-li-bg: #2a2748;
+        --searchbar-shadow-color: var(--wasm-purple-light);
+        --footnote-highlight: #4a3aa8;
+    }
+}
+
+/* The theme menu marks the selected theme in the accent. */
+.theme-popup .theme-selected {
+    color: var(--links);
+}

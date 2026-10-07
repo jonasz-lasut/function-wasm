@@ -11,7 +11,8 @@ pub const API_VERSION: &str = "wasm.fn.crossplane.io/v1";
 pub const KIND: &str = "Input";
 
 /// The Input's apiVersion before 1.0.0: the same fields and rules as v1,
-/// accepted throughout 1.x under the README's deprecation policy and
+/// accepted throughout 1.x under the deprecation policy
+/// (docs/contract/compatibility.md) and
 /// removed in 2.0.0.
 pub const API_VERSION_V1BETA1: &str = "wasm.fn.crossplane.io/v1beta1";
 

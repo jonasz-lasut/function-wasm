@@ -27,7 +27,7 @@ guest language the project takes on adds one
 | Crossplane CLI (`crossplane render`) | contributor's install | `curl … crossplane/master/install.sh` — **latest release, unpinned** |
 | Docker (the render engine runs in a container; the image build) | Docker Desktop / colima | the runner's Docker |
 
-Three of those float, and the README's "Building" section is a list of
+Three of those float, and the Development page (`docs/project/development.md`) is a list of
 installers a new contributor follows by hand. On the owner's machine
 `tinygo`, `protoc`, `golangci-lint` and `crossplane` already resolve through
 a [devbox](https://www.jetify.com/devbox) global profile — a Nix store
@@ -83,9 +83,9 @@ dependency graphs Nix can only see when they are vendored or hashed).
 - One declaration of the toolchain that local development and CI both use,
   pinned by `flake.lock` the way `go.sum` and `Cargo.lock` pin dependencies.
 - Zero cost for a contributor who does not use Nix: `make`, `go test`,
-  `cargo test` and the README's per-tool instructions keep working unchanged.
+  `cargo test` and the Development page's per-tool instructions keep working unchanged.
 - A place for the toolchains new guest languages bring (Zig, wasi-sdk,
-  AssemblyScript/Node) that does not turn the README into an installer list.
+  AssemblyScript/Node) that does not turn the Development page into an installer list.
 - CI toolchain versions that stop floating.
 
 Nothing here gates `v0.1.0`: the shell is opt-in and every phase is
@@ -126,7 +126,7 @@ and `devShells.default = pkgs.mkShell { packages = [ … ]; }` listing:
 
 `flake.lock` is committed and refreshed deliberately (`nix flake update` in
 its own PR; Renovate's `nix` manager can open those). `.envrc` with
-`use flake` for direnv users. `README.md` "Building" gains one line ahead of
+`use flake` for direnv users. `docs/project/development.md` gains one line ahead of
 the per-tool instructions: `nix develop` (or `direnv allow`) gives every
 tool below. CI gains **one** job — `DeterminateSystems/nix-installer-action`
 (or `cachix/install-nix-action`, which upstream uses) plus
@@ -186,7 +186,7 @@ the non-goal above stands until then.
 | `devbox.json` in the repo | not instead | it is Nix underneath with a friendlier CLI; a `flake.nix` is the more standard artifact for an OSS repository and its GitHub Actions path is better trodden; devbox users can consume the flake |
 | mise / asdf (`.tool-versions`) | not instead | pins versions but not builds — each plugin shells out to the tool's own installer; weaker on exactly the axis (wasi-sdk, protoc plugins, Rust targets) that motivates this |
 | devcontainer | complement | editor/Codespaces integration; could run `nix develop` inside; not a substitute for a shell on bare metal |
-| status quo | the baseline | three floating versions in CI, an installer list in the README, every new guest language adds to both |
+| status quo | the baseline | three floating versions in CI, an installer list in the Development page, every new guest language adds to both |
 
 ## Open questions
 

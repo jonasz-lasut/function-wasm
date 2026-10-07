@@ -2,7 +2,7 @@
 
 ABI v2 is the guest contract of function-wasm: a guest is a WebAssembly
 **component** targeting the WIT world `wasmfn:function@2.0.0`
-([`wit/wasmfn-function.wit`](../wit/wasmfn-function.wit)). The payload is
+([`wit/wasmfn-function.wit`](https://github.com/jonasz-lasut/function-wasm/blob/main/wit/wasmfn-function.wit)). The payload is
 protobuf: `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out,
 so payload evolution stays protobuf's job; the canonical ABI owns memory
 movement, so a guest carries no allocator export and no pointer packing of

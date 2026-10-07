@@ -169,7 +169,7 @@ render --include-function-results` and the XR condition say *why*.
 `--attach-guest-panic` (default true) are the knobs. Cost: a create, a stat
 and a remove per run — tens of microseconds against a Go guest's 8–11 ms,
 comparable to a Rust guest's 50 µs — measured in phase 2 and stated in the
-README's sizing table; the flag is for runtimes serving microsecond-class
+sizing table (`docs/operators/sizing.md`); the flag is for runtimes serving microsecond-class
 modules at high rate. stdout stays inherited.
 
 **Readable traps.** `guestfn build --debug` keeps the `name` section and
