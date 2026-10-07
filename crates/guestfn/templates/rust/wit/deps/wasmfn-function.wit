@@ -1,8 +1,8 @@
 /// The function-wasm guest contract, ABI v2 (docs/abi-v2.md).
 ///
-/// A guest is a WebAssembly component targeting this world; the binary format
-/// is the ABI version (a component is ABI v2, a core module is ABI v1). The
-/// payload contract is v1's, unchanged: protobuf RunFunctionRequest bytes in,
+/// A guest is a WebAssembly component targeting this world; a core module is
+/// refused at load (ABI v1, the core-module contract, was removed in
+/// function-wasm 1.0.0). The payload is protobuf: RunFunctionRequest bytes in,
 /// RunFunctionResponse bytes out - payload evolution stays protobuf's job.
 /// The world is final: 2.0.0 is the contract from function-wasm 1.0.0 on. A
 /// 2.x minor may add imports a guest may use and nothing else; run, log and
