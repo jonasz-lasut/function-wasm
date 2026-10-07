@@ -214,7 +214,7 @@ a WebAssembly *component* targeting the `wasmfn:function@2.0.0-draft` WIT
 world, with the same protobuf payload, a typed `log` import and `wasi:http`
 egress behind the same host policy. The binary format is the ABI version - a
 component is v2, a core module is v1 - and this v1 contract is served
-indefinitely alongside it. The v2 contract lives in
+beside it until 1.0.0 (deprecated from v0.6.0). The v2 contract lives in
 [`docs/abi-v2.md`](abi-v2.md); the design rationale in
 `docs/one-pager-abi-v2.md` and `docs/one-pager-language-support.md`.
 

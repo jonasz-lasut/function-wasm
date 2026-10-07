@@ -218,13 +218,16 @@ guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest
 ```
 
 `guestfn build` ends with the verdict the runtime reaches when it loads the
-module — `Built fn.wasm (74.2 MB, ABI v2, imports log)`, or for an ABI v1
-module `Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http wasmfn.log)`
-followed by the deprecation warning the runtime logs
-on every load of one (see [Other languages](#other-languages))
-— and fails, in the runtime's words, on a module the runtime would refuse
-(`module does not export "wasmfn_run"`); `guestfn push` refuses to publish
-such a module for the same reason. The check is the runtime's own: `guestfn`
+module - for the Go scaffold `Componentized fn.wasm (wasip1 adapter linked)`
+(the wrap), then `Built fn.wasm (74.9 MB, ABI v2, imports log; manifest:
+greeter 0.1.0; config schema)`; for an ABI v1 module built with the pre-v2
+glue `Built fn.wasm (73.9 MB, ABI v1, imports wasmfn.http wasmfn.log)`
+followed by the deprecation warning the runtime logs on every load of one
+(see [Other languages](#other-languages)) - and fails, in the runtime's
+words, on a module the runtime would refuse (`component does not implement
+the wasmfn:function world: …`; for a core module, `module does not export
+"wasmfn_run"`); `guestfn push` refuses to publish such a module for the
+same reason. The check is the runtime's own: `guestfn`
 compiles the module with the same wasmtime engine (a couple of seconds for a
 large Go module), so what it prints is what a load says.
 `guestfn inspect fn.wasm` shows what the runtime sees — size, verdict,
@@ -498,7 +501,7 @@ operator's Cedar `--sandbox-policy-file` both permit it
 | `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names — an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` — e.g. `status.module`; read on every request and decoded strictly (a typo or a wrong shape is a fatal result naming the field), so each XR can choose its module. What it may choose is fenced by `compositionPolicy` (`pullModule`, default-deny). A field the XR leaves unset is a fatal result naming it, unless `module.allowEmpty` says otherwise |
 | `module.allowEmpty` | bool | *optional*, with `module.from` only - `true` lets the composite resource leave the field unset (absent, or `null`): the step then runs no module and returns the request's desired state and context unchanged, a no-op the pipeline continues past, instead of a fatal result. This is the reserved hook a platform team ships before any tenant fills it in, and the smoke test of a runtime with no module published yet. A field that is set is read, fenced and run exactly as without it. Read from the Input only, so an XR may leave a step empty only where the Composition allows it; refused without `module.from`. A skipped step is logged and counted as `requests_total{outcome="skipped"}` |
 | `compositionPolicy` | string | the composition author's own Cedar policy layer, over the same schema as the operator's `--sandbox-policy-file` (actions `pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv`; a `Request` principal carrying `namespace` and `xrKind`; `Repository`, `HostPattern`, `Capability` and `Credential` entities). AND-combined with the module's manifest and the operator's policy, so it can only narrow. Two regimes: a sandbox action it scopes no rule for is not narrowed (the operator and the manifest decide alone), while a module chosen through `module.from` is refused unless a `pullModule` permit matches its normalized location - matched over a boundary-correct `Repository` hierarchy, so `Repository::"ghcr.io/example-org"` admits `ghcr.io/example-org/mod` but never the sibling namespace `ghcr.io/example-org-other/...` - and may spend a step credential only where a `spendCredential` permit matches (`context.repository` carries the ref's location). **Required whenever `module.from` names an `OCI` or `HTTP` source** — an unfenced XR author could point the runtime at any host and read what its answer says. Read from the Input only; malformed Cedar is a fatal result at admission |
-| `limits.timeout` | duration | compute budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). Time the run spends waiting on `wasmfn.http` answers is credited back, so a slow upstream does not spend the budget; the request's own gRPC deadline is the hard wall-clock cap and still applies if shorter |
+| `limits.timeout` | duration | compute budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result naming both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). Time the run spends waiting on the host's HTTP answers (`wasi:http`, or ABI v1's `wasmfn.http`) is credited back, so a slow upstream does not spend the budget; the request's own gRPC deadline is the hard wall-clock cap and still applies if shorter |
 | `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`; at most `--module-memory-limit`, else a fatal result naming both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
 | `limits.concurrency` | int32 | at most N runs of this step at once, across all requests, keyed by the module's content digest. A further request waits under its own context; when the deadline passes first, it is a fatal result that consumed nothing and is not counted as a run. A value above `--max-concurrent-runs` is silently capped. No ceiling flag: this only narrows |
 | `config` | object | opaque, passed to the module untouched inside the request input; a Go guest reads it with `wasmfn.GetConfig`. Non-secret module configuration belongs here - the module's environment comes only from its manifest's `requires.env` credential bindings |
@@ -655,7 +658,7 @@ validate --resolve` applies the same check offline.
 ## HTTP egress
 
 A module can be granted HTTP(S) requests **through the host**: it never
-opens a socket (wasip1 has none), it asks the runtime, and the runtime
+opens a socket (the sandbox links none), it asks the runtime, and the runtime
 resolves the name, refuses addresses on its block list, terminates TLS with
 its own roots, checks the host, method and path against the rules its
 manifest declared and the policy layers granted, follows redirects within
@@ -811,9 +814,10 @@ your organisation signed run.
    ten minutes after their last use), then wasmtime artifacts on disk, then
    fetched modules on disk under `/tmp/function-wasm-cache`. Only a module
    never seen by this node is fetched (verified against its digest, written
-   to disk) and compiled — about two seconds for a 75 MB Go module; a
-   module without the ABI's exports, or importing what the host does not
-   provide, is refused here — and its artifact written to disk. Restarts and
+   to disk) and compiled - about two seconds for a 75 MB Go module; a
+   component that does not implement the world, or a core module without
+   ABI v1's exports or importing what the host does not provide, is refused
+   here - and its artifact written to disk. Restarts and
    registry outages need no network. Details in
    [docs/one-pager-cache.md](docs/one-pager-cache.md). The module's
    [manifest](#module-manifests), if its artifact carries one, is then the
@@ -834,10 +838,11 @@ your organisation signed run.
    Go panic's stack shows up in `kubectl logs`.
 4. The response is returned as the module produced it. A trap, timeout
    (`limits.timeout` or `--module-timeout` - guest compute, with time spent
-   waiting on `wasmfn.http` credited back - or the request deadline if
-   sooner), memory limit (`limits.memory` or `--module-memory-limit`) or an
-   unusable module is a fatal result naming the module — never a crashed
-   function pod. So is a request that, with `--max-concurrent-runs` set,
+   waiting on the host's HTTP answers credited back - or the request
+   deadline if sooner), memory limit (`limits.memory` or
+   `--module-memory-limit`) or an unusable module is a fatal result naming
+   the module - never a crashed function pod. So is a request that, with
+   `--max-concurrent-runs` set,
    reaches its deadline while waiting for a run slot (`waiting for a run
    slot: context deadline exceeded`): it never ran.
 
@@ -1023,11 +1028,15 @@ which is the point.
 ## Sizing
 
 What a request and a module cost depends almost entirely on the guest's
-toolchain — the host adds about 60 µs. Measured on linux/arm64 with the
-example guests (a `function-sdk-go` Go guest, a raw-proto Go guest using
-only the vendored glue, TinyGo, Rust):
+toolchain - the host adds about 60 µs. A historical measurement
+(2026-08-16, linux/arm64, the ABI v1 guests of the time: a
+`function-sdk-go` Go guest, a raw-proto Go guest using only the vendored
+glue, TinyGo, Rust), kept as the order of magnitude per toolchain: the
+TinyGo flavour has since been retired and the other guests are ABI v2
+components (the Go module's size and compile cost did not move; the Rust
+scaffold is now ~240 KB):
 
-| | Go (~75 MB) | Go, raw proto (~20 MB) | TinyGo (~1.4 MB) | Rust (~150 KB) |
+| | Go (~75 MB) | Go, raw proto (~20 MB) | TinyGo (~1.4 MB, retired) | Rust (~150 KB) |
 |---|---|---|---|---|
 | one request (CPU) | 8–11 ms, 91 % of it the Go runtime's own init | 1.2 ms | 0.4 ms | 0.05 ms |
 | first compile of a module | 23–28 CPU-seconds, ~1 GB peak | 6 CPU-s | 1 CPU-s | 0.1 CPU-s |
@@ -1072,7 +1081,7 @@ format never changes what a dashboard sees:
 | `function_wasm_module_cache_events_total` | `cache` = compiled (memory), compiled-disk, blob; `event` = hit, miss, stale (compiled-disk only: an artifact wasmtime refused) | cache lookups |
 | `function_wasm_module_cache_bytes` | `cache` = compiled-disk, blob | bytes on disk per store, measured every ten minutes |
 | `function_wasm_module_http_requests_total` | `outcome` = ok, refused, budget, error | HTTP requests modules made through the host (`sandbox.egress`): the server answered; refused by the grant or the egress policy; a per-run budget or the timeout was hit; the request failed. No host label — the audit log line names it |
-| `function_wasm_module_hostcall_duration_seconds` | | histogram of the slice of a run spent inside host imports (`wasmfn.log`, `wasmfn.http` and WASI); the rest of `run_duration_seconds` is guest compute. A run that is slow here is waiting on the host - usually an upstream `wasmfn.http` talks to |
+| `function_wasm_module_hostcall_duration_seconds` | | histogram of the slice of a run spent inside host imports (the `log` import, HTTP egress - `wasi:http`, or ABI v1's `wasmfn.http` - and WASI); the rest of `run_duration_seconds` is guest compute. A run that is slow here is waiting on the host - usually an upstream the module's HTTP requests talk to |
 | `function_wasm_module_memory_denials_total` | `reason` = limit, pool | guest memory growths denied - at the run's ceiling (`limits.memory` or `--module-memory-limit`) or because `--max-total-run-memory` could not serve the growth before the run's deadline. The guest sees `memory.grow` fail |
 | `function_wasm_module_loads_total` | `abi` = 1, 2 | module loads by ABI - a wasmtime compile or a compiled-artifact read, once per load rather than per request (a memory-cache hit is not a load). `abi="1"` is how much deprecated ABI v1 a deployment still serves; each such load also logs the deprecation warning |
 
@@ -1231,8 +1240,9 @@ toolchain, zig, npm, python3) are on PATH, and skip the ones that are not. See
 
 Design documents live under `docs/` as one-pagers: the implemented ones
 (cache, module source schema, trust model, resource governance, sandbox,
-admission and inspection tooling, the module manifest, the three-layer
-authorization model, governance and performance phases, the use-case examples) and the drafts of
-what comes next (guest language support, sandbox requests for
-manifest-less sources, a Nix development environment).
+admission and inspection tooling, the module manifest, manifest-less
+sources, the three-layer authorization model, the policy engine,
+governance and performance phases, the use-case examples) and the drafts
+(ABI v2 on the component model, guest language support, a Nix development
+environment).
 [AGENTS.md](AGENTS.md#key-reference-documents) lists them.
