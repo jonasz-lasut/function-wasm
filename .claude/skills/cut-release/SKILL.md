@@ -83,11 +83,9 @@ no separate SDK version to bump.
 (`SECURITY.md`: users ship what `guestfn init` writes; Renovate cannot read
 `.tmpl`). Move each to its latest release: function-sdk-go
 (`FALLBACK_SDK_VERSION` in `crates/guestfn/src/main.rs`, plus the
-`sdk_version` in `scaffold.rs`'s tests), the go and tinygo `go.mod.tmpl`
-(the go one's grpc floor too, dropped once a function-sdk-go release
-requires grpc v1.83 or newer)
-(after a protobuf or vtprotobuf move, regenerate the tinygo codec with
-`make -C examples/hello-tinygo generate` and copy it into the templates),
+`sdk_version` in `scaffold.rs`'s tests), the go `go.mod.tmpl`
+(its grpc floor too, dropped once a function-sdk-go release
+requires grpc v1.83 or newer),
 the rust `Cargo.toml.tmpl`, the zig and c `build.zig.zon.tmpl`
 (`zig fetch --save <url>` writes url and hash), the ts
 `package.json.tmpl`'s devDependency ranges (then `npm install` in

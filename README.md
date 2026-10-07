@@ -92,7 +92,7 @@ Composition.
   Rolling forward or back is a digest change in the Composition; nothing is
   reinstalled and every other Composition on the same runtime is untouched.
 - **Many small functions, one runtime.** Teams keep their own modules,
-  possibly in their own languages (Go, TinyGo, Rust — see the
+  possibly in their own languages (Go, Rust, Python, see the
   [size table](#other-languages)); the cluster runs one function-wasm, which
   compiles each module once per digest and caches it.
 - **Restricted networks.** Modules can come from an internal registry, an
@@ -181,7 +181,7 @@ Install the CLI and scaffold a project:
 ```shell
 cargo install --git https://github.com/jonasz-lasut/function-wasm guestfn
 
-guestfn init greeter --module github.com/example/greeter   # --lang go (default), tinygo, rust, zig, c, ts or python
+guestfn init greeter --module github.com/example/greeter   # --lang go (default), rust, zig, c, ts or python
 cd greeter
 ```
 
@@ -201,7 +201,7 @@ runtime calls, decodes the request, calls your `RunFunction`, encodes the
 response, and gives you a `logging.Logger` that logs through the runtime. Your
 function knows nothing about WebAssembly, and `wasmfn.GetConfig(req, &cfg)`
 hands you the Input's `config` block. Edit it if you need to; it is yours, like
-the ABI glue the TinyGo and Rust scaffolds carry.
+the ABI glue the Zig and C scaffolds carry.
 
 ```shell
 go test ./...                                   # unit tests run natively
@@ -288,8 +288,8 @@ A language is *tested* when this repository works with it: a scaffold or an
 example here, built and run through the host by the guest suite and the render
 jobs on every `/e2e`. Tested on ABI v2: Rust, TypeScript, Python and C#.
 Tested on ABI v1, and moving to v2 before v0.6.0 under
-[#114](https://github.com/jonasz-lasut/function-wasm/issues/114): Go, TinyGo,
-Zig and C. A supported language that is not tested is expected to work, and a
+[#114](https://github.com/jonasz-lasut/function-wasm/issues/114): Go, Zig
+and C. A supported language that is not tested is expected to work, and a
 guest we can run is what moves it into the tested set. A language with no
 component path is not supported: AssemblyScript was retired for that reason
 (#114, 2026-10-07).
@@ -303,12 +303,19 @@ scaffold as ABI v2 components, the rest as ABI v1 modules:
 | `guestfn init --lang` | example | toolchain | how it talks protobuf | module size |
 |---|---|---|---|---|
 | `go` (default) | [`examples/pdb-addon`](examples/pdb-addon) | Go + function-sdk-go (vendored `internal/wasmfn` glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
-| `tinygo` | [`examples/hello-tinygo`](examples/hello-tinygo) | [TinyGo](https://tinygo.org) | protobuf-go message types + [vtprotobuf](https://github.com/planetscale/vtprotobuf)'s reflection-free codecs, generated from the vendored proto (shipped pre-generated; `go generate` + protoc to redo) | ~1.8 MB |
 | `rust` | [`examples/cloudflare-origin`](examples/cloudflare-origin) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) - **an ABI v2 component**, async `run` + `wasi:http` fetch ([docs/abi-v2.md](docs/abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
 | `zig` | [`examples/hello-zig`](examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (a single binary; `protoc` only to regenerate) | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto, generated codec checked in | ~95 KB |
 | `c` | [`examples/hello-c`](examples/hello-c) | C via `zig cc` (the same zig binary, no wasi-sdk; `nanopb_generator` only to regenerate) | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in), [cJSON](https://github.com/DaveGamble/cJSON) for the host payloads | ~70 KB |
 | `ts` | [`examples/policy-gate`](examples/policy-gate) | node + npm: [esbuild](https://esbuild.github.io) bundles, [jco](https://github.com/bytecodealliance/jco) componentizes - **an ABI v2 component**, sync-lifted `run`, `fetch()` over `wasi:http@0.2` | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto (`js+dts` codec checked in; `npm run gen-proto` + protoc to redo) | ~14 MB (SpiderMonkey) |
 | `python` | [`examples/team-tags`](examples/team-tags) | `python3` (a venv with [componentize-py](https://github.com/bytecodealliance/componentize-py)) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2` | protoc's Python codec over the vendored proto (checked in), on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
+
+**TinyGo** is possible if needed: #114's spike built this greeting guest as a
+1.5 MB ABI v2 component on TinyGo's own `wasip2` target with
+[wit-bindgen-go](https://github.com/bytecodealliance/go-modules) (vtprotobuf
+for the codec, since protobuf-go's panics under TinyGo), at 0.4 s of runtime
+compile and 1.8 ms a run. It has no scaffold or test here: that generator is
+unmaintained since 2025-05, and TinyGo cannot use componentize-go's bindings
+(tinygo#4072), so the `go` flavour above is the one this repository carries.
 
 A **C#** ABI v2 guest exists as an example only as well
 ([`examples/dashboard-bundle`](examples/dashboard-bundle), ~4.5 MB; the
@@ -342,12 +349,12 @@ like the TypeScript guest; `guestfn build` makes the venv from
 `guestfn build` picks the toolchain from the project (`Cargo.toml` → cargo,
 targeting `wasm32-wasip3` when the project carries a `wit/` directory and
 `wasm32-wasip1` otherwise; a `build.zig` → zig, for the zig and c guests
-alike; a `package.json` without an `asconfig.json` → npm, for the
+alike; a `package.json` → npm, for the
 TypeScript guest; a `requirements.txt` → a venv with componentize-py, for
-the Python guest; a `go.mod` requiring vtprotobuf → tinygo; otherwise go)
+the Python guest; a `go.mod` → go)
 or takes `--lang`. Every flavour carries
-its ABI glue in the open — the Go scaffold vendors it under `internal/wasmfn`,
-TinyGo, Rust, Zig and C carry theirs beside the module — with a small HTTP
+its ABI glue in the open: the Go scaffold vendors it under `internal/wasmfn`,
+Zig and C carry theirs beside the module, with a small HTTP
 helper over `wasmfn.http`; each example
 has a `make render-check` that runs it through the runtime and asserts what it
 composes with an [xprin](https://github.com/crossplane-contrib/xprin) suite,
@@ -724,9 +731,8 @@ hands the response back. Three parties, in the order they decide:
 
    Inject the client into your function so native tests can substitute an
    `httptest` server; outside a wasip1 build the transport fails with
-   `wasmfn.ErrNoHostHTTP`. The TinyGo and Rust scaffolds ship the same in
-   about a hundred lines each — `HTTPGet`/`HTTPDo` in `http.go`, `http::get`/
-   `http::send` in `src/http.rs` — over the `wasmfn.http` import (its JSON
+   `wasmfn.ErrNoHostHTTP`. The Zig and C scaffolds ship the same (the http helpers in
+   `src/main.zig` and `src/wasmfn.c`) over the `wasmfn.http` import (its JSON
    payload is in [docs/abi.md](docs/abi.md#http-egress)), with a swappable
    host so native tests can fake it.
    A request the host does not perform — no grant, host or method or path
@@ -1184,7 +1190,7 @@ test/e2e/oci/run.sh                                 # the OCI path end to end: r
 
 The workspace tests build every scaffold (what `guestfn init` writes) to
 WebAssembly and run them all through the host when
-their toolchains (go, tinygo, cargo with the rust scaffold's pinned
+their toolchains (go, cargo with the rust scaffold's pinned
 toolchain, zig, npm, python3) are on PATH, and skip the ones that are not. See
 [AGENTS.md](AGENTS.md) for the layout and conventions.
 

@@ -94,13 +94,16 @@ Design choices worth keeping:
 
 ### Languages not rewritten
 
-TinyGo, Zig and C stay unpublished hello examples while
+Zig and C stay unpublished hello examples while
 [#114](https://github.com/jonasz-lasut/function-wasm/issues/114) decides their
 path to ABI v2 or their retirement. The ABI v1 Rust example was removed: the
 rust scaffold and `cloudflare-origin` cover Rust as a component. The
 AssemblyScript example was retired (2026-10-07): no component-model path
 exists, and #114's spike showed that hand-written canonical-ABI glue carries
-`run` and `log` but makes `wasi:http` a hand-maintained cost.
+`run` and `log` but makes `wasi:http` a hand-maintained cost. The `tinygo`
+scaffold and `hello-tinygo` were retired the same day: TinyGo builds the world
+on its own `wasip2` target, but its bindings generator is unmaintained and the
+Go flavour cannot share it, so Go stays on componentize-go alone.
 
 ## Testing
 

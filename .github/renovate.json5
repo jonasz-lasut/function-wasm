@@ -221,32 +221,20 @@
     // gomod has no lock file maintenance, so the Go examples take regular
     // updates. `enabled` here also covers their indirect requirements,
     // which gomod extracts disabled. gomodTidy leaves go.mod and go.sum
-    // tidy, as the /e2e drift check for hello-tinygo requires.
+    // tidy, so a bump never leaves go.sum behind.
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/pdb-addon/go.mod', 'examples/hello-tinygo/go.mod'],
+      matchFileNames: ['examples/pdb-addon/go.mod'],
       enabled: true,
       postUpdateOptions: ['gomodTidy'],
     },
-    // ...except what the scaffold templates pin, which moves with a release
-    // instead: the go directive both stamp (it also picks the Go toolchain
-    // /e2e installs, and TinyGo bounds it), the go template's function-sdk-go
-    // (FALLBACK_SDK_VERSION in crates/guestfn/src/main.rs), and the tinygo
-    // template's three requirements, the versions its checked-in vtprotobuf
-    // codec was generated with - today all that hello-tinygo requires.
+    // ...except what the scaffold template pins, which moves with a release
+    // instead: the go directive (it also picks the Go toolchain /e2e
+    // installs) and the go template's function-sdk-go (FALLBACK_SDK_VERSION
+    // in crates/guestfn/src/main.rs).
     {
       matchFileNames: ['examples/pdb-addon/go.mod'],
       matchPackageNames: ['go', 'github.com/crossplane/function-sdk-go'],
-      enabled: false,
-    },
-    {
-      matchFileNames: ['examples/hello-tinygo/go.mod'],
-      matchPackageNames: [
-        'go',
-        'github.com/google/go-cmp',
-        'github.com/planetscale/vtprotobuf',
-        'google.golang.org/protobuf',
-      ],
       enabled: false,
     },
     // dashboard-bundle is example-only, with no template to drift from: its
@@ -301,13 +289,13 @@
     // the major is dropped.
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/pdb-addon/go.mod', 'examples/hello-tinygo/go.mod'],
+      matchFileNames: ['examples/pdb-addon/go.mod'],
       matchDepTypes: ['indirect'],
       separateMajorMinor: true,
     },
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/pdb-addon/go.mod', 'examples/hello-tinygo/go.mod'],
+      matchFileNames: ['examples/pdb-addon/go.mod'],
       matchDepTypes: ['indirect'],
       matchUpdateTypes: ['major'],
       enabled: false,
