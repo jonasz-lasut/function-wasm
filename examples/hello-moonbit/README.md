@@ -129,10 +129,14 @@ module (`moon build`), 107 KB wrapped; the runtime compiles it in ~170 ms.
   links to a trap.
 - **Never `println`.** It imports `spectest.print_char`, which no host
   provides; log through `@wasmfn.info` and friends (the world's `log`).
-- **Deprecation noise.** `moon check` and `moon build` print a few hundred
-  warnings from the generated code (`derive(Show)`, implicit impl-as-method
-  promotion, `try?`): the generators have not caught up with this moon.
-  They are warnings, not errors; the hand-written packages are clean.
+- **Deprecation noise, silenced per generated package.** The generated code
+  trips the deprecations this moonc added since its generators were written
+  (`derive(Show)`, implicit impl-as-method promotion), one warning per type:
+  some 240 per `moon check` or `moon build` otherwise. `make gen-bindings`
+  extends the `"warn-list": "-44"` wit-bindgen writes into every package with
+  their names, and `src/fnv1/moon.pkg` sets `warnings` by hand for
+  protoc-gen-mbt's codec. The hand-written packages keep every warning, and
+  are clean.
 - **Tests need the host injected.** `run_function` takes a `Host` struct of
   two functions; `hello_test.mbt` passes fakes. A test in a package that
   imports `src/wasmfn` would not instantiate on moonrun (the `log` import).

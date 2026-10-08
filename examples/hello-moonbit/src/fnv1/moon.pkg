@@ -1,3 +1,8 @@
+// protoc-gen-mbt 0.2.0 implements the protobuf runtime's traits the way
+// moonc now deprecates (implicit promotion of trait methods), one warning
+// per message; silenced until the generator follows the compiler.
+warnings = "-implicit_impl_as_method"
+
 import {
   "moonbitlang/protobuf" @lib,
   "moonbitlang/protobuf/google/protobuf",
