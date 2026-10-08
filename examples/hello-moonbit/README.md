@@ -101,7 +101,9 @@ make render-check                   # example/xprin.yaml (xprin on PATH, or XPRI
 Written and tested against `moon` 0.1.20260920 (`moonc` v0.10.14+7d59c7ec9,
 `moonrun` 0.1.20260920; the official installer,
 `curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash`, into
-`~/.moon`; the render job pins the same release by checksum),
+`~/.moon`, then `moon update` once: the installer does not fetch the
+registry index that resolves `moonbitlang/protobuf`; the render job pins
+the same release by checksum),
 `wit-bindgen-cli` 0.62.0 and `protoc-gen-mbt` 0.2.0 (`moonx
 moonbitlang/protoc-gen-mbt@0.2.0`, fetched on first use) with `protoc`
 3.x or newer for the regeneration targets only, and the
