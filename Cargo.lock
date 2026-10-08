@@ -1702,9 +1702,9 @@ checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
 name = "function-sdk-rust"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1e74a9b5174cd26367cd4e02b592f66ee71cc7216d5a2dcfec07de2c3945f41"
+checksum = "579051063ad02867b1f24016297aa98de8b8cef0ed73300d3bb97f09cf5e0583"
 dependencies = [
  "bytes",
  "clap",
@@ -1714,6 +1714,7 @@ dependencies = [
  "pbjson-types",
  "prometheus-client",
  "prost",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3176,7 +3177,7 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.21.7",
  "chrono",
  "getrandom 0.2.17",
  "http",
@@ -5190,7 +5191,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
