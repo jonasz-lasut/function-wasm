@@ -95,14 +95,14 @@ fn describe(code : @types.ErrorCode) -> String {
 ///|
 fn split_url(url : String) -> Result[(@types.Scheme, String, String), String] {
   let (scheme, rest) = if url.has_prefix("https://") {
-    (@types.Scheme::Https, url[8:].to_string())
+    (@types.Scheme::Https, url[8:].to_owned())
   } else if url.has_prefix("http://") {
-    (@types.Scheme::Http, url[7:].to_string())
+    (@types.Scheme::Http, url[7:].to_owned())
   } else {
     return Err("only http and https URLs work")
   }
   let (authority, path) = match rest.find("/") {
-    Some(slash) => (rest[:slash].to_string(), rest[slash:].to_string())
+    Some(slash) => (rest[:slash].to_owned(), rest[slash:].to_owned())
     None => (rest, "/")
   }
   if authority == "" {
