@@ -1,15 +1,18 @@
 # The hello guest in MoonBit on ABI v2: needs moon (the MoonBit toolchain,
 # https://www.moonbitlang.com/download, its registry index fetched once by
-# moon update) on PATH and guestfn, which embeds the world (UTF-16) into the
-# core module moon links and wraps it into the component the runtime loads
-# (no wasm-tools, no adapter). wit-bindgen 0.62.0
-# is only needed to regenerate the checked-in bindings (make gen-bindings)
-# and protoc with protoc-gen-mbt 0.2.0 (run through moonx, no install) the
-# checked-in codec (make gen-proto). Render needs the crossplane CLI and
-# Docker.
+# moon update) on PATH and guestfn, which comes from this repository (cargo
+# run) and embeds the world (UTF-16) into the core module moon links and
+# wraps it into the component the runtime loads (no wasm-tools, no adapter).
+# wit-bindgen 0.62.0 is only needed to regenerate the checked-in bindings
+# (make gen-bindings) and protoc with protoc-gen-mbt 0.2.0 (run through
+# moonx, no install) the checked-in codec (make gen-proto). Render needs the
+# crossplane CLI and Docker, render-check also xprin. GUESTFN, FUNCTION_BIN
+# (read by ../render.sh) and XPRIN can name prebuilt binaries instead, as CI
+# does.
 .PHONY: build test lint gen-proto gen-bindings render render-check clean
 
-GUESTFN ?= guestfn
+ROOT := $(abspath ../..)
+GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 MODULE := jonasz-lasut/hello-moonbit
 PROTOC_GEN_MBT_VERSION := 0.2.0
 WIT_BINDGEN := wit-bindgen
