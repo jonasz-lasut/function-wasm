@@ -1,5 +1,5 @@
 {
-  "warn-list": "-44",
+  "warn-list": "-44-implicit_impl_as_method-deprecated_syntax-deprecated",
   "import": [
     { "path" : "jonasz-lasut/hello-moonbit/interface/wasi/http/types", "alias" : "types" }
   ]

@@ -319,8 +319,12 @@ examples/hello-moonbit      the same guest in MoonBit, an ABI v2 component and a
                             compiles the result in ~170 ms. Its own manifests are moon's
                             current moon.mod/moon.pkg format, the generated packages keep the
                             moon.pkg.json their generators write (moon fmt migrates manifests
-                            in place, so make lint checks the hand-written packages only); a
-                            guest never calls println (it imports spectest.print_char). Its
+                            in place, so make lint checks the hand-written packages only),
+                            their warn-list extended by make gen-bindings, and src/fnv1's
+                            moon.pkg sets warnings by hand, to silence the deprecations the
+                            generators trip (implicit_impl_as_method, derive(Show)) - some
+                            240 warnings per moon run otherwise, the hand-written packages
+                            keep every warning; a guest never calls println (it imports spectest.print_char). Its
                             xprin suite renders the configured greeting and one fetched through
                             the host's egress (example/policy.cedar, example/wasmfn.local.yaml
                             named by module.manifestPath, example/fixtures). ~107 KB

@@ -42,14 +42,22 @@ gen-proto: ## Regenerate src/fnv1 from proto/ (needs protoc; protoc-gen-mbt runs
 
 # The export package's config is generated too, and run.mbt (hand-written,
 # the run slot beside the bindings) needs the glue imported there, so it is
-# written back after the generator; and the generator writes each file's
-# FFI helpers in an order that changes from run to run, so sort-ffi.pl puts
-# them in one (the drift check in e2e.yml compares the result byte for byte).
+# written back after the generator; the generator writes each file's FFI
+# helpers in an order that changes from run to run, so sort-ffi.pl puts them
+# in one (the drift check in e2e.yml compares the result byte for byte); and
+# its code trips the deprecations this moonc added since (derive(Show),
+# implicit promotion of trait methods), one warning per type, so the
+# "warn-list": "-44" it writes into every package is extended with their
+# names - the hand-written packages keep every warning (src/fnv1's moon.pkg
+# does the same for protoc-gen-mbt's codec).
+GENERATED_WARN_LIST := -44-implicit_impl_as_method-deprecated_syntax-deprecated
+
 gen-bindings: ## Regenerate the wit-bindgen output under src/ from wit/ (needs wit-bindgen 0.62.0)
 	$(WIT_BINDGEN) moonbit wit --world function --out-dir src --ignore-module-file \
 		--project-name $(MODULE) --derive-show --derive-eq
-	printf '{\n  "warn-list": "-44",\n  "import": [\n    { "path": "$(MODULE)/wasmfn", "alias": "wasmfn" }\n  ]\n}\n' \
+	printf '{\n  "warn-list": "$(GENERATED_WARN_LIST)",\n  "import": [\n    { "path": "$(MODULE)/wasmfn", "alias": "wasmfn" }\n  ]\n}\n' \
 		> src/gen/world/function/moon.pkg.json
+	find src -name moon.pkg.json -exec perl -pi -e 's/"warn-list": "-44"/"warn-list": "$(GENERATED_WARN_LIST)"/' {} +
 	find src -name 'ffi*.mbt' -exec perl sort-ffi.pl {} +
 
 render: build ## Start the runtime serving this directory and crossplane render example/
