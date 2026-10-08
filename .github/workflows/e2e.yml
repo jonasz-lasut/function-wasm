@@ -723,7 +723,12 @@ jobs:
       # What the official installer does for one pinned release: the
       # toolchain tarball under ~/.moon, the core beside it, bundled for the
       # wasm and wasm-gc targets (the latter runs moon test), checksums
-      # verified first. The '+' in the release is URL-encoded.
+      # verified first. The '+' in the release is URL-encoded. Then what the
+      # installer leaves to the user: moon update clones the registry index
+      # that resolves moon.mod's moonbitlang/protobuf; without it moon check,
+      # test and build fail with "module was not found in the registry"
+      # (moonx needs no index, it fetches its pinned asset directly, which is
+      # why gen-proto passes without one).
       - name: Setup MoonBit
         run: |
           version="${MOON_VERSION/+/%2B}"
@@ -741,6 +746,7 @@ jobs:
           export PATH="${HOME}/.moon/bin:${PATH}"
           moon -C "${HOME}/.moon/lib/core" bundle --warn-list -a --all
           moon -C "${HOME}/.moon/lib/core" bundle --warn-list -a --target wasm-gc --quiet
+          moon update
           echo "${HOME}/.moon/bin" >> "$GITHUB_PATH"
           moon version --all
 

@@ -1,7 +1,8 @@
 # The hello guest in MoonBit on ABI v2: needs moon (the MoonBit toolchain,
-# https://www.moonbitlang.com/download) on PATH and guestfn, which embeds the
-# world (UTF-16) into the core module moon links and wraps it into the
-# component the runtime loads (no wasm-tools, no adapter). wit-bindgen 0.62.0
+# https://www.moonbitlang.com/download, its registry index fetched once by
+# moon update) on PATH and guestfn, which embeds the world (UTF-16) into the
+# core module moon links and wraps it into the component the runtime loads
+# (no wasm-tools, no adapter). wit-bindgen 0.62.0
 # is only needed to regenerate the checked-in bindings (make gen-bindings)
 # and protoc with protoc-gen-mbt 0.2.0 (run through moonx, no install) the
 # checked-in codec (make gen-proto). Render needs the crossplane CLI and
