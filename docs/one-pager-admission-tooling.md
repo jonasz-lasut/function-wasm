@@ -82,8 +82,8 @@ composition.yaml: Composition/hello pipeline[0] greeter: OK (oci ghcr.io/example
 composition.yaml: Composition/hello pipeline[1] labeler: refused: module oci ghcr.io/example/labeler@sha256:9d1c… requires egress GET to host "evil.example.com" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit
 ```
 
-`--resolve` goes one step further: `Resolve` + `Verify` (with `--cosign-key`)
-+ fetch through the same resolver, then `engine.Inspect` — the module
+`--resolve` goes one step further: `Resolve` + `Verify` (with
+`--cosign-key`) + fetch through the same resolver, then `engine.Inspect` — the module
 compiled with the runtime's own wasmtime engine, its size, ABI verdict and
 host imports reported (the module manifest of
 `docs/one-pager-module-manifest.md`, once it exists, is checked here too).

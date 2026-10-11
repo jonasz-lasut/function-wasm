@@ -22,7 +22,7 @@
 # change to a world, a re-vendoring of the WASI WIT, or a wit-bindgen bump
 # (the generated files' header names the version; e2e.yml's drift checks
 # install the same one).
-.PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens gen-bindings tools tools-clean
+.PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens vendor-docs-highlight gen-bindings tools tools-clean
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:
 
@@ -109,6 +109,38 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 
 vendor-proto-goldens: ## Refresh the guestfn scaffold goldens from the templates
 	UPDATE_GOLDENS=1 cargo test -p guestfn
+
+# The documentation site's Cedar highlighting (docs/theme/cedar.js) runs
+# cedar-policy/highlightjs-cedar's grammar on a private highlight.js 11 core,
+# each vendored under docs/theme as the upstream file beneath a one-line
+# header naming the release, which Renovate's version-header rules read. A
+# bump PR moves a header only, so it is the signal to run
+# `make vendor-docs-highlight` on the PR's branch: both files and their
+# licenses are fetched again at the versions the headers name.
+HLJS_CORE := docs/theme/highlightjs/core.min.js
+HLJS_CEDAR := docs/theme/highlightjs-cedar/hljs-cedar.esm.js
+HLJS_VERSION := $(shell sed -n '1s|^// Vendored from @highlightjs/cdn-assets \([0-9.]*\) .*|\1|p' $(HLJS_CORE))
+HLJS_CEDAR_VERSION := $(shell sed -n '1s|^// Vendored from cedar-policy/highlightjs-cedar \(v[0-9.]*\) .*|\1|p' $(HLJS_CEDAR))
+HLJS_CEDAR_URL := https://raw.githubusercontent.com/cedar-policy/highlightjs-cedar/$(HLJS_CEDAR_VERSION)
+
+vendor-docs-highlight: ## Re-vendor the docs site's highlight.js core and Cedar grammar, with their licenses, at the versions their headers name
+	@expr '$(HLJS_VERSION)' : '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$$' >/dev/null || \
+		{ echo "$(HLJS_CORE): line 1 names no @highlightjs/cdn-assets release (X.Y.Z)" >&2; exit 1; }
+	@expr '$(HLJS_CEDAR_VERSION)' : 'v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$$' >/dev/null || \
+		{ echo "$(HLJS_CEDAR): line 1 names no cedar-policy/highlightjs-cedar release (vX.Y.Z)" >&2; exit 1; }
+	@set -e; \
+	tarball=$$(mktemp); trap 'rm -f "$$tarball"' EXIT; \
+	echo "fetching @highlightjs/cdn-assets $(HLJS_VERSION)"; \
+	curl -fsSL -o "$$tarball" 'https://registry.npmjs.org/@highlightjs/cdn-assets/-/cdn-assets-$(HLJS_VERSION).tgz'; \
+	{ head -n 1 $(HLJS_CORE); tar -xzOf "$$tarball" package/es/core.min.js; } > $(HLJS_CORE).tmp; \
+	mv $(HLJS_CORE).tmp $(HLJS_CORE); \
+	tar -xzOf "$$tarball" package/LICENSE > $(dir $(HLJS_CORE))LICENSE; \
+	echo "fetching cedar-policy/highlightjs-cedar $(HLJS_CEDAR_VERSION)"; \
+	{ head -n 1 $(HLJS_CEDAR); curl -fsSL '$(HLJS_CEDAR_URL)/dist/hljs-cedar.mjs'; } > $(HLJS_CEDAR).tmp; \
+	mv $(HLJS_CEDAR).tmp $(HLJS_CEDAR); \
+	curl -fsSL -o $(dir $(HLJS_CEDAR))LICENSE '$(HLJS_CEDAR_URL)/LICENSE'; \
+	curl -fsSL -o $(dir $(HLJS_CEDAR))NOTICE '$(HLJS_CEDAR_URL)/NOTICE'
+	@echo "vendored highlight.js $(HLJS_VERSION) and highlightjs-cedar $(HLJS_CEDAR_VERSION): review git diff, then check the Cedar pages under mdbook serve"
 
 # The bindings are mirrored whole: wit-bindgen writes exactly the three files
 # the c and zig templates carry (function.c, function.h,

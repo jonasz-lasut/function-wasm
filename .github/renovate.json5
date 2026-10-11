@@ -129,6 +129,34 @@
       datasourceTemplate: 'crate',
       versioningTemplate: 'semver',
     },
+    {
+      // The documentation site's Cedar highlighting (docs/theme/cedar.js):
+      // the highlight.js 11 core and Cedar's own grammar, each vendored under
+      // docs/theme (not under a vendor/ directory: ignorePaths skips those)
+      // as the upstream file beneath a one-line header naming the release.
+      // Same tripwire as the proto: a bump PR moves the header and does NOT
+      // re-download the file, so run `make vendor-docs-highlight` on its
+      // branch, which fetches both at the versions their headers name, and
+      // check the Cedar pages render.
+      customType: 'regex',
+      description: 'highlight.js release the docs site runs the Cedar grammar on',
+      managerFilePatterns: ['/^docs/theme/highlightjs/core\\.min\\.js$/'],
+      matchStrings: [
+        'Vendored from @highlightjs/cdn-assets (?<currentValue>\\d+\\.\\d+\\.\\d+) ',
+      ],
+      depNameTemplate: '@highlightjs/cdn-assets',
+      datasourceTemplate: 'npm',
+    },
+    {
+      customType: 'regex',
+      description: 'cedar-policy/highlightjs-cedar release the docs site highlights Cedar with',
+      managerFilePatterns: ['/^docs/theme/highlightjs-cedar/hljs-cedar\\.esm\\.js$/'],
+      matchStrings: [
+        'Vendored from cedar-policy/highlightjs-cedar (?<currentValue>v\\d+\\.\\d+\\.\\d+) ',
+      ],
+      depNameTemplate: 'cedar-policy/highlightjs-cedar',
+      datasourceTemplate: 'github-releases',
+    },
   ],
   // Rules are evaluated in order; later rules win.
   packageRules: [
@@ -215,6 +243,13 @@
       matchManagers: ['custom.regex'],
       matchPackageNames: ['wasmtime-wasi-http'],
       enabled: true,
+    },
+    // The docs site's Cedar grammar is written for one highlight.js major,
+    // so a bump of either is judged with the other in one PR.
+    {
+      matchManagers: ['custom.regex'],
+      matchPackageNames: ['@highlightjs/cdn-assets', 'cedar-policy/highlightjs-cedar'],
+      groupName: 'docs Cedar highlighting',
     },
 
     // The monthly examples refresh. The examples are illustrative and never

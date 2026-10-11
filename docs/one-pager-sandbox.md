@@ -122,8 +122,8 @@ directory into a module: what a module can read is its request, what it can
 write is its private `/tmp`. `internal/authz.LoadOperatorPolicy`,
 `internal/egress.New` and `internal/sandbox.NewCeiling` check the policy once at
 startup - a `--sandbox-policy-file` that does not parse (a malformed ip-rule
-included), or an unwritable `$TMPDIR` when the policy can grant a private `/tmp`
-- and refuse to start rather than fail every request that would hit the mistake.
+included), or an unwritable `$TMPDIR` when the policy can grant a private
+`/tmp` - and refuse to start rather than fail every request that would hit the mistake.
 Between load and run `admission.AdmitRequires` decides the module's ask,
 giving the run its sandbox or a fatal result: with no policy, `module …
 requires a private /tmp (requires.filesystem.privateTmp), but the runtime has

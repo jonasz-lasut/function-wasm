@@ -28,9 +28,9 @@ is presently always empty). The actions are `usePrivateTmp`, `setEnv`,
 `Credential::"<name>"`, for egress the host or pattern within a
 boundary-correct `HostPattern` hierarchy, and the context carries the method
 and path. A separate, caller-independent action `requireSignature` (over the
-`Repository` hierarchy) decides which repositories must carry a cosign signature
-- see [signing](signatures.md). A policy that lets only `team-a` use a
-private `/tmp` and lets any namespace reach `*.example.com`:
+`Repository` hierarchy) decides which repositories must carry a cosign
+signature - see [signing](signatures.md). A policy that lets only `team-a`
+use a private `/tmp` and lets any namespace reach `*.example.com`:
 
 ```cedar
 permit (principal, action == Action::"usePrivateTmp", resource)
