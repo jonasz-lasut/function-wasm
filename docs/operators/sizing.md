@@ -18,8 +18,8 @@ scaffold is now ~240 KB):
 | on disk per module version | ~230 MB (module + artifact) | ~60 MB | 5 MB | 0.9 MB |
 | load from a warm volume | 6–8 ms | 2 ms | 0.2 ms | 0.05 ms |
 
-Rules of thumb: memory ≈ resident modules + `--max-concurrent-compiles` × 1 GB
-+ concurrent runs × 16 MB (`--max-concurrent-runs` caps that last term when
+Rules of thumb: memory ≈ resident modules + `--max-concurrent-compiles` ×
+1 GB + concurrent runs × 16 MB (`--max-concurrent-runs` caps that last term when
 the caller's concurrency is not the number you want to size for); a cold
 start compiles every module once, so ten Go modules on two cores take about
 two minutes and a warm volume under `/tmp/function-wasm-cache` turns that
