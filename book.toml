@@ -23,6 +23,9 @@ edit-url-template = "https://github.com/jonasz-lasut/function-wasm/edit/main/{pa
 default-theme = "light"
 preferred-dark-theme = "navy"
 additional-css = ["docs/theme/wasm.css"]
+# mdBook's highlight.js has no Cedar grammar; docs/theme/cedar.js highlights
+# the ```cedar blocks with Cedar's own (vendored beside it in docs/theme/).
+additional-js = ["docs/theme/cedar.js"]
 
 [output.html.search]
 limit-results = 20

@@ -424,8 +424,11 @@ docs/abi-v2.md              the host/guest contract: the component world every s
 book.toml, docs/SUMMARY.md  the documentation site (mdBook over docs/; "Documentation site" below):
                             the manual's pages under docs/guests, docs/operators, docs/contract and
                             docs/project, the one-pagers and docs/abi-v2.md listed beside them,
-                            docs/theme/wasm.css the accent stylesheet; .github/workflows/docs.yml
-                            builds, link-checks and deploys it
+                            docs/theme/wasm.css the accent stylesheet, docs/theme/cedar.js the
+                            Cedar code-block highlighting (Cedar's own highlightjs-cedar grammar on a
+                            private highlight.js 11 core, both vendored under docs/theme/ with their
+                            licenses: mdBook's bundled 10.1.1 cannot load it);
+                            .github/workflows/docs.yml builds, link-checks and deploys it
 ```
 
 ## Key Concepts
