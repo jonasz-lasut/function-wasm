@@ -41,6 +41,6 @@ wit-component = "0.258.3"
 wit-parser = "0.258.3"
 
 [dev-dependencies]
-function-sdk-rust = "0.3.0"
+function-sdk-rust = "0.4.0"
 prost = "0.14"
 wat = "1"
