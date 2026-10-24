@@ -490,7 +490,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14'
+          python-version: '3.15'
 
       - name: Setup nanopb_generator
         run: pip install nanopb==0.4.9.1
@@ -606,7 +606,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14'
+          python-version: '3.15'
 
       - name: Setup nanopb_generator
         run: pip install nanopb==0.4.9.1
@@ -1014,7 +1014,7 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
-          cosign-release: 'v3.1.3'
+          cosign-release: 'v3.1.4'
 
       - name: Setup the Crossplane CLI
         run: |
