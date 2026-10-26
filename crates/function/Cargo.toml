@@ -26,14 +26,15 @@ jsonschema = "0.60"
 tempfile = "3"
 pbjson-types = "0.9"
 prost = "0.14"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "gzip"] }
+# query and json: the registry client's token request and response; the
+# sigstore 0.14 crate used to enable them transitively.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "gzip", "query", "json"] }
 serde.workspace = true
 serde_json.workspace = true
 pem = "4"
 # Signs Sigstore bundles in cosign::testutil (feature testutil) only.
 p256 = { version = "0.14", features = ["ecdsa", "pem"], optional = true }
 serde_yaml = "0.9"
-sigstore = { version = "0.14", default-features = false, features = ["cosign", "rustls-tls"] }
 sha2 = "0.11"
 tar = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -46,6 +47,9 @@ tracing.workspace = true
 # env-filter: the --debug filter in logging.rs is scoped by crate; json: the
 # pod's line format (the feature function-sdk-rust already enables).
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+sigstore-verify = { version = "0.15.1", default-features = false, features = ["aws-lc-rs"] }
+sigstore-trust-root = { version = "0.15.1", default-features = false, features = ["aws-lc-rs"] }
+sigstore-types = "0.15.1"
 
 [dev-dependencies]
 # The crate's own integration tests use the test registry.

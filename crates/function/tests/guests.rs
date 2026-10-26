@@ -482,7 +482,7 @@ fn run_guest(guest: &str) {
         engine,
         resolver: Arc::new(Resolver::new(Some(dir.path().to_owned()), 128 << 20, None)),
         ttl: std::time::Duration::from_secs(60),
-        policy: Some(permissive_policy()),
+        policy: Some(std::sync::Arc::new(permissive_policy())),
         egress: Arc::new(function_wasm::egress::Egress::new(rules, 0.0, 0)),
         step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
         verifier: None,

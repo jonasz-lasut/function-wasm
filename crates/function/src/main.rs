@@ -75,6 +75,14 @@ struct ServeArgs {
     #[arg(long, env = "COSIGN_KEY")]
     cosign_key: Option<PathBuf>,
 
+    /// Sigstore trusted root (trusted_root.json: Fulcio authorities, Rekor
+    /// and certificate-transparency keys, timestamp authorities) that
+    /// verifies keyless cosign signatures. A keyless signature admits a
+    /// module only where the operator policy's trustSigner rules trust its
+    /// signer for the repository.
+    #[arg(long, env = "COSIGN_TRUSTED_ROOT")]
+    cosign_trusted_root: Option<PathBuf>,
+
     /// Keep compiled modules in memory between requests. Off, every request
     /// maps the module's compiled artifact from disk and releases it after.
     #[arg(long, default_value_t = true, env = "ENABLE_MEMORY_CACHE", action = clap::ArgAction::Set)]
@@ -165,16 +173,6 @@ fn main() -> ExitCode {
 async fn serve_main(args: ServeArgs) -> Result<(), String> {
     logging::configure(args.sdk.debug);
 
-    let verifier = match &args.cosign_key {
-        None => None,
-        Some(path) => match cosign::Verifier::load(path) {
-            Ok(v) => Some(Arc::new(v)),
-            Err(e) => {
-                eprintln!("{e}");
-                std::process::exit(1);
-            }
-        },
-    };
     if args.egress_rate_limit_per_minute < 0.0 || args.egress_rate_limit_burst < 0 {
         eprintln!(
             "--egress-rate-limit-per-minute and --egress-rate-limit-burst must not be negative"
@@ -203,6 +201,20 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         args.egress_rate_limit_per_minute,
         args.egress_rate_limit_burst,
     ));
+    // The policy is shared with the verifier: its trustSigner rules decide
+    // which keyless signers a repository may trust.
+    let policy = policy.map(Arc::new);
+    let verifier = match cosign::Verifier::configure(
+        args.cosign_key.as_deref(),
+        args.cosign_trusted_root.as_deref(),
+        policy.clone().map(|p| p as Arc<dyn cosign::SignerPolicy>),
+    ) {
+        Ok(v) => v.map(Arc::new),
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
     // A key without a policy is the all-or-nothing regime; a key beside a
     // policy with no requireSignature rule verifies nothing - warn loudly
     // rather than let --cosign-key lapse silently.
@@ -214,11 +226,19 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             "--cosign-key is set but the operator policy has no requireSignature rule: no module will be signature-verified"
         );
     }
+    // A trusted root admits a keyless signature only through a trustSigner
+    // rule: without one, every keyless signature is refused.
+    if args.cosign_trusted_root.is_some() && !policy.as_ref().is_some_and(|p| p.has_signer_rules())
+    {
+        tracing::warn!(
+            "--cosign-trusted-root is set but the operator policy has no trustSigner rule: no keyless signature will be trusted"
+        );
+    }
     // The $TMPDIR probe runs once before serving, only when the policy can
     // grant a private /tmp: a misconfigured $TMPDIR stops the runtime here,
     // not every request.
     if policy
-        .as_ref()
+        .as_deref()
         .is_some_and(authz::OperatorPolicy::has_private_tmp_rules)
     {
         match tempfile::Builder::new()

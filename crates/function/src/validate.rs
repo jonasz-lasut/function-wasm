@@ -79,6 +79,12 @@ pub struct ValidateArgs {
     #[arg(long, env = "COSIGN_KEY")]
     cosign_key: Option<PathBuf>,
 
+    /// Sigstore trusted root (trusted_root.json) that verifies keyless
+    /// cosign signatures; the operator policy's trustSigner rules decide
+    /// which signers a repository trusts.
+    #[arg(long, env = "COSIGN_TRUSTED_ROOT")]
+    cosign_trusted_root: Option<PathBuf>,
+
     /// Cedar document with the operator's grant policy.
     #[arg(long, env = "SANDBOX_POLICY_FILE")]
     sandbox_policy_file: Option<PathBuf>,
@@ -190,10 +196,15 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
         args.egress_rate_limit_per_minute,
         args.egress_rate_limit_burst,
     ));
-    let verifier = match &args.cosign_key {
-        None => None,
-        Some(path) => Some(std::sync::Arc::new(crate::cosign::Verifier::load(path)?)),
-    };
+    let policy = policy.map(std::sync::Arc::new);
+    let verifier = crate::cosign::Verifier::configure(
+        args.cosign_key.as_deref(),
+        args.cosign_trusted_root.as_deref(),
+        policy
+            .clone()
+            .map(|p| p as std::sync::Arc<dyn crate::cosign::SignerPolicy>),
+    )?
+    .map(std::sync::Arc::new);
     let ceilings = Config {
         timeout: args.module_timeout,
         memory_limit: args.module_memory_limit << 20,
@@ -231,7 +242,7 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
         xr,
         policy,
         egress,
-        cosign_key: args.cosign_key.is_some(),
+        verifier_configured: verifier.is_some(),
         verifier,
     };
     let mut refused = false;
@@ -437,9 +448,9 @@ struct Validator {
     engine: Option<Engine>,
     resolver: Option<Resolver>,
     xr: Option<serde_json::Value>,
-    policy: Option<OperatorPolicy>,
+    policy: Option<std::sync::Arc<OperatorPolicy>>,
     egress: std::sync::Arc<crate::egress::Egress>,
-    cosign_key: bool,
+    verifier_configured: bool,
     verifier: Option<std::sync::Arc<crate::cosign::Verifier>>,
 }
 
@@ -537,11 +548,11 @@ impl Validator {
         // carry one, a required OCI module is verified (or refused when no
         // --cosign-key can check it).
         let signature_required =
-            crate::from::signature_required(self.policy.as_ref(), self.verifier.is_some(), &src);
+            crate::from::signature_required(self.policy.as_deref(), self.verifier.is_some(), &src);
         if signature_required && src.r#type != "OCI" {
             refuse!(format!(
                 "cannot resolve module: {}",
-                crate::from::non_oci_signature_refusal(self.policy.as_ref(), &src)
+                crate::from::non_oci_signature_refusal(self.policy.as_deref(), &src)
             ));
         }
         let resolved = match resolver.resolve(&src, None) {
@@ -628,7 +639,7 @@ impl Validator {
             .as_ref()
             .and_then(|q| q.egress.as_ref())
             .is_some_and(|e| !e.http.is_empty())
-            && !self.cosign_key
+            && !self.verifier_configured
         {
             r.warnings.push(
                 "the module requires egress but is not signature-verified: no --cosign-key was given"
@@ -643,7 +654,7 @@ impl Validator {
         let caps = match admission::admit_requires(
             m.requires.as_ref(),
             Some(&self.egress),
-            self.policy.as_ref(),
+            self.policy.as_deref(),
             comp,
             &principal,
         ) {

@@ -33,6 +33,7 @@ pub const ACTION_GRANT_EGRESS: &str = "grantEgress";
 pub const ACTION_USE_PRIVATE_TMP: &str = "usePrivateTmp";
 pub const ACTION_SET_ENV: &str = "setEnv";
 const ACTION_REQUIRE_SIGNATURE: &str = "requireSignature";
+const ACTION_TRUST_SIGNER: &str = "trustSigner";
 const ACTION_DIAL_ADDRESS: &str = "dialAddress";
 
 const COMPOSITION_ACTIONS: &[&str] = &[
@@ -213,6 +214,12 @@ pub struct OperatorPolicy {
     policy: PolicySet,
 }
 
+impl crate::cosign::SignerPolicy for OperatorPolicy {
+    fn trusts_signer(&self, repository: &str, signer: &crate::cosign::Signer) -> bool {
+        self.permits_signer(repository, &signer.issuer, &signer.identity)
+    }
+}
+
 impl OperatorPolicy {
     /// Reads and compiles a Cedar grant policy from a file.
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
@@ -305,12 +312,38 @@ impl OperatorPolicy {
 
     /// Whether the operator policy contains any requireSignature rule, so
     /// --cosign-key without one warns loudly rather than lapse silently.
-    /// (Used once --cosign-key is ported.)
-    #[allow(dead_code)]
     pub fn has_signature_rules(&self) -> bool {
         self.policy
             .policies()
             .any(|p| policy_scopes_action(p, ACTION_REQUIRE_SIGNATURE))
+    }
+
+    /// Whether the operator policy trusts a keyless cosign signature by
+    /// identity, authenticated by the OIDC issuer, for a module at location:
+    /// a trustSigner permit over the boundary-correct Repository hierarchy
+    /// whose condition reads context.issuer and context.identity (Cedar's
+    /// `like` matches a workflow's tag pattern). Default-deny: no rule, no
+    /// trusted signer. Caller-independent, so the principal is a placeholder.
+    pub fn permits_signer(&self, location: &str, issuer: &str, identity: &str) -> bool {
+        let (resource, entities) = repository_entities(location);
+        decide_raw(
+            &self.policy,
+            uid("Module", "module"),
+            None,
+            ACTION_TRUST_SIGNER,
+            resource,
+            entities,
+            json!({ "issuer": issuer, "identity": identity }),
+        )
+    }
+
+    /// Whether the operator policy contains any trustSigner rule, so
+    /// --cosign-trusted-root without one warns loudly rather than lapse
+    /// silently.
+    pub fn has_signer_rules(&self) -> bool {
+        self.policy
+            .policies()
+            .any(|p| policy_scopes_action(p, ACTION_TRUST_SIGNER))
     }
 
     /// Compiles the policy's Action::"dialAddress" rules into the SSRF
@@ -859,6 +892,41 @@ mod tests {
         assert!(p.requires_signature("ghcr.io/secure/greeter"));
         assert!(!p.requires_signature("ghcr.io/open/greeter"));
         assert!(p.has_signature_rules());
+        assert!(!p.has_signer_rules());
+    }
+
+    #[test]
+    fn operator_policy_trusts_signers_per_repository() {
+        const ISSUER: &str = "https://token.actions.githubusercontent.com";
+        const RELEASE: &str = "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-pkg.yml@refs/tags/v0.6.0";
+        let p = OperatorPolicy::new(
+            "test",
+            r#"permit (principal, action == Action::"trustSigner", resource in Repository::"ghcr.io/jonasz-lasut/wasmfn/examples")
+               when { context.issuer == "https://token.actions.githubusercontent.com"
+                      && context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-pkg.yml@refs/tags/v*" };"#,
+        )
+        .expect("compile");
+        let module = "ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon";
+        assert!(p.permits_signer(module, ISSUER, RELEASE));
+        // Another branch, another issuer, another repository: refused.
+        assert!(!p.permits_signer(
+            module,
+            ISSUER,
+            "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-pkg.yml@refs/heads/main"
+        ));
+        assert!(!p.permits_signer(module, "https://accounts.google.com", RELEASE));
+        assert!(!p.permits_signer("ghcr.io/jonasz-lasut/other/pdb-addon", ISSUER, RELEASE));
+        assert!(p.has_signer_rules());
+        assert!(!p.has_signature_rules());
+        // The trait the verifier consumes reads the same decision.
+        use crate::cosign::{Signer, SignerPolicy};
+        assert!(p.trusts_signer(
+            module,
+            &Signer {
+                issuer: ISSUER.to_string(),
+                identity: RELEASE.to_string()
+            }
+        ));
     }
 
     #[test]

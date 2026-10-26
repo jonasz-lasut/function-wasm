@@ -1,25 +1,37 @@
-//! Cosign signature verification over cosign 3's Sigstore bundles, with the
-//! crypto from sigstore-rs - key-based only: the "cosign sign --key"
-//! workflow. Keyless verification is not implemented yet (#116); a keyless
-//! bundle simply matches no configured key.
+//! Cosign signature verification over cosign 3's Sigstore bundles: key-based
+//! (the "cosign sign --key" workflow) with sigstore-crypto's keys, and
+//! keyless (a Fulcio certificate, a Rekor entry, an RFC 3161 timestamp)
+//! through sigstore-verify against a Sigstore trusted root (#116).
 //!
 //! cosign 3 stores a signature as an OCI 1.1 referrer of the signed
 //! manifest: a manifest whose subject is that manifest and whose layer is a
 //! Sigstore bundle (v0.3) holding a DSSE envelope around an in-toto
 //! statement that names the manifest digest. The referrers are listed and
 //! fetched through the runtime's own registry client, so they travel the
-//! same authenticated path as the module pull; sigstore-rs contributes the
-//! verification keys (algorithm auto-detected from the PEM's SPKI) and the
-//! signature check. The configured keys are the trust root: the bundle's
-//! verification material (a key hint, a certificate, transparency-log
-//! entries) is never consulted, as the Rekor entry of a legacy signature
-//! never was. cosign 2's legacy `sha256-<hex>.sig` signatures are not read.
+//! same authenticated path as the module pull.
+//!
+//! A bundle carrying a key hint is checked against the configured keys
+//! (--cosign-key): the keys are the trust root, and the bundle's
+//! transparency-log entries are not consulted, as the Rekor entry of a
+//! legacy signature never was. A bundle carrying a certificate is keyless:
+//! sigstore-verify establishes the signing time from the bundle's RFC 3161
+//! timestamps and its Rekor entry's signed entry timestamp, verifies the
+//! inclusion proof and checkpoint, chains the certificate to the trusted
+//! root's Fulcio authorities at that time and checks the signature; the
+//! signer the certificate names (its OIDC issuer and SAN identity) is then
+//! held against the operator policy's trustSigner rules for the module's
+//! repository, default-deny. cosign 2's legacy `sha256-<hex>.sig`
+//! signatures are not read.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::sync::Mutex;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
-use sigstore::crypto::{CosignVerificationKey, Signature};
+use sigstore_trust_root::TrustedRoot;
+use sigstore_types::{DerPublicKey, Sha256Hash, SignatureBytes};
+use sigstore_verify::crypto::VerificationKey;
+use sigstore_verify::{VerificationPolicy, Verifier as BundleVerifier};
 
 use crate::location::OciReference;
 use crate::oci::{Descriptor, OCI_MANIFEST_TYPE, RegistryClient};
@@ -46,17 +58,82 @@ const MAX_MANIFEST_SIZE: usize = 4 << 20;
 /// costs bounded requests.
 const MAX_REFERRERS: usize = 32;
 
-/// Checks cosign signatures made with a fixed set of public keys. Results
-/// are remembered per manifest digest for the life of the process;
+/// A keyless signature's signer, as its Fulcio certificate names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signer {
+    /// The OIDC issuer that authenticated the signer (Fulcio's issuer
+    /// extension), such as https://token.actions.githubusercontent.com.
+    pub issuer: String,
+    /// The certificate's subject alternative name: a workflow URI or an
+    /// email address.
+    pub identity: String,
+}
+
+/// Decides whether a keyless signature's signer may vouch for a module in
+/// repository - the operator policy's trustSigner rules. No policy, no
+/// trusted signer.
+pub trait SignerPolicy: Send + Sync {
+    fn trusts_signer(&self, repository: &str, signer: &Signer) -> bool;
+}
+
+impl<F> SignerPolicy for F
+where
+    F: Fn(&str, &Signer) -> bool + Send + Sync,
+{
+    fn trusts_signer(&self, repository: &str, signer: &Signer) -> bool {
+        self(repository, signer)
+    }
+}
+
+/// Checks cosign signatures: key-based ones against a fixed set of public
+/// keys, keyless ones against a Sigstore trusted root and a signer policy.
+/// Results are remembered per manifest digest for the life of the process;
 /// manifests are immutable by digest.
 pub struct Verifier {
-    keys: Vec<CosignVerificationKey>,
+    keys: Vec<VerificationKey>,
+    keyless: Option<Keyless>,
     verified: Mutex<HashSet<String>>,
 }
 
+/// The keyless half: sigstore-verify over the trusted root, and the policy
+/// that decides which signers a repository may trust.
+struct Keyless {
+    verifier: BundleVerifier,
+    policy: Option<Arc<dyn SignerPolicy>>,
+}
+
 impl Verifier {
+    /// Builds the verifier the flags describe: the PEM keys of --cosign-key,
+    /// the trusted root of --cosign-trusted-root (its signers decided by
+    /// policy), or both. None when neither flag is set.
+    pub fn configure(
+        keys: Option<&Path>,
+        trusted_root: Option<&Path>,
+        policy: Option<Arc<dyn SignerPolicy>>,
+    ) -> Result<Option<Verifier>, String> {
+        let mut verifier = match keys {
+            Some(path) => Self::load(path)?,
+            None => Self::empty(),
+        };
+        if let Some(path) = trusted_root {
+            verifier = verifier.with_trusted_root(load_trusted_root(path)?, policy)?;
+        }
+        if verifier.keys.is_empty() && verifier.keyless.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(verifier))
+    }
+
+    fn empty() -> Verifier {
+        Verifier {
+            keys: Vec::new(),
+            keyless: None,
+            verified: Mutex::new(HashSet::new()),
+        }
+    }
+
     /// Reads one or more PEM public keys (as cosign.pub is written).
-    pub fn load(path: &std::path::Path) -> Result<Verifier, String> {
+    pub fn load(path: &Path) -> Result<Verifier, String> {
         let raw = std::fs::read(path).map_err(|e| {
             format!(
                 "cannot read cosign public key: {}",
@@ -73,7 +150,7 @@ impl Verifier {
             .map_err(|e| format!("cannot parse cosign public key: {e}"))?;
         let mut keys = Vec::new();
         for block in blocks {
-            let key = CosignVerificationKey::try_from_der(block.contents())
+            let key = VerificationKey::from_spki(&DerPublicKey::new(block.contents().to_vec()))
                 .map_err(|e| format!("cannot parse cosign public key: {e}"))?;
             keys.push(key);
         }
@@ -82,14 +159,30 @@ impl Verifier {
         }
         Ok(Verifier {
             keys,
-            verified: Mutex::new(HashSet::new()),
+            ..Self::empty()
         })
     }
 
-    /// Checks that the pinned manifest carries a cosign signature by one of
-    /// the keys: some Sigstore bundle among its referrers verifies. The
-    /// referrers are read through client - the same authenticated path the
-    /// module pull uses. Blocking: run it off the async executor.
+    /// Adds keyless verification against root: Fulcio authorities, Rekor
+    /// keys, certificate-transparency keys and timestamp authorities. A
+    /// signer the root vouches for is admitted only where policy trusts it.
+    pub fn with_trusted_root(
+        mut self,
+        root: TrustedRoot,
+        policy: Option<Arc<dyn SignerPolicy>>,
+    ) -> Result<Verifier, String> {
+        let verifier = BundleVerifier::new(&root)
+            .map_err(|e| format!("cannot use the Sigstore trusted root: {e}"))?;
+        self.keyless = Some(Keyless { verifier, policy });
+        Ok(self)
+    }
+
+    /// Checks that the pinned manifest carries a cosign signature this
+    /// verifier accepts: some Sigstore bundle among its referrers verifies
+    /// with one of the keys, or keyless against the trusted root by a signer
+    /// the policy trusts for the repository. The referrers are read through
+    /// client - the same authenticated path the module pull uses. Blocking:
+    /// run it off the async executor.
     pub fn verify(&self, client: &RegistryClient, reference: &OciReference) -> Result<(), String> {
         if self
             .verified
@@ -99,6 +192,7 @@ impl Verifier {
         {
             return Ok(());
         }
+        let repository = format!("{}/{}", reference.registry, reference.repository);
         let referrers = client.referrers(&reference.digest, MAX_MANIFEST_SIZE)?;
         // Only an image manifest can carry a bundle layer. The listing's
         // artifactType does not say which do: cosign 3.0 sets none, so its
@@ -136,7 +230,7 @@ impl Verifier {
                 .filter(|l| l.media_type == BUNDLE_MEDIA_TYPE)
             {
                 bundles += 1;
-                match self.check_bundle(client, layer, &reference.digest) {
+                match self.check_bundle(client, layer, &reference.digest, &repository) {
                     Ok(()) => {
                         self.verified
                             .lock()
@@ -156,10 +250,7 @@ impl Verifier {
                 manifests.len()
             ));
         }
-        let name = format!(
-            "{}/{}@{}",
-            reference.registry, reference.repository, reference.digest
-        );
+        let name = format!("{repository}@{}", reference.digest);
         if bundles == 0 && reasons.is_empty() {
             return Err(format!(
                 "{name} carries no cosign signature (no Sigstore bundle among its referrers)"
@@ -178,6 +269,7 @@ impl Verifier {
         client: &RegistryClient,
         layer: &Descriptor,
         digest: &str,
+        repository: &str,
     ) -> Result<(), String> {
         if !(0..=MAX_BUNDLE_SIZE as i64).contains(&layer.size) {
             return Err(format!(
@@ -186,13 +278,18 @@ impl Verifier {
             ));
         }
         let raw = client.verified_blob(&layer.digest, MAX_BUNDLE_SIZE, "Sigstore bundle")?;
-        self.check_bundle_content(&raw, digest)
+        self.check_bundle_content(&raw, digest, repository)
     }
 
-    /// Checks a bundle: a DSSE envelope whose signature verifies with one
-    /// of the keys, around an in-toto statement that is a cosign signature
-    /// of digest.
-    fn check_bundle_content(&self, raw: &[u8], digest: &str) -> Result<(), String> {
+    /// Checks a bundle: a DSSE envelope around an in-toto statement that is
+    /// a cosign signature of digest, signed by one of the keys or, when the
+    /// bundle carries a certificate, keyless by a trusted signer.
+    fn check_bundle_content(
+        &self,
+        raw: &[u8],
+        digest: &str,
+        repository: &str,
+    ) -> Result<(), String> {
         let bundle: Bundle = serde_json::from_slice(raw)
             .map_err(|e| format!("Sigstore bundle is not valid JSON: {e}"))?;
         if bundle.media_type != BUNDLE_MEDIA_TYPE {
@@ -216,15 +313,31 @@ impl Verifier {
             ));
         }
         let payload = decode_base64(&envelope.payload).ok_or("DSSE payload is not base64")?;
+        if bundle.verification_material.certificate.is_some() {
+            let Some(keyless) = &self.keyless else {
+                return Err(
+                    "keyless signature cannot be verified: the runtime has no --cosign-trusted-root"
+                        .to_string(),
+                );
+            };
+            return self.check_keyless(keyless, raw, &payload, digest, repository);
+        }
+        if self.keys.is_empty() {
+            return Err(
+                "key-based signature cannot be verified: the runtime has no --cosign-key"
+                    .to_string(),
+            );
+        }
         let signed = pae(&envelope.payload_type, &payload);
         let verifies = envelope
             .signatures
             .iter()
             .filter_map(|s| decode_base64(&s.sig))
             .any(|sig| {
+                let sig = SignatureBytes::from_bytes(&sig);
                 self.keys
                     .iter()
-                    .any(|key| key.verify_signature(Signature::Raw(&sig), &signed).is_ok())
+                    .any(|key| key.verify(&signed, &sig).is_ok())
             });
         if !verifies {
             return Err("signature does not verify with the configured keys".to_string());
@@ -232,16 +345,100 @@ impl Verifier {
         // Only a payload a key vouched for is read any further.
         check_statement(&payload, digest)
     }
+
+    /// Verifies a keyless bundle: sigstore-verify binds the statement's
+    /// subject to digest, establishes the signing time, checks the Rekor
+    /// entry and chains the certificate; this runtime then requires the
+    /// statement to be a cosign signature and the signer to be trusted for
+    /// repository.
+    fn check_keyless(
+        &self,
+        keyless: &Keyless,
+        raw: &[u8],
+        payload: &[u8],
+        digest: &str,
+        repository: &str,
+    ) -> Result<(), String> {
+        let text =
+            std::str::from_utf8(raw).map_err(|_| "Sigstore bundle is not UTF-8".to_string())?;
+        let bundle = sigstore_types::Bundle::from_json(text)
+            .map_err(|e| format!("Sigstore bundle does not parse as a Sigstore bundle: {e}"))?;
+        let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
+        let subject = Sha256Hash::from_hex(hex)
+            .map_err(|e| format!("module digest {digest:?} is not a sha256 digest: {e}"))?;
+        let result = keyless
+            .verifier
+            .verify(subject, &bundle, &VerificationPolicy::any_identity())
+            .map_err(|e| {
+                format!("keyless signature does not verify against the trusted root: {e}")
+            })?;
+        // The verifier bound the subject to digest; that the statement is a
+        // signature and not an attestation is this runtime's rule.
+        check_statement(payload, digest)?;
+        let (Some(identity), Some(issuer)) = (result.identity(), result.issuer()) else {
+            return Err(
+                "keyless signature's certificate names no signer identity or OIDC issuer"
+                    .to_string(),
+            );
+        };
+        let signer = Signer {
+            issuer: issuer.to_string(),
+            identity: identity.as_str().to_string(),
+        };
+        let trusted = keyless
+            .policy
+            .as_ref()
+            .is_some_and(|p| p.trusts_signer(repository, &signer));
+        if !trusted {
+            return Err(format!(
+                "keyless signature by {} (issuer {}) is not trusted for {repository}: no trustSigner rule in the operator policy permits it",
+                signer.identity, signer.issuer
+            ));
+        }
+        tracing::debug!(
+            digest,
+            repository,
+            identity = signer.identity,
+            issuer = signer.issuer,
+            "keyless cosign signature verified"
+        );
+        Ok(())
+    }
 }
 
-/// A Sigstore bundle, as far as a key-based check reads it: the
-/// verification material is deliberately not modelled.
+/// Reads a Sigstore trusted root (trusted_root.json, as `cosign
+/// trusted-root` writes it): Fulcio authorities, Rekor and
+/// certificate-transparency keys and timestamp authorities with their
+/// validity windows.
+pub fn load_trusted_root(path: &Path) -> Result<TrustedRoot, String> {
+    let raw = std::fs::read_to_string(path).map_err(|e| {
+        format!(
+            "cannot read Sigstore trusted root: {}",
+            crate::resolver::go_io_error("open", path, &e)
+        )
+    })?;
+    TrustedRoot::from_json(&raw).map_err(|e| format!("cannot parse Sigstore trusted root: {e}"))
+}
+
+/// A Sigstore bundle, as far as this module reads it before handing a
+/// keyless one to sigstore-verify: enough to tell a key hint from a
+/// certificate and to check a key-based signature.
 #[derive(Deserialize)]
 struct Bundle {
     #[serde(default, rename = "mediaType")]
     media_type: String,
+    #[serde(default, rename = "verificationMaterial")]
+    verification_material: Material,
     #[serde(default, rename = "dsseEnvelope")]
     dsse_envelope: Option<Envelope>,
+}
+
+#[derive(Deserialize, Default)]
+struct Material {
+    /// Present in a keyless bundle: the Fulcio certificate. A key-based
+    /// bundle carries a publicKey hint instead.
+    #[serde(default)]
+    certificate: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -478,9 +675,24 @@ mod tests {
     use super::*;
     use crate::location::parse_oci_reference;
     use crate::oci::testregistry::{TestRegistry, digest_of, serve};
+    use sigstore_trust_root::SigstoreInstance;
     use std::collections::HashMap;
 
     const SLSA_PROVENANCE: &str = "https://slsa.dev/provenance/v1";
+
+    /// A real keyless signature: the cosign bundle this repository's release
+    /// workflow attached to ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon
+    /// v0.1.0 on 2026-10-07 (see testdata/cosign/README.md).
+    const KEYLESS_BUNDLE: &[u8] =
+        include_bytes!("../testdata/cosign/pdb-addon-v0.1.0-keyless.bundle.json");
+    /// The manifest digest that bundle signs.
+    const KEYLESS_DIGEST: &str = include_str!("../testdata/cosign/pdb-addon-v0.1.0.digest");
+    const GITHUB_ACTIONS_ISSUER: &str = "https://token.actions.githubusercontent.com";
+    const RELEASE_WORKFLOW: &str = "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-pkg.yml@refs/tags/v0.6.0";
+
+    fn keyless_digest() -> String {
+        KEYLESS_DIGEST.trim().to_string()
+    }
 
     /// A registry holding one module artifact, and its manifest digest.
     fn module_registry(referrers_api: bool) -> (TestRegistry, String) {
@@ -507,17 +719,53 @@ mod tests {
         (registry, digest)
     }
 
-    /// Serves registry and verifies the module digest with keys; the
+    /// A registry with no module manifest: the verifier reads referrers
+    /// only, so a bundle attached to any subject digest can be checked.
+    fn bare_registry() -> TestRegistry {
+        TestRegistry {
+            manifests: HashMap::new(),
+            blobs: HashMap::new(),
+            bearer: false,
+            referrers_api: false,
+            basic: false,
+        }
+    }
+
+    /// Serves registry and verifies the module digest with verifier; the
     /// registry's address reads <REGISTRY> in a refusal.
-    fn verify(registry: TestRegistry, digest: &str, keys: &[&TestKey]) -> Result<(), String> {
+    fn verify_with(registry: TestRegistry, digest: &str, verifier: Verifier) -> Result<(), String> {
         let addr = serve(registry);
         let reference =
             parse_oci_reference(&format!("{addr}/example/greeter@{digest}")).expect("reference");
         let client = RegistryClient::new(&reference, None);
-        let pem: String = keys.iter().map(|k| k.public_pem.as_str()).collect();
-        Verifier::new(pem.as_bytes())?
+        verifier
             .verify(&client, &reference)
             .map_err(|e| e.replace(&addr, "<REGISTRY>"))
+    }
+
+    /// Serves registry and verifies the module digest with keys.
+    fn verify(registry: TestRegistry, digest: &str, keys: &[&TestKey]) -> Result<(), String> {
+        let pem: String = keys.iter().map(|k| k.public_pem.as_str()).collect();
+        verify_with(registry, digest, Verifier::new(pem.as_bytes())?)
+    }
+
+    /// A verifier with no keys: the embedded trusted root of instance and
+    /// a policy trusting this repository's release workflow for the test
+    /// repository, or no policy at all.
+    fn keyless_verifier(instance: SigstoreInstance, trusting: bool) -> Verifier {
+        let policy: Option<Arc<dyn SignerPolicy>> = trusting.then(|| {
+            Arc::new(|repository: &str, signer: &Signer| {
+                repository.ends_with("/example/greeter")
+                    && signer.issuer == GITHUB_ACTIONS_ISSUER
+                    && signer.identity == RELEASE_WORKFLOW
+            }) as Arc<dyn SignerPolicy>
+        });
+        Verifier::empty()
+            .with_trusted_root(
+                TrustedRoot::from_embedded(instance).expect("embedded trusted root"),
+                policy,
+            )
+            .expect("verifier")
     }
 
     fn unsigned(digest: &str) -> String {
@@ -713,8 +961,165 @@ mod tests {
             verify(registry, &digest, &[&key]),
             Err(invalid(
                 &digest,
-                "signature does not verify with the configured keys"
+                "keyless signature cannot be verified: the runtime has no --cosign-trusted-root"
             ))
+        );
+    }
+
+    #[test]
+    fn a_key_bundle_is_refused_by_a_verifier_without_keys() {
+        let key = TestKey::from_seed(7);
+        let (mut registry, digest) = module_registry(false);
+        attach(
+            &mut registry,
+            &digest,
+            &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
+            Shape::ArtifactType,
+        );
+        assert_eq!(
+            verify_with(
+                registry,
+                &digest,
+                keyless_verifier(SigstoreInstance::PublicGood, true)
+            ),
+            Err(invalid(
+                &digest,
+                "key-based signature cannot be verified: the runtime has no --cosign-key"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_keyless_signature_by_a_trusted_signer_verifies_against_the_trusted_root() {
+        // Offline: the embedded public-good trusted root carries the Fulcio
+        // authority, the Rekor key and the timestamp authority that signed
+        // the fixture's certificate, log entry and RFC 3161 timestamp; the
+        // certificate expired ten minutes after signing, so the verdict
+        // rests on the authenticated signing time, not the clock.
+        let digest = keyless_digest();
+        let mut registry = bare_registry();
+        attach(
+            &mut registry,
+            &digest,
+            KEYLESS_BUNDLE,
+            Shape::AnnotationsOnly,
+        );
+        assert_eq!(
+            verify_with(
+                registry,
+                &digest,
+                keyless_verifier(SigstoreInstance::PublicGood, true)
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_keyless_signature_nobody_trusts_is_refused() {
+        let digest = keyless_digest();
+        let mut registry = bare_registry();
+        attach(
+            &mut registry,
+            &digest,
+            KEYLESS_BUNDLE,
+            Shape::AnnotationsOnly,
+        );
+        assert_eq!(
+            verify_with(
+                registry,
+                &digest,
+                keyless_verifier(SigstoreInstance::PublicGood, false)
+            ),
+            Err(invalid(
+                &digest,
+                &format!(
+                    "keyless signature by {RELEASE_WORKFLOW} (issuer {GITHUB_ACTIONS_ISSUER}) is not trusted for <REGISTRY>/example/greeter: no trustSigner rule in the operator policy permits it"
+                )
+            ))
+        );
+    }
+
+    /// Asserts a keyless refusal from sigstore-verify, whose detail is the
+    /// crate's wording: only the runtime's prefix and the category are
+    /// pinned.
+    fn assert_keyless_refusal(result: Result<(), String>, digest: &str, category: &str) {
+        let prefix = invalid(
+            digest,
+            "keyless signature does not verify against the trusted root: ",
+        );
+        match result {
+            Err(e) if e.starts_with(&prefix) && e[prefix.len()..].starts_with(category) => {}
+            other => panic!("want a refusal starting {prefix:?}{category:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_keyless_signature_for_another_digest_is_refused() {
+        let other = format!("sha256:{}", "9".repeat(64));
+        let mut registry = bare_registry();
+        attach(
+            &mut registry,
+            &other,
+            KEYLESS_BUNDLE,
+            Shape::AnnotationsOnly,
+        );
+        assert_keyless_refusal(
+            verify_with(
+                registry,
+                &other,
+                keyless_verifier(SigstoreInstance::PublicGood, true),
+            ),
+            &other,
+            "artifact mismatch",
+        );
+    }
+
+    #[test]
+    fn a_keyless_signature_against_another_trusted_root_is_refused() {
+        // Staging's authorities never issued the fixture's certificate.
+        let digest = keyless_digest();
+        let mut registry = bare_registry();
+        attach(
+            &mut registry,
+            &digest,
+            KEYLESS_BUNDLE,
+            Shape::AnnotationsOnly,
+        );
+        assert_keyless_refusal(
+            verify_with(
+                registry,
+                &digest,
+                keyless_verifier(SigstoreInstance::Staging, true),
+            ),
+            &digest,
+            "",
+        );
+    }
+
+    #[test]
+    fn a_tampered_keyless_signature_is_refused() {
+        let digest = keyless_digest();
+        let mut bundle: serde_json::Value = serde_json::from_slice(KEYLESS_BUNDLE).expect("bundle");
+        let sig = bundle["dsseEnvelope"]["signatures"][0]["sig"]
+            .as_str()
+            .expect("signature")
+            .to_string();
+        // Flip one base64 symbol well inside the signature.
+        let mut chars: Vec<char> = sig.chars().collect();
+        chars[10] = if chars[10] == 'A' { 'B' } else { 'A' };
+        bundle["dsseEnvelope"]["signatures"][0]["sig"] =
+            serde_json::json!(chars.into_iter().collect::<String>());
+        let tampered = serde_json::to_vec(&bundle).expect("bundle");
+        let mut registry = bare_registry();
+        attach(&mut registry, &digest, &tampered, Shape::AnnotationsOnly);
+        assert_keyless_refusal(
+            verify_with(
+                registry,
+                &digest,
+                keyless_verifier(SigstoreInstance::PublicGood, true),
+            ),
+            &digest,
+            "",
         );
     }
 

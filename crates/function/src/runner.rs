@@ -39,7 +39,7 @@ pub struct WasmFunction {
     /// The operator's grant policy (--sandbox-policy-file), the sole
     /// authority that enables a sandbox capability; None refuses every
     /// sandbox grant, so the runtime offers only the default sandbox.
-    pub policy: Option<OperatorPolicy>,
+    pub policy: Option<Arc<OperatorPolicy>>,
     /// The egress mechanism: the SSRF block list, fixed budgets, the
     /// operator's Cedar CIDR rules and rate limit. Always built; whether a
     /// run may use it is the policy layers' grantEgress decision.
@@ -175,15 +175,18 @@ impl WasmFunction {
         // before it is resolved: the legacy all-or-nothing --cosign-key
         // requires every module (and refuses non-OCI), while an operator
         // policy requires it per repository.
-        let signature_required =
-            crate::from::signature_required(self.policy.as_ref(), self.verifier.is_some(), &source);
+        let signature_required = crate::from::signature_required(
+            self.policy.as_deref(),
+            self.verifier.is_some(),
+            &source,
+        );
         if signature_required && source.r#type != "OCI" {
             return Ok(raw_rsp(self.fatal(
                 rsp,
                 OUTCOME_REFUSED,
                 format!(
                     "cannot resolve module: {}",
-                    crate::from::non_oci_signature_refusal(self.policy.as_ref(), &source)
+                    crate::from::non_oci_signature_refusal(self.policy.as_deref(), &source)
                 ),
             )));
         }
@@ -366,7 +369,7 @@ impl WasmFunction {
         let caps = match admission::admit_requires(
             manifest.as_ref().and_then(|m| m.requires.as_ref()),
             Some(&self.egress),
-            self.policy.as_ref(),
+            self.policy.as_deref(),
             admitted.composition.as_deref(),
             &principal,
         ) {
@@ -723,13 +726,13 @@ mod tests {
         let (digest, addr) =
             crate::oci::testregistry::wasm_artifact(&wasm, Some(module_manifest), true);
         let mut f = function(None);
-        f.policy = Some(
+        f.policy = Some(Arc::new(
             crate::authz::OperatorPolicy::new(
                 "test",
                 r#"permit (principal, action == Action::"usePrivateTmp", resource);"#,
             )
             .expect("policy"),
-        );
+        ));
         let rsp = run(
             &f,
             input(serde_json::json!({
@@ -1033,14 +1036,14 @@ mod tests {
 
     fn granting_function(dir: Option<&std::path::Path>) -> WasmFunction {
         let mut f = function(dir.map(std::path::Path::to_owned));
-        f.policy = Some(
+        f.policy = Some(Arc::new(
             crate::authz::OperatorPolicy::new(
                 "test",
                 r#"permit (principal, action == Action::"setEnv", resource);
                    permit (principal, action == Action::"spendCredential", resource);"#,
             )
             .expect("policy"),
-        );
+        ));
         f
     }
 
