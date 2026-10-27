@@ -18,6 +18,7 @@ are no render tests and no shell scenarios; `crossplane render` is a
 | a guest-visible behaviour of the engine (a trap, a limit, a WASI interface) | a WAT fixture in `crates/engine/tests/engine.rs`, or a knob of the committed guest driven from `crates/engine/tests/committed_guest.rs` |
 | an Input rule, a refusal, a policy decision | a unit test beside the code, a fixture under `crates/function/testdata/validate/` and a conformance golden (`UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` records it; a re-record is a behaviour change, say so in the commit) |
 | a scaffold change | the template, then `UPDATE_GOLDENS=1 cargo test -p guestfn`; the guest suite builds the goldens |
+| a new fixture or stand-in a test needs | `function_wasm_engine::testing` for a guest component, `function_wasm::testing` for a registry, a signer, an in-process runtime, a server or a policy (both behind the `testutil` feature); a suite never declares its own copy |
 | something only Crossplane can show: a condition, an event, a Secret read, a requirement resolved, a pod restarted, a metric as scraped | a feature in the end-to-end suite |
 
 ## The end-to-end suite

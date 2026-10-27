@@ -15,119 +15,12 @@ use std::fmt::Write as _;
 use std::time::Duration;
 
 use function_sdk_rust::proto::v1::{Result as FnResult, RunFunctionResponse, Severity, Target};
+use function_wasm_engine::testing::{
+    COMPONENT_CORE_PRELUDE, component_importing, component_with_run, fixed_component, grow_guest,
+    lift_run, ok_result, spinning_guest, wat_bytes,
+};
 use function_wasm_engine::{CORE_MODULE_REFUSAL, Config, Engine, RunOptions};
 use prost::Message;
-
-/// Escapes bytes for a WAT data-segment string.
-fn wat_bytes(b: &[u8]) -> String {
-    let mut out = String::new();
-    for byte in b {
-        let _ = write!(out, "\\{byte:02x}");
-    }
-    out
-}
-
-/// The core body shared by the component fixtures: a bump realloc (8-byte
-/// aligned, so any canonical-ABI allocation is accepted) and a memory.
-/// `run` is provided per fixture; a sync-lifted `run` returns the address
-/// of its result (the ok/err discriminant, then the list's pointer and
-/// length).
-const COMPONENT_CORE_PRELUDE: &str = r#"
-    (memory (export "memory") 4)
-    (global $next (mut i32) (i32.const 131072))
-    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
-      (local $p i32)
-      global.get $next
-      local.set $p
-      global.get $next
-      (i32.and (i32.add (local.get 3) (i32.const 7)) (i32.const -8))
-      i32.add
-      global.set $next
-      local.get $p)
-"#;
-
-/// The world's `run` export lifted from a core instance's `run`.
-fn lift_run(instance: &str, libc: &str) -> String {
-    format!(
-        r#"(func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func ${instance} "run") (memory (core memory ${libc} "memory")) (realloc (core func ${libc} "cabi_realloc"))))"#
-    )
-}
-
-/// A component whose run returns the given bytes.
-fn fixed_component(rsp: &[u8]) -> String {
-    format!(
-        r#"(component
-  (core module $m
-    {COMPONENT_CORE_PRELUDE}
-    (func (export "run") (param i32 i32) (result i32)
-      (i32.store8 (i32.const 64) (i32.const 0))
-      (i32.store (i32.const 68) (i32.const 1024))
-      (i32.store (i32.const 72) (i32.const {len}))
-      (i32.const 64))
-    (data (i32.const 1024) "{data}"))
-  (core instance $i (instantiate $m))
-  {lift}
-)"#,
-        len = rsp.len(),
-        data = wat_bytes(rsp),
-        lift = lift_run("i", "i"),
-    )
-}
-
-/// A component whose run is the given core body (returning the result
-/// address), with no imports.
-fn component_with_run(body: &str) -> String {
-    format!(
-        r#"(component
-  (core module $m
-    {COMPONENT_CORE_PRELUDE}
-    (func (export "run") (param i32 i32) (result i32)
-      {body}))
-  (core instance $i (instantiate $m))
-  {lift}
-)"#,
-        lift = lift_run("i", "i"),
-    )
-}
-
-/// A component whose main core module imports one WASI 0.2 function,
-/// lowered against a `$libc` instance whose memory the main module shares:
-/// `import_decl` is the component-level import, `lower` the canon lower
-/// (naming `$libc_inst` and `$f` for the imported function), `core_import`
-/// the core module's own import declaration of it as `$host`, and `body`
-/// run's core body.
-fn component_importing(import_decl: &str, lower: &str, core_import: &str, body: &str) -> String {
-    format!(
-        r#"(component
-  {import_decl}
-  (core module $libc
-    {COMPONENT_CORE_PRELUDE})
-  (core instance $libc_inst (instantiate $libc))
-  (core func $lowered {lower})
-  (core module $m
-    (import "env" "memory" (memory 4))
-    {core_import}
-    (func (export "run") (param i32 i32) (result i32)
-      {body}))
-  (core instance $m_inst (instantiate $m
-    (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
-    (with "host" (instance (export "f" (func $lowered))))))
-  {lift}
-)"#,
-        lift = lift_run("m_inst", "libc_inst"),
-    )
-}
-
-/// The result address for ok(list at ptr, len) stored at 64.
-fn ok_result(ptr: &str, len: &str) -> String {
-    format!(
-        r#"(i32.store8 (i32.const 64) (i32.const 0))
-      (i32.store (i32.const 68) {ptr})
-      (i32.store (i32.const 72) {len})
-      (i32.const 64)"#
-    )
-}
 
 fn engine() -> Engine {
     Engine::new(Config::default()).expect("engine")
@@ -335,18 +228,6 @@ fn guest_error_string() {
     assert_eq!(err.to_string(), "run returned an error: boom");
 }
 
-/// A guest that grows toward the exported response: empty means the grow
-/// was denied (memory.grow returned -1), one byte means it succeeded.
-fn grow_guest(pages: u32) -> String {
-    component_with_run(&format!(
-        r#"(i32.store8 (i32.const 64) (i32.const 0))
-      (i32.store (i32.const 68) (i32.const 1024))
-      (i32.store (i32.const 72)
-        (i32.ne (memory.grow (i32.const {pages})) (i32.const -1)))
-      (i32.const 64)"#
-    ))
-}
-
 /// The per-run memory ceiling denies growth: the guest sees memory.grow
 /// fail rather than the run trapping.
 #[test]
@@ -365,25 +246,6 @@ fn the_memory_limit_denies_growth() {
     )
     .unwrap_or(0.0);
     assert!(denied >= 1.0, "the denial should be counted");
-}
-
-/// A guest that spins for the given nanoseconds on the monotonic clock
-/// (`wasi:clocks/monotonic-clock`), holding its memory meanwhile.
-fn spinning_guest(nanos: u64) -> String {
-    component_importing(
-        r#"(import "wasi:clocks/monotonic-clock@0.2.0" (instance $clock
-    (export "now" (func (result u64)))))"#,
-        "(canon lower (func $clock \"now\"))",
-        r#"(import "host" "f" (func $host (result i64)))"#,
-        &format!(
-            r#"(local $start i64)
-      (local.set $start (call $host))
-      (loop $l
-        (br_if $l (i64.lt_u (i64.sub (call $host) (local.get $start)) (i64.const {nanos}))))
-      {}"#,
-            ok_result("(i32.const 1024)", "(i32.const 0)")
-        ),
-    )
 }
 
 /// The shared pool reserves incrementally: a run holding the pool denies

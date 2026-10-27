@@ -671,12 +671,12 @@ pub mod testutil {
 
 #[cfg(test)]
 mod tests {
-    use super::testutil::{Shape, TestKey, attach};
+    use super::testutil::{Shape, TestKey};
     use super::*;
     use crate::location::parse_oci_reference;
-    use crate::oci::testregistry::{TestRegistry, digest_of, serve};
+    use crate::oci::testregistry::digest_of;
+    use crate::testing::registry::Registry;
     use sigstore_trust_root::SigstoreInstance;
-    use std::collections::HashMap;
 
     const SLSA_PROVENANCE: &str = "https://slsa.dev/provenance/v1";
 
@@ -695,46 +695,25 @@ mod tests {
     }
 
     /// A registry holding one module artifact, and its manifest digest.
-    fn module_registry(referrers_api: bool) -> (TestRegistry, String) {
-        let wasm = b"fake wasm";
-        let config = b"{}";
-        let manifest = serde_json::to_vec(&serde_json::json!({
-            "schemaVersion": 2,
-            "mediaType": OCI_MANIFEST_TYPE,
-            "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(config), "size": config.len()},
-            "layers": [{"mediaType": "application/wasm", "digest": digest_of(wasm), "size": wasm.len()}],
-        }))
-        .expect("manifest");
-        let digest = digest_of(&manifest);
-        let registry = TestRegistry {
-            manifests: HashMap::from([(digest.clone(), manifest)]),
-            blobs: HashMap::from([
-                (digest_of(wasm), wasm.to_vec()),
-                (digest_of(config), config.to_vec()),
-            ]),
-            bearer: false,
-            referrers_api,
-            basic: false,
-        };
+    fn module_registry(referrers_api: bool) -> (Registry, String) {
+        let mut registry = Registry::new();
+        if referrers_api {
+            registry = registry.referrers_api();
+        }
+        let digest = registry.module(b"fake wasm", None, "");
         (registry, digest)
     }
 
     /// A registry with no module manifest: the verifier reads referrers
     /// only, so a bundle attached to any subject digest can be checked.
-    fn bare_registry() -> TestRegistry {
-        TestRegistry {
-            manifests: HashMap::new(),
-            blobs: HashMap::new(),
-            bearer: false,
-            referrers_api: false,
-            basic: false,
-        }
+    fn bare_registry() -> Registry {
+        Registry::new()
     }
 
     /// Serves registry and verifies the module digest with verifier; the
     /// registry's address reads <REGISTRY> in a refusal.
-    fn verify_with(registry: TestRegistry, digest: &str, verifier: Verifier) -> Result<(), String> {
-        let addr = serve(registry);
+    fn verify_with(registry: Registry, digest: &str, verifier: Verifier) -> Result<(), String> {
+        let addr = registry.serve();
         let reference =
             parse_oci_reference(&format!("{addr}/example/greeter@{digest}")).expect("reference");
         let client = RegistryClient::new(&reference, None);
@@ -744,7 +723,7 @@ mod tests {
     }
 
     /// Serves registry and verifies the module digest with keys.
-    fn verify(registry: TestRegistry, digest: &str, keys: &[&TestKey]) -> Result<(), String> {
+    fn verify(registry: Registry, digest: &str, keys: &[&TestKey]) -> Result<(), String> {
         let pem: String = keys.iter().map(|k| k.public_pem.as_str()).collect();
         verify_with(registry, digest, Verifier::new(pem.as_bytes())?)
     }
@@ -794,8 +773,7 @@ mod tests {
     fn a_bundle_listed_by_the_referrers_api_verifies() {
         let key = TestKey::from_seed(7);
         let (mut registry, digest) = module_registry(true);
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
             Shape::ArtifactType,
@@ -813,8 +791,7 @@ mod tests {
         let key = TestKey::from_seed(7);
         let other = TestKey::from_seed(9);
         let (mut registry, digest) = module_registry(false);
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
             Shape::ArtifactType,
@@ -829,8 +806,7 @@ mod tests {
         // shows the empty config's type.
         let key = TestKey::from_seed(7);
         let (mut registry, digest) = module_registry(false);
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
             Shape::AnnotationsOnly,
@@ -843,8 +819,7 @@ mod tests {
         let key = TestKey::from_seed(7);
         let (mut registry, digest) = module_registry(true);
         let other = format!("sha256:{}", "9".repeat(64));
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &key.bundle(&other, COSIGN_SIGN_PREDICATE),
             Shape::ArtifactType,
@@ -862,8 +837,7 @@ mod tests {
         let key = TestKey::from_seed(7);
         let (mut registry, digest) = module_registry(false);
         let other = format!("sha256:{}", "9".repeat(64));
-        attach(
-            &mut registry,
+        registry.attach(
             &other,
             &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
             Shape::ArtifactType,
@@ -882,8 +856,7 @@ mod tests {
     fn a_wrong_key_is_refused() {
         let key = TestKey::from_seed(7);
         let (mut registry, digest) = module_registry(true);
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
             Shape::ArtifactType,
@@ -914,8 +887,7 @@ mod tests {
     fn provenance_signed_by_the_key_is_not_a_signature() {
         let key = TestKey::from_seed(7);
         let (mut registry, digest) = module_registry(true);
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &key.bundle(&digest, SLSA_PROVENANCE),
             Shape::AnnotationsOnly,
@@ -948,14 +920,8 @@ mod tests {
         let key = TestKey::from_seed(7);
         let (mut registry, digest) = module_registry(false);
         // Listed first, so it is examined first.
-        attach(
-            &mut registry,
-            &digest,
-            &keyless_bundle(&digest),
-            Shape::AnnotationsOnly,
-        );
-        attach(
-            &mut registry,
+        registry.attach(&digest, &keyless_bundle(&digest), Shape::AnnotationsOnly);
+        registry.attach(
             &digest,
             &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
             Shape::ArtifactType,
@@ -963,12 +929,7 @@ mod tests {
         assert_eq!(verify(registry, &digest, &[&key]), Ok(()));
 
         let (mut registry, digest) = module_registry(false);
-        attach(
-            &mut registry,
-            &digest,
-            &keyless_bundle(&digest),
-            Shape::AnnotationsOnly,
-        );
+        registry.attach(&digest, &keyless_bundle(&digest), Shape::AnnotationsOnly);
         assert_eq!(
             verify(registry, &digest, &[&key]),
             Err(invalid(
@@ -982,8 +943,7 @@ mod tests {
     fn a_key_bundle_is_refused_by_a_verifier_without_keys() {
         let key = TestKey::from_seed(7);
         let (mut registry, digest) = module_registry(false);
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
             Shape::ArtifactType,
@@ -1010,12 +970,7 @@ mod tests {
         // rests on the authenticated signing time, not the clock.
         let digest = keyless_digest();
         let mut registry = bare_registry();
-        attach(
-            &mut registry,
-            &digest,
-            KEYLESS_BUNDLE,
-            Shape::AnnotationsOnly,
-        );
+        registry.attach(&digest, KEYLESS_BUNDLE, Shape::AnnotationsOnly);
         assert_eq!(
             verify_with(
                 registry,
@@ -1030,12 +985,7 @@ mod tests {
     fn a_keyless_signature_nobody_trusts_is_refused() {
         let digest = keyless_digest();
         let mut registry = bare_registry();
-        attach(
-            &mut registry,
-            &digest,
-            KEYLESS_BUNDLE,
-            Shape::AnnotationsOnly,
-        );
+        registry.attach(&digest, KEYLESS_BUNDLE, Shape::AnnotationsOnly);
         assert_eq!(
             verify_with(
                 registry,
@@ -1069,12 +1019,7 @@ mod tests {
     fn a_keyless_signature_for_another_digest_is_refused() {
         let other = format!("sha256:{}", "9".repeat(64));
         let mut registry = bare_registry();
-        attach(
-            &mut registry,
-            &other,
-            KEYLESS_BUNDLE,
-            Shape::AnnotationsOnly,
-        );
+        registry.attach(&other, KEYLESS_BUNDLE, Shape::AnnotationsOnly);
         assert_keyless_refusal(
             verify_with(
                 registry,
@@ -1091,12 +1036,7 @@ mod tests {
         // Staging's authorities never issued the fixture's certificate.
         let digest = keyless_digest();
         let mut registry = bare_registry();
-        attach(
-            &mut registry,
-            &digest,
-            KEYLESS_BUNDLE,
-            Shape::AnnotationsOnly,
-        );
+        registry.attach(&digest, KEYLESS_BUNDLE, Shape::AnnotationsOnly);
         assert_keyless_refusal(
             verify_with(
                 registry,
@@ -1123,7 +1063,7 @@ mod tests {
             serde_json::json!(chars.into_iter().collect::<String>());
         let tampered = serde_json::to_vec(&bundle).expect("bundle");
         let mut registry = bare_registry();
-        attach(&mut registry, &digest, &tampered, Shape::AnnotationsOnly);
+        registry.attach(&digest, &tampered, Shape::AnnotationsOnly);
         assert_keyless_refusal(
             verify_with(
                 registry,
@@ -1180,7 +1120,7 @@ mod tests {
             serde_json::from_slice(&key.bundle(&digest, COSIGN_SIGN_PREDICATE)).expect("bundle");
         bundle["padding"] = serde_json::json!("x".repeat(MAX_BUNDLE_SIZE as usize));
         let bundle = serde_json::to_vec(&bundle).expect("bundle");
-        attach(&mut registry, &digest, &bundle, Shape::ArtifactType);
+        registry.attach(&digest, &bundle, Shape::ArtifactType);
         assert_eq!(
             verify(registry, &digest, &[&key]),
             Err(invalid(
@@ -1199,7 +1139,7 @@ mod tests {
         let key = TestKey::from_seed(7);
         let (mut registry, digest) = module_registry(true);
         let bundle = key.bundle(&digest, COSIGN_SIGN_PREDICATE);
-        attach(&mut registry, &digest, &bundle, Shape::ArtifactType);
+        registry.attach(&digest, &bundle, Shape::ArtifactType);
         let tampered = key.bundle(&format!("sha256:{}", "9".repeat(64)), COSIGN_SIGN_PREDICATE);
         registry.blobs.insert(digest_of(&bundle), tampered.clone());
         assert_eq!(
@@ -1228,7 +1168,7 @@ mod tests {
             },
         }))
         .expect("bundle");
-        attach(&mut registry, &digest, &bundle, Shape::ArtifactType);
+        registry.attach(&digest, &bundle, Shape::ArtifactType);
         assert_eq!(
             verify(registry, &digest, &[&key]),
             Err(invalid(
@@ -1256,8 +1196,7 @@ mod tests {
             .expect("referrer");
             registry.push_referrer(manifest);
         }
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
             Shape::ArtifactType,
@@ -1283,8 +1222,7 @@ mod tests {
             "the stand-in's certificates must have expired"
         );
         let (mut registry, digest) = module_registry(false);
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &instance.sign(&digest, COSIGN_SIGN_PREDICATE, &release_signer()),
             Shape::AnnotationsOnly,
@@ -1309,7 +1247,7 @@ mod tests {
         );
         // Nobody trusts the signer.
         let (mut registry, digest) = module_registry(false);
-        attach(&mut registry, &digest, &bundle, Shape::AnnotationsOnly);
+        registry.attach(&digest, &bundle, Shape::AnnotationsOnly);
         assert_eq!(
             verify_with(
                 registry,
@@ -1325,7 +1263,7 @@ mod tests {
         );
         // Another instance's trusted root vouches for none of it.
         let (mut registry, digest) = module_registry(false);
-        attach(&mut registry, &digest, &bundle, Shape::AnnotationsOnly);
+        registry.attach(&digest, &bundle, Shape::AnnotationsOnly);
         assert_keyless_refusal(
             verify_with(
                 registry,
@@ -1337,8 +1275,7 @@ mod tests {
         );
         // The provenance it also signs is not a signature.
         let (mut registry, digest) = module_registry(false);
-        attach(
-            &mut registry,
+        registry.attach(
             &digest,
             &instance.sign(&digest, SLSA_PROVENANCE, &release_signer()),
             Shape::AnnotationsOnly,

@@ -25,5 +25,7 @@ pub mod runner;
 pub mod sandboxenv;
 pub mod store;
 #[cfg(any(test, feature = "testutil"))]
+pub mod testing;
+#[cfg(any(test, feature = "testutil"))]
 pub mod testsigstore;
 pub mod validate;

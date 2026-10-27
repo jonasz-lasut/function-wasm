@@ -65,6 +65,9 @@ wat = "1"
 time = { version = "0.3", features = ["formatting"] }
 
 [features]
-# rcgen and x509-cert: cosign::testutil::sigstore, the in-memory Sigstore
-# instance (Fulcio CA, CT log, Rekor) the keyless tests sign against.
-testutil = ["dep:p256", "dep:rcgen", "dep:x509-cert", "dep:time"]
+# The testing module (the in-memory registry, the signers, the runtime
+# builder, the greeting server, the open policy) and what it stands on:
+# rcgen and x509-cert for testsigstore, the in-memory Sigstore instance
+# (Fulcio CA, CT log, Rekor) the keyless tests sign against, and the
+# engine's WAT fixtures.
+testutil = ["dep:p256", "dep:rcgen", "dep:x509-cert", "dep:time", "function-wasm-engine/testutil"]
