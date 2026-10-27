@@ -12,18 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# The end-to-end suite, hand-triggered by commenting /e2e on a pull request
-# (the pattern upjet providers use for uptest): the per-guest render jobs - each
-# guest built with its own toolchain, served by the runtime built from the
-# PR, rendered by crossplane render - and the full guest behavioural suite,
-# which the always-on CI keeps toolchain-free. The result is reported as a
+# The end-to-end workflow, hand-triggered by commenting /e2e on a pull
+# request (the pattern upjet providers use for uptest): the full guest
+# behavioural suite, which the always-on CI keeps toolchain-free; one build
+# job per example toolchain (build, unit tests, lint, codec and bindings
+# drift); and the cluster job, the Kubernetes-native end-to-end suite
+# (crates/e2e, docs/project/testing.md) against the runtime built from the
+# PR, installed as a Function in a kind cluster. The result is reported as a
 # commit status on the PR's head, since an issue_comment run does not show
 # up as a check by itself.
 #
 # An issue_comment run uses this file from the default branch but builds the
-# pull request's code, so only the repository's owner, members and
-# collaborators can start it, the jobs that run that code get a read-only
-# token, and no checkout leaves the token behind for the code to read. Nor do
+# pull request's code, so a change to this file is exercised only after it
+# merges - unless the workflow is dispatched by hand on its branch
+# (workflow_dispatch runs the file from the chosen ref, against that ref),
+# which reports no commit status. Only the repository's owner, members and
+# collaborators can start a comment run, the jobs that run that code get a
+# read-only token, and no checkout leaves the token behind for the code to
+# read. Nor do
 # the jobs restore or save caches (rust-cache, setup-go, setup-zig, npm): they
 # run in the default branch's cache scope, where trusted workflows would
 # restore whatever the pull request's code wrote.
@@ -32,6 +38,7 @@ name: E2E
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch: {}
 
 # Read-only by default; start and report, which run none of the pull
 # request's code, take the write scopes they need.
@@ -39,15 +46,13 @@ permissions:
   contents: read
 
 jobs:
-  # Gates the whole run on a /e2e comment on a pull request, acknowledges
-  # the comment with a reaction, resolves the PR's head SHA and marks its
-  # e2e status pending.
   start:
     runs-on: ubuntu-26.04
     if: >-
-      github.event.issue.pull_request
+      github.event_name == 'workflow_dispatch'
+      || (github.event.issue.pull_request
       && startsWith(github.event.comment.body, '/e2e')
-      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     # Reactions and the head lookup on a pull request's comment go through
     # the pull-requests permission; issues: write stays for comments on
     # plain issues.
@@ -57,43 +62,52 @@ jobs:
       statuses: write
     outputs:
       sha: ${{ steps.pr.outputs.sha }}
+      ref: ${{ steps.pr.outputs.ref }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       # Best effort: the acknowledgement is cosmetic and must never take
       # the run down.
       - name: Acknowledge the Comment
+        if: github.event_name == 'issue_comment'
         run: |
           gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=rocket || true
 
-      - name: Resolve the PR Head
+      # The code under test: the pull request's merge ref for a comment run,
+      # the dispatched ref otherwise.
+      - name: Resolve the Code Under Test
         id: pr
         run: |
-          sha=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" -q .head.sha)
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            sha=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" -q .head.sha)
+            ref="refs/pull/${{ github.event.issue.number }}/merge"
+          else
+            sha="${{ github.sha }}"
+            ref="${{ github.ref }}"
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Mark the Status Pending
+        if: github.event_name == 'issue_comment'
         run: |
           gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
             -f state=pending -f context=e2e -f description="running" \
             -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-  # The runtime every render job serves its guest with, and guestfn for the
-  # guests that build through it, compiled once per run and handed to the
-  # render jobs as an artifact - the jobs keep no caches, so each one used
-  # to compile the release runtime itself. xprin, which runs each example's
-  # render test suite, rides along: fetched once, pinned by checksum.
+  # The runtime and guestfn, compiled once per run with a warm cargo cache
+  # and handed to the other jobs as an artifact: the cluster job wraps the
+  # runtime into its image (Dockerfile.dev) instead of compiling the
+  # workspace cold in the Dockerfile's build stage, and the guests that
+  # build through guestfn take it from GUESTFN.
   build-tools:
     runs-on: ubuntu-26.04
     needs: start
-    env:
-      XPRIN_VERSION: v0.3.0
-      XPRIN_SHA256: 266f2bc024f8ca3f0071c3abe14ddca971be85890ce17260df92174b5e2f432c
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
       - name: Setup Rust
@@ -104,21 +118,13 @@ jobs:
       - name: Build the Runtime and guestfn
         run: cargo build --locked --release -p function-wasm -p guestfn
 
-      # Beside the binaries, so the artifact keeps one flat directory.
-      - name: Fetch xprin
-        run: |
-          curl -fsSL -o target/release/xprin \
-            "https://github.com/crossplane-contrib/xprin/releases/download/${XPRIN_VERSION}/xprin_linux_amd64"
-          echo "${XPRIN_SHA256}  target/release/xprin" | sha256sum -c -
-
-      - name: Upload the Runtime, guestfn and xprin
+      - name: Upload the Runtime and guestfn
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-tools
           path: |
             target/release/function
             target/release/guestfn
-            target/release/xprin
           if-no-files-found: error
           retention-days: 1
 
@@ -132,7 +138,12 @@ jobs:
   # Built in release: a debug wasmtime compiles the large guests (the Go
   # module, the TypeScript and Python components) many times slower, and
   # the arm64 runner is faster again. x86-64 code generation stays covered
-  # by the render jobs, which serve every guest through an x86-64 runtime.
+  # by the cluster job, which serves the test module through an x86-64
+  # runtime.
+  #
+  # FUNCTION_WASM_REQUIRE_TOOLCHAINS: a guest whose toolchain is missing
+  # fails here instead of skipping, so a runner that lost a toolchain cannot
+  # shrink the suite and stay green.
   guest-suite:
     runs-on: ubuntu-26.04-arm
     needs: start
@@ -140,7 +151,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
       # The rust-v2 guest's rust-toolchain.toml brings its own toolchain and
@@ -173,59 +184,50 @@ jobs:
           node-version: '24'
 
       - name: Run the Guest Suite
+        env:
+          FUNCTION_WASM_REQUIRE_TOOLCHAINS: '1'
         run: cargo test --locked --release -p function-wasm --test guests
 
-  # Each example guest, rendered with crossplane against the runtime built
-  # from this tree, proves the whole chain: guest compiles to wasm, the
-  # runtime serves it over gRPC, Crossplane accepts the response.
+  # Each example guest, built with its own toolchain, unit-tested and linted,
+  # its generated codec and bindings checked for drift. What an example
+  # composes is asserted by nothing here: the cluster job below drives the
+  # suite's own module through Crossplane.
   #
-  # The Go guest, an ABI v2 component: the pdb-addon use case, a tenant
-  # add-on the XR names through module.from, run after a
-  # function-go-templating step (which crossplane render runs in Docker).
-  # go build emits the wasip1 core module and guestfn embeds its world and
-  # wraps it (no componentize-go, no wasm-tools); wit-bindgen is only needed
-  # to regenerate the checked-in Go bindings, which this job does to catch
+  # The Go guest, an ABI v2 component: the pdb-addon use case. go build
+  # emits the wasip1 core module and guestfn embeds its world and wraps it
+  # (no componentize-go, no wasm-tools); wit-bindgen is only needed to
+  # regenerate the checked-in Go bindings, which this job does to catch
   # drift.
-  render-go:
-    name: render (go)
+  build-go:
+    name: build (go)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
     env:
-      # These environment variables are important to the Crossplane CLI
-      # install.sh script. They determine what version it installs.
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
       # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum like xprin.
+      # names it), as a release binary pinned by checksum.
       WIT_BINDGEN_VERSION: 0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
-      # The runtime, guestfn and xprin come from build-tools; render.sh and
-      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
-      # of building or installing them.
-      - name: Download the Runtime, guestfn and xprin
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt guestfn
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -233,10 +235,6 @@ jobs:
           cache: false
           go-version-file: examples/pdb-addon/go.mod
 
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
 
       - name: Setup wit-bindgen
         run: |
@@ -260,52 +258,40 @@ jobs:
       # vet takes the guest's own packages: internal/bindings is wit-bindgen's
       # output, whose pointer arithmetic over the wasm linear memory is what
       # vet's unsafeptr check flags.
-      - name: Vet and Test the Example Guest
+      - name: Build, Vet and Test the Example Guest
         working-directory: examples/pdb-addon
         run: |
+          make build
           go vet $(go list ./... | grep -v /internal/bindings/)
           go test -race ./...
 
-      - name: Render the Example
-        run: make -C examples/pdb-addon render-check
-
   # The Rust guest, an ABI v2 component (wasm32-wasip3 on the toolchain its
-  # rust-toolchain.toml pins): the cloudflare-origin use case, which fetches
-  # over the host's egress from a fixture server render.sh starts.
-  render-rust:
-    name: render (rust)
+  # rust-toolchain.toml pins): the cloudflare-origin use case.
+  build-rust:
+    name: build (rust)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
-    env:
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
-      # The runtime, guestfn and xprin come from build-tools; render.sh and
-      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
-      # of building or installing them.
-      - name: Download the Runtime, guestfn and xprin
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt guestfn
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -320,63 +306,47 @@ jobs:
       # The guest's Makefile names its wasm target (and a rust-toolchain.toml
       # beside it may pin the compiler), so the lint follows the pull
       # request's code rather than this file, which comes from main.
-      - name: Lint and Test the ABI v2 Rust Guest
-        run: make -C examples/cloudflare-origin lint test
-
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Render the ABI v2 Rust Guest
-        run: make -C examples/cloudflare-origin render-check
+      - name: Build, Lint and Test the ABI v2 Rust Guest
+        run: make -C examples/cloudflare-origin build lint test
 
   # The same guest in Zig, an ABI v2 component: zig-protobuf over the
   # vendored proto and wit-bindgen's C bindings over its world (the c
   # guest's, byte for byte, read through translate-c), built by zig into a
-  # core module that guestfn wraps (no wasm-tools, no adapter download),
-  # rendered through the runtime. One zig binary builds it; protoc (which
+  # core module that guestfn wraps (no wasm-tools, no adapter download).
+  # One zig binary builds it; protoc (which
   # zig build gen-proto downloads) and wit-bindgen are only needed to
   # regenerate the checked-in codec and bindings, which this job does to
   # catch drift.
-  render-zig:
-    name: render (zig)
+  build-zig:
+    name: build (zig)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
     env:
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
       # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum like xprin.
+      # names it), as a release binary pinned by checksum.
       WIT_BINDGEN_VERSION: 0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
-      # The runtime, guestfn and xprin come from build-tools; render.sh and
-      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
-      # of building or installing them.
-      - name: Download the Runtime, guestfn and xprin
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt guestfn
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
@@ -414,65 +384,50 @@ jobs:
             exit 1
           fi
 
-      - name: Lint and Test the Zig Guest
+      - name: Build, Lint and Test the Zig Guest
         working-directory: examples/hello-zig
         run: |
           zig fmt --check build.zig src/main.zig src/wasmfn.zig
           zig build test
-
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Render the Zig Guest
-        run: make -C examples/hello-zig render-check
+          make build
 
   # The same guest in C, an ABI v2 component: nanopb over the vendored proto
   # and wit-bindgen's C bindings over its world, compiled by zig cc behind
   # its build.zig into a core module that guestfn wraps (no wasm-tools, no
-  # adapter download), rendered through the runtime. The same zig binary
+  # adapter download). The same zig binary
   # builds it; nanopb_generator (and protoc) and wit-bindgen are only needed
   # to regenerate the checked-in codec and bindings, which this job does to
   # catch drift.
-  render-c:
-    name: render (c)
+  build-c:
+    name: build (c)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
     env:
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
       # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum like xprin.
+      # names it), as a release binary pinned by checksum.
       WIT_BINDGEN_VERSION: 0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
-      # The runtime, guestfn and xprin come from build-tools; render.sh and
-      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
-      # of building or installing them.
-      - name: Download the Runtime, guestfn and xprin
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt guestfn
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
@@ -525,19 +480,12 @@ jobs:
             exit 1
           fi
 
-      - name: Lint and Test the C Guest
+      - name: Build, Lint and Test the C Guest
         working-directory: examples/hello-c
         run: |
           zig fmt --check build.zig
           zig build test
-
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Render the C Guest
-        run: make -C examples/hello-c render-check
+          make build
 
   # The same guest in Odin, an ABI v2 component on the c flavour's plumbing
   # (its C bindings, nanopb codec, WIT and proto byte for byte): odin
@@ -548,17 +496,15 @@ jobs:
   # (the binary is statically linked, its base and core collections sit
   # beside it); the codec and bindings drift checks are the c job's, over
   # this example's copies.
-  render-odin:
-    name: render (odin)
+  build-odin:
+    name: build (odin)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
     env:
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
       # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum like xprin.
+      # names it), as a release binary pinned by checksum.
       WIT_BINDGEN_VERSION: 0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
       # The Odin release the example builds with (its README names it).
@@ -568,27 +514,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
-      # The runtime, guestfn and xprin come from build-tools; render.sh and
-      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
-      # of building or installing them.
-      - name: Download the Runtime, guestfn and xprin
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt guestfn
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
@@ -651,39 +591,30 @@ jobs:
           echo "${RUNNER_TEMP}/odin" >> "$GITHUB_PATH"
           "${RUNNER_TEMP}/odin/odin" version
 
-      - name: Lint and Test the Odin Guest
+      - name: Build, Lint and Test the Odin Guest
         working-directory: examples/hello-odin
         run: |
           zig fmt --check build.zig
           zig build lint
           zig build test
-
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Render the Odin Guest
-        run: make -C examples/hello-odin render-check
+          make build
 
   # The same guest in MoonBit, an ABI v2 component: protoc-gen-mbt's codec
   # over the vendored proto (the well-known types from the moonbitlang/protobuf
   # runtime) and wit-bindgen's MoonBit bindings over its world, built by moon
   # into a core module that guestfn embeds the world into (UTF-16, MoonBit's
-  # string encoding) and wraps (no wasm-tools, no adapter), rendered through
-  # the runtime. moon is pinned to the release the example was written
-  # against, by checksum like xprin; protoc (with protoc-gen-mbt through
+  # string encoding) and wraps (no wasm-tools, no adapter). moon is pinned
+  # to the release the example was written against, by checksum; protoc
+  # (with protoc-gen-mbt through
   # moonx) and wit-bindgen are only needed to regenerate the checked-in codec
   # and bindings, which this job does to catch drift.
-  render-moonbit:
-    name: render (moonbit)
+  build-moonbit:
+    name: build (moonbit)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
     env:
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
       # The toolchain release: moonc's version string names it on
       # cli.moonbitlang.com (moon 0.1.20260920, moonc v0.10.14+7d59c7ec9),
       # the toolchain and its core as two tarballs the installer would fetch.
@@ -691,34 +622,28 @@ jobs:
       MOON_SHA256: 9226694de9ff978db1ecf820b7710c4224e84ec7a76b19a222d96f0cd4e31b6a
       MOON_CORE_SHA256: 6f18b8fdea18f85e628a75e4a1bd3977c5a5c9c6a836fd8824192b0e6bd91b14
       # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum like xprin.
+      # names it), as a release binary pinned by checksum.
       WIT_BINDGEN_VERSION: 0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
-      # The runtime, guestfn and xprin come from build-tools; render.sh and
-      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
-      # of building or installing them.
-      - name: Download the Runtime, guestfn and xprin
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt guestfn
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
       # What the official installer does for one pinned release: the
       # toolchain tarball under ~/.moon, the core beside it, bundled for the
@@ -787,55 +712,36 @@ jobs:
             exit 1
           fi
 
-      - name: Lint and Test the MoonBit Guest
-        run: make -C examples/hello-moonbit lint test
-
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Render the MoonBit Guest
-        run: make -C examples/hello-moonbit render-check
+      - name: Build, Lint and Test the MoonBit Guest
+        run: make -C examples/hello-moonbit build lint test
 
   # The TypeScript guest, an ABI v2 component (jco): the policy-gate use
-  # case, the last step after function-go-templating (which render runs in
-  # Docker). It asks for its environment's EnvironmentConfig through
-  # requirements, which the xprin suite answers from its extra resources.
-  render-ts:
-    name: render (ts)
+  # case.
+  build-ts:
+    name: build (ts)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
-    env:
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
-      # The runtime, guestfn and xprin come from build-tools; render.sh and
-      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
-      # of building or installing them.
-      - name: Download the Runtime, guestfn and xprin
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt guestfn
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -843,106 +749,67 @@ jobs:
           node-version: '24'
           cache-dependency-path: examples/policy-gate/package-lock.json
 
-      - name: Test the TypeScript Guest
-        run: make -C examples/policy-gate test
-
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Render the TypeScript Guest
-        run: make -C examples/policy-gate render-check
+      - name: Build and Test the TypeScript Guest
+        run: make -C examples/policy-gate build test
 
   # The Python guest, an ABI v2 component (componentize-py): the team-tags
-  # use case, which reads the CMDB record of the XR's namespace with that
-  # team's token from a shared step credential, over the host's egress from
-  # a fixture server render.sh starts, after function-go-templating (run in
-  # Docker by the render) composes the bucket it tags.
-  render-python:
-    name: render (python)
+  # use case.
+  build-python:
+    name: build (python)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
-    env:
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
-      # The runtime, guestfn and xprin come from build-tools; render.sh and
-      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
-      # of building or installing them.
-      - name: Download the Runtime, guestfn and xprin
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt guestfn
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
-      - name: Test the Python Guest
-        run: make -C examples/team-tags test
-
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Render the Python Guest
-        run: make -C examples/team-tags render-check
+      - name: Build and Test the Python Guest
+        run: make -C examples/team-tags build test
 
   # The C# guest, an ABI v2 component from componentize-dotnet: the
-  # dashboard-bundle use case, which fetches a pinned zip archive over the
-  # host's egress from a fixture server render.sh starts and unpacks it into
-  # its private /tmp, under example/policy.cedar.
-  render-dotnet:
-    name: render (dotnet)
+  # dashboard-bundle use case.
+  build-dotnet:
+    name: build (dotnet)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
-    env:
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
 
-      # The runtime, guestfn and xprin come from build-tools; render.sh and
-      # the Makefiles take them from FUNCTION_BIN, GUESTFN and XPRIN instead
-      # of building or installing them.
-      - name: Download the Runtime, guestfn and xprin
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt guestfn
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
       # NativeAOT-LLVM's linux-x64 compiler: the Makefile builds with the
       # host's dotnet here, no container.
@@ -952,81 +819,84 @@ jobs:
           dotnet-version: '10.0.x'
           cache: false
 
-      - name: Lint and Test the C# Guest
-        run: make -C examples/dashboard-bundle lint test
+      - name: Build, Lint and Test the C# Guest
+        run: make -C examples/dashboard-bundle build lint test
 
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Render the C# Guest
-        run: make -C examples/dashboard-bundle render-check
-
-  # One commit status carries the verdict back to the PR.
-  # The OCI path end to end at the render tier (test/e2e/oci, issue #112): a
-  # module in a registry behind basic auth, signed with cosign, chosen by the
-  # composite resource through module.from, pulled by digest with a step
-  # credential, fenced by pullModule and verified under requireSignature.
-  e2e-oci:
-    name: e2e (oci)
+  # The Kubernetes-native end-to-end suite (crates/e2e, docs/project/testing.md):
+  # a kind cluster with Crossplane at CROSSPLANE_VERSION, provider-nop, the
+  # suite's registry and this tree's runtime installed as a Function - the
+  # prebuilt binary from build-tools wrapped by Dockerfile.dev - and the
+  # three runtime profiles' suites in turn on that one cluster. The
+  # submodule's make library pins kind, kubectl, helm and the crossplane
+  # CLI, so nothing is installed by hand here. On failure the cluster's
+  # state and the suite's own logs are uploaded.
+  e2e-cluster:
+    name: e2e (cluster)
     runs-on: ubuntu-26.04
     needs:
       - start
       - build-tools
     env:
-      # These environment variables are important to the Crossplane CLI
-      # install.sh script. They determine what version it installs.
-      XP_CHANNEL: stable
-      XP_VERSION: 'v2.5.0'
+      CROSSPLANE_VERSION: '2.4.3'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ needs.start.outputs.ref }}
           persist-credentials: false
+          submodules: true
 
-      - name: Download the Runtime, guestfn and xprin
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+
+      - name: Download the Runtime and guestfn
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-tools
           path: ${{ runner.temp }}/e2e-tools
 
-      - name: Use the Prebuilt Runtime, guestfn and xprin
+      - name: Use the Prebuilt Runtime
         run: |
-          chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn" \
-            "${RUNNER_TEMP}/e2e-tools/xprin"
-          {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function"
-            echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn"
-            echo "XPRIN=${RUNNER_TEMP}/e2e-tools/xprin"
-          } >> "$GITHUB_ENV"
+          chmod +x "${RUNNER_TEMP}/e2e-tools/function"
+          echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function" >> "$GITHUB_ENV"
 
-      # The module under test is examples/pdb-addon.
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Bring the Cluster Up
+        run: make e2e.up
+
+      - name: Run the Default Profile
+        run: make e2e.test.default
+
+      - name: Run the Strict Profile
+        run: make e2e.test.strict
+
+      - name: Run the Lifecycle Profile
+        run: make e2e.test.lifecycle
+
+      - name: Dump the Cluster
+        if: failure()
+        run: make e2e.dump
+
+      - name: Upload the Dump
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          cache: false
-          go-version-file: examples/pdb-addon/go.mod
+          name: e2e-cluster-dump
+          path: |
+            _output/controlplane-dump
+            _output/e2e/logs
+          if-no-files-found: ignore
+          retention-days: 7
 
-      # The scenario signs offline (no Rekor upload), with flags cosign 3.1
-      # takes.
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: 'v3.1.4'
+      - name: Tear the Cluster Down
+        if: always()
+        run: make e2e.down
 
-      - name: Setup the Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/crossplane
-
-      - name: Run the OCI Scenario
-        run: test/e2e/oci/run.sh
-
+  # One commit status carries the verdict back to the PR.
   report:
     runs-on: ubuntu-26.04
-    needs: [start, guest-suite, render-go, render-rust, render-zig, render-c, render-odin, render-moonbit, render-ts, render-python, render-dotnet, e2e-oci]
+    needs: [start, guest-suite, build-go, build-rust, build-zig, build-c, build-odin, build-moonbit, build-ts, build-python, build-dotnet, e2e-cluster]
     if: always() && needs.start.result == 'success'
     permissions:
       statuses: write
@@ -1037,17 +907,21 @@ jobs:
         run: |
           state=success
           description="all jobs passed"
-          for result in "${{ needs.guest-suite.result }}" "${{ needs.render-go.result }}" \
-            "${{ needs.render-rust.result }}" \
-            "${{ needs.render-zig.result }}" "${{ needs.render-c.result }}" \
-            "${{ needs.render-odin.result }}" "${{ needs.render-moonbit.result }}" "${{ needs.render-ts.result }}" \
-            "${{ needs.render-python.result }}" "${{ needs.render-dotnet.result }}" \
-            "${{ needs.e2e-oci.result }}"; do
+          for result in "${{ needs.guest-suite.result }}" "${{ needs.build-go.result }}" \
+            "${{ needs.build-rust.result }}" \
+            "${{ needs.build-zig.result }}" "${{ needs.build-c.result }}" \
+            "${{ needs.build-odin.result }}" "${{ needs.build-moonbit.result }}" "${{ needs.build-ts.result }}" \
+            "${{ needs.build-python.result }}" "${{ needs.build-dotnet.result }}" \
+            "${{ needs.e2e-cluster.result }}"; do
             if [ "$result" != "success" ]; then
               state=failure
               description="at least one job did not pass"
             fi
           done
-          gh api "repos/${{ github.repository }}/statuses/${{ needs.start.outputs.sha }}" \
-            -f state="$state" -f context=e2e -f description="$description" \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            gh api "repos/${{ github.repository }}/statuses/${{ needs.start.outputs.sha }}" \
+              -f state="$state" -f context=e2e -f description="$description" \
+              -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+          # The run itself carries the verdict too, for a dispatched run.
+          [ "$state" = success ]
