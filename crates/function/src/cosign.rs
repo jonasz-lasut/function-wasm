@@ -460,7 +460,7 @@ struct EnvelopeSignature {
 /// DSSE's pre-authentication encoding - what the envelope's signatures
 /// sign: "DSSEv1 <len(type)> <type> <len(payload)> <payload>", lengths in
 /// ASCII decimal bytes.
-fn pae(payload_type: &str, payload: &[u8]) -> Vec<u8> {
+pub(crate) fn pae(payload_type: &str, payload: &[u8]) -> Vec<u8> {
     let mut out = format!(
         "DSSEv1 {} {payload_type} {} ",
         payload_type.len(),
@@ -753,6 +753,14 @@ mod tests {
     /// a policy trusting this repository's release workflow for the test
     /// repository, or no policy at all.
     fn keyless_verifier(instance: SigstoreInstance, trusting: bool) -> Verifier {
+        keyless_verifier_with(
+            TrustedRoot::from_embedded(instance).expect("embedded trusted root"),
+            trusting,
+        )
+    }
+
+    /// A verifier with no keys over root, and the same policy choice.
+    fn keyless_verifier_with(root: TrustedRoot, trusting: bool) -> Verifier {
         let policy: Option<Arc<dyn SignerPolicy>> = trusting.then(|| {
             Arc::new(|repository: &str, signer: &Signer| {
                 repository.ends_with("/example/greeter")
@@ -761,11 +769,15 @@ mod tests {
             }) as Arc<dyn SignerPolicy>
         });
         Verifier::empty()
-            .with_trusted_root(
-                TrustedRoot::from_embedded(instance).expect("embedded trusted root"),
-                policy,
-            )
+            .with_trusted_root(root, policy)
             .expect("verifier")
+    }
+
+    fn release_signer() -> Signer {
+        Signer {
+            issuer: GITHUB_ACTIONS_ISSUER.to_string(),
+            identity: RELEASE_WORKFLOW.to_string(),
+        }
     }
 
     fn unsigned(digest: &str) -> String {
@@ -1255,6 +1267,91 @@ mod tests {
             Err(invalid(
                 &digest,
                 "only the first 32 of its 33 referrers were examined"
+            ))
+        );
+    }
+
+    #[test]
+    fn an_in_memory_keyless_signature_verifies_against_its_own_trusted_root() {
+        // The stand-in signs at a fixed time in the past with a ten-minute
+        // certificate: only the signing time its Rekor entry authenticates
+        // admits the signature, as with the real fixture above.
+        let instance = crate::testsigstore::Instance::new();
+        assert!(
+            crate::testsigstore::Instance::signing_time() + time::Duration::minutes(5)
+                < time::OffsetDateTime::now_utc(),
+            "the stand-in's certificates must have expired"
+        );
+        let (mut registry, digest) = module_registry(false);
+        attach(
+            &mut registry,
+            &digest,
+            &instance.sign(&digest, COSIGN_SIGN_PREDICATE, &release_signer()),
+            Shape::AnnotationsOnly,
+        );
+        assert_eq!(
+            verify_with(
+                registry,
+                &digest,
+                keyless_verifier_with(instance.trusted_root(), true)
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_in_memory_keyless_signature_is_refused_where_it_should_be() {
+        let instance = crate::testsigstore::Instance::new();
+        let bundle = instance.sign(
+            &module_registry(false).1,
+            COSIGN_SIGN_PREDICATE,
+            &release_signer(),
+        );
+        // Nobody trusts the signer.
+        let (mut registry, digest) = module_registry(false);
+        attach(&mut registry, &digest, &bundle, Shape::AnnotationsOnly);
+        assert_eq!(
+            verify_with(
+                registry,
+                &digest,
+                keyless_verifier_with(instance.trusted_root(), false)
+            ),
+            Err(invalid(
+                &digest,
+                &format!(
+                    "keyless signature by {RELEASE_WORKFLOW} (issuer {GITHUB_ACTIONS_ISSUER}) is not trusted for <REGISTRY>/example/greeter: no trustSigner rule in the operator policy permits it"
+                )
+            ))
+        );
+        // Another instance's trusted root vouches for none of it.
+        let (mut registry, digest) = module_registry(false);
+        attach(&mut registry, &digest, &bundle, Shape::AnnotationsOnly);
+        assert_keyless_refusal(
+            verify_with(
+                registry,
+                &digest,
+                keyless_verifier_with(crate::testsigstore::Instance::other().trusted_root(), true),
+            ),
+            &digest,
+            "",
+        );
+        // The provenance it also signs is not a signature.
+        let (mut registry, digest) = module_registry(false);
+        attach(
+            &mut registry,
+            &digest,
+            &instance.sign(&digest, SLSA_PROVENANCE, &release_signer()),
+            Shape::AnnotationsOnly,
+        );
+        assert_eq!(
+            verify_with(
+                registry,
+                &digest,
+                keyless_verifier_with(instance.trusted_root(), true)
+            ),
+            Err(invalid(
+                &digest,
+                "signed statement's predicate type is \"https://slsa.dev/provenance/v1\", not https://sigstore.dev/cosign/sign/v1"
             ))
         );
     }

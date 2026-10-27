@@ -1,0 +1,4 @@
+exit 1
+--- stdout
+<DIR>/KeylessUntrusted.yaml: Composition/KeylessUntrusted pipeline[0] KeylessUntrusted: refused: cannot verify module oci <REGISTRY>/example/greeter@sha256:5e3c56b32296415a6fa9e13aad07e5636a6615866df94738b88bb9d9010dfa0b: no valid cosign signature for <REGISTRY>/example/greeter@sha256:5e3c56b32296415a6fa9e13aad07e5636a6615866df94738b88bb9d9010dfa0b: keyless signature by https://github.com/example/greeter/.github/workflows/release.yml@refs/tags/v1.0.0 (issuer https://token.actions.githubusercontent.com) is not trusted for <REGISTRY>/example/greeter: no trustSigner rule in the operator policy permits it
+--- stderr

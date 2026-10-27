@@ -809,6 +809,42 @@ fn validate_resolve_oci_source_matches_the_goldens() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
+/// The smallest ABI v2 component: a sync-lifted run that returns an empty
+/// response, enough for `function validate --resolve` to inspect.
+fn tiny_component() -> Vec<u8> {
+    wat::parse_str(
+        r#"(component
+          (core module $m
+            (memory (export "memory") 1)
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+            (func (export "run") (param i32 i32) (result i32)
+              (i32.store8 (i32.const 64) (i32.const 0))
+              (i32.store (i32.const 68) (i32.const 1024))
+              (i32.store (i32.const 72) (i32.const 0))
+              (i32.const 64)))
+          (core instance $i (instantiate $m))
+          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+        )"#,
+    )
+    .expect("wat")
+}
+
+/// An OCI manifest of one wasm layer and the empty config, titled name so
+/// two modules of the same bytes get distinct digests.
+fn module_manifest(wasm: &[u8], name: &str) -> Vec<u8> {
+    use function_wasm::oci::testregistry::digest_of;
+    let config = br#"{}"#;
+    serde_json::to_vec(&serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(config), "size": config.len()},
+        "layers": [{"mediaType": "application/wasm", "digest": digest_of(wasm), "size": wasm.len()}],
+        "annotations": {"org.opencontainers.image.title": name},
+    }))
+    .expect("manifest json")
+}
+
 /// Cosign verification under the all-or-nothing --cosign-key: the harness
 /// signs an artifact with a P-256 key the way cosign 3's key-based flow
 /// does (a Sigstore bundle - DSSE over an in-toto statement - attached as
@@ -824,33 +860,8 @@ fn validate_resolve_cosign_matches_the_goldens() {
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
     let cwd = crate_dir();
 
-    let wasm = wat::parse_str(
-        r#"(component
-          (core module $m
-            (memory (export "memory") 1)
-            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
-            (func (export "run") (param i32 i32) (result i32)
-              (i32.store8 (i32.const 64) (i32.const 0))
-              (i32.store (i32.const 68) (i32.const 1024))
-              (i32.store (i32.const 72) (i32.const 0))
-              (i32.const 64)))
-          (core instance $i (instantiate $m))
-          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-        )"#,
-    )
-    .expect("wat");
-    let config = br#"{}"#;
-    let module_manifest = |name: &str| {
-        serde_json::to_vec(&serde_json::json!({
-            "schemaVersion": 2,
-            "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(config), "size": config.len()},
-            "layers": [{"mediaType": "application/wasm", "digest": digest_of(&wasm), "size": wasm.len()}],
-            "annotations": {"org.opencontainers.image.title": name},
-        }))
-        .expect("manifest json")
-    };
+    let wasm = tiny_component();
+    let module_manifest = |name: &str| module_manifest(&wasm, name);
     let signed_manifest = module_manifest("signed");
     let unsigned_manifest = module_manifest("unsigned");
     let (signed_digest, unsigned_digest) =
@@ -964,6 +975,153 @@ fn validate_resolve_cosign_matches_the_goldens() {
     ];
     if let Some(f) = assert_golden("Cosign/SignedBehindAuth", &rust_out, &subs) {
         failures.push(f);
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}
+
+/// Keyless cosign verification against an in-memory Sigstore instance
+/// (`function_wasm::testsigstore`): a module signed keyless by a release
+/// workflow identity, verified with the instance's trusted root under a
+/// policy that trusts that identity, one that trusts another branch, and
+/// another instance's root; a keyless module met by a key-only runtime, and
+/// a key-signed module met by a trusted-root-only one. The refusal that
+/// quotes sigstore-verify's own wording (`KeylessAgainstAnotherRoot`) pins
+/// that crate's words too, so a bump of it may re-record that golden.
+#[test]
+fn validate_resolve_keyless_cosign_matches_the_goldens() {
+    use function_wasm::cosign::Signer;
+    use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey, attach};
+    use function_wasm::oci::testregistry::{TestRegistry, digest_of, serve};
+    use function_wasm::testsigstore::Instance;
+
+    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let cwd = crate_dir();
+    let wasm = tiny_component();
+    let keyless_manifest = module_manifest(&wasm, "keyless");
+    let keyed_manifest = module_manifest(&wasm, "keyed");
+    let (keyless_digest, keyed_digest) = (digest_of(&keyless_manifest), digest_of(&keyed_manifest));
+
+    let mut registry = TestRegistry {
+        manifests: [
+            (keyless_digest.clone(), keyless_manifest),
+            (keyed_digest.clone(), keyed_manifest),
+        ]
+        .into(),
+        blobs: [(digest_of(&wasm), wasm.clone())].into(),
+        bearer: false,
+        referrers_api: false,
+        basic: false,
+    };
+    let instance = Instance::new();
+    let signer = Signer {
+        issuer: "https://token.actions.githubusercontent.com".to_string(),
+        identity:
+            "https://github.com/example/greeter/.github/workflows/release.yml@refs/tags/v1.0.0"
+                .to_string(),
+    };
+    attach(
+        &mut registry,
+        &keyless_digest,
+        &instance.sign(&keyless_digest, COSIGN_SIGN_PREDICATE, &signer),
+        Shape::AnnotationsOnly,
+    );
+    let key = TestKey::from_seed(5);
+    attach(
+        &mut registry,
+        &keyed_digest,
+        &key.bundle(&keyed_digest, COSIGN_SIGN_PREDICATE),
+        Shape::ArtifactType,
+    );
+    let addr = serve(registry);
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let write = |name: &str, bytes: &[u8]| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).expect("write");
+        path.display().to_string()
+    };
+    let root = write("trusted_root.json", &instance.trusted_root_json());
+    let other_root = write("other_root.json", &Instance::other().trusted_root_json());
+    let key_path = write("cosign.pub", key.public_pem.as_bytes());
+    let trusting = cwd
+        .join("testdata/validate/signer-policy.cedar")
+        .display()
+        .to_string();
+    let untrusting = cwd
+        .join("testdata/validate/signer-policy-untrusting.cedar")
+        .display()
+        .to_string();
+
+    let cases: [(&str, &str, Vec<&str>); 5] = [
+        (
+            "KeylessTrusted",
+            &keyless_digest,
+            vec![
+                "--cosign-trusted-root",
+                &root,
+                "--sandbox-policy-file",
+                &trusting,
+            ],
+        ),
+        (
+            "KeylessUntrusted",
+            &keyless_digest,
+            vec![
+                "--cosign-trusted-root",
+                &root,
+                "--sandbox-policy-file",
+                &untrusting,
+            ],
+        ),
+        (
+            "KeylessAgainstAnotherRoot",
+            &keyless_digest,
+            vec![
+                "--cosign-trusted-root",
+                &other_root,
+                "--sandbox-policy-file",
+                &trusting,
+            ],
+        ),
+        // The all-or-nothing key regime meets a keyless signature.
+        (
+            "KeylessWithoutTrustedRoot",
+            &keyless_digest,
+            vec!["--cosign-key", &key_path],
+        ),
+        // A trusted root alone meets a key-based signature.
+        (
+            "KeyedWithoutKey",
+            &keyed_digest,
+            vec![
+                "--cosign-trusted-root",
+                &root,
+                "--sandbox-policy-file",
+                &trusting,
+            ],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, digest, flags) in cases {
+        let file = dir.path().join(format!("{name}.yaml"));
+        std::fs::write(
+            &file,
+            format!(
+                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: OCI, oci: {{ref: {addr}/example/greeter@{digest}}}}}\n"
+            ),
+        )
+        .expect("write");
+        let file = file.display().to_string();
+        let mut args = vec![file.as_str(), "--resolve"];
+        args.extend(flags);
+        let rust_out = run_validate(rust, &args, "", &cwd);
+        let subs = [
+            (dir.path().display().to_string(), "<DIR>"),
+            (addr.to_string(), "<REGISTRY>"),
+        ];
+        if let Some(f) = assert_golden(&format!("Cosign/{name}"), &rust_out, &subs) {
+            failures.push(f);
+        }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }

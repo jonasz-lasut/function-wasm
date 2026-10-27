@@ -1,0 +1,4 @@
+exit 1
+--- stdout
+<DIR>/KeyedWithoutKey.yaml: Composition/KeyedWithoutKey pipeline[0] KeyedWithoutKey: refused: cannot verify module oci <REGISTRY>/example/greeter@sha256:d5b02bee92d9172ffa64118cd26b0357ba5ac9788c7b0e84dd6ac0c664cf7759: no valid cosign signature for <REGISTRY>/example/greeter@sha256:d5b02bee92d9172ffa64118cd26b0357ba5ac9788c7b0e84dd6ac0c664cf7759: key-based signature cannot be verified: the runtime has no --cosign-key
+--- stderr

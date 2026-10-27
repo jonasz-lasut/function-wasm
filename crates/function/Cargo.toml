@@ -50,13 +50,21 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 sigstore-verify = { version = "0.15.1", default-features = false, features = ["aws-lc-rs"] }
 sigstore-trust-root = { version = "0.15.1", default-features = false, features = ["aws-lc-rs"] }
 sigstore-types = "0.15.1"
+rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"], optional = true }
+x509-cert = { version = "0.2", optional = true }
+time = { version = "0.3", features = ["formatting"], optional = true }
 
 [dev-dependencies]
 # The crate's own integration tests use the test registry.
 function-wasm = { path = ".", features = ["testutil"] }
 p256 = { version = "0.14", features = ["ecdsa", "pem"] }
+rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"] }
+x509-cert = "0.2"
 tempfile = "3"
 wat = "1"
+time = { version = "0.3", features = ["formatting"] }
 
 [features]
-testutil = ["dep:p256"]
+# rcgen and x509-cert: cosign::testutil::sigstore, the in-memory Sigstore
+# instance (Fulcio CA, CT log, Rekor) the keyless tests sign against.
+testutil = ["dep:p256", "dep:rcgen", "dep:x509-cert", "dep:time"]
