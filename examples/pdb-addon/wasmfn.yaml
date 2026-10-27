@@ -5,11 +5,18 @@
 # make one possible.
 abi: 2
 name: pdb-addon
-version: 0.1.0
+version: 0.1.1
 # No requires: the add-on runs in the default sandbox - no network, no
 # filesystem, no environment. Everything it reads arrives in the request, and
 # everything it does is the response, so no policy layer has anything to
 # grant it.
+# What it composes, declared for the tooling (function validate --resolve
+# warns where a Composition's policy would refuse it, guestfn scaffold
+# composition writes the matching permit); the runtime judges the actual
+# output against the composeResource rules, never this declaration.
+composes:
+  - kind: policy/PodDisruptionBudget
+    changes: [add]
 config:
   # The JSON Schema (draft 2020-12) of the Input's config; the runtime refuses
   # a request whose config does not match, naming the field.

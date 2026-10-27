@@ -1,7 +1,7 @@
 //! guestfn scaffold composition: a Composition step for a module, from its
 //! manifest - the module source, a config skeleton from the manifest's
 //! schema, and a commented compositionPolicy skeleton derived from the
-//! manifest's requires.
+//! manifest's requires and composes.
 
 use std::path::{Path, PathBuf};
 
@@ -204,6 +204,31 @@ fn composition_policy_skeleton(src: &Source, m: Option<&Manifest>) -> Option<Str
                     "permit (principal, action == Action::\"spendCredential\", resource == Credential::\"{name}\");"
                 ));
             }
+        }
+    }
+    if let Some(composes) = m.map(|m| &m.composes)
+        && !composes.is_empty()
+    {
+        body.push(
+            "// what the module declares it composes (composeResource fences a module's"
+                .to_string(),
+        );
+        body.push("// output; unscoped, nothing is narrowed):".to_string());
+        for c in composes {
+            let when = match c.changes.as_slice() {
+                [] => String::new(),
+                changes => {
+                    let tests: Vec<String> = changes
+                        .iter()
+                        .map(|ch| format!("context.change == \"{ch}\""))
+                        .collect();
+                    format!(" when {{ {} }}", tests.join(" || "))
+                }
+            };
+            body.push(format!(
+                "permit (principal, action == Action::\"composeResource\", resource == Kind::\"{}\"){when};",
+                c.kind
+            ));
         }
     }
     if let Source::Oci(reference) = src
