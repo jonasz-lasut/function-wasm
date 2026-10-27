@@ -30,6 +30,9 @@
 # states. It can also be started by hand on any ref, to try the matrix
 # itself:
 #   gh workflow run "Release Matrix E2E" --ref main
+# A trusted ref runs here, so the Rust builds use rust-cache's default
+# prefix like ci.yml, never the e2e- namespace e2e.yml's pull-request code
+# writes.
 name: Release Matrix E2E
 
 on:
@@ -66,6 +69,11 @@ jobs:
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
+
+      - name: Cache the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-on-failure: true
 
       - name: Build the Runtime and guestfn
         run: cargo build --locked --release -p function-wasm -p guestfn
@@ -113,6 +121,11 @@ jobs:
         run: |
           chmod +x "${RUNNER_TEMP}/release-matrix-tools/function"
           echo "FUNCTION_BIN=${RUNNER_TEMP}/release-matrix-tools/function" >> "$GITHUB_ENV"
+
+      - name: Cache the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-on-failure: true
 
       - name: Select the Crossplane Version
         run: |
