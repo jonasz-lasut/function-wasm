@@ -77,11 +77,53 @@ countersignature. A keyless signature by any other signer is refused with
 <repository>: no trustSigner rule in the operator policy permits it`, and
 a keyless bundle met by a runtime without the flag with `keyless signature
 cannot be verified: the runtime has no --cosign-trusted-root`.
-`--cosign-key` and `--cosign-trusted-root` combine: a bundle with a key
-hint is checked against the keys, one with a certificate against the root,
-and a module is signed when any one bundle verifies. The trusted root is
-read once at startup; fetching and refreshing it over TUF, for an operator who
-would rather not mount the file, is [#183](https://github.com/jonasz-lasut/function-wasm/issues/183).
+`--cosign-key` and a trusted root combine: a bundle with a key hint is
+checked against the keys, one with a certificate against the root, and a
+module is signed when any one bundle verifies.
+
+### Fetching the trusted root over TUF
+
+Sigstore rotates the material in the trusted root (the public-good root
+already carries two generations of Rekor keys, Fulcio chains and CT keys),
+and a runtime holding a stale file keeps admitting old signatures while
+refusing every module signed after the next rotation. `--cosign-trusted-root`
+is the air-gapped mode: that file and nothing else, no network, the
+operator owns the refresh (a mounted ConfigMap `cosign initialize`
+rewrites). `--cosign-trust-instance public-good` (`COSIGN_TRUST_INSTANCE`;
+also `staging` and `github`) fetches the root instead, and keeps it
+current while serving; the two flags exclude each other. The TUF root
+embedded in the runtime's sigstore-trust-root crate bootstraps the walk:
+root, timestamp, snapshot and targets, each signed and expiring, and
+`trusted_root.json` is read by the length and hashes the verified metadata
+pins. The verified metadata and the root are cached under
+`/tmp/function-wasm-cache/tuf/<instance>` (outside the `--max-cache-size`
+sweep; a volume under the cache root carries it across restarts).
+
+At startup the runtime fetches the root before it warms modules and
+reports ready, bounded to one minute; if the repository does not answer,
+the cache is re-verified offline from the embedded TUF root (as
+trustworthy as a fetch, only as old as the cache, and refused once the
+metadata has expired). With neither the runtime still starts and serves:
+every keyless signature is refused with `keyless signature cannot be
+verified: the trusted root of public-good has not been fetched yet (the
+last attempt failed: …)` until a refresh succeeds, retried once a minute
+until then. Key-signed and unsigned modules are unaffected, and so are
+readiness and liveness. While serving, the root is refreshed every
+`--cosign-tuf-refresh` (`COSIGN_TUF_REFRESH`, default `1h`, at least
+`1m`, the duration syntax of `--module-timeout`): a changed root replaces
+the one in use and forgets the verified-digest memo, so a module whose
+signer the new root no longer vouches for is verified again on its next
+request; a failed refresh keeps the last good root. Verification itself
+never touches the network: a refresh failure can only make the root
+older, never a request slower. The metrics
+`function_wasm_trusted_root_refreshes_total{outcome}` and
+`function_wasm_trusted_root_last_refresh_timestamp_seconds` show the
+refreshes and the root's age (see [metrics](metrics.md)).
+
+`function validate --resolve --cosign-trust-instance public-good …` runs
+the same fetch (or reads the same cache) before it verifies, so an
+operator can rehearse the flags offline; without `--resolve` nothing is
+fetched. A private TUF mirror is not offered yet.
 
 ## Requiring signatures per repository
 
