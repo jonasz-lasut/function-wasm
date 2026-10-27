@@ -1,4 +1,4 @@
 exit 1
 --- stdout
-<DIR>/KeylessWithoutTrustedRoot.yaml: Composition/KeylessWithoutTrustedRoot pipeline[0] KeylessWithoutTrustedRoot: refused: cannot verify module oci <REGISTRY>/example/greeter@sha256:5e3c56b32296415a6fa9e13aad07e5636a6615866df94738b88bb9d9010dfa0b: no valid cosign signature for <REGISTRY>/example/greeter@sha256:5e3c56b32296415a6fa9e13aad07e5636a6615866df94738b88bb9d9010dfa0b: keyless signature cannot be verified: the runtime has no --cosign-trusted-root
+<DIR>/KeylessWithoutTrustedRoot.yaml: Composition/KeylessWithoutTrustedRoot pipeline[0] KeylessWithoutTrustedRoot: refused: cannot verify module oci <REGISTRY>/example/greeter@sha256:5e3c56b32296415a6fa9e13aad07e5636a6615866df94738b88bb9d9010dfa0b: no valid cosign signature for <REGISTRY>/example/greeter@sha256:5e3c56b32296415a6fa9e13aad07e5636a6615866df94738b88bb9d9010dfa0b: keyless signature cannot be verified: the runtime has neither --cosign-trusted-root nor --cosign-trust-instance
 --- stderr

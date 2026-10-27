@@ -13,7 +13,7 @@ use std::time::Duration;
 use clap::Parser;
 use function_sdk_rust::Args;
 use function_wasm::{
-    authz, cache, cosign, egress, grpc, logging, ops, resolver, runner, store, validate,
+    authz, cache, cosign, egress, grpc, logging, ops, resolver, runner, store, trustroot, validate,
 };
 use function_wasm_engine::{Config, Engine, duration};
 
@@ -82,6 +82,20 @@ struct ServeArgs {
     /// signer for the repository.
     #[arg(long, env = "COSIGN_TRUSTED_ROOT")]
     cosign_trusted_root: Option<PathBuf>,
+
+    /// Fetch the Sigstore trusted root over TUF from a well-known instance
+    /// (public-good, staging or github) and refresh it while serving,
+    /// instead of reading --cosign-trusted-root's file. The verified TUF
+    /// metadata and the root are cached under
+    /// /tmp/function-wasm-cache/tuf/<instance>; a keyless signature is
+    /// refused until the first fetch, or that cache, yields a root.
+    #[arg(long, env = "COSIGN_TRUST_INSTANCE", value_enum)]
+    cosign_trust_instance: Option<trustroot::Instance>,
+
+    /// How often --cosign-trust-instance refreshes the trusted root, at
+    /// least 1m; the syntax of --module-timeout.
+    #[arg(long, default_value = "1h", env = "COSIGN_TUF_REFRESH", value_parser = duration::parse)]
+    cosign_tuf_refresh: Duration,
 
     /// Keep compiled modules in memory between requests. Off, every request
     /// maps the module's compiled artifact from disk and releases it after.
@@ -179,6 +193,15 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         );
         std::process::exit(1);
     }
+    if let Err(e) = trustroot::exclusive(
+        args.cosign_trusted_root.as_deref(),
+        args.cosign_trust_instance,
+    )
+    .and_then(|()| trustroot::check_refresh(args.cosign_tuf_refresh))
+    {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
     // The operator policy compiles once at startup and is immutable for the
     // process; a malformed policy or SSRF CIDR rule stops the runtime here
     // rather than compiling into a table that means less than written.
@@ -207,6 +230,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     let verifier = match cosign::Verifier::configure(
         args.cosign_key.as_deref(),
         args.cosign_trusted_root.as_deref(),
+        args.cosign_trust_instance.map(trustroot::Instance::name),
         policy.clone().map(|p| p as Arc<dyn cosign::SignerPolicy>),
     ) {
         Ok(v) => v.map(Arc::new),
@@ -214,6 +238,17 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             eprintln!("{e}");
             std::process::exit(1);
         }
+    };
+    // The trusted root over TUF: the first fetch runs with the warm-up
+    // below, the refreshes while serving; a verifier is there whenever the
+    // instance flag is.
+    let refresher = match (args.cosign_trust_instance, &verifier) {
+        (Some(instance), Some(verifier)) => Some(Arc::new(trustroot::Refresher::new(
+            instance.source(),
+            Arc::clone(verifier),
+            args.cosign_tuf_refresh,
+        ))),
+        _ => None,
     };
     // A key without a policy is the all-or-nothing regime; a key beside a
     // policy with no requireSignature rule verifies nothing - warn loudly
@@ -227,12 +262,22 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         );
     }
     // A trusted root admits a keyless signature only through a trustSigner
-    // rule: without one, every keyless signature is refused.
-    if args.cosign_trusted_root.is_some() && !policy.as_ref().is_some_and(|p| p.has_signer_rules())
-    {
-        tracing::warn!(
-            "--cosign-trusted-root is set but the operator policy has no trustSigner rule: no keyless signature will be trusted"
-        );
+    // rule: without one, every keyless signature is refused - and a rule
+    // without a root refuses them just the same.
+    let has_signer_rules = policy.as_ref().is_some_and(|p| p.has_signer_rules());
+    let root_flag = match (&args.cosign_trusted_root, args.cosign_trust_instance) {
+        (Some(_), _) => Some("--cosign-trusted-root"),
+        (None, Some(_)) => Some("--cosign-trust-instance"),
+        (None, None) => None,
+    };
+    match root_flag {
+        Some(flag) if !has_signer_rules => tracing::warn!(
+            "{flag} is set but the operator policy has no trustSigner rule: no keyless signature will be trusted"
+        ),
+        None if has_signer_rules => tracing::warn!(
+            "the operator policy has trustSigner rules but neither --cosign-trusted-root nor --cosign-trust-instance is set: every keyless signature will be refused"
+        ),
+        _ => {}
     }
     // The $TMPDIR probe runs once before serving, only when the policy can
     // grant a private /tmp: a misconfigured $TMPDIR stops the runtime here,
@@ -385,12 +430,17 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     {
         // Warm-up shares the request path's cache, so a warmed module is
         // exactly what a request would have loaded; failures never hold
-        // readiness back.
+        // readiness back. The trusted root is fetched first (bounded, a
+        // failure logged): a warmed module may need it, and so will the
+        // first request.
         let entries = args.warm_modules.clone();
         let readiness = readiness.clone();
         let resolver = Arc::clone(&resolver);
         let module_cache = Arc::clone(&module_cache);
         tokio::spawn(async move {
+            if let Some(refresher) = refresher {
+                refresher.start().await;
+            }
             ops::warm(&entries, &resolver, &module_cache).await;
             readiness.ready();
             health.set_serving::<grpc::RawFunctionServer>().await;

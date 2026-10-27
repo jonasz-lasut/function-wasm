@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+function validate: --cosign-trusted-root and --cosign-trust-instance are mutually exclusive: the file is the trusted root, or the instance's root is fetched over TUF

@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.7
+* Status: Implemented, revision 1.8
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. Written after the 2026-08-16 review,
@@ -107,7 +107,21 @@ which OIDC issuer and identity may vouch for a module - default-deny, so a
 trusted root alone admits nothing. Key-based bundles keep the key path: a
 bundle with a key hint never reaches the trusted root, and a keyless bundle
 met without one is refused by name, never mistaken for a key failure. The
-root is a file read at startup; fetching and refreshing it over TUF is #183.
+root is a file read at startup (`--cosign-trusted-root`, the air-gapped
+mode) or, since revision 1.8 (#183), fetched over TUF from a well-known
+instance (`--cosign-trust-instance public-good|staging|github`) and
+refreshed while serving: the TUF root embedded in the sigstore-trust-root
+crate is the trust anchor, the walk (root, timestamp, snapshot, targets,
+each signed and expiring) pins trusted_root.json by length and hashes, the
+verified metadata is cached under the module cache root, and a pod that
+cannot fetch starts from that cache or, with none, serves while refusing
+keyless signatures by name until a retry succeeds - fail-closed per
+module, never a crash loop that takes key-signed and unsigned modules down
+with it, and never the crate's embedded snapshot, a freeze the operator did
+not choose. A changed root forgets the verified-digest memo, so a signer a
+rotation dropped is re-verified on the module's next request; a failed
+refresh keeps the last good root; verification never touches the network.
+Opt-in only: the runtime opens no connection the operator did not ask for.
 
 An operator `--sandbox-policy-file` makes the requirement per-repository: a
 `requireSignature` rule demands a signature for the repositories it names,

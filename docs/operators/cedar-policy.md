@@ -67,8 +67,8 @@ either that conditions on `principal` never matches.
 | `usePrivateTmp` | both | `Capability::"privateTmp"` | none | the private `/tmp` the manifest requires |
 | `setEnv` | both | `Capability::"env"` | `keys`: the set of every environment variable name the manifest binds, decided once for all of them | the env bindings as a whole; each binding's credential is then decided by `spendCredential` |
 | `grantEgress` | both | `HostPattern::"<host or pattern>"` | `method` (upper case) and `path` (the rule's `pathPrefix`, empty when it has none); one decision per rule and per method it lists | that rule's (host, method) |
-| `requireSignature` | operator | `Repository::"<location>"` | none (placeholder principal) | nothing: it demands that a module at that location carry a cosign signature, verified with `--cosign-key` or, keyless, with `--cosign-trusted-root` and a `trustSigner` rule, before any cache is read. The [signatures](signatures.md) page has the precedence with `--cosign-key` alone |
-| `trustSigner` | operator | `Repository::"<location>"` | `issuer`, the OIDC issuer of a keyless signature's Fulcio certificate, and `identity`, its subject alternative name (a workflow URI or an email), both strings for `==` and `like` (placeholder principal) | nothing by itself: a keyless cosign signature by that signer, verified against `--cosign-trusted-root`, counts as the module's signature for `requireSignature`. See [signatures](signatures.md) |
+| `requireSignature` | operator | `Repository::"<location>"` | none (placeholder principal) | nothing: it demands that a module at that location carry a cosign signature, verified with `--cosign-key` or, keyless, with a trusted root (`--cosign-trusted-root` or `--cosign-trust-instance`) and a `trustSigner` rule, before any cache is read. The [signatures](signatures.md) page has the precedence with `--cosign-key` alone |
+| `trustSigner` | operator | `Repository::"<location>"` | `issuer`, the OIDC issuer of a keyless signature's Fulcio certificate, and `identity`, its subject alternative name (a workflow URI or an email), both strings for `==` and `like` (placeholder principal) | nothing by itself: a keyless cosign signature by that signer, verified against the trusted root (`--cosign-trusted-root` or `--cosign-trust-instance`), counts as the module's signature for `requireSignature`. See [signatures](signatures.md) |
 | `dialAddress` | operator | none: the rule must leave `principal` and `resource` unconstrained | `ip`, the resolved address, tested with `isInRange(ip("CIDR"))` or `isLoopback()` | nothing at request time: the rules compile at load into the egress block list, a `forbid` adding a blocked prefix and a `permit` a hole in the default list |
 
 ## How each layer decides
@@ -238,7 +238,8 @@ release workflow running on a version tag, authenticated by GitHub Actions.
 wrote it (`https://github.com/<owner>/<repo>/.github/workflows/<file>@<ref>`
 for a GitHub Actions run, an email for a human signer) and `context.issuer`
 its OIDC issuer; `like` takes `*` as a wildcard. The signature is verified
-first, against `--cosign-trusted-root`; the rule only decides whether a
+first, against the trusted root (`--cosign-trusted-root`, or the one
+`--cosign-trust-instance` fetches); the rule only decides whether a
 verified signer is trusted for the repository, so a rule with no `when`
 trusts every identity the root's authorities ever certified, which is
 rarely meant. A verified signature no rule trusts is refused: `cannot
@@ -342,7 +343,10 @@ has no `requireSignature` rule it logs a warning, since that combination
 verifies nothing: `--cosign-key is set but the operator policy has no
 requireSignature rule: no module will be signature-verified`; likewise
 `--cosign-trusted-root is set but the operator policy has no trustSigner
-rule: no keyless signature will be trusted`.
+rule: no keyless signature will be trusted` (or `--cosign-trust-instance
+is set …`), and the mirror image, `the operator policy has trustSigner
+rules but neither --cosign-trusted-root nor --cosign-trust-instance is
+set: every keyless signature will be refused`.
 
 ## Testing a policy
 

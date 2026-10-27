@@ -43,4 +43,8 @@ traffic. `/livez` answers throughout, so a liveness probe is unaffected;
 only `/readyz` (and the gRPC status) waits for warm-up. Warm-up runs the same
 path a request does, so a warmed module is a memory hit for its first
 request; with `--enable-memory-cache=false` it leaves the artifact on disk,
-which is the point.
+which is the point. With `--cosign-trust-instance` the first fetch of the
+Sigstore trusted root runs just before the modules, bounded to one minute
+and never held against readiness either: a pod that cannot reach the TUF
+repository reports ready on its cache or, with none, refuses keyless
+signatures by name until a retry succeeds ([signing](signatures.md)).

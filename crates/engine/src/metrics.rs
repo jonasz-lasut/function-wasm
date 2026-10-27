@@ -132,6 +132,16 @@ fn pair(keys: &[&str], values: &[&str]) -> Labels {
         .collect()
 }
 
+/// An unlabeled gauge, registered: the shape the runtime's own series take
+/// (the engine's runs_in_flight, the function crate's trusted-root time).
+pub type PlainGauge = Gauge<f64, AtomicU64>;
+
+pub fn plain_gauge(name: &str, help: &str) -> PlainGauge {
+    let g = PlainGauge::default();
+    register(name, help, g.clone());
+    g
+}
+
 fn plain_histogram(name: &str, help: &str, buckets: &'static [f64]) -> Histogram {
     let h = Histogram::new(buckets.iter().copied());
     register(name, help, h.clone());
@@ -184,14 +194,11 @@ pub static HOSTCALL_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
 
 /// How many guest runs are executing right now - pinned at
 /// --max-concurrent-runs, it says the bound is what requests wait on.
-pub static RUNS_IN_FLIGHT: LazyLock<Gauge<f64, AtomicU64>> = LazyLock::new(|| {
-    let g = Gauge::<f64, AtomicU64>::default();
-    register(
+pub static RUNS_IN_FLIGHT: LazyLock<PlainGauge> = LazyLock::new(|| {
+    plain_gauge(
         "function_wasm_module_runs_in_flight",
         "Module runs executing at this moment (a run holding a slot when --max-concurrent-runs bounds them).",
-        g.clone(),
-    );
-    g
+    )
 });
 
 /// Hits and misses of the compiled-module and blob caches.

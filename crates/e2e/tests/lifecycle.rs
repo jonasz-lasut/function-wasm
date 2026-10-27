@@ -1,7 +1,10 @@
 //! The lifecycle profile: the published pdb-addon warmed at startup, the
 //! caches on a volume that outlives the pod and bounded below that module's
-//! size, --debug on. The oracle is the function pod itself: its readiness
-//! and its metrics after a restart.
+//! size, the trusted root fetched over TUF from the public-good instance,
+//! --debug on. The oracle is the function pod itself: its readiness and its
+//! metrics after a restart.
+
+use std::sync::LazyLock;
 
 use function_wasm_e2e::k8s::{self, CROSSPLANE_NAMESPACE, FUNCTION_POD_SELECTOR};
 use function_wasm_e2e::prelude::*;
@@ -11,14 +14,22 @@ use kube::api::{Api, DeleteParams, ListParams};
 
 const WAIT: Duration = Duration::from_secs(180);
 
+/// The harness runs the tests in parallel, and each restarts the one
+/// function pod and reads that pod's metrics: one test at a time, or one
+/// restarts the pod another is measuring.
+static ONE_AT_A_TIME: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// Deletes the one function pod and waits for its replacement to be Ready;
 /// returns the new pod's name. The profile's readiness probe reads /readyz,
-/// so Ready means the warm-up is done.
+/// so Ready means the warm-up is done. A pod the last restart left
+/// terminating is not the one.
 async fn restart_function(client: &Client) -> Result<String> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), CROSSPLANE_NAMESPACE);
     let old: Vec<String> = k8s::function_pods(client)
         .await?
         .iter()
+        .filter(|p| p.metadata.deletion_timestamp.is_none())
         .filter_map(|p| p.metadata.name.clone())
         .collect();
     ensure!(old.len() == 1, "one function pod expected, found {old:?}");
@@ -49,6 +60,7 @@ async fn restart_function(client: &Client) -> Result<String> {
 /// while /livez answered throughout.
 #[tokio::test]
 async fn readiness_waits_for_the_warm_up() -> Result<()> {
+    let _serial = ONE_AT_A_TIME.lock().await;
     with_temp_ns("warm-up", |ns| async move {
         ns.ensure_profile(Profile::Lifecycle).await?;
         let pod = restart_function(&ns.client).await?;
@@ -79,6 +91,7 @@ async fn readiness_waits_for_the_warm_up() -> Result<()> {
 /// bound, was swept at startup and fetched again.
 #[tokio::test]
 async fn caches_survive_a_restart_and_the_sweep_bounds_them() -> Result<()> {
+    let _serial = ONE_AT_A_TIME.lock().await;
     with_temp_ns("caches", |ns| async move {
         ns.ensure_profile(Profile::Lifecycle).await?;
         let step = Step::oci(&ns.state.variant("plain").reference());
@@ -106,6 +119,63 @@ async fn caches_survive_a_restart_and_the_sweep_bounds_them() -> Result<()> {
             hits_after > hits_before,
             "the compiled artifact on the volume was not reused by {pod}: {hits_before} -> {hits_after}\n{scraped}"
         );
+        Ok(())
+    })
+    .await
+}
+
+/// The trusted root over TUF: the profile mounts no root file and names
+/// the public-good instance, whose root the pod fetched before it reported
+/// ready (a refresh counted as updated, a last-refresh time). The published
+/// pdb-addon, whose keyless signature the policy requires and only that
+/// root verifies, is admitted - and after a restart the cache on the
+/// volume holds the verified metadata, so the fresh pod has its root even
+/// before the repository answers.
+#[tokio::test]
+async fn the_trusted_root_is_fetched_over_tuf() -> Result<()> {
+    let _serial = ONE_AT_A_TIME.lock().await;
+    with_temp_ns("tuf", |ns| async move {
+        ns.ensure_profile(Profile::Lifecycle).await?;
+        let refreshed = |scraped: &str| -> Result<()> {
+            let updated = metrics::sample(
+                scraped,
+                "function_wasm_trusted_root_refreshes_total",
+                &[("outcome", "updated")],
+            )
+            .unwrap_or_default();
+            ensure!(
+                updated >= 1.0,
+                "the trusted root was not fetched over TUF: updated={updated}\n{scraped}"
+            );
+            let errors = metrics::sample(
+                scraped,
+                "function_wasm_trusted_root_refreshes_total",
+                &[("outcome", "error")],
+            )
+            .unwrap_or_default();
+            ensure!(
+                errors == 0.0,
+                "a TUF refresh failed: error={errors}\n{scraped}"
+            );
+            let last = metrics::sample(
+                scraped,
+                "function_wasm_trusted_root_last_refresh_timestamp_seconds",
+                &[],
+            )
+            .unwrap_or_default();
+            ensure!(last > 0.0, "no last-refresh time: {last}\n{scraped}");
+            Ok(())
+        };
+        refreshed(&metrics::scrape(&ns.client).await?)?;
+
+        let step = Step::oci_public(&ns.state.pdb_addon);
+        let guest = ns.guest("tuf", &step, json!({})).await?;
+        guest.wait_synced(WAIT).await?;
+
+        restart_function(&ns.client).await?;
+        refreshed(&metrics::scrape(&ns.client).await?)?;
+        let again = ns.guest("tuf-again", &step, json!({})).await?;
+        again.wait_synced(WAIT).await?;
         Ok(())
     })
     .await

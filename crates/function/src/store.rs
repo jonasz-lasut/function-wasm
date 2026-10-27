@@ -19,6 +19,10 @@ pub const DEFAULT_DIR: &str = "/tmp/function-wasm-cache";
 pub const MODULES_DIR: &str = "modules";
 pub const COMPILED_DIR: &str = "compiled";
 pub const MANIFESTS_DIR: &str = "manifests";
+/// The Sigstore trusted root fetched over TUF, with the verified metadata
+/// (trustroot.rs): tuf/<instance>, beside the stores and outside their
+/// sweep.
+pub const TUF_DIR: &str = "tuf";
 
 /// Compiled-cache directories of other engine versions are removed at
 /// startup once this old, so a wasmtime bump does not strand artifacts

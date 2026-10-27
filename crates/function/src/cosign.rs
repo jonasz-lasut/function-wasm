@@ -25,9 +25,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::Deserialize;
+use sha2::Digest as _;
 use sigstore_trust_root::TrustedRoot;
 use sigstore_types::{DerPublicKey, Sha256Hash, SignatureBytes};
 use sigstore_verify::crypto::VerificationKey;
@@ -87,28 +88,48 @@ where
 
 /// Checks cosign signatures: key-based ones against a fixed set of public
 /// keys, keyless ones against a Sigstore trusted root and a signer policy.
-/// Results are remembered per manifest digest for the life of the process;
-/// manifests are immutable by digest.
+/// Results are remembered per manifest digest for the life of the process
+/// (manifests are immutable by digest) and forgotten when the trusted root
+/// changes, so a signer the new root no longer vouches for is verified
+/// again on the module's next request.
 pub struct Verifier {
     keys: Vec<VerificationKey>,
-    keyless: Option<Keyless>,
+    /// The operator policy's trustSigner rules, which decide which signers
+    /// a repository may trust; None trusts no keyless signer.
+    policy: Option<Arc<dyn SignerPolicy>>,
+    keyless: RwLock<Keyless>,
     verified: Mutex<HashSet<String>>,
 }
 
-/// The keyless half: sigstore-verify over the trusted root, and the policy
-/// that decides which signers a repository may trust.
-struct Keyless {
-    verifier: BundleVerifier,
-    policy: Option<Arc<dyn SignerPolicy>>,
+/// The keyless half: the trusted root sigstore-verify checks bundles
+/// against, or why there is none yet.
+enum Keyless {
+    /// No trusted root: a keyless signature is refused by name.
+    Off,
+    /// A trusted root fetched over TUF (--cosign-trust-instance) that has
+    /// not arrived yet: refused naming the instance and the last failure.
+    Pending {
+        instance: String,
+        last_error: Option<String>,
+    },
+    /// A trusted root in use, with the sha256 of the bytes it was read
+    /// from (None for one given parsed), so a refresh can tell a changed
+    /// root from the same one again.
+    Ready {
+        verifier: Box<BundleVerifier>,
+        root_hash: Option<[u8; 32]>,
+    },
 }
 
 impl Verifier {
     /// Builds the verifier the flags describe: the PEM keys of --cosign-key,
-    /// the trusted root of --cosign-trusted-root (its signers decided by
-    /// policy), or both. None when neither flag is set.
+    /// the trusted root of --cosign-trusted-root or the one
+    /// --cosign-trust-instance (named by instance) will fetch, its signers
+    /// decided by policy, or keys and a root both. None when no flag is set.
     pub fn configure(
         keys: Option<&Path>,
         trusted_root: Option<&Path>,
+        instance: Option<&str>,
         policy: Option<Arc<dyn SignerPolicy>>,
     ) -> Result<Option<Verifier>, String> {
         let mut verifier = match keys {
@@ -117,8 +138,12 @@ impl Verifier {
         };
         if let Some(path) = trusted_root {
             verifier = verifier.with_trusted_root(load_trusted_root(path)?, policy)?;
+        } else if let Some(instance) = instance {
+            verifier = verifier.awaiting_trusted_root(instance, policy);
         }
-        if verifier.keys.is_empty() && verifier.keyless.is_none() {
+        if verifier.keys.is_empty()
+            && matches!(*verifier.keyless.read().expect("poisoned"), Keyless::Off)
+        {
             return Ok(None);
         }
         Ok(Some(verifier))
@@ -127,7 +152,8 @@ impl Verifier {
     fn empty() -> Verifier {
         Verifier {
             keys: Vec::new(),
-            keyless: None,
+            policy: None,
+            keyless: RwLock::new(Keyless::Off),
             verified: Mutex::new(HashSet::new()),
         }
     }
@@ -173,8 +199,73 @@ impl Verifier {
     ) -> Result<Verifier, String> {
         let verifier = BundleVerifier::new(&root)
             .map_err(|e| format!("cannot use the Sigstore trusted root: {e}"))?;
-        self.keyless = Some(Keyless { verifier, policy });
+        self.policy = policy;
+        self.keyless = RwLock::new(Keyless::Ready {
+            verifier: Box::new(verifier),
+            root_hash: None,
+        });
         Ok(self)
+    }
+
+    /// Expects a trusted root a refresher will put in use
+    /// ([`Verifier::set_trusted_root`]): until then a keyless signature is
+    /// refused naming instance, the Sigstore instance it is fetched from.
+    pub fn awaiting_trusted_root(
+        mut self,
+        instance: &str,
+        policy: Option<Arc<dyn SignerPolicy>>,
+    ) -> Verifier {
+        self.policy = policy;
+        self.keyless = RwLock::new(Keyless::Pending {
+            instance: instance.to_string(),
+            last_error: None,
+        });
+        self
+    }
+
+    /// Puts the trusted root read from raw (a trusted_root.json) in use.
+    /// Ok(true) when it differs from the root in use, whose verified-digest
+    /// memo is then forgotten; Ok(false) for the same bytes again. A root
+    /// that does not parse leaves the one in use untouched.
+    pub fn set_trusted_root(&self, raw: &[u8]) -> Result<bool, String> {
+        let text = std::str::from_utf8(raw)
+            .map_err(|_| "Sigstore trusted root is not UTF-8".to_string())?;
+        let root = TrustedRoot::from_json(text)
+            .map_err(|e| format!("cannot parse Sigstore trusted root: {e}"))?;
+        let verifier = BundleVerifier::new(&root)
+            .map_err(|e| format!("cannot use the Sigstore trusted root: {e}"))?;
+        let hash: [u8; 32] = sha2::Sha256::digest(raw).into();
+        let mut keyless = self.keyless.write().expect("poisoned");
+        if let Keyless::Ready {
+            root_hash: Some(current),
+            ..
+        } = &*keyless
+            && *current == hash
+        {
+            return Ok(false);
+        }
+        *keyless = Keyless::Ready {
+            verifier: Box::new(verifier),
+            root_hash: Some(hash),
+        };
+        self.verified.lock().expect("poisoned").clear();
+        Ok(true)
+    }
+
+    /// Records why the awaited trusted root is still missing, for the
+    /// refusals that name it. Nothing once a root is in use.
+    pub fn note_unavailable(&self, error: String) {
+        if let Keyless::Pending { last_error, .. } = &mut *self.keyless.write().expect("poisoned") {
+            *last_error = Some(error);
+        }
+    }
+
+    /// Whether a trusted root is in use.
+    pub fn has_trusted_root(&self) -> bool {
+        matches!(
+            *self.keyless.read().expect("poisoned"),
+            Keyless::Ready { .. }
+        )
     }
 
     /// Checks that the pinned manifest carries a cosign signature this
@@ -314,13 +405,27 @@ impl Verifier {
         }
         let payload = decode_base64(&envelope.payload).ok_or("DSSE payload is not base64")?;
         if bundle.verification_material.certificate.is_some() {
-            let Some(keyless) = &self.keyless else {
-                return Err(
-                    "keyless signature cannot be verified: the runtime has no --cosign-trusted-root"
+            let keyless = self.keyless.read().expect("poisoned");
+            return match &*keyless {
+                Keyless::Off => Err(
+                    "keyless signature cannot be verified: the runtime has neither --cosign-trusted-root nor --cosign-trust-instance"
                         .to_string(),
-                );
+                ),
+                Keyless::Pending {
+                    instance,
+                    last_error,
+                } => Err(match last_error {
+                    Some(e) => format!(
+                        "keyless signature cannot be verified: the trusted root of {instance} has not been fetched yet (the last attempt failed: {e})"
+                    ),
+                    None => format!(
+                        "keyless signature cannot be verified: the trusted root of {instance} has not been fetched yet"
+                    ),
+                }),
+                Keyless::Ready { verifier, .. } => {
+                    self.check_keyless(verifier, raw, &payload, digest, repository)
+                }
             };
-            return self.check_keyless(keyless, raw, &payload, digest, repository);
         }
         if self.keys.is_empty() {
             return Err(
@@ -353,7 +458,7 @@ impl Verifier {
     /// repository.
     fn check_keyless(
         &self,
-        keyless: &Keyless,
+        verifier: &BundleVerifier,
         raw: &[u8],
         payload: &[u8],
         digest: &str,
@@ -366,8 +471,7 @@ impl Verifier {
         let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
         let subject = Sha256Hash::from_hex(hex)
             .map_err(|e| format!("module digest {digest:?} is not a sha256 digest: {e}"))?;
-        let result = keyless
-            .verifier
+        let result = verifier
             .verify(subject, &bundle, &VerificationPolicy::any_identity())
             .map_err(|e| {
                 format!("keyless signature does not verify against the trusted root: {e}")
@@ -385,7 +489,7 @@ impl Verifier {
             issuer: issuer.to_string(),
             identity: identity.as_str().to_string(),
         };
-        let trusted = keyless
+        let trusted = self
             .policy
             .as_ref()
             .is_some_and(|p| p.trusts_signer(repository, &signer));
@@ -934,7 +1038,7 @@ mod tests {
             verify(registry, &digest, &[&key]),
             Err(invalid(
                 &digest,
-                "keyless signature cannot be verified: the runtime has no --cosign-trusted-root"
+                "keyless signature cannot be verified: the runtime has neither --cosign-trusted-root nor --cosign-trust-instance"
             ))
         );
     }

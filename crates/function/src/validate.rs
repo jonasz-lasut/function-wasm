@@ -85,6 +85,14 @@ pub struct ValidateArgs {
     #[arg(long, env = "COSIGN_TRUSTED_ROOT")]
     cosign_trusted_root: Option<PathBuf>,
 
+    /// Fetch the Sigstore trusted root over TUF from a well-known instance
+    /// (public-good, staging or github) instead of reading
+    /// --cosign-trusted-root's file, as the runtime does: with --resolve,
+    /// from the repository or the cache under
+    /// /tmp/function-wasm-cache/tuf/<instance>.
+    #[arg(long, env = "COSIGN_TRUST_INSTANCE", value_enum)]
+    cosign_trust_instance: Option<crate::trustroot::Instance>,
+
     /// Cedar document with the operator's grant policy.
     #[arg(long, env = "SANDBOX_POLICY_FILE")]
     sandbox_policy_file: Option<PathBuf>,
@@ -197,14 +205,44 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
         args.egress_rate_limit_burst,
     ));
     let policy = policy.map(std::sync::Arc::new);
+    crate::trustroot::exclusive(
+        args.cosign_trusted_root.as_deref(),
+        args.cosign_trust_instance,
+    )?;
     let verifier = crate::cosign::Verifier::configure(
         args.cosign_key.as_deref(),
         args.cosign_trusted_root.as_deref(),
+        args.cosign_trust_instance
+            .map(crate::trustroot::Instance::name),
         policy
             .clone()
             .map(|p| p as std::sync::Arc<dyn crate::cosign::SignerPolicy>),
     )?
     .map(std::sync::Arc::new);
+    // The trusted root over TUF, as the runtime fetches it at startup:
+    // only --resolve verifies anything, so only --resolve fetches. A
+    // failure is the runtime's state too - every keyless signature refused
+    // naming it - said once here and per module below.
+    if args.resolve
+        && let (Some(instance), Some(verifier)) = (args.cosign_trust_instance, &verifier)
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("cannot start the TUF client: {e}"))?;
+        match runtime.block_on(instance.source().fetch_or_cached()) {
+            Ok((raw, _)) => {
+                verifier.set_trusted_root(&raw)?;
+            }
+            Err(e) => {
+                eprintln!(
+                    "function validate: the trusted root of {} could not be fetched over TUF, so every keyless signature is refused: {e}",
+                    instance.name()
+                );
+                verifier.note_unavailable(e);
+            }
+        }
+    }
     let ceilings = Config {
         timeout: args.module_timeout,
         memory_limit: args.module_memory_limit << 20,

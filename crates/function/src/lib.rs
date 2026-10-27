@@ -28,4 +28,5 @@ pub mod store;
 pub mod testing;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testsigstore;
+pub mod trustroot;
 pub mod validate;

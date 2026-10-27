@@ -328,3 +328,256 @@ permit (principal, action == Action::"spendCredential", resource);
         .expect("policy")
     }
 }
+
+pub mod tuf {
+    //! A TUF repository a test publishes trusted roots through, the shape
+    //! of Sigstore's: four roles signed with seeded P-256 keys, consistent
+    //! snapshots (version-prefixed metadata, hash-prefixed targets), served
+    //! on loopback. A test bootstraps a [`crate::trustroot::Source`] from
+    //! its root, publishes a trusted root, republishes another for a
+    //! rotation, expires the timestamp for a freeze, or takes it offline.
+
+    use std::collections::HashMap;
+    use std::io::{Read as _, Write as _};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use p256::ecdsa::signature::Signer as _;
+    use p256::pkcs8::EncodePublicKey as _;
+    use serde_json::{Value, json};
+    use sha2::Digest as _;
+
+    /// When the metadata expires, unless expired on purpose.
+    pub const FAR_FUTURE: &str = "2036-01-01T00:00:00Z";
+    /// An expiry in the past: the freeze TUF refuses.
+    pub const IN_THE_PAST: &str = "2020-01-01T00:00:00Z";
+    /// The TUF specification version the metadata states.
+    const SPEC_VERSION: &str = "1.0.31";
+
+    /// One role's key.
+    struct Role {
+        signing: p256::ecdsa::SigningKey,
+        key: Value,
+        keyid: String,
+    }
+
+    impl Role {
+        fn from_seed(seed: u8) -> Role {
+            let signing = p256::ecdsa::SigningKey::from_bytes((&[seed; 32]).into()).expect("key");
+            let public = signing
+                .verifying_key()
+                .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+                .expect("pem");
+            let key = json!({
+                "keytype": "ecdsa",
+                "scheme": "ecdsa-sha2-nistp256",
+                "keyval": {"public": public},
+            });
+            let keyid = serde_json::from_value::<sigstore_tuf::Key>(key.clone())
+                .expect("a TUF key")
+                .key_id()
+                .expect("key id");
+            Role {
+                signing,
+                key,
+                keyid,
+            }
+        }
+
+        /// The metadata file: signed, with one signature over its canonical
+        /// JSON (ASN.1 DER ECDSA, hex, as securesystemslib writes it).
+        fn envelope(&self, signed: Value) -> Vec<u8> {
+            let canonical =
+                sigstore_tuf::canonical_json::to_canonical_bytes(&signed).expect("canonical");
+            let signature: p256::ecdsa::Signature = self.signing.sign(&canonical);
+            serde_json::to_vec(&json!({
+                "signatures": [{"keyid": self.keyid, "sig": hex::encode(signature.to_der())}],
+                "signed": signed,
+            }))
+            .expect("metadata")
+        }
+    }
+
+    /// The repository: its files by path, served while online.
+    pub struct Repository {
+        timestamp: Role,
+        snapshot: Role,
+        targets: Role,
+        files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+        online: Arc<AtomicBool>,
+        /// The version of targets, snapshot and timestamp, moved together.
+        version: u64,
+        url: String,
+        root_json: Vec<u8>,
+    }
+
+    impl Repository {
+        /// Signs the root and starts serving on a free loopback port. Nothing
+        /// is published yet: a fetch fails until [`Repository::publish`].
+        pub fn serve() -> Repository {
+            let root = Role::from_seed(41);
+            let timestamp = Role::from_seed(42);
+            let snapshot = Role::from_seed(43);
+            let targets = Role::from_seed(44);
+            let role = |r: &Role| json!({"keyids": [r.keyid], "threshold": 1});
+            let root_json = root.envelope(json!({
+                "_type": "root",
+                "spec_version": SPEC_VERSION,
+                "version": 1,
+                "expires": FAR_FUTURE,
+                "consistent_snapshot": true,
+                "keys": {
+                    root.keyid.clone(): root.key,
+                    timestamp.keyid.clone(): timestamp.key,
+                    snapshot.keyid.clone(): snapshot.key,
+                    targets.keyid.clone(): targets.key,
+                },
+                "roles": {
+                    "root": role(&root),
+                    "timestamp": role(&timestamp),
+                    "snapshot": role(&snapshot),
+                    "targets": role(&targets),
+                },
+            }));
+            let files = Arc::new(Mutex::new(HashMap::from([(
+                "1.root.json".to_string(),
+                root_json.clone(),
+            )])));
+            let online = Arc::new(AtomicBool::new(true));
+            let url = serve_files(Arc::clone(&files), Arc::clone(&online));
+            Repository {
+                timestamp,
+                snapshot,
+                targets,
+                files,
+                online,
+                version: 0,
+                url,
+                root_json,
+            }
+        }
+
+        pub fn url(&self) -> &str {
+            &self.url
+        }
+
+        /// The root that bootstraps a client of this repository.
+        pub fn root_json(&self) -> &[u8] {
+            &self.root_json
+        }
+
+        /// Publishes trusted_root as the repository's trusted_root.json: a
+        /// new version of targets, snapshot and timestamp.
+        pub fn publish(&mut self, trusted_root: &[u8]) {
+            self.version += 1;
+            let v = self.version;
+            let hash = hex::encode(sha2::Sha256::digest(trusted_root));
+            let targets = self.targets.envelope(json!({
+                "_type": "targets",
+                "spec_version": SPEC_VERSION,
+                "version": v,
+                "expires": FAR_FUTURE,
+                "targets": {
+                    "trusted_root.json": {"length": trusted_root.len(), "hashes": {"sha256": hash}},
+                },
+            }));
+            let snapshot = self.snapshot.envelope(json!({
+                "_type": "snapshot",
+                "spec_version": SPEC_VERSION,
+                "version": v,
+                "expires": FAR_FUTURE,
+                "meta": {"targets.json": meta(v, &targets)},
+            }));
+            let timestamp = self.timestamp.envelope(json!({
+                "_type": "timestamp",
+                "spec_version": SPEC_VERSION,
+                "version": v,
+                "expires": FAR_FUTURE,
+                "meta": {"snapshot.json": meta(v, &snapshot)},
+            }));
+            let mut files = self.files.lock().expect("poisoned");
+            files.insert(
+                format!("targets/{hash}.trusted_root.json"),
+                trusted_root.to_vec(),
+            );
+            files.insert(format!("{v}.targets.json"), targets);
+            files.insert(format!("{v}.snapshot.json"), snapshot);
+            files.insert("timestamp.json".to_string(), timestamp);
+        }
+
+        /// Serves a newer timestamp that has already expired: a client
+        /// takes it (the version moved) and refuses the repository.
+        pub fn expire_timestamp(&mut self) {
+            let mut files = self.files.lock().expect("poisoned");
+            let snapshot = files
+                .get(&format!("{}.snapshot.json", self.version))
+                .expect("a published snapshot")
+                .clone();
+            self.version += 1;
+            let timestamp = self.timestamp.envelope(json!({
+                "_type": "timestamp",
+                "spec_version": SPEC_VERSION,
+                "version": self.version,
+                "expires": IN_THE_PAST,
+                "meta": {"snapshot.json": meta(self.version - 1, &snapshot)},
+            }));
+            files.insert("timestamp.json".to_string(), timestamp);
+        }
+
+        /// Offline, the server answers 503 to everything.
+        pub fn set_online(&self, online: bool) {
+            self.online.store(online, Ordering::SeqCst);
+        }
+
+        /// A source of this repository caching under cache_dir.
+        pub fn source(&self, cache_dir: impl Into<std::path::PathBuf>) -> crate::trustroot::Source {
+            crate::trustroot::Source::custom("test", &self.url, self.root_json.clone(), cache_dir)
+        }
+    }
+
+    /// A snapshot or timestamp meta entry for a metadata file.
+    fn meta(version: u64, bytes: &[u8]) -> Value {
+        json!({
+            "version": version,
+            "length": bytes.len(),
+            "hashes": {"sha256": hex::encode(sha2::Sha256::digest(bytes))},
+        })
+    }
+
+    /// Serves files on loopback: GET /<path> answers the file or 404, and
+    /// 503 while offline. Returns the base URL.
+    fn serve_files(files: Arc<Mutex<HashMap<String, Vec<u8>>>>, online: Arc<AtomicBool>) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            for mut conn in listener.incoming().flatten() {
+                let mut buf = [0u8; 4096];
+                let n = conn.read(&mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let path = head
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .trim_start_matches('/')
+                    .to_string();
+                let (status, body) = if !online.load(Ordering::SeqCst) {
+                    ("503 Service Unavailable", Vec::new())
+                } else {
+                    match files.lock().expect("poisoned").get(&path) {
+                        Some(bytes) => ("200 OK", bytes.clone()),
+                        None => ("404 Not Found", Vec::new()),
+                    }
+                };
+                let _ = conn.write_all(
+                    format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+                let _ = conn.write_all(&body);
+            }
+        });
+        format!("http://{addr}")
+    }
+}

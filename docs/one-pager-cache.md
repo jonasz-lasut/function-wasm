@@ -20,9 +20,12 @@ filled (before readiness), not how.
 /tmp/function-wasm-cache/
 ├── modules/                          fetched blobs, as delivered by the source
 │   └── sha256-<hex>                    verified against its name on every read
-└── compiled/                         wasmtime artifacts (Module.Serialize)
-    └── <wasmtime-go version>-<os>-<arch>/   e.g. v47.0.0-linux-arm64
-        └── sha256-<hex>                the artifact for the module that digest pins
+├── compiled/                         wasmtime artifacts (Module.Serialize)
+│   └── <wasmtime-go version>-<os>-<arch>/   e.g. v47.0.0-linux-arm64
+│       └── sha256-<hex>                the artifact for the module that digest pins
+└── tuf/<instance>/                   with --cosign-trust-instance (#183): the verified TUF
+                                      metadata and trusted_root.json of that Sigstore instance,
+                                      ~100 KB, outside the LRU sweep (which walks the stores above)
 ```
 
 The directory is `cache.DefaultDir`. It is created at startup; a pod that

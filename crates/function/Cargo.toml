@@ -48,7 +48,13 @@ tracing.workspace = true
 # pod's line format (the feature function-sdk-rust already enables).
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 sigstore-verify = { version = "0.15.1", default-features = false, features = ["aws-lc-rs"] }
-sigstore-trust-root = { version = "0.15.1", default-features = false, features = ["aws-lc-rs"] }
+# tuf and rustls: the trusted root fetched over TUF (--cosign-trust-instance,
+# trustroot.rs) - the instances' embedded TUF roots and the TUF client
+# below, over reqwest with rustls like the registry client.
+sigstore-trust-root = { version = "0.15.1", default-features = false, features = ["aws-lc-rs", "tuf", "rustls"] }
+sigstore-tuf = { version = "0.15.1", default-features = false, features = ["client", "aws-lc-rs"] }
+# The TUF client takes the time it validates metadata at as a jiff timestamp.
+jiff = "0.2"
 sigstore-types = "0.15.1"
 rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"], optional = true }
 x509-cert = { version = "0.2", optional = true }
