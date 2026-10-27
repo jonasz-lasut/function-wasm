@@ -122,8 +122,12 @@ uploaded on failure. The jobs cache the Rust builds and the guests'
 dependencies under keys prefixed `e2e-`, a namespace of their own: the run
 builds a pull request's code in the default branch's cache scope, so no
 trusted workflow (`ci.yml`, the release matrix) ever restores an `e2e-`
-key, and a poisoned cache could mislead only this workflow's verdict. A
-push to a `release-*` branch runs the release matrix below.
+key, and a poisoned cache could mislead only this workflow's verdict.
+GitHub hands a run that anyone may start (an `issue_comment` run) a
+read-only cache token, under which every save is skipped, so the workflow
+declares `cache-mode: write`, the documented opt-in that the namespace
+makes acceptable. A push to a `release-*` branch runs the release matrix
+below.
 
 ### The release matrix
 

@@ -35,7 +35,11 @@
 # in the default branch's cache scope, so these caches are shared by every
 # pull request's run; their only reader is this workflow, with a read-only
 # token and no secrets, so a cache a pull request's code poisoned can
-# mislead this workflow's verdict and nothing else.
+# mislead this workflow's verdict and nothing else. That namespace is what
+# the cache-mode below rests on: GitHub hands a run started by an event
+# anyone may fire (issue_comment among them) a read-only cache token, so
+# without the explicit write mode every save is skipped and the caches
+# never exist.
 name: E2E
 
 on:
@@ -46,6 +50,10 @@ on:
 # request's code, take the write scopes they need.
 permissions:
   contents: read
+
+# Read-only by default for an issue_comment run (the header says why the
+# e2e- namespace makes the opt-in acceptable).
+cache-mode: write
 
 # The Zig every guest job installs (the zig and c scaffolds and the odin
 # example build with it; the guest suite builds their goldens), one pin per
