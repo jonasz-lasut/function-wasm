@@ -32,3 +32,29 @@ What each policy layer can say about a requirement (the actions
 `usePrivateTmp`, `setEnv`, `spendCredential` and `grantEgress`, the resource
 and context each decides on, and the exact sentence a refused requirement
 produces) is in the [Cedar policy reference](../operators/cedar-policy.md).
+
+## What the module composes
+
+A manifest may also declare what the module writes, beside what it needs:
+
+```yaml
+composes:
+  - kind: policy/PodDisruptionBudget   # <group>/<Kind>, the core group spelled core
+    changes: [add]                     # add, modify, remove; all three when omitted
+```
+
+The declaration is advisory. The policy layers fence a module's output
+with `composeResource` rules judged over its actual response after the
+run ([the output fence](../operators/cedar-policy.md#the-output-fence));
+the runtime never reads `composes`, so a declaration can neither make an
+output admissible nor refuse a run early. It feeds the tooling: `function
+validate --resolve` warns where a declared kind and change would be
+refused by the step's `compositionPolicy` or the operator policy (`the
+module declares it composes policy/PodDisruptionBudget (add), which the
+compositionPolicy does not permit (composeResource)`), `guestfn inspect`
+shows it in the manifest summary, and `guestfn scaffold composition`
+writes the matching `composeResource` permits into the `compositionPolicy`
+skeleton it already derives from `requires`. A field inside `composes` the
+runtime does not know is refused by `guestfn build` (a typo in the file you
+are editing) and ignored by a runtime reading a published manifest (it is
+advisory there).

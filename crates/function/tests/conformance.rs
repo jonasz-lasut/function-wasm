@@ -58,6 +58,29 @@ fn cases() -> Vec<Case> {
             args: &["testdata/validate/from.yaml"],
             stdin: "",
         },
+        // The output fence (composeResource, #174): a step whose
+        // compositionPolicy scopes it is marked on its OK line; the operator
+        // ceiling compiles and changes no verdict offline, since only a run
+        // can judge a module's output.
+        Case {
+            name: "ComposeResource",
+            args: &["testdata/validate/compose.yaml"],
+            stdin: "",
+        },
+        Case {
+            name: "ComposeResource-json",
+            args: &["testdata/validate/compose.yaml", "--output", "json"],
+            stdin: "",
+        },
+        Case {
+            name: "ComposeResource-OperatorCeiling",
+            args: &[
+                "testdata/validate/compose.yaml",
+                "--sandbox-policy-file",
+                "testdata/validate/compose-ceiling.cedar",
+            ],
+            stdin: "",
+        },
         Case {
             name: "FromWithXR",
             args: &[
@@ -1105,6 +1128,77 @@ fn validate_trust_instance_matches_the_goldens() {
     ] {
         let out = run_validate(rust, &args, "", &cwd);
         if let Some(f) = assert_golden(&format!("TrustInstance/{name}"), &out, &[]) {
+            failures.push(f);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}
+
+/// The advisory `composes` declaration of a manifest (#174) under
+/// `--resolve`: a declared kind and change the step's compositionPolicy, or
+/// the operator's ceiling, would refuse is a warning naming the layer; the
+/// step stays admitted, since only a run can judge the module's output.
+#[test]
+fn validate_resolve_composes_matches_the_goldens() {
+    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let cwd = crate_dir();
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
+    std::fs::write(
+        dir.path().join("manifest.yaml"),
+        "abi: 2\nname: pdb-addon\nversion: 0.1.1\ncomposes:\n  - kind: policy/PodDisruptionBudget\n    changes: [add]\n  - kind: core/Secret\n",
+    )
+    .expect("write manifest");
+    let composition = |name: &str, policy: &str| {
+        let path = dir.path().join(format!("{name}.yaml"));
+        let policy_block = if policy.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "      compositionPolicy: |\n        {}\n",
+                policy.replace('\n', "\n        ")
+            )
+        };
+        std::fs::write(
+            &path,
+            format!(
+                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: fn.wasm, manifestPath: manifest.yaml}}\n{policy_block}"
+            ),
+        )
+        .expect("write composition");
+        path.display().to_string()
+    };
+    let fenced = composition(
+        "Declared",
+        "permit (principal, action == Action::\"composeResource\", resource in Group::\"policy\")\nwhen { context.change == \"add\" };",
+    );
+    let unfenced = composition("DeclaredCeiling", "");
+    let module_dir = dir.path().display().to_string();
+    let mut failures = Vec::new();
+    for (name, composition, extra) in [
+        ("Declared", &fenced, Vec::new()),
+        (
+            "DeclaredCeiling",
+            &unfenced,
+            vec![
+                "--sandbox-policy-file",
+                "testdata/validate/compose-ceiling.cedar",
+            ],
+        ),
+    ] {
+        let mut args = vec![
+            composition.as_str(),
+            "--resolve",
+            "--module-dir",
+            module_dir.as_str(),
+        ];
+        args.extend(extra);
+        let rust_out = run_validate(rust, &args, "", &cwd);
+        if let Some(f) = assert_golden(
+            &format!("ComposeResource/{name}"),
+            &rust_out,
+            &[(module_dir.clone(), "<DIR>")],
+        ) {
             failures.push(f);
         }
     }

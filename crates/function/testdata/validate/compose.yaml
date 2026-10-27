@@ -1,0 +1,33 @@
+# The output fence (composeResource): the first step's compositionPolicy
+# scopes it (the pdb-addon rule: the module may add disruption budgets and
+# touch nothing else), so validate marks the step; the second scopes nothing.
+# Only a run can judge a module's output, so both steps are admitted.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: compose
+spec:
+  pipeline:
+  - step: fenced
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      compositionPolicy: |
+        permit (principal, action == Action::"composeResource", resource in Group::"policy")
+        when { context.change == "add" };
+  - step: unfenced
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      compositionPolicy: |
+        permit (principal, action == Action::"usePrivateTmp", resource);

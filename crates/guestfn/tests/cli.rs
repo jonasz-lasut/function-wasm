@@ -27,6 +27,9 @@ requires:
       - host: example.com
         methods: [GET]
   credentials: [cmdb]
+composes:
+  - kind: policy/PodDisruptionBudget
+    changes: [add]
 config:
   schema:
     type: object
@@ -90,7 +93,7 @@ fn push_then_inspect_and_show() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("manifest: greeter v0.1.0, requires egress example.com, credentials cmdb"),
+        stdout.contains("manifest: greeter v0.1.0, requires egress example.com, credentials cmdb, composes policy/PodDisruptionBudget (add)"),
         "{stdout}"
     );
     assert!(
@@ -229,7 +232,7 @@ fn manifest_validate() {
     assert!(ok, "{stderr}");
     assert!(
         stdout.contains(
-            "wasmfn.yaml: valid (greeter v0.1.0, requires egress example.com, credentials cmdb;"
+            "wasmfn.yaml: valid (greeter v0.1.0, requires egress example.com, credentials cmdb, composes policy/PodDisruptionBudget (add);"
         ),
         "{stdout}"
     );
@@ -337,6 +340,10 @@ fn scaffold_composition_from_a_file() {
     );
     assert!(
         stdout.contains("#   permit (principal, action == Action::\"spendCredential\", resource == Credential::\"cmdb\");"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("#   permit (principal, action == Action::\"composeResource\", resource == Kind::\"policy/PodDisruptionBudget\") when { context.change == \"add\" };"),
         "{stdout}"
     );
 

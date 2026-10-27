@@ -13,8 +13,8 @@ drawn there; this page is the reference for writing the two documents.
 
 | layer | where it lives | written by | default | actions it may use |
 |---|---|---|---|---|
-| operator policy | the file `--sandbox-policy-file` names, compiled once at startup and immutable for the process | the operator | deny: a capability no `permit` matches is refused, and no file means no capability at all | `usePrivateTmp`, `setEnv`, `spendCredential`, `grantEgress`, `requireSignature`, `trustSigner`, `dialAddress` |
-| composition policy | the Input's `compositionPolicy` string, compiled per Composition (cached by content hash) | the composition author | deny for the `module.from` fences (`pullModule`, and `spendCredential` for an XR-chosen pull credential); scoped default-permit for the sandbox actions (below) | `pullModule`, `spendCredential`, `usePrivateTmp`, `setEnv`, `grantEgress` |
+| operator policy | the file `--sandbox-policy-file` names, compiled once at startup and immutable for the process | the operator | deny for capabilities: one no `permit` matches is refused, and no file means no capability at all. The output fence (`composeResource`) narrows only where a rule scopes it | `usePrivateTmp`, `setEnv`, `spendCredential`, `grantEgress`, `composeResource`, `requireSignature`, `trustSigner`, `dialAddress` |
+| composition policy | the Input's `compositionPolicy` string, compiled per Composition (cached by content hash) | the composition author | deny for the `module.from` fences (`pullModule`, and `spendCredential` for an XR-chosen pull credential); scoped default-permit for the sandbox actions and the output fence (below) | `pullModule`, `spendCredential`, `usePrivateTmp`, `setEnv`, `grantEgress`, `composeResource` |
 
 `requireSignature`, `trustSigner` and `dialAddress` are the operator's
 alone: a `compositionPolicy` rule for any of them is never evaluated. `pullModule` is the
@@ -55,8 +55,10 @@ either that conditions on `principal` never matches.
 | `HostPattern` | an egress rule's `host`, lowercased with any trailing dot dropped, or its `hostPattern` as written (`*.example.com`) | `host`: the same string, for `like` | the DNS label suffixes: `api.example.com` is `in HostPattern::"example.com"` and `in HostPattern::"com"`; the pattern `*.example.com` is `in HostPattern::"example.com"` too. `example.com.attacker.net` and `badexample.com` are not | `grantEgress` (resource) |
 | `Capability` | `privateTmp` or `env` | none | none | `usePrivateTmp` and `setEnv` (resource) |
 | `Credential` | the name of a pipeline-step credential | none | none | `spendCredential` (resource) |
+| `Kind` | `<group>/<Kind>` of a resource a module composed, read from its `apiVersion` and `kind`: `apps/Deployment`, `policy/PodDisruptionBudget`; the core group is spelled `core` (`core/Secret`) and the API version is absent, so `policy/v1` and `policy/v1beta1` are one kind | none | its one `Group` | `composeResource` (resource) |
+| `Group` | an API group: `apps`, `policy`, `core`, `nop.crossplane.io` | none | none | the parent of every `Kind` in it, so `resource in Group::"apps"` is every kind of the apps group and no other |
 | `Module` | `module` | none | none | the placeholder principal of `requireSignature` and `trustSigner` |
-| `Action` | one of the eight below | | | the action of every rule |
+| `Action` | one of the nine below | | | the action of every rule |
 
 ## Actions
 
@@ -67,6 +69,7 @@ either that conditions on `principal` never matches.
 | `usePrivateTmp` | both | `Capability::"privateTmp"` | none | the private `/tmp` the manifest requires |
 | `setEnv` | both | `Capability::"env"` | `keys`: the set of every environment variable name the manifest binds, decided once for all of them | the env bindings as a whole; each binding's credential is then decided by `spendCredential` |
 | `grantEgress` | both | `HostPattern::"<host or pattern>"` | `method` (upper case) and `path` (the rule's `pathPrefix`, empty when it has none); one decision per rule and per method it lists | that rule's (host, method) |
+| `composeResource` | both | `Kind::"<group>/<Kind>"` | `change`: `add`, `modify` or `remove`; `name`: the composition resource name (empty for the composite resource); `target`: `composite` or `composed`. One decision per change the module made to the desired state | nothing: it is a fence on the module's output, judged after the run over the response (the [output fence](#the-output-fence) below). Scoped default-permit in both layers |
 | `requireSignature` | operator | `Repository::"<location>"` | none (placeholder principal) | nothing: it demands that a module at that location carry a cosign signature, verified with `--cosign-key` or, keyless, with a trusted root (`--cosign-trusted-root` or `--cosign-trust-instance`) and a `trustSigner` rule, before any cache is read. The [signatures](signatures.md) page has the precedence with `--cosign-key` alone |
 | `trustSigner` | operator | `Repository::"<location>"` | `issuer`, the OIDC issuer of a keyless signature's Fulcio certificate, and `identity`, its subject alternative name (a workflow URI or an email), both strings for `==` and `like` (placeholder principal) | nothing by itself: a keyless cosign signature by that signer, verified against the trusted root (`--cosign-trusted-root` or `--cosign-trust-instance`), counts as the module's signature for `requireSignature`. See [signatures](signatures.md) |
 | `dialAddress` | operator | none: the rule must leave `principal` and `resource` unconstrained | `ip`, the resolved address, tested with `isInRange(ip("CIDR"))` or `isLoopback()` | nothing at request time: the rules compile at load into the egress block list, a `forbid` adding a blocked prefix and a `permit` a hole in the default list |
@@ -109,6 +112,36 @@ The composition layer is evaluated first and whole, so the author closest
 to the fix reads their own layer's refusal even where the operator would
 also deny. A `compositionPolicy` that is not valid Cedar is refused at
 admission, before anything is resolved.
+
+### The output fence
+
+`composeResource` is not a capability a module requests; it is a fence on
+what a module writes. After the run, the runtime compares the response's
+desired state with the request's, by composition resource name, and judges
+every change: a name the response has and the request did not is an `add`;
+one both have whose resource differs (its body, connection details or
+ready flag, compared by value, so a guest that re-encodes a map in another
+order changed nothing) is a `modify`; one the request had and the response
+dropped is a `remove`, and a response with no desired state at all drops
+everything. A kind replaced under one name is a `remove` of the old kind and
+an `add` of the new one, never a `modify` of either. The composite
+resource's own desired state follows the same rules as `Kind::"<xr
+group>/<xrKind>"` with `context.target == "composite"` and an empty name: a
+status write is a `modify`. Each change must be permitted by every layer
+that scopes the action; a refusal is a fatal result naming the module, the
+kind, the name, the change and the layer, and nothing the module composed
+is applied. A response that already carries a fatal result is never applied
+by Crossplane, so it is not judged.
+
+Both layers decide it **scoped default-permit**, the operator's included:
+a policy with no rule scoping `composeResource` does not narrow a module's
+output, and a runtime with no `--sandbox-policy-file` does not either.
+That is the one action for which the operator layer is not default-deny,
+because a module's output was never gated before the fence existed and a
+minor may only widen ([compatibility](../contract/compatibility.md)).
+Once a layer scopes the action, Cedar's usual rule applies: a matching
+`permit` and no matching `forbid`. A `forbid` alone scopes the action and
+permits nothing, so an operator's ceiling needs a `permit` beside it.
 
 ## Worked examples
 
@@ -272,6 +305,44 @@ the resolved address and the prefix that blocked it go to the runtime's
 audit line. The default block list and the budgets are on the
 [HTTP egress](http-egress.md) page.
 
+### `composeResource`
+
+The pdb-addon Composition, whose README promises that the add-on only adds
+disruption budgets:
+
+```cedar
+permit (principal, action == Action::"composeResource", resource in Group::"policy")
+when { context.change == "add" };
+```
+
+A module of that step that modifies the Deployment the platform step
+composed is refused with `module oci ghcr.io/example-org/webapp-addons/pdb@sha256:… composed apps/Deployment "deployment" (modify), which the compositionPolicy does not permit (composeResource)`.
+
+An operator who never wants a module to compose RBAC or Secrets, whatever
+a Composition says; the second rule is required, since a `forbid` alone
+scopes the action and permits nothing:
+
+```cedar
+forbid (principal, action == Action::"composeResource", resource)
+when { resource in Group::"rbac.authorization.k8s.io" || resource == Kind::"core/Secret" };
+
+permit (principal, action == Action::"composeResource", resource);
+```
+
+A per-tenant rule in the shape the other actions take: modules may write
+their own XR's status everywhere, and compose workloads in `team-a` only:
+
+```cedar
+permit (principal, action == Action::"composeResource", resource)
+when { context.target == "composite" ||
+       (principal.namespace == "team-a" && resource in Group::"apps") };
+```
+
+`function validate` cannot judge output offline; it marks a step whose
+`compositionPolicy` scopes the action with `composeResource` on its OK
+line, and with `--resolve` warns where a kind the module's manifest
+declares it composes would be refused.
+
 ## What a refusal says
 
 A refused capability is a fatal result naming the module (`module oci
@@ -286,6 +357,7 @@ step:
 | `requires.env` (`setEnv`) | `requires env [API_TOKEN] (requires.env), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities` | `requires env [API_TOKEN] (requires.env), which the compositionPolicy does not permit (setEnv)` | `requires env [API_TOKEN] (requires.env), which the operator policy (--sandbox-policy-file) does not permit (setEnv)` |
 | an env binding's credential (`spendCredential`) | as above | `requires env API_TOKEN from credential "apikeys", which the compositionPolicy does not permit (spendCredential)` | `requires env API_TOKEN from credential "apikeys", which the operator policy (--sandbox-policy-file) does not permit (spendCredential)` |
 | `requires.credentials[i]` | `requires credential "cmdb" (requires.credentials[0]), but the runtime has no --sandbox-policy-file, which is required to grant step credentials (spendCredential)` | `requires credential "cmdb" (requires.credentials[0]), which the compositionPolicy does not permit` | `requires credential "cmdb" (requires.credentials[0]), which the operator policy (--sandbox-policy-file) does not permit` |
+| a change to the desired state (`composeResource`, after the run) | not refused: no policy file narrows the output | `composed apps/Deployment "deployment" (modify), which the compositionPolicy does not permit (composeResource)`; for the composite resource `composed platform.example.org/WebApp (composite, modify), which …` | `composed core/Secret "db-password" (add), which the operator policy (--sandbox-policy-file) does not permit (composeResource)` |
 
 The `module.from` fences refuse before the module is resolved, prefixed
 `cannot resolve module:`:

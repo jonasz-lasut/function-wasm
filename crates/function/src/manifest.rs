@@ -45,6 +45,47 @@ pub struct Manifest {
     /// The oldest function-wasm runtime that serves this module.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub min_runtime: String,
+    /// What the module composes - advisory (#174): the runtime judges the
+    /// module's actual output against the policy layers' composeResource
+    /// rules and never reads this; `function validate --resolve` warns where
+    /// a declared change would be refused, `guestfn inspect` shows it and
+    /// `guestfn scaffold composition` writes the matching permits.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub composes: Vec<Composes>,
+}
+
+/// One kind a module declares it composes, and how.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Composes {
+    /// `<group>/<Kind>`, the core group spelled `core`, as the policy's
+    /// `Kind::` entity names it: `policy/PodDisruptionBudget`,
+    /// `core/ConfigMap`.
+    pub kind: String,
+    /// `add`, `modify`, `remove`; empty means all three.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<String>,
+}
+
+impl Composes {
+    /// The group and kind halves of `kind`.
+    pub fn group_and_kind(&self) -> Option<(&str, &str)> {
+        self.kind
+            .split_once('/')
+            .filter(|(g, k)| !g.is_empty() && !k.is_empty())
+    }
+
+    /// The changes declared, every one when none is.
+    pub fn change_kinds(&self) -> Vec<crate::authz::ChangeKind> {
+        use crate::authz::ChangeKind;
+        if self.changes.is_empty() {
+            return vec![ChangeKind::Add, ChangeKind::Modify, ChangeKind::Remove];
+        }
+        self.changes
+            .iter()
+            .filter_map(|c| ChangeKind::parse(c))
+            .collect()
+    }
 }
 
 /// The sandbox capabilities a module needs - its request, the least-trusted
@@ -123,7 +164,7 @@ impl Manifest {
         let value: serde_json::Value = serde_yaml::from_slice(&raw)
             .map_err(|e| format!("{} is not valid YAML: {e}", path.display()))?;
         if let Some(map) = value.as_object() {
-            const KNOWN: [&str; 8] = [
+            const KNOWN: [&str; 9] = [
                 "abi",
                 "name",
                 "version",
@@ -132,11 +173,21 @@ impl Manifest {
                 "requires",
                 "config",
                 "minRuntime",
+                "composes",
             ];
             for key in map.keys() {
                 if !KNOWN.contains(&key.as_str()) {
                     return Err(format!("{}: unknown field {key:?}", path.display()));
                 }
+            }
+            // The author's file is read strictly here, where a typo can be
+            // fixed; a published manifest's composes is advisory, so a field
+            // this runtime does not know is forward compatibility there.
+            if let Some(composes) = map.get("composes")
+                && !composes.is_null()
+            {
+                strict_composes(composes)
+                    .map_err(|e| format!("{}: cannot parse composes: {e}", path.display()))?;
             }
         }
         let json =
@@ -195,6 +246,21 @@ impl Manifest {
             }
             sandboxenv::validate_bindings("requires.env", &r.env)?;
             sandboxenv::validate_credentials("requires.credentials", &r.credentials)?;
+        }
+        for (i, c) in self.composes.iter().enumerate() {
+            if c.group_and_kind().is_none() {
+                return Err(format!(
+                    "composes[{i}].kind must be <group>/<Kind> (the core group spelled core), got {:?}",
+                    c.kind
+                ));
+            }
+            for change in &c.changes {
+                if crate::authz::ChangeKind::parse(change).is_none() {
+                    return Err(format!(
+                        "composes[{i}].changes must be among add, modify and remove, got {change:?}"
+                    ));
+                }
+            }
         }
         if !self.min_runtime.is_empty() && parse_semver(&canonical(&self.min_runtime)).is_none() {
             return Err(format!(
@@ -266,6 +332,20 @@ impl Manifest {
             if !r.credentials.is_empty() {
                 parts.push(format!("credentials {}", r.credentials.join(" ")));
             }
+        }
+        if !self.composes.is_empty() {
+            let kinds: Vec<String> = self
+                .composes
+                .iter()
+                .map(|c| {
+                    if c.changes.is_empty() {
+                        c.kind.clone()
+                    } else {
+                        format!("{} ({})", c.kind, c.changes.join(" "))
+                    }
+                })
+                .collect();
+            parts.push(format!("composes {}", kinds.join(" ")));
         }
         let mut out = parts.join(", ");
         if self.config_schema().is_some() {
@@ -420,6 +500,18 @@ fn strict_requires(v: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// The strict decode of the composes declaration for the author's own file.
+fn strict_composes(v: &Value) -> Result<(), String> {
+    #[derive(Deserialize, Default)]
+    #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+    struct StrictComposes {
+        kind: String,
+        changes: Vec<String>,
+    }
+    let _: Vec<StrictComposes> = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Whether one required rule is admitted by a granted rule: the same host,
 /// or a granted pattern covering the required host or pattern; the required
 /// methods among the granted; the granted path prefix a prefix of the
@@ -552,6 +644,31 @@ mod tests {
                 .starts_with("cannot parse manifest requires:")
         );
         assert!(Manifest::parse(br#"{"abi":2,"future":true}"#).is_ok());
+        // composes is validated in shape, and read by summary.
+        let composing = Manifest::parse(
+            br#"{"abi":2,"name":"pdb-addon","composes":[{"kind":"policy/PodDisruptionBudget","changes":["add"]},{"kind":"apps/Deployment"}]}"#,
+        )
+        .expect("composes");
+        assert_eq!(
+            composing.summary(),
+            "pdb-addon, composes policy/PodDisruptionBudget (add) apps/Deployment"
+        );
+        assert_eq!(
+            composing.composes[1].change_kinds().len(),
+            3,
+            "no changes declared means every change"
+        );
+        assert_eq!(
+            Manifest::parse(br#"{"abi":2,"composes":[{"kind":"Deployment"}]}"#).unwrap_err(),
+            r#"composes[0].kind must be <group>/<Kind> (the core group spelled core), got "Deployment""#
+        );
+        assert_eq!(
+            Manifest::parse(
+                br#"{"abi":2,"composes":[{"kind":"apps/Deployment","changes":["patch"]}]}"#
+            )
+            .unwrap_err(),
+            r#"composes[0].changes must be among add, modify and remove, got "patch""#
+        );
     }
 
     #[test]

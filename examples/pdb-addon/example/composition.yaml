@@ -73,6 +73,13 @@ spec:
       # repository, default-deny. A Path source has no host to fence: an XR
       # can name only a file the operator put under --module-dir (a path
       # that leaves it is refused), so the fence does not apply to it.
+      # What the add-on may compose: a disruption budget it adds, and nothing
+      # else (composeResource fences the module's output; the Deployment the
+      # platform step composed stays as it was, or the step ends in a fatal
+      # result naming what the add-on tried to change).
       compositionPolicy: |
         permit (principal, action == Action::"pullModule",
                 resource in Repository::"ghcr.io/example-org/webapp-addons");
+        permit (principal, action == Action::"composeResource",
+                resource in Group::"policy")
+        when { context.change == "add" };

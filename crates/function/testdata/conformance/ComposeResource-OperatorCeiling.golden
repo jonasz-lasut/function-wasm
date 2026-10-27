@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+testdata/validate/compose.yaml: Composition/compose pipeline[0] fenced: OK (path fn.wasm, compositionPolicy, composeResource)
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+testdata/validate/compose.yaml: Composition/compose pipeline[1] unfenced: OK (path fn.wasm, compositionPolicy)
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+--- stderr

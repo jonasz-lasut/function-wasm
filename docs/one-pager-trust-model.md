@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.8
+* Status: Implemented, revision 1.9
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. Written after the 2026-08-16 review,
@@ -232,7 +232,12 @@ one-pager for the bounds).
 
 An XR author who can pick a module can, through it, write desired state and
 results into their own XR — the same power any module of that Composition
-has over that XR. They cannot pick a module outside the
+has over that XR, unless the Composition's `compositionPolicy` or the
+operator's policy fences `composeResource` (revision 1.9, #174): then every
+change the module makes to the desired state - a resource added, modified
+or removed, the XR's own status included - must be permitted by kind, and
+a refused change is a fatal result that applies nothing the module
+composed. They cannot pick a module outside the
 `compositionPolicy`'s `pullModule` permits or one the runtime's signature
 policy refuses, spend a step credential no `spendCredential` permit names
 for that repository, widen the run's `limits` or the sandbox, or read

@@ -22,6 +22,12 @@ composition.yaml: Composition/hello pipeline[0] hello: OK (oci ghcr.io/example/g
 composition.yaml: Composition/hello pipeline[1] labeler: refused: module oci ghcr.io/example/labeler@sha256:9d1c… requires egress GET to host "evil.example.com" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit
 ```
 
+A step whose `compositionPolicy` scopes `composeResource` carries
+`composeResource` among the OK line's details: the module's output is
+fenced, which only a run can judge. With `--resolve`, a kind the module's
+manifest declares it `composes` that the policy layers would refuse is a
+warning under the step, so the author learns before the first reconcile.
+
 `--xr xr.yaml` materialises `module.from` sources against that composite
 resource, as the observed XR would (without it a `from` source is checked
 for the `compositionPolicy` it requires and reported as the XR's

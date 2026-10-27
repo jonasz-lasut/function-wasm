@@ -15,7 +15,7 @@ on the operator boundary alone - a module's manifest can only request, and
 the Input's `compositionPolicy` can only narrow, so neither can widen past
 it.
 
-The schema both layers share (the principal, the entity types, the seven
+The schema both layers share (the principal, the entity types, the eight
 actions with their resources and context) and the rules by which each layer
 decides are in the [Cedar policy reference](cedar-policy.md); this page is
 the operator's side of it.
@@ -59,9 +59,23 @@ spec:
             configMap: {name: function-wasm-policy}
 ```
 
-Because the policy is default-deny, a document that governs one capability
-refuses every *other* capability a module requires unless it also
-permits it: with a `--sandbox-policy-file` set, permit every capability you mean to
-allow. `function validate --sandbox-policy-file …` reports the same verdicts offline
+One action is not a capability: `composeResource` is the operator's ceiling
+on what any module may compose, judged over the module's response after the
+run, and it narrows only where a rule scopes it (a runtime with no policy
+file, or a file with no such rule, serves every module's output as before).
+A `forbid` alone scopes it and permits nothing, so a ceiling needs a
+`permit` beside it:
+
+```cedar
+forbid (principal, action == Action::"composeResource", resource)
+when { resource in Group::"rbac.authorization.k8s.io" || resource == Kind::"core/Secret" };
+
+permit (principal, action == Action::"composeResource", resource);
+```
+
+Because the policy is default-deny for capabilities, a document that governs
+one capability refuses every *other* capability a module requires unless it
+also permits it: with a `--sandbox-policy-file` set, permit every capability
+you mean to allow. `function validate --sandbox-policy-file …` reports the same verdicts offline
 (the principal comes from `--xr`, else a zero principal that matches no
 per-tenant condition).

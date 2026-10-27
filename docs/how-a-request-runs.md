@@ -37,7 +37,12 @@
    ([HTTP egress](operators/http-egress.md)); guest logs flow into the runtime's logger
    with the module reference attached; stdout and stderr are the pod's, so a
    Go panic's stack shows up in `kubectl logs`.
-4. The response is returned as the module produced it. A trap, timeout
+4. The response is returned as the module produced it, once the output
+   fence has had its say where a policy layer scopes `composeResource`:
+   every change the module made to the desired state must be permitted,
+   or the step ends in a fatal result naming the kind, the name, the
+   change and the layer ([Cedar policy reference](operators/cedar-policy.md#the-output-fence)).
+   A trap, timeout
    (`limits.timeout` or `--module-timeout` - guest compute, with time spent
    waiting on the host's HTTP answers credited back - or the request
    deadline if sooner), memory limit (`limits.memory` or

@@ -11,8 +11,11 @@
 //! a location's ancestors are its path-boundary prefixes (a repository) or
 //! its DNS suffixes (a host), so `in` an allowed entity is true exactly when
 //! that entity equals the location or fences it at a boundary, never a
-//! sibling namespace or an adjacent host. Cedar owns the decision only;
-//! callers keep their own refusal strings.
+//! sibling namespace or an adjacent host. A composed resource's kind is
+//! `Kind::"<group>/<Kind>"` under its one `Group::"<group>"` (the core group
+//! spelled `core`, the API version absent), so a rule names a kind or a
+//! whole group. Cedar owns the decision only; callers keep their own
+//! refusal strings.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -32,6 +35,11 @@ pub const ACTION_SPEND_CREDENTIAL: &str = "spendCredential";
 pub const ACTION_GRANT_EGRESS: &str = "grantEgress";
 pub const ACTION_USE_PRIVATE_TMP: &str = "usePrivateTmp";
 pub const ACTION_SET_ENV: &str = "setEnv";
+/// The output fence (#174): judged over a module's response, in both
+/// layers, scoped default-permit in each - the one action the operator
+/// layer does not decide default-deny, since a runtime with no policy file
+/// must keep serving every module's output as before.
+pub const ACTION_COMPOSE_RESOURCE: &str = "composeResource";
 const ACTION_REQUIRE_SIGNATURE: &str = "requireSignature";
 const ACTION_TRUST_SIGNER: &str = "trustSigner";
 const ACTION_DIAL_ADDRESS: &str = "dialAddress";
@@ -42,6 +50,7 @@ const COMPOSITION_ACTIONS: &[&str] = &[
     ACTION_GRANT_EGRESS,
     ACTION_USE_PRIVATE_TMP,
     ACTION_SET_ENV,
+    ACTION_COMPOSE_RESOURCE,
 ];
 
 /// Identifies the caller of a grant-policy decision: the observed composite
@@ -53,6 +62,64 @@ pub struct Principal {
     pub namespace: String,
     pub xr_kind: String,
     pub composition: String,
+}
+
+/// How a module changed one entry of the desired state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    Add,
+    Modify,
+    Remove,
+}
+
+impl ChangeKind {
+    /// The word a policy's `context.change` compares with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ChangeKind::Add => "add",
+            ChangeKind::Modify => "modify",
+            ChangeKind::Remove => "remove",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ChangeKind> {
+        match s {
+            "add" => Some(ChangeKind::Add),
+            "modify" => Some(ChangeKind::Modify),
+            "remove" => Some(ChangeKind::Remove),
+            _ => None,
+        }
+    }
+}
+
+/// One change a module made to the desired state, as the composeResource
+/// decision sees it: the resource's kind within its group, what happened to
+/// it, and the composition resource name it happened under (empty for the
+/// composite resource).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    /// The API group; `core` for the core group.
+    pub group: String,
+    pub kind: String,
+    pub change: ChangeKind,
+    pub name: String,
+    pub composite: bool,
+}
+
+impl Change {
+    /// The Kind entity's id, `<group>/<Kind>`.
+    pub fn kind_id(&self) -> String {
+        format!("{}/{}", self.group, self.kind)
+    }
+
+    /// The word a policy's `context.target` compares with.
+    pub fn target(&self) -> &'static str {
+        if self.composite {
+            "composite"
+        } else {
+            "composed"
+        }
+    }
 }
 
 /// One egress request the policy layers judge: a single host or host
@@ -203,6 +270,21 @@ impl CompositionPolicy {
             Value::Object(ctx),
         )
     }
+
+    /// Whether a permit matches composeResource for one change a module
+    /// made to the desired state, over the Kind-in-Group hierarchy with
+    /// `context.change`, `context.name` and `context.target`.
+    pub fn permits_compose(&self, principal: &Principal, change: &Change) -> bool {
+        let (resource, entities) = kind_entities(&change.group, &change.kind);
+        decide(
+            &self.policy,
+            principal,
+            ACTION_COMPOSE_RESOURCE,
+            resource,
+            entities,
+            compose_context(change),
+        )
+    }
 }
 
 /// The operator's grant policy, compiled from --sandbox-policy-file and
@@ -212,6 +294,9 @@ impl CompositionPolicy {
 #[derive(Debug)]
 pub struct OperatorPolicy {
     policy: PolicySet,
+    // Whether any rule scopes composeResource: the operator layer narrows
+    // a module's output only where it says so.
+    scopes_compose: bool,
 }
 
 impl crate::cosign::SignerPolicy for OperatorPolicy {
@@ -236,7 +321,35 @@ impl OperatorPolicy {
         let policy: PolicySet = doc
             .parse()
             .map_err(|e| format!("cannot compile the operator policy {name}: {e}"))?;
-        Ok(OperatorPolicy { policy })
+        let scopes_compose = policy
+            .policies()
+            .any(|p| policy_scopes_action(p, ACTION_COMPOSE_RESOURCE));
+        Ok(OperatorPolicy {
+            policy,
+            scopes_compose,
+        })
+    }
+
+    /// Whether any rule scopes composeResource - the operator layer's opt-in
+    /// to the output fence. Unscoped, the layer does not narrow a module's
+    /// output: unlike a capability, which no policy file means no grant for,
+    /// a module's output was never gated before the fence existed.
+    pub fn scopes_compose_resource(&self) -> bool {
+        self.scopes_compose
+    }
+
+    /// Whether a permit matches composeResource for one change, as the
+    /// composition layer decides it.
+    pub fn permits_compose(&self, principal: &Principal, change: &Change) -> bool {
+        let (resource, entities) = kind_entities(&change.group, &change.kind);
+        decide(
+            &self.policy,
+            principal,
+            ACTION_COMPOSE_RESOURCE,
+            resource,
+            entities,
+            compose_context(change),
+        )
     }
 
     pub fn permits_private_tmp(&self, principal: &Principal) -> bool {
@@ -777,6 +890,24 @@ fn egress_context(g: &EgressGrant) -> Value {
     json!({ "method": g.method.to_uppercase(), "path": g.path })
 }
 
+/// The Kind entity for a composed resource and the store giving it its one
+/// ancestor, its group: `resource in Group::"apps"` is true for every kind
+/// of the apps group and for no other, since the hierarchy is built from
+/// the parsed group rather than a string prefix.
+fn kind_entities(group: &str, kind: &str) -> (Value, Vec<Value>) {
+    let group_uid = uid_json("Group", group);
+    let resource = uid_json("Kind", &format!("{group}/{kind}"));
+    let entities = vec![
+        flat_entity(&group_uid),
+        json!({ "uid": resource, "attrs": {}, "parents": [group_uid] }),
+    ];
+    (resource, entities)
+}
+
+fn compose_context(c: &Change) -> Value {
+    json!({ "change": c.change.as_str(), "name": c.name, "target": c.target() })
+}
+
 impl std::fmt::Display for IpPrefix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}", self.addr, self.len)
@@ -847,6 +978,116 @@ mod tests {
         assert!(p.scopes_action(ACTION_SET_ENV));
         assert!(p.scopes_action(ACTION_USE_PRIVATE_TMP));
         assert!(!p.scopes_action(ACTION_GRANT_EGRESS));
+    }
+
+    fn change(group: &str, kind: &str, change: ChangeKind, name: &str) -> Change {
+        Change {
+            group: group.to_string(),
+            kind: kind.to_string(),
+            change,
+            name: name.to_string(),
+            composite: false,
+        }
+    }
+
+    #[test]
+    fn compose_resource_hierarchy_is_group_correct() {
+        let p = composition(
+            r#"permit (principal, action == Action::"composeResource", resource in Group::"policy")
+               when { context.change == "add" };
+               permit (principal, action == Action::"composeResource", resource == Kind::"core/ConfigMap");"#,
+        );
+        let principal = Principal::default();
+        let cases = [
+            (
+                change("policy", "PodDisruptionBudget", ChangeKind::Add, "pdb"),
+                true,
+            ),
+            (
+                change("policy", "PodDisruptionBudget", ChangeKind::Modify, "pdb"),
+                false,
+            ),
+            (
+                change("policy.example.io", "Thing", ChangeKind::Add, "t"),
+                false,
+            ),
+            (change("core", "ConfigMap", ChangeKind::Remove, "cm"), true),
+            (change("core", "Secret", ChangeKind::Add, "s"), false),
+            (change("apps", "Deployment", ChangeKind::Add, "web"), false),
+        ];
+        for (c, want) in cases {
+            assert_eq!(p.permits_compose(&principal, &c), want, "{c:?}");
+        }
+        assert!(p.scopes_action(ACTION_COMPOSE_RESOURCE));
+    }
+
+    #[test]
+    fn compose_resource_context_narrows_by_name_and_target() {
+        let p = composition(
+            r#"permit (principal, action == Action::"composeResource", resource)
+               when { context.target == "composite" || context.name like "addon-*" };"#,
+        );
+        let principal = Principal::default();
+        let mut composite = change("platform.example.org", "WebApp", ChangeKind::Modify, "");
+        composite.composite = true;
+        assert!(p.permits_compose(&principal, &composite));
+        assert!(p.permits_compose(
+            &principal,
+            &change("apps", "Deployment", ChangeKind::Add, "addon-pdb")
+        ));
+        assert!(!p.permits_compose(
+            &principal,
+            &change("apps", "Deployment", ChangeKind::Add, "deployment")
+        ));
+    }
+
+    #[test]
+    fn a_forbid_alone_scopes_compose_resource_and_refuses_every_change() {
+        let p = composition(
+            r#"forbid (principal, action == Action::"composeResource", resource == Kind::"core/Secret");"#,
+        );
+        assert!(p.scopes_action(ACTION_COMPOSE_RESOURCE));
+        let principal = Principal::default();
+        assert!(!p.permits_compose(&principal, &change("core", "Secret", ChangeKind::Add, "s")));
+        assert!(!p.permits_compose(
+            &principal,
+            &change("apps", "Deployment", ChangeKind::Add, "d")
+        ));
+    }
+
+    #[test]
+    fn the_operator_policy_scopes_compose_resource_only_when_a_rule_names_it() {
+        let unscoped = OperatorPolicy::new(
+            "test",
+            r#"permit (principal, action == Action::"usePrivateTmp", resource);"#,
+        )
+        .expect("policy");
+        assert!(!unscoped.scopes_compose_resource());
+        let ceiling = OperatorPolicy::new(
+            "test",
+            r#"forbid (principal, action == Action::"composeResource", resource)
+               when { resource in Group::"rbac.authorization.k8s.io" || resource == Kind::"core/Secret" };
+               permit (principal, action == Action::"composeResource", resource);"#,
+        )
+        .expect("policy");
+        assert!(ceiling.scopes_compose_resource());
+        let principal = Principal::default();
+        assert!(ceiling.permits_compose(
+            &principal,
+            &change("apps", "Deployment", ChangeKind::Add, "d")
+        ));
+        assert!(
+            !ceiling.permits_compose(&principal, &change("core", "Secret", ChangeKind::Add, "s"))
+        );
+        assert!(!ceiling.permits_compose(
+            &principal,
+            &change(
+                "rbac.authorization.k8s.io",
+                "RoleBinding",
+                ChangeKind::Modify,
+                "rb"
+            )
+        ));
     }
 
     #[test]

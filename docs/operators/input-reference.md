@@ -30,6 +30,10 @@ in its manifest (`requires` - see [Module manifests](../guests/module-manifests.
 and each is granted only when the Input's `compositionPolicy` and the
 operator's Cedar `--sandbox-policy-file` both permit it
 ([docs/one-pager-three-layer-authz.md](../one-pager-three-layer-authz.md)).
+The same two layers may fence what the module composes
+(`composeResource`, judged over the response after the run; a layer with
+no such rule narrows nothing): see the
+[Cedar policy reference](cedar-policy.md#the-output-fence).
 
 | field | type | description |
 |---|---|---|

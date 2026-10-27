@@ -6,6 +6,7 @@
 pub mod admission;
 pub mod authz;
 pub mod cache;
+pub mod compose;
 pub mod cosign;
 pub mod egress;
 pub mod egress_rules;
