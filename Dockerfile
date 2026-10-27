@@ -49,7 +49,7 @@ RUN --mount=target=.,rw \
 # distroless/cc-debian13 carried a dozen won't-fix libc6 CVEs) with a
 # nonroot user (65532), CA certificates and a writable /tmp for the caches.
 # Renovate pins and bumps the digest.
-FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:2827063c9efb4ba971d8621eb75f4e61b8d19850a6293a797df37358cc6f687b AS image
+FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88 AS image
 WORKDIR /
 COPY --from=build /function /function
 EXPOSE 9443
