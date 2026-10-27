@@ -11,13 +11,16 @@
 ROOT := $(abspath ../..)
 GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 
-.PHONY: build test gen-proto gen-bindings render clean
+.PHONY: build test lint gen-proto gen-bindings render clean
 
 build: ## Compile the guest to fn.wasm (a component)
 	$(GUESTFN) build --dir $(CURDIR)
 
 test: ## Run the unit tests natively
 	zig build test
+
+lint: ## Check build.zig's formatting (the C sources are compiled by zig cc, which has no formatter)
+	zig fmt --check build.zig
 
 gen-proto: ## Regenerate src/fnv1 from proto/ (needs nanopb_generator)
 	zig build gen-proto

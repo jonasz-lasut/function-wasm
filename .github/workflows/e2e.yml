@@ -368,11 +368,7 @@ jobs:
           fi
 
       - name: Build, Lint and Test the Zig Guest
-        working-directory: examples/hello-zig
-        run: |
-          zig fmt --check build.zig src/main.zig src/wasmfn.zig
-          zig build test
-          make build
+        run: make -C examples/hello-zig lint test build
 
   # The same guest in C, an ABI v2 component: nanopb over the vendored proto
   # and wit-bindgen's C bindings over its world, compiled by zig cc behind
@@ -464,11 +460,7 @@ jobs:
           fi
 
       - name: Build, Lint and Test the C Guest
-        working-directory: examples/hello-c
-        run: |
-          zig fmt --check build.zig
-          zig build test
-          make build
+        run: make -C examples/hello-c lint test build
 
   # The same guest in Odin, an ABI v2 component on the c flavour's plumbing
   # (its C bindings, nanopb codec, WIT and proto byte for byte): odin

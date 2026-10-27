@@ -585,9 +585,9 @@ Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration 
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 (cd examples/pdb-addon && golangci-lint run ./...)  # the Go guests keep Go lint
-(cd examples/hello-zig && zig fmt --check build.zig src/main.zig src/wasmfn.zig)
-(cd examples/hello-c && zig fmt --check build.zig)
-(cd examples/hello-odin && make lint)              # odin check -vet -strict-style, zig fmt --check build.zig
+make -C examples/hello-zig lint                     # zig fmt --check over build.zig and the guest's sources
+make -C examples/hello-c lint                       # zig fmt --check build.zig
+make -C examples/hello-odin lint                    # odin check -vet -strict-style, zig fmt --check build.zig
 make -C examples/hello-moonbit lint                 # moon fmt --check over the hand-written packages, moon check
 make -C examples/dashboard-bundle lint              # dotnet format (in the .NET SDK container off Linux)
 ```
