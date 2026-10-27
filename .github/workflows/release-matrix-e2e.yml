@@ -27,13 +27,16 @@
 # cut-release skill pushes the branch, waits for this run and cuts the tag
 # only when it is green) and a patch on an existing one (remediate-cves).
 # A red version is a release blocker, or the floor the documentation then
-# states. Nothing starts it by hand: the branch is the trigger.
+# states. It can also be started by hand on any ref, to try the matrix
+# itself:
+#   gh workflow run "Release Matrix E2E" --ref main
 name: Release Matrix E2E
 
 on:
   push:
     branches:
       - 'release-*'
+  workflow_dispatch:
 
 permissions:
   contents: read

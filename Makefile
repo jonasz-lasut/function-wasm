@@ -26,9 +26,14 @@ $(error the crossplane build submodule is missing: run git submodule update --in
 endif
 
 # The cluster the suite provisions and the Crossplane it installs. Both are
-# overridable from the environment (CI sets CROSSPLANE_VERSION; a release
-# matrix would run the suite once per supported version).
+# overridable from the environment: /e2e runs the default, the release
+# matrix (.github/workflows/release-matrix-e2e.yml) runs the suite once per
+# Crossplane minor the project supports, setting CROSSPLANE_VERSION for the
+# two older ones. Renovate moves the default to the latest release (the
+# `# renovate:` comment); its PR for a new minor is the signal to shift the
+# matrix's two pins down one minor in the same PR.
 KIND_CLUSTER_NAME ?= function-wasm-e2e
+# renovate: datasource=github-releases depName=crossplane/crossplane
 CROSSPLANE_VERSION ?= 2.4.3
 PROVIDER_NOP_VERSION ?= v0.6.0
 

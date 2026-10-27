@@ -125,6 +125,24 @@
       datasourceTemplate: 'github-releases',
     },
     {
+      // The Crossplane the end-to-end suite installs: the Makefile's
+      // CROSSPLANE_VERSION default (what every /e2e run and the matrix's
+      // `current` job test) and the release matrix workflow's two older
+      // pins, each a `# renovate:` comment above a `<NAME> ?= x.y.z` or
+      // `<NAME>: 'x.y.z'` line. Releases are tagged vX.Y.Z; the pins carry
+      // the chart version, without the v. The packageRules below let the
+      // default take any release and hold the two older pins to the latest
+      // patch of their own minor.
+      customType: 'regex',
+      description: 'the Crossplane versions the end-to-end suite installs',
+      managerFilePatterns: ['/^Makefile$/', '/^\\.github/workflows/release-matrix-e2e\\.ya?ml$/'],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\s+CROSSPLANE_[A-Z_]+ ?[?:]?=? ?'?(?<currentValue>\\d+\\.\\d+\\.\\d+)'?",
+      ],
+      extractVersionTemplate: '^v(?<version>.*)$',
+      versioningTemplate: 'semver',
+    },
+    {
       // The crossplane/crossplane release every vendored run_function.proto
       // was copied from - the same tripwire function-sdk-rust carries. A bump
       // PR moves the version in the header comment of all copies at once; it
@@ -278,12 +296,35 @@
     // moves templates, goldens and examples in a single PR - the examples
     // only because ignorePaths above no longer skips them. Left disabled
     // under those paths it would update the templates alone - desyncing the
-    // very copies the rule above exists to protect.
+    // very copies the rule above exists to protect. Scoped to the proto
+    // files: the end-to-end suite's Crossplane pins below are the same
+    // package under other rules.
     {
       matchManagers: ['custom.regex'],
+      matchFileNames: ['**/proto/run_function.proto'],
       matchPackageNames: ['crossplane/crossplane'],
       enabled: true,
       groupName: 'vendored run_function.proto',
+    },
+    // The end-to-end suite's Crossplane versions (the regex manager above):
+    // the matrix's two older pins follow the latest patch of their own minor
+    // only - Crossplane maintains its three most recent minors, and the pins
+    // name the two before the Makefile's default - while the default takes
+    // any release. One PR moves whatever moved; a PR that moves the default
+    // to a new minor is the signal to shift the two pins down one minor by
+    // hand in that PR (docs/project/testing.md).
+    {
+      matchManagers: ['custom.regex'],
+      matchFileNames: ['.github/workflows/release-matrix-e2e.yml'],
+      matchDepNames: ['crossplane/crossplane'],
+      matchUpdateTypes: ['major', 'minor'],
+      enabled: false,
+    },
+    {
+      matchManagers: ['custom.regex'],
+      matchFileNames: ['Makefile', '.github/workflows/release-matrix-e2e.yml'],
+      matchDepNames: ['crossplane/crossplane'],
+      groupName: 'crossplane e2e',
     },
     // The WASI WIT headers, for the same reason: one dep across the rust,
     // python, c, zig and go templates, their goldens, cloudflare-origin,
