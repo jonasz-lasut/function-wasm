@@ -80,8 +80,8 @@ cannot be verified: the runtime has no --cosign-trusted-root`.
 `--cosign-key` and `--cosign-trusted-root` combine: a bundle with a key
 hint is checked against the keys, one with a certificate against the root,
 and a module is signed when any one bundle verifies. The trusted root is
-read once at startup; refreshing it over TUF while the runtime runs is not
-implemented yet ([#116](https://github.com/jonasz-lasut/function-wasm/issues/116)).
+read once at startup; fetching and refreshing it over TUF, for an operator who
+would rather not mount the file, is [#183](https://github.com/jonasz-lasut/function-wasm/issues/183).
 
 ## Requiring signatures per repository
 

@@ -107,7 +107,7 @@ which OIDC issuer and identity may vouch for a module - default-deny, so a
 trusted root alone admits nothing. Key-based bundles keep the key path: a
 bundle with a key hint never reaches the trusted root, and a keyless bundle
 met without one is refused by name, never mistaken for a key failure. The
-root is a file read at startup; a TUF refresh is the open half of #116.
+root is a file read at startup; fetching and refreshing it over TUF is #183.
 
 An operator `--sandbox-policy-file` makes the requirement per-repository: a
 `requireSignature` rule demands a signature for the repositories it names,
