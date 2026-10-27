@@ -2,7 +2,8 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.2
+* Status: Implemented, revision 1.3 (`composes`, the advisory declaration
+  of what a module writes, #174)
 
 A module declares what it needs — the sandbox capabilities it cannot run
 without, the shape of the `config` it reads, the oldest runtime it works on

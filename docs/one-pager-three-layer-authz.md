@@ -2,8 +2,9 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.1 (the inline `request` for manifest-less
-  sources stays a separate Draft: docs/one-pager-manifest-less-sources.md)
+* Status: Implemented, revision 1.2 (the output fence, `composeResource`,
+  #174; the inline `request` for manifest-less sources stays a separate
+  Draft: docs/one-pager-manifest-less-sources.md)
 
 ## Summary
 
@@ -83,14 +84,31 @@ what `sandbox` and the allowlists do today:
   only within it). A **static** source (the Composition names the module itself)
   is not gated by this layer - it is the Composition's own choice, as today.
 
-Worked table (S = sandbox cap, F = from-source fence):
+- The output fence (`composeResource`, revision 1.2, #174): **scoped
+  default-permit in both layers**, the operator's included. It is not a
+  capability a module requests but a fence on what it writes, judged over
+  the response after the run (every resource added, modified or removed,
+  the composite's status included, as `Kind::"<group>/<Kind>"` in a
+  `Group` hierarchy with `context.change`, `name` and `target`). A layer
+  with no rule scoping the action narrows nothing, and a runtime with no
+  policy file does not either: a module's output was never gated before the
+  fence existed, and a minor may only widen. Once scoped, Cedar's usual
+  rule; a `forbid` alone permits nothing. The composition layer is
+  evaluated first and whole, then the operator's. `modify` is judged on the
+  whole resource (body, connection details, ready flag), compared by value;
+  a `context.fields` set that lets a policy permit the ready flag alone is a
+  known, additive extension no use case has asked for yet.
 
-| composition policy state | S: grantEgress/usePrivateTmp/setEnv/spendCredential (request) | F: pullModule/spendCredential (from) |
-|---|---|---|
-| absent | permit (operator ∧ manifest decide) | deny (from-source refused) |
-| present, no rule for the action | permit | deny |
-| present, has `permit` for it | permit if matched, else deny | permit if matched, else deny |
-| present, has `forbid` for it | forbid wins | forbid wins |
+Worked table (S = sandbox cap, F = from-source fence, O = the output fence;
+the O column holds for the operator layer too, which is where it differs
+from S):
+
+| composition policy state | S: grantEgress/usePrivateTmp/setEnv/spendCredential (request) | F: pullModule/spendCredential (from) | O: composeResource |
+|---|---|---|---|
+| absent | permit (operator ∧ manifest decide) | deny (from-source refused) | permit, both layers |
+| present, no rule for the action | permit | deny | permit |
+| present, has `permit` for it | permit if matched, else deny | permit if matched, else deny | permit if matched, else deny |
+| present, has `forbid` for it | forbid wins | forbid wins | forbid wins (and with no permit beside it, every change is refused) |
 
 ## The env model (#3)
 
@@ -189,4 +207,10 @@ from an old `sandbox`/`policy` block to ease the port (later).
   ceiling - the AND forbids it.
 - Cedar for `limits` - a numeric clamp is not an authorization question.
 - A permissive default for the operator or the from-source fence - both stay
-  deny-by-default.
+  deny-by-default for capabilities. The output fence is the recorded
+  exception: scoped default-permit, since a default-deny would have refused
+  every module's output on upgrade.
+- Fencing `results`, `requirements` or `context` writes: `results` are
+  messages, `requirements` are reads the proxy already carries round trip,
+  and context writes could take the same action shape later without
+  touching this design.

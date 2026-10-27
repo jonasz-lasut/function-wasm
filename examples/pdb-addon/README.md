@@ -57,7 +57,12 @@ The platform team keeps the guardrails:
   reach nothing.
 - **What the add-on keeps.** Everything earlier steps composed passes
   through untouched; the add-on only adds budgets, never replaces a
-  resource an earlier step composed under the name it would use.
+  resource an earlier step composed under the name it would use. Since
+  function-wasm's `composeResource` fence that is a rule the runtime holds,
+  not a promise the author keeps: the Composition's `compositionPolicy`
+  permits the add-on to add resources of the `policy` group and nothing
+  else, so an add-on that touched the Deployment, or composed a Secret,
+  would end the step with a fatal result naming the change.
 
 The budget follows the Deployment it guards: it takes the Deployment's
 whole label selector, is named after the Deployment's composition resource

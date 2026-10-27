@@ -72,6 +72,16 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       outgoing-handler) → the run's egress client (grant, block list,        │
 │       budgets, audit line) or an internal-error (wasihttp.rs); a core        │
 │       module (ABI v1, removed in 1.0.0) never gets here: refused at load     │
+│  8b. the output fence (compose.rs + admission::admit_compose, #174): where   │
+│       a policy layer scopes composeResource, the decoded response's desired  │
+│       state is diffed against the request's by composition resource name    │
+│       (add / modify by value / remove, a kind swap = remove + add, the       │
+│       composite included) and every change judged as Kind::"<group>/<Kind>"  │
+│       in a Group hierarchy with context change/name/target - composition     │
+│       layer first, then operator, each scoped default-permit; a refusal is a │
+│       fatal result naming kind, name, change and layer, counted refused; a   │
+│       response carrying a fatal result is not judged; the bytes are never    │
+│       touched                                                                 │
 │  9. return the guest's raw response bytes verbatim (meta appended at the     │
 │     wire level only when the guest omitted it); the caller's raw request     │
 │     bytes were forwarded verbatim too, with only the step credentials the    │
@@ -123,13 +133,25 @@ crates/function/            the runtime crate: a library (everything below) + th
                               --resolve → resolve + verify + fetch + engine.inspect + admit_requires
                               and the credentials the module's request carries (credentials:);
                               text or --output json; exit 0 admitted / 1 refused / 2 tool failure
-  src/admission.rs            admit (step 1) and admit_requires (step 6, the three-layer AND) -
+  src/admission.rs            admit (step 1), admit_requires (step 6, the three-layer AND) and
+                              admit_compose (step 8b, the output fence over compose.rs's
+                              changes; compose_fenced says whether any layer scopes it) -
                               shared verbatim with validate
   src/authz.rs                Cedar PDP (cedar-policy): CompositionPolicy (pullModule/spendCredential
                               fences over a boundary-correct Repository hierarchy, scoped
                               default-permit sandbox narrowing) and OperatorPolicy (default-deny
                               grants, requireSignature per repository, dialAddress → IpRules);
-                              refusal strings stay in the callers
+                              composeResource in both (#174: Kind-in-Group entities, context
+                              change/name/target, scoped default-permit in the operator layer
+                              too - scopes_compose_resource is its opt-in); refusal strings stay
+                              in the callers
+  src/compose.rs              the output fence's diff: the changes a response makes to the
+                              request's desired state (Change per composition resource name,
+                              the composite first; Resource compared by value so a reordered
+                              map is no change; a kind replaced under one name is remove +
+                              add; a response with no desired removes everything; a composed
+                              resource with no apiVersion/kind is an error, request-side ones
+                              are read leniently). Pure: no Cedar, no I/O
   src/resolver.rs             the three sources: Path under --module-dir (content-hashed, stamped),
                               HTTP with stated digests, OCI by manifest digest; manifests by
                               reference (manifestPath, manifestURL/manifestDigest); fetch timed into
@@ -505,7 +527,7 @@ The function receives an `Input` (`wasm.fn.crossplane.io/v1`; a `v1beta1` docume
 - `limits` — `timeout`, `memory`, `concurrency`, each ≤ the runtime's ceiling flag (concurrency silently capped)
 - `config` — opaque; the guest reads it via `GetConfig` - non-secret module configuration lives here
 
-There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs` and the CRD under `package/input/`.
+There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` declares it for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs` and the CRD under `package/input/`.
 
 ### ABI v2
 
@@ -517,7 +539,7 @@ The host forwards the whole request and returns the whole response - requirement
 
 ### Parity with the Go runtime
 
-The Go implementation was the reference until 2026-08; the contract is **logical compatibility**: the same Inputs admitted, the same requests refused for the same reasons, nothing running wider than the Go runtime would allow. Most admission and policy refusal strings match Go verbatim (the conformance goldens hold them); wording-only divergences are accepted (alpha), the recorded ones being: guest log kv rendered as one JSON field, egress transport-error text (reqwest's words, no 64KiB response-header cap, no HTTP/2 attempt), limits parse-error wording, a cold module load (fetch + compile) not being cut short by the request's deadline - the compile completes and caches where Go bounded loads with a load timeout; the run that follows still gets only the remaining budget - and the run deadline metering guest compute: time blocked in `wasi:http` is credited back to the epoch deadline (the gRPC deadline stays the hard cap) where Go spent `limits.timeout` on it. One recorded divergence is more than wording - the signature format: the Go runtime read cosign 2's legacy `sha256-<hex>.sig` signatures, this runtime reads only cosign 3's key-based Sigstore bundles among the manifest's OCI 1.1 referrers (the same `--cosign-key` keys decide, in the format cosign 3 writes by default), so a module signed only the legacy way is refused as unsigned until re-signed with cosign 3. Another is step credential forwarding: the Go runtime forwarded a module every step credential but the pull credential, this runtime forwards only the ones it was granted - those its manifest's `requires.env` bindings and `requires.credentials` name, each permitted by `spendCredential` in both Cedar layers - so a module that read a credential it did not declare stops seeing it (and a required credential the step does not carry is refused, as an env binding's always was); `function validate --resolve` lists what each module receives. Anything the runtime does not carry is refused with a message naming it, never silently ignored.
+The Go implementation was the reference until 2026-08; the contract is **logical compatibility**: the same Inputs admitted, the same requests refused for the same reasons, nothing running wider than the Go runtime would allow. Most admission and policy refusal strings match Go verbatim (the conformance goldens hold them); wording-only divergences are accepted (alpha), the recorded ones being: guest log kv rendered as one JSON field, egress transport-error text (reqwest's words, no 64KiB response-header cap, no HTTP/2 attempt), limits parse-error wording, a cold module load (fetch + compile) not being cut short by the request's deadline - the compile completes and caches where Go bounded loads with a load timeout; the run that follows still gets only the remaining budget - and the run deadline metering guest compute: time blocked in `wasi:http` is credited back to the epoch deadline (the gRPC deadline stays the hard cap) where Go spent `limits.timeout` on it. One recorded divergence is more than wording - the signature format: the Go runtime read cosign 2's legacy `sha256-<hex>.sig` signatures, this runtime reads only cosign 3's key-based Sigstore bundles among the manifest's OCI 1.1 referrers (the same `--cosign-key` keys decide, in the format cosign 3 writes by default), so a module signed only the legacy way is refused as unsigned until re-signed with cosign 3. Another is step credential forwarding: the Go runtime forwarded a module every step credential but the pull credential, this runtime forwards only the ones it was granted - those its manifest's `requires.env` bindings and `requires.credentials` name, each permitted by `spendCredential` in both Cedar layers - so a module that read a credential it did not declare stops seeing it (and a required credential the step does not carry is refused, as an env binding's always was); `function validate --resolve` lists what each module receives. A third, additive one is the `composeResource` output fence (#174), which the Go runtime never had: unscoped it changes nothing, scoped it refuses output the Go runtime would have applied. Anything the runtime does not carry is refused with a message naming it, never silently ignored.
 
 ### Conformance goldens
 
@@ -684,7 +706,7 @@ The Go-era decisions below still describe the product's behaviour; the runtime t
 - **wasmtime is the only reader of a module** (Jonasz, 2026-08-17): no second wasm decoder; `engine.inspect` compiles with wasmtime and reports the shape and checkABI's verdict, so every verdict `guestfn` or `validate` prints is the runtime's.
 - **`FROM scratch` images hold the module at `/fn.wasm`** (Jonasz, 2026-08-17): the tar path stays for `COPY fn.wasm /` images, but the resolver never picks "the first `.wasm` file"; raw `application/wasm` layers (`guestfn push`, `oras push`) are the recommended shape.
 - **The module manifest is a layer of the OCI artifact, not a custom section** (Jonasz, 2026-08-17): covered by the pinned manifest digest and a cosign signature, written by `guestfn push` from `wasmfn.yaml`, parsed with no wasm walker. It is a request, never a grant: `admit_requires` runs after admission and load, before the run, so a manifest can only refuse earlier - never make a run possible. `path`/`http` sources may name a `wasmfn.yaml` by reference instead (`docs/one-pager-manifest-less-sources.md`).
-- **Three-layer authorization** (Jonasz, 2026-08-19): a capability is granted iff the module's manifest requests it, the Input's `compositionPolicy` permits it and the operator's `--sandbox-policy-file` permits it - three AND-combined layers, each able only to narrow the one above. The composition layer is scoped default-permit for sandbox actions and default-deny for `from`-source fencing; static sources bypass it. `docs/one-pager-three-layer-authz.md`.
+- **Three-layer authorization** (Jonasz, 2026-08-19): a capability is granted iff the module's manifest requests it, the Input's `compositionPolicy` permits it and the operator's `--sandbox-policy-file` permits it - three AND-combined layers, each able only to narrow the one above. The composition layer is scoped default-permit for sandbox actions and default-deny for `from`-source fencing; static sources bypass it. `docs/one-pager-three-layer-authz.md`. The output fence `composeResource` (Jonasz, 2026-10-27, #174) is the one action both layers decide scoped default-permit, the operator's included: it fences what a module writes rather than granting a capability, so a default-deny would have refused every module's output on upgrade; a kind replaced under one composition resource name is a remove plus an add, `modify` is judged on the whole resource, a response carrying a fatal result is not judged, a refused output counts as `refused`, and the manifest's `composes` stays advisory (the manifest is a request, never a grant, and a pre-run refusal is unsound for name-conditioned rules).
 - **Cedar-only sandbox enablement** (Jonasz, 2026-08-19): the operator's Cedar `--sandbox-policy-file` is the sole authority that enables a sandbox capability, evaluated default-deny. With no policy file every sandbox grant is refused - which is all most modules need.
 - **Sandbox filesystem and env are WASI, not ABI** (Jonasz, 2026-08-16): the private `/tmp` is a per-run temp dir under the OS temp dir ($TMPDIR is the operator's quota knob), pre-opened at `/tmp` and removed after the store; env is exactly the materialized bindings. Nothing new for guests to import, so every guest language is equal.
 - **No host mounts** (Jonasz, 2026-08-16): a module's inputs come through the request; mapping any part of the pod's filesystem into a module is a boundary the runtime does not offer; the private `/tmp` is the only directory a guest ever gets.
