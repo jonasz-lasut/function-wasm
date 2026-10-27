@@ -1,0 +1,20 @@
+# The test module requiring every capability at once: what the default
+# profile grants in full.
+abi: 2
+name: e2e-guest
+version: 0.1.0-everything
+description: function-wasm's end-to-end test module, requiring every capability
+requires:
+  egress:
+    http:
+    - host: registry.e2e.svc
+      methods: [GET]
+      pathPrefix: /v2/
+  filesystem:
+    privateTmp: true
+  env:
+  - name: E2E_TOKEN
+    fromCredential:
+      name: e2e
+      key: token
+  credentials: [e2e]

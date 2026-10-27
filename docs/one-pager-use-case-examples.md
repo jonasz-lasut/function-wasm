@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.5
+* Status: Implemented, revision 1.6
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/112
 
 ## Context
@@ -126,22 +126,20 @@ render job.
   example manifests are the example's own.
 - **Each example has its own unit tests in its language**, covering every
   fatal path.
-- **Each example has a render test**, `example/xprin.yaml`, run by
-  [xprin](https://github.com/crossplane-contrib/xprin). It renders each case
-  and asserts what is composed declaratively, and validates the output against
-  the XRD and vendored provider CRDs where every rendered kind has a schema.
-  Suites assert composed resources and XR status, never function results (xprin
-  collapses unnamed results onto one key); a fatal path fails the render, so it
-  lives in the unit tests. `examples/render.sh` runs the runtime's side:
-  `function validate` over every `example/xr*.yaml`, the operator policy in
-  `example/policy.cedar`, and the fixture server for `example/fixtures/`.
-- **The OCI path has an end-to-end scenario at the same render tier**,
-  `test/e2e/oci/run.sh`: `pdb-addon` pushed to a registry behind basic auth
-  and signed with cosign, a `WebApp` naming it by digest through
-  `module.from`, and the runtime pulling it with the step credential the XR
-  names, behind `pullModule` and `requireSignature`. The script sets the
-  stage; xprin and `function validate --output json` assert.
-  `test/e2e/README.md` sets out the tiers and the conventions.
+- **Each example has a build job** in the `/e2e` workflow: its toolchain,
+  `make build test lint`, and a drift check of its generated codec and
+  bindings. What an example composes is asserted by nothing in CI (revision
+  1.6): the xprin render suites every example carried, `examples/render.sh
+  --check` and the OCI scenario `test/e2e/oci/run.sh` were retired with the
+  Kubernetes-native end-to-end suite (`crates/e2e`,
+  [testing](project/testing.md), #185), which drives a committed test module
+  of its own through Crossplane in a kind cluster: the runtime behaviour the
+  examples relied on (signatures, `module.from`, egress, credentials, env, the
+  private `/tmp`, requirements, fatals, limits) is proved there, and an
+  example's own logic by its unit tests. `make render` stays as each
+  example's development loop (`examples/render.sh`: `function validate` over
+  every `example/xr*.yaml`, the operator policy in `example/policy.cedar`,
+  the fixture server for `example/fixtures/`, `crossplane render`).
 
 ## Publishing
 

@@ -1,9 +1,0 @@
-apiVersion: platform.example.org/v1alpha1
-kind: WebApp
-metadata:
-  name: shop-none
-  namespace: default
-spec:
-  image: ghcr.io/example-org/shop:1.4.0
-  replicas: 3
-  port: 8080

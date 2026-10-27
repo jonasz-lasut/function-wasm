@@ -7,7 +7,7 @@
 //! byte-identical against the Go runtime's own `function validate` (the
 //! original differential harness, retired with the Go tree) - so they are
 //! the Go runtime's words wherever parity held, and a change is a parity
-//! regression until re-recorded deliberately with UPDATE_CONFORMANCE=1.
+//! regression until re-recorded deliberately with UPDATE_GOLDENS=1.
 //! Run-specific values (temp directories, loopback ports) are replaced
 //! with stable placeholders before comparing.
 
@@ -218,7 +218,7 @@ fn run_validate_env(
     }
 }
 
-/// Compares one case's output against its golden; UPDATE_CONFORMANCE=1
+/// Compares one case's output against its golden; UPDATE_GOLDENS=1
 /// records instead. subs replace run-specific values with stable
 /// placeholders.
 fn assert_golden(name: &str, out: &Output, subs: &[(String, &str)]) -> Option<String> {
@@ -232,14 +232,14 @@ fn assert_golden(name: &str, out: &Output, subs: &[(String, &str)]) -> Option<St
     let path = crate_dir()
         .join("testdata/conformance")
         .join(format!("{}.golden", name.replace('/', "-")));
-    if std::env::var_os("UPDATE_CONFORMANCE").is_some() {
+    if std::env::var_os("UPDATE_GOLDENS").is_some() {
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
         std::fs::write(&path, &rendered).expect("write golden");
         return None;
     }
     let want = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "{name}: cannot read {} ({e}); record with UPDATE_CONFORMANCE=1 cargo test",
+            "{name}: cannot read {} ({e}); record with UPDATE_GOLDENS=1 cargo test",
             path.display()
         )
     });
@@ -247,7 +247,7 @@ fn assert_golden(name: &str, out: &Output, subs: &[(String, &str)]) -> Option<St
         return None;
     }
     Some(format!(
-        "{name}: output differs from {}\n--- want\n{want}\n--- got\n{rendered}\n(re-record deliberately with UPDATE_CONFORMANCE=1 cargo test)",
+        "{name}: output differs from {}\n--- want\n{want}\n--- got\n{rendered}\n(re-record deliberately with UPDATE_GOLDENS=1 cargo test)",
         path.display()
     ))
 }

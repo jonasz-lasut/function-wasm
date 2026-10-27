@@ -1,0 +1,50 @@
+# The lifecycle profile: --debug, the published pdb-addon warmed at
+# startup (a 75 MB module: a visible warm-up and a cache entry the sweep has
+# to remove), the caches on a volume that outlives the pod, bounded below
+# that module's size so the startup sweep has work. No policy file: the
+# module requires nothing.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: e2e-lifecycle
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      strategy: {}
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            image: function-wasm-e2e:dev
+            args:
+            - --debug
+            - --warm-modules=ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon@sha256:f80a8364a61555f02d1429a17af9feaf0e9e8505c8fbb0d64589f84b05b14346
+            # In MiB: below the warmed module's 74 MB, so the startup sweep
+            # (which runs before the warm-up) has to remove it.
+            - --max-cache-size=64
+            env:
+            - name: SSL_CERT_FILE
+              value: /etc/function-wasm/registry-ca/ca.crt
+            - name: SSL_CERT_DIR
+              value: /etc/ssl/certs
+            # Ready means warmed: /readyz answers 503 until every warm-up
+            # entry is loaded (docs/operators/readiness.md).
+            readinessProbe:
+              httpGet:
+                path: /readyz
+                port: 8081
+              periodSeconds: 2
+            volumeMounts:
+            - name: cache
+              mountPath: /tmp/function-wasm-cache
+            - name: registry-ca
+              mountPath: /etc/function-wasm/registry-ca
+              readOnly: true
+          volumes:
+          - name: cache
+            persistentVolumeClaim:
+              claimName: e2e-cache
+          - name: registry-ca
+            configMap:
+              name: e2e-registry-ca

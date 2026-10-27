@@ -1,7 +1,7 @@
 # The team-tags guest in Python, componentized with componentize-py: needs
 # python3 (protoc only to regenerate the checked-in codec). Render needs
-# the crossplane CLI and Docker, render-check also xprin.
-.PHONY: build test render render-check gen-proto clean
+# the crossplane CLI and Docker.
+.PHONY: build test render gen-proto clean
 
 .venv: requirements.txt
 	python3 -m venv .venv
@@ -20,8 +20,6 @@ gen-proto: ## Regenerate the checked-in protobuf codec (protoc)
 render: build ## Start the runtime serving this directory and crossplane render example/
 	../render.sh $(CURDIR)
 
-render-check: build ## Like render, but assert the output (used by CI)
-	../render.sh $(CURDIR) --check
 
 clean:
 	rm -rf .venv fn.wasm src/__pycache__ src/gen/__pycache__ test/__pycache__

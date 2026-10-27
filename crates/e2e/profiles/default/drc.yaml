@@ -1,0 +1,53 @@
+# The default profile: both verifiers (the suite's cosign key and the merged
+# trusted root), the default policy, and the registry CA trusted beside the
+# image's bundle (SSL_CERT_FILE replaces the platform store for rustls, so
+# SSL_CERT_DIR names the image's bundle again).
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: e2e-default
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      strategy: {}
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            image: function-wasm-e2e:dev
+            args:
+            - --sandbox-policy-file=/etc/function-wasm/policy/policy.cedar
+            - --cosign-key=/etc/function-wasm/cosign/cosign.pub
+            - --cosign-trusted-root=/etc/function-wasm/trusted-root/trusted_root.json
+            env:
+            - name: SSL_CERT_FILE
+              value: /etc/function-wasm/registry-ca/ca.crt
+            - name: SSL_CERT_DIR
+              value: /etc/ssl/certs
+            volumeMounts:
+            - name: policy
+              mountPath: /etc/function-wasm/policy
+              readOnly: true
+            - name: cosign-key
+              mountPath: /etc/function-wasm/cosign
+              readOnly: true
+            - name: trusted-root
+              mountPath: /etc/function-wasm/trusted-root
+              readOnly: true
+            - name: registry-ca
+              mountPath: /etc/function-wasm/registry-ca
+              readOnly: true
+          volumes:
+          - name: policy
+            configMap:
+              name: e2e-policy-default
+          - name: cosign-key
+            secret:
+              secretName: e2e-cosign-key
+          - name: trusted-root
+            configMap:
+              name: e2e-trusted-root
+          - name: registry-ca
+            configMap:
+              name: e2e-registry-ca

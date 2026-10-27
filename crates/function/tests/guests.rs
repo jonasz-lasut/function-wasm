@@ -16,7 +16,10 @@
 //! checked by their render jobs.
 //!
 //! A guest whose toolchain is not on PATH is skipped, like the Go tree's
-//! guest tests skip without theirs.
+//! guest tests skip without theirs - unless FUNCTION_WASM_REQUIRE_TOOLCHAINS
+//! is set, as the /e2e workflow's guest-suite job sets it, when a missing
+//! toolchain fails the guest instead: a runner that lost a toolchain would
+//! otherwise shrink the suite and stay green.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -115,6 +118,18 @@ fn on_path(name: &str) -> bool {
         .is_some_and(|paths| std::env::split_paths(&paths).any(|p| p.join(name).is_file()))
 }
 
+/// Skips a guest for a missing toolchain, naming it - or fails, where
+/// FUNCTION_WASM_REQUIRE_TOOLCHAINS says every guest must build.
+fn skip(guest: &str, reason: &str) -> Option<Vec<u8>> {
+    if std::env::var_os("FUNCTION_WASM_REQUIRE_TOOLCHAINS").is_some() {
+        panic!(
+            "the {guest} guest cannot build ({reason}) and FUNCTION_WASM_REQUIRE_TOOLCHAINS is set"
+        );
+    }
+    eprintln!("skipping the {guest} guest: {reason}");
+    None
+}
+
 fn command(dir: &Path, name: &str, args: &[&str], envs: &[(&str, &str)]) -> bool {
     let mut cmd = std::process::Command::new(name);
     // rustup exports RUSTUP_TOOLCHAIN to everything under the cargo running
@@ -149,8 +164,7 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
     let built = match guest {
         "go" => {
             if !on_path("go") {
-                eprintln!("skipping: go not on PATH");
-                return None;
+                return skip(guest, "go not on PATH");
             }
             // A scaffold's go.mod has no go.sum yet; guestfn init tidies it.
             // -checklinkname=0 admits the bindings runtime's linkname to
@@ -192,8 +206,7 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
         }
         "rust-v2" => {
             if !on_path("cargo") || !on_path("rustup") {
-                eprintln!("skipping: cargo/rustup not on PATH");
-                return None;
+                return skip(guest, "cargo/rustup not on PATH");
             }
             // Asked in the guest's directory, so its rust-toolchain.toml
             // decides which toolchain's targets count (rustup installs a
@@ -205,8 +218,7 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 .output()
                 .ok()?;
             if !String::from_utf8_lossy(&targets.stdout).contains("wasm32-wasip3") {
-                eprintln!("skipping: wasm32-wasip3 target not installed");
-                return None;
+                return skip(guest, "wasm32-wasip3 target not installed");
             }
             if !command(
                 &dir,
@@ -227,8 +239,7 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
         }
         "ts" => {
             if !on_path("npm") {
-                eprintln!("skipping: npm not on PATH");
-                return None;
+                return skip(guest, "npm not on PATH");
             }
             // A scaffold has no lockfile: npm install resolves it the way a
             // user's first build does.
@@ -242,8 +253,7 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
         }
         "python" => {
             if !on_path("python3") {
-                eprintln!("skipping: python3 not on PATH");
-                return None;
+                return skip(guest, "python3 not on PATH");
             }
             // The venv is a kept cache; the requirements are installed every
             // run, which is cheap once they are satisfied.
@@ -286,8 +296,7 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
         }
         "zig" | "c" => {
             if !on_path("zig") {
-                eprintln!("skipping: zig not on PATH");
-                return None;
+                return skip(guest, "zig not on PATH");
             }
             if !command(&dir, "zig", &["build", "-Doptimize=ReleaseSmall"], &[]) {
                 return Some(Vec::new());

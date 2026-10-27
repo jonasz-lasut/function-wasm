@@ -6,10 +6,9 @@
 # wit-bindgen 0.62.0 is only needed to regenerate the checked-in bindings
 # (make gen-bindings) and protoc with protoc-gen-mbt 0.2.0 (run through
 # moonx, no install) the checked-in codec (make gen-proto). Render needs the
-# crossplane CLI and Docker, render-check also xprin. GUESTFN, FUNCTION_BIN
-# (read by ../render.sh) and XPRIN can name prebuilt binaries instead, as CI
-# does.
-.PHONY: build test lint gen-proto gen-bindings render render-check clean
+# crossplane CLI and Docker. GUESTFN and FUNCTION_BIN (read by ../render.sh)
+# can name prebuilt binaries instead.
+.PHONY: build test lint gen-proto gen-bindings render clean
 
 ROOT := $(abspath ../..)
 GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
@@ -66,8 +65,6 @@ gen-bindings: ## Regenerate the wit-bindgen output under src/ from wit/ (needs w
 render: build ## Start the runtime serving this directory and crossplane render example/
 	../render.sh $(CURDIR)
 
-render-check: build ## Like render, but assert the output (used by CI)
-	../render.sh $(CURDIR) --check
 
 clean:
 	rm -rf _build .mooncakes fn.wasm

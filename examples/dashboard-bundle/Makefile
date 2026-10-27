@@ -5,8 +5,8 @@
 # and win-x64 hosts only, so a Linux host with dotnet builds natively and
 # every other host (macOS) runs dotnet in the .NET SDK container - `make
 # build DOTNET=dotnet` forces the host's own. Render needs the crossplane CLI
-# and Docker, render-check also xprin.
-.PHONY: build lint test render render-check gen-proto bundles clean
+# and Docker.
+.PHONY: build lint test render gen-proto bundles clean
 
 SDK_IMAGE := mcr.microsoft.com/dotnet/sdk:10.0
 # A named volume keeps the container's NuGet packages and WASI SDK between
@@ -40,8 +40,6 @@ bundles: ## Repack example/fixtures/bundles from example/bundles and print the d
 render: build ## Start the runtime serving this directory and crossplane render example/
 	../render.sh $(CURDIR)
 
-render-check: build ## Like render, but assert the output (used by CI)
-	../render.sh $(CURDIR) --check
 
 clean:
 	rm -rf bin obj test/bin test/obj fn.wasm

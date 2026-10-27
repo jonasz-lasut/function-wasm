@@ -1,9 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/function", "crates/guestfn"]
+members = ["crates/engine", "crates/function", "crates/guestfn", "crates/e2e"]
 # The example guests are deliberately standalone: a guest depends on nothing
-# in this repository.
-exclude = ["examples/cloudflare-origin"]
+# in this repository. The end-to-end suite's test module is a guest too,
+# built for wasm32-wasip3 on the rust scaffold's pinned toolchain.
+exclude = ["examples/cloudflare-origin", "crates/e2e/guest"]
 
 [workspace.package]
 edition = "2024"

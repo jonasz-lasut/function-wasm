@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Renders <example dir>/example/ with the function-wasm runtime from this
-# repository serving that directory (module.type: Path, path: fn.wasm), the way the
+# The development loop of an example (docs/guests/render-locally.md): renders
+# <example dir>/example/ with the function-wasm runtime from this repository
+# serving that directory (module.type: Path, path: fn.wasm), the way the
 # scaffold README describes. The guest must already be built to fn.wasm:
 # each example's Makefile does that, whatever its toolchain.
 #
@@ -10,32 +11,26 @@
 # the operator grant policy (--sandbox-policy-file), and example/fixtures/
 # served over plain HTTP on 127.0.0.1:$FIXTURE_PORT (default 9480) for a
 # module that fetches over the host's egress; the policy has to permit
-# dialling loopback for it.
+# dialling loopback for it - and prints the render of example/xr.yaml,
+# passing example/required-resources.yaml, observed-resources.yaml and
+# function-credentials.yaml when they exist.
 #
-# Without --check it prints the render of example/xr.yaml, passing
-# example/required-resources.yaml, observed-resources.yaml and
-# function-credentials.yaml when they exist. With --check it runs the
-# example's xprin suite, example/xprin.yaml
-# (https://github.com/crossplane-contrib/xprin), which renders its cases and
-# asserts what they compose - what CI runs: it proves the runtime loads the
-# module, runs it over gRPC, Crossplane accepts the response, and the module
-# does what the example says.
+# It is a loop for a developer's eyes, not a test: what an example composes
+# is asserted by nothing in CI (the end-to-end suite under crates/e2e drives
+# its own module in a cluster, docs/project/testing.md); each example's unit
+# tests and its build job cover the guest itself.
 #
 # The runtime is built from this repository unless FUNCTION_BIN names a
-# prebuilt one (CI builds it once per run and hands it to every render job);
-# xprin is XPRIN, else xprin on PATH.
+# prebuilt one.
 #
-# Usage: render.sh <example dir> [--check]
+# Usage: render.sh <example dir>
 set -euo pipefail
 
-here=$(cd "${1:?usage: render.sh <example dir> [--check]}" && pwd)
+here=$(cd "${1:?usage: render.sh <example dir>}" && pwd)
 root=$(cd "$(dirname "$0")/.." && pwd)
-check=false
-[[ "${2:-}" == "--check" ]] && check=true
 [[ -f "$here/fn.wasm" ]] || { echo "$here/fn.wasm not found; build the guest first" >&2; exit 1; }
 example="$here/example"
 fixture_port=${FIXTURE_PORT:-9480}
-xprin=${XPRIN:-xprin}
 
 listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 wait_for() {
@@ -47,10 +42,6 @@ wait_for() {
 }
 
 command -v crossplane >/dev/null || { echo "crossplane CLI not found; see https://docs.crossplane.io/latest/cli/" >&2; exit 1; }
-if $check; then
-  command -v "$xprin" >/dev/null || { echo "xprin not found; see https://github.com/crossplane-contrib/xprin" >&2; exit 1; }
-  [[ -f "$example/xprin.yaml" ]] || { echo "$example/xprin.yaml not found" >&2; exit 1; }
-fi
 if listening 9443; then
   echo "something already listens on 127.0.0.1:9443 (the Development runtime target)" >&2
   exit 1
@@ -96,16 +87,6 @@ echo "==> starting the runtime" >&2
 "$work/function" --insecure "${runtime_flags[@]}" >"$work/function.log" 2>&1 &
 fn_pid=$!
 wait_for 9443 || { echo "runtime did not start:" >&2; cat "$work/function.log" >&2; exit 1; }
-
-if $check; then
-  echo "==> xprin test example/xprin.yaml" >&2
-  if ! "$xprin" test -v --show-render --show-validate --show-assertions "$example/xprin.yaml"; then
-    echo "--- runtime log ---" >&2
-    cat "$work/function.log" >&2
-    exit 1
-  fi
-  exit 0
-fi
 
 args=()
 for input in required-resources observed-resources function-credentials; do

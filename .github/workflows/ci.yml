@@ -53,10 +53,13 @@ jobs:
       - name: Cache Rust Builds
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
+      # --all-features: the end-to-end crate (crates/e2e) is empty without
+      # its cluster feature, so this is where it gets compiled and linted on
+      # every push; its tests themselves need a cluster (/e2e).
       - name: Lint
         run: |
           cargo fmt --all --check
-          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   # cargo test covers the whole workspace: the engine's WAT-fixture tests,
   # the runtime's unit and integration tests (the raw-client transparency
@@ -66,9 +69,9 @@ jobs:
   # CLI tests against an in-memory registry. The job is deliberately
   # toolchain-free: SKIP_GUEST_BUILDS turns the guest suite off (the
   # runner's preinstalled Go would otherwise build the go guest with an
-  # unpinned toolchain) - each guest is proven end to end by its render job
-  # and the full behavioural matrix by the guest-suite job, both in the
-  # comment-triggered e2e workflow (/e2e on a pull request).
+  # unpinned toolchain) - the full behavioural matrix runs in the guest-suite
+  # job, each example in its build job and the runtime in a cluster, all in
+  # the comment-triggered e2e workflow (/e2e on a pull request).
   unit-test:
     runs-on: ubuntu-26.04
     needs: detect-noop

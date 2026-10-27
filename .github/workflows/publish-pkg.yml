@@ -83,14 +83,9 @@ jobs:
         # --examples-root must point at a directory of Crossplane example objects
         # only: xpkg build parses every YAML file under it. The default
         # (./examples) recurses into the guest projects and their wasmfn.yaml
-        # module manifests (no Kind), and a guest's example/ dir holds its xprin
-        # render test (no Kind either), so the package takes one guest's
-        # example objects without the test.
-        run: |
-          mkdir package-examples
-          cp examples/pdb-addon/example/*.yaml package-examples/
-          rm package-examples/xprin.yaml
-          ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/ --examples-root=package-examples --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
+        # module manifests (no Kind), so the package takes one guest's
+        # example/ directory, which holds nothing else.
+        run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/ --examples-root=examples/pdb-addon/example --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
 
       - name: Upload Single-Platform Package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
