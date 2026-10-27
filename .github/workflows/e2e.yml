@@ -26,10 +26,16 @@
 # pull request's code (so a change to this file is exercised by the first
 # /e2e after it merges), only the repository's owner, members and
 # collaborators can start it, the jobs that run that code get a read-only
-# token, and no checkout leaves the token behind for the code to read. Nor do
-# the jobs restore or save caches (rust-cache, setup-go, npm): they
-# run in the default branch's cache scope, where trusted workflows would
-# restore whatever the pull request's code wrote.
+# token, and no checkout leaves the token behind for the code to read. The
+# jobs do cache - the Rust builds and the guests' dependencies, which are
+# most of a run - but in a namespace of their own: every key here starts
+# with e2e- (rust-cache's prefix-key, actions/cache's key), and no trusted
+# workflow restores an e2e- key (ci.yml's rust-cache and the release
+# matrix stay on the default v0-rust prefix). An issue_comment run writes
+# in the default branch's cache scope, so these caches are shared by every
+# pull request's run; their only reader is this workflow, with a read-only
+# token and no secrets, so a cache a pull request's code poisoned can
+# mislead this workflow's verdict and nothing else.
 name: E2E
 
 on:
@@ -109,6 +115,12 @@ jobs:
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
+
+      - name: Cache the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: e2e-rust
+          cache-on-failure: true
 
       - name: Build the Runtime and guestfn
         run: cargo build --locked --release -p function-wasm -p guestfn
@@ -192,6 +204,30 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Cache the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: e2e-rust
+          cache-on-failure: true
+
+      # What the scaffolds download on a first build: Go modules and the Go
+      # build cache, npm's and pip's package caches, zig's global cache, and
+      # the rust scaffold's pinned toolchain, which rustup installs on first
+      # use. The templates' pins key it.
+      - name: Cache the Scaffolds' Dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/.npm
+            ~/.cache/pip
+            ~/.cache/zig
+            ~/.rustup/toolchains/beta-*
+          key: e2e-guests-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/guestfn/templates/go/go.mod.tmpl', 'crates/guestfn/templates/ts/package.json.tmpl', 'crates/guestfn/templates/python/requirements.txt', 'crates/guestfn/templates/zig/build.zig.zon.tmpl', 'crates/guestfn/templates/c/build.zig.zon.tmpl', 'crates/guestfn/templates/rust/rust-toolchain.toml', 'crates/guestfn/templates/rust/Cargo.toml.tmpl') }}
+          restore-keys: |
+            e2e-guests-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Run the Guest Suite
         env:
           FUNCTION_WASM_REQUIRE_TOOLCHAINS: '1'
@@ -244,6 +280,15 @@ jobs:
           cache: false
           go-version-file: examples/pdb-addon/go.mod
 
+      - name: Cache the Go Modules and Build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: e2e-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/pdb-addon/go.sum') }}
+          restore-keys: |
+            e2e-go-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Setup wit-bindgen
         run: |
@@ -315,6 +360,12 @@ jobs:
       # The guest's Makefile names its wasm target (and a rust-toolchain.toml
       # beside it may pin the compiler), so the lint follows the pull
       # request's code rather than this file, which comes from main.
+      - name: Cache the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: e2e-rust
+          cache-on-failure: true
+          workspaces: examples/cloudflare-origin
       - name: Build, Lint and Test the ABI v2 Rust Guest
         run: make -C examples/cloudflare-origin build lint test
 
@@ -376,6 +427,14 @@ jobs:
           echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
           tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
+
+      - name: Cache the Zig Packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/hello-zig/build.zig.zon', 'examples/hello-c/build.zig.zon', 'examples/hello-odin/build.zig.zon') }}
+          restore-keys: |
+            e2e-zig-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check Generated Codec
         working-directory: examples/hello-zig
@@ -482,6 +541,14 @@ jobs:
 
       - name: Setup nanopb_generator
         run: pip install nanopb==0.4.9.1
+
+      - name: Cache the Zig Packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/hello-zig/build.zig.zon', 'examples/hello-c/build.zig.zon', 'examples/hello-odin/build.zig.zon') }}
+          restore-keys: |
+            e2e-zig-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check Generated Codec
         working-directory: examples/hello-c
@@ -593,6 +660,14 @@ jobs:
 
       - name: Setup nanopb_generator
         run: pip install nanopb==0.4.9.1
+
+      - name: Cache the Zig Packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/hello-zig/build.zig.zon', 'examples/hello-c/build.zig.zon', 'examples/hello-odin/build.zig.zon') }}
+          restore-keys: |
+            e2e-zig-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check Generated Codec
         working-directory: examples/hello-odin
@@ -790,7 +865,14 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-          cache-dependency-path: examples/policy-gate/package-lock.json
+
+      - name: Cache the npm Packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: e2e-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/policy-gate/package-lock.json') }}
+          restore-keys: |
+            e2e-npm-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build and Test the TypeScript Guest
         run: make -C examples/policy-gate build test
@@ -822,6 +904,14 @@ jobs:
         run: |
           chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
+
+      - name: Cache the pip Packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: e2e-pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/team-tags/requirements.txt') }}
+          restore-keys: |
+            e2e-pip-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build and Test the Python Guest
         run: make -C examples/team-tags build test
@@ -861,6 +951,14 @@ jobs:
         with:
           dotnet-version: '10.0.x'
           cache: false
+
+      - name: Cache the NuGet Packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: e2e-nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/dashboard-bundle/Directory.Packages.props', 'examples/dashboard-bundle/**/*.csproj') }}
+          restore-keys: |
+            e2e-nuget-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build, Lint and Test the C# Guest
         run: make -C examples/dashboard-bundle build lint test
@@ -902,6 +1000,12 @@ jobs:
         run: |
           chmod +x "${RUNNER_TEMP}/e2e-tools/function"
           echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-tools/function" >> "$GITHUB_ENV"
+
+      - name: Cache the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: e2e-rust
+          cache-on-failure: true
 
       - name: Bring the Cluster Up
         run: make e2e.up

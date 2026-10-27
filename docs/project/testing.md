@@ -118,8 +118,12 @@ every push. `/e2e` on a pull request runs `e2e.yml`: the guest suite with
 skipping), one build job per example toolchain (build, unit tests, lint,
 codec and bindings drift), and the cluster job: the three profiles in turn on
 one kind cluster at the Makefile's `CROSSPLANE_VERSION`, `make e2e.dump`
-uploaded on failure. A push to a `release-*` branch runs the release matrix
-below.
+uploaded on failure. The jobs cache the Rust builds and the guests'
+dependencies under keys prefixed `e2e-`, a namespace of their own: the run
+builds a pull request's code in the default branch's cache scope, so no
+trusted workflow (`ci.yml`, the release matrix) ever restores an `e2e-`
+key, and a poisoned cache could mislead only this workflow's verdict. A
+push to a `release-*` branch runs the release matrix below.
 
 ### The release matrix
 
