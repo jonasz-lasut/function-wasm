@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.4
+* Status: Implemented, revision 1.5
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/112
 
 ## Context
@@ -160,11 +160,13 @@ with their module manifests, by `publish-pkg.yml`'s `publish-examples` job:
 - **When:** at a release, so a published example only ever targets a released
   runtime.
 - **Signing:** keyless cosign plus SLSA provenance from the release workflow,
-  with no key in the repository. The runtime verifies key-based signatures
-  only (keyless waits on sigstore-rs,
-  [#116](https://github.com/jonasz-lasut/function-wasm/issues/116)); until then
-  an operator who requires signatures verifies the keyless one, copies the
-  module and countersigns it with its own key.
+  with no key in the repository. The runtime verifies the keyless signature
+  against a Sigstore trusted root (`--cosign-trusted-root`) and admits it
+  where the operator's `trustSigner` rule names this repository's release
+  workflow on a version tag
+  ([#116](https://github.com/jonasz-lasut/function-wasm/issues/116); the
+  signatures page has the rule); an operator may still countersign with its
+  own key instead.
 - **References:** a release asset, `function-wasm-examples-<release>.yaml`,
   lists every published example's reference pinned by digest
   (`repo:v<version>@sha256:…`: the tag for people, the digest for the runtime).

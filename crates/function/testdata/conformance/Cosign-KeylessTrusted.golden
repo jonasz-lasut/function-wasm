@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+<DIR>/KeylessTrusted.yaml: Composition/KeylessTrusted pipeline[0] KeylessTrusted: OK (oci <REGISTRY>/example/greeter@sha256:5e3c56b32296415a6fa9e13aad07e5636a6615866df94738b88bb9d9010dfa0b)
+  module: sha256:5e3c56b32296415a6fa9e13aad07e5636a6615866df94738b88bb9d9010dfa0b, 255 B, ABI v2
+--- stderr

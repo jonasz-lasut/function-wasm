@@ -280,7 +280,7 @@ pub fn non_oci_signature_refusal(
     src: &ModuleSource,
 ) -> String {
     if policy.is_none() {
-        return "only cosign-signed oci modules are accepted (--cosign-key is set); http and path sources are refused".to_string();
+        return "only cosign-signed oci modules are accepted (--cosign-key or --cosign-trusted-root is set); http and path sources are refused".to_string();
     }
     let (field, location) = match src.r#type.as_str() {
         "HTTP" => (

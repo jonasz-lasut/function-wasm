@@ -13,11 +13,11 @@ drawn there; this page is the reference for writing the two documents.
 
 | layer | where it lives | written by | default | actions it may use |
 |---|---|---|---|---|
-| operator policy | the file `--sandbox-policy-file` names, compiled once at startup and immutable for the process | the operator | deny: a capability no `permit` matches is refused, and no file means no capability at all | `usePrivateTmp`, `setEnv`, `spendCredential`, `grantEgress`, `requireSignature`, `dialAddress` |
+| operator policy | the file `--sandbox-policy-file` names, compiled once at startup and immutable for the process | the operator | deny: a capability no `permit` matches is refused, and no file means no capability at all | `usePrivateTmp`, `setEnv`, `spendCredential`, `grantEgress`, `requireSignature`, `trustSigner`, `dialAddress` |
 | composition policy | the Input's `compositionPolicy` string, compiled per Composition (cached by content hash) | the composition author | deny for the `module.from` fences (`pullModule`, and `spendCredential` for an XR-chosen pull credential); scoped default-permit for the sandbox actions (below) | `pullModule`, `spendCredential`, `usePrivateTmp`, `setEnv`, `grantEgress` |
 
-`requireSignature` and `dialAddress` are the operator's alone: a
-`compositionPolicy` rule for either is never evaluated. `pullModule` is the
+`requireSignature`, `trustSigner` and `dialAddress` are the operator's
+alone: a `compositionPolicy` rule for any of them is never evaluated. `pullModule` is the
 composition author's alone: the operator policy has no say in where an
 XR-chosen module comes from, only in what it is granted once chosen. Where
 `compositionPolicy` sits in the Input, and that it is read from the Input
@@ -41,22 +41,22 @@ safe because both layers only narrow: a rule that cannot match grants
 nothing. `function validate` builds the principal from `--xr`, and uses the
 zero principal without it.
 
-`requireSignature` is the one action evaluated with a placeholder principal
-(`Module::"module"`) that has no attributes: the requirement is
-caller-independent, and a `requireSignature` rule that conditions on
-`principal` never matches.
+`requireSignature` and `trustSigner` are evaluated with a placeholder
+principal (`Module::"module"`) that has no attributes: a signature
+requirement and a signer's trust are caller-independent, and a rule for
+either that conditions on `principal` never matches.
 
 ## Entity types
 
 | entity type | id | attributes | hierarchy (`in`) | used by |
 |---|---|---|---|---|
-| `Request` | `self` | `namespace`, `xrKind`, `composition` | none | the principal of every action but `requireSignature` |
-| `Repository` | a module's normalized location: `registry/repository` for an OCI reference, without its tag or digest and normalized as go-containerregistry does (`docker.io/x` is `index.docker.io/x`); `scheme://host/path` for an HTTP URL, host lowercased, no query | none | every path-boundary prefix, with and without its trailing slash: `ghcr.io/team` and `ghcr.io/team/` are ancestors of `ghcr.io/team/mod`, `ghcr.io/team-other` and `ghcr.io/teamsuffix` are not. `in` is reflexive, so an entity is `in` itself | `pullModule` (resource), `requireSignature` (resource), `spendCredential` (`context.repository`) |
+| `Request` | `self` | `namespace`, `xrKind`, `composition` | none | the principal of every action but `requireSignature` and `trustSigner` |
+| `Repository` | a module's normalized location: `registry/repository` for an OCI reference, without its tag or digest and normalized as go-containerregistry does (`docker.io/x` is `index.docker.io/x`); `scheme://host/path` for an HTTP URL, host lowercased, no query | none | every path-boundary prefix, with and without its trailing slash: `ghcr.io/team` and `ghcr.io/team/` are ancestors of `ghcr.io/team/mod`, `ghcr.io/team-other` and `ghcr.io/teamsuffix` are not. `in` is reflexive, so an entity is `in` itself | `pullModule` (resource), `requireSignature` and `trustSigner` (resource), `spendCredential` (`context.repository`) |
 | `HostPattern` | an egress rule's `host`, lowercased with any trailing dot dropped, or its `hostPattern` as written (`*.example.com`) | `host`: the same string, for `like` | the DNS label suffixes: `api.example.com` is `in HostPattern::"example.com"` and `in HostPattern::"com"`; the pattern `*.example.com` is `in HostPattern::"example.com"` too. `example.com.attacker.net` and `badexample.com` are not | `grantEgress` (resource) |
 | `Capability` | `privateTmp` or `env` | none | none | `usePrivateTmp` and `setEnv` (resource) |
 | `Credential` | the name of a pipeline-step credential | none | none | `spendCredential` (resource) |
-| `Module` | `module` | none | none | the placeholder principal of `requireSignature` |
-| `Action` | one of the seven below | | | the action of every rule |
+| `Module` | `module` | none | none | the placeholder principal of `requireSignature` and `trustSigner` |
+| `Action` | one of the eight below | | | the action of every rule |
 
 ## Actions
 
@@ -67,7 +67,8 @@ caller-independent, and a `requireSignature` rule that conditions on
 | `usePrivateTmp` | both | `Capability::"privateTmp"` | none | the private `/tmp` the manifest requires |
 | `setEnv` | both | `Capability::"env"` | `keys`: the set of every environment variable name the manifest binds, decided once for all of them | the env bindings as a whole; each binding's credential is then decided by `spendCredential` |
 | `grantEgress` | both | `HostPattern::"<host or pattern>"` | `method` (upper case) and `path` (the rule's `pathPrefix`, empty when it has none); one decision per rule and per method it lists | that rule's (host, method) |
-| `requireSignature` | operator | `Repository::"<location>"` | none (placeholder principal) | nothing: it demands that a module at that location carry a cosign signature, verified with `--cosign-key` before any cache is read. The [signatures](signatures.md) page has the precedence with `--cosign-key` alone |
+| `requireSignature` | operator | `Repository::"<location>"` | none (placeholder principal) | nothing: it demands that a module at that location carry a cosign signature, verified with `--cosign-key` or, keyless, with `--cosign-trusted-root` and a `trustSigner` rule, before any cache is read. The [signatures](signatures.md) page has the precedence with `--cosign-key` alone |
+| `trustSigner` | operator | `Repository::"<location>"` | `issuer`, the OIDC issuer of a keyless signature's Fulcio certificate, and `identity`, its subject alternative name (a workflow URI or an email), both strings for `==` and `like` (placeholder principal) | nothing by itself: a keyless cosign signature by that signer, verified against `--cosign-trusted-root`, counts as the module's signature for `requireSignature`. See [signatures](signatures.md) |
 | `dialAddress` | operator | none: the rule must leave `principal` and `resource` unconstrained | `ip`, the resolved address, tested with `isInRange(ip("CIDR"))` or `isLoopback()` | nothing at request time: the rules compile at load into the egress block list, a `forbid` adding a blocked prefix and a `permit` a hole in the default list |
 
 ## How each layer decides
@@ -204,15 +205,46 @@ when { resource in Repository::"ghcr.io/secure" };
 ```
 
 Every module pulled from under `ghcr.io/secure` must carry a cosign
-signature that one of the `--cosign-key` keys verifies; a module from
+signature that one of the `--cosign-key` keys verifies, or a keyless one
+by a signer a `trustSigner` rule trusts; a module from
 `ghcr.io/open/greeter` runs unsigned. With the rule but no `--cosign-key`,
 a required module is refused: `cannot verify module oci
 ghcr.io/secure/greeter@sha256:…: the operator policy requires a cosign
-signature, but the runtime has no --cosign-key to verify it`. A required
+signature, but the runtime has neither --cosign-key nor --cosign-trusted-root
+to verify it`. A required
 HTTP source is refused before any fetch, since only OCI artifacts carry a
 signature: `module.http "https://example.com/fn.wasm" requires a cosign
 signature (operator policy), but only OCI modules can be
 signature-verified`. A `Path` source is never required by a rule.
+
+### `trustSigner`
+
+```cedar
+permit (principal, action == Action::"requireSignature", resource)
+when { resource in Repository::"ghcr.io/jonasz-lasut/wasmfn/examples" };
+
+permit (principal, action == Action::"trustSigner", resource)
+when {
+  resource in Repository::"ghcr.io/jonasz-lasut/wasmfn/examples" &&
+  context.issuer == "https://token.actions.githubusercontent.com" &&
+  context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-pkg.yml@refs/tags/v*"
+};
+```
+
+A keyless signature on a module under `ghcr.io/jonasz-lasut/wasmfn/examples`
+counts only when its Fulcio certificate was issued to this repository's
+release workflow running on a version tag, authenticated by GitHub Actions.
+`context.identity` is the certificate's subject alternative name as Fulcio
+wrote it (`https://github.com/<owner>/<repo>/.github/workflows/<file>@<ref>`
+for a GitHub Actions run, an email for a human signer) and `context.issuer`
+its OIDC issuer; `like` takes `*` as a wildcard. The signature is verified
+first, against `--cosign-trusted-root`; the rule only decides whether a
+verified signer is trusted for the repository, so a rule with no `when`
+trusts every identity the root's authorities ever certified, which is
+rarely meant. A verified signature no rule trusts is refused: `cannot
+verify module oci …: no valid cosign signature for <ref>: keyless signature
+by <identity> (issuer <issuer>) is not trusted for <repository>: no
+trustSigner rule in the operator policy permits it`.
 
 ### `dialAddress`
 
@@ -301,14 +333,16 @@ prints the error and exits 1, `function validate` prints it prefixed
     takes context.ip and no argument`, `isInRange takes one ip("CIDR")
     literal`, or `"<value>" is not an ip literal: <reason>`
 
-Two more checks run at the runtime's startup, not in `function validate`:
+Three more checks run at the runtime's startup, not in `function validate`:
 when the policy carries any `usePrivateTmp` rule the runtime makes one
 temporary directory under `TMPDIR` and exits 1 if it cannot (`the operator
 policy grants a private /tmp (usePrivateTmp), but the runtime cannot create
 one under <dir>: <error>`), and when `--cosign-key` is set but the policy
 has no `requireSignature` rule it logs a warning, since that combination
 verifies nothing: `--cosign-key is set but the operator policy has no
-requireSignature rule: no module will be signature-verified`.
+requireSignature rule: no module will be signature-verified`; likewise
+`--cosign-trusted-root is set but the operator policy has no trustSigner
+rule: no keyless signature will be trusted`.
 
 ## Testing a policy
 
@@ -332,8 +366,8 @@ is the zero principal, which matches no per-tenant condition, and a
 its fence checked only for the policy's presence. Exit codes: 0 when every
 step is admitted, 1 when at least one is refused, 2 when the tool itself
 failed. A module that requires egress on a run without `--cosign-key` gets
-the warning `the module requires egress but is not signature-verified: no
---cosign-key was given`.
+the warning `the module requires egress but is not signature-verified:
+neither --cosign-key nor --cosign-trusted-root was given`.
 
 ## Further reading
 

@@ -2,7 +2,7 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 1.6
+* Status: Implemented, revision 1.7
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. Written after the 2026-08-16 review,
@@ -85,18 +85,29 @@ verifies with a configured key and the statement it signs is a cosign
 signature (`predicateType` `https://sigstore.dev/cosign/sign/v1`) whose
 subject is the manifest digest; the statement is read only after the
 signature verifies. Other attestations, such as SLSA provenance, never
-count, whichever key signed them. The configured keys are the trust root:
-the bundle's verification material (key hint, certificate, Rekor entries)
-is not consulted, as the legacy path never consulted Rekor.
+count, whichever key signed them. For a key-based bundle the configured
+keys are the trust root: its verification material (key hint, Rekor
+entries) is not consulted, as the legacy path never consulted Rekor.
 
 cosign 2's legacy signature, a simple-signing payload under the
 `sha256-<hex>.sig` tag, is not read: a module signed only that way is
-unsigned to this runtime and must be re-signed with cosign 3. Keyless
-(Fulcio/Rekor) verification is not implemented yet (#116, waiting on
-sigstore-rs): a keyless bundle matches no configured key, so it never
-admits a module and never fails the check for a key-based bundle beside it.
-Until then an operator admits a keyless-signed module by verifying it with
-cosign and countersigning it with their own key.
+unsigned to this runtime and must be re-signed with cosign 3.
+
+Keyless (Fulcio/Rekor) signatures (#116) are verified through
+sigstore-verify, the sigstore org's second Rust implementation, against the
+Sigstore trusted root `--cosign-trusted-root` names: the signing time comes
+from the bundle's RFC 3161 timestamps and its Rekor entry's signed entry
+timestamp (a source that is present but fails is fatal, and there is no
+fallback to the clock), the inclusion proof and checkpoint are verified,
+the certificate chains to a Fulcio authority at that time, and only then is
+the statement read as above. The signer the certificate names is a further
+party in this model: the operator decides per repository, through
+`trustSigner` rules in the same policy file that requires the signature,
+which OIDC issuer and identity may vouch for a module - default-deny, so a
+trusted root alone admits nothing. Key-based bundles keep the key path: a
+bundle with a key hint never reaches the trusted root, and a keyless bundle
+met without one is refused by name, never mistaken for a key failure. The
+root is a file read at startup; fetching and refreshing it over TUF is #183.
 
 An operator `--sandbox-policy-file` makes the requirement per-repository: a
 `requireSignature` rule demands a signature for the repositories it names,
