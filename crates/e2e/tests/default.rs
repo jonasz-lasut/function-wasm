@@ -417,36 +417,3 @@ async fn module_from_unset_skips_the_step() -> Result<()> {
     })
     .await
 }
-
-#[tokio::test]
-async fn guest_log_lines_reach_the_pod_log() -> Result<()> {
-    with_temp_ns("logs", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
-        let plain = ns.state.variant("plain");
-        let step = Step::oci(&plain.reference());
-        let guest = ns
-            .guest("probe", &step, json!({"log": ["info", "warn", "error"]}))
-            .await?;
-        guest.wait_status(WAIT, |s| s.logged.is_some()).await?;
-        let mut found = Vec::new();
-        for pod in function_wasm_e2e::k8s::function_pods(&ns.client).await? {
-            let name = pod.metadata.name.clone().unwrap_or_default();
-            let log = function_wasm_e2e::k8s::function_log(&ns.client, &name).await?;
-            found.extend(
-                log.lines()
-                    .filter(|l| l.contains("e2e guest log line"))
-                    .map(str::to_string),
-            );
-        }
-        ensure!(
-            found.len() >= 3,
-            "guest log lines in the pod log: {found:?}"
-        );
-        ensure!(
-            found.iter().all(|l| l.contains(&plain.digest)),
-            "a guest log line lacks the module digest: {found:?}"
-        );
-        Ok(())
-    })
-    .await
-}

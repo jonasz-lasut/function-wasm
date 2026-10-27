@@ -61,7 +61,6 @@ pub fn xrd() -> Value {
                                 "error": {"type": "string"},
                             }},
                             "environmentConfig": {"type": "object", "x-kubernetes-preserve-unknown-fields": true},
-                            "logged": {"type": "array", "items": {"type": "string"}},
                         }},
                     },
                 }},
@@ -218,7 +217,6 @@ pub struct Status {
     pub credentials: Option<BTreeMap<String, Vec<String>>>,
     pub tmp: Option<TmpStatus>,
     pub environment_config: Option<Value>,
-    pub logged: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq)]

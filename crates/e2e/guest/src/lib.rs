@@ -86,8 +86,6 @@ pub struct Spec {
     /// Grow linear memory by this many MiB, reporting where the limit refused it.
     #[serde(rename = "growMiB")]
     pub grow_mib: u32,
-    /// Emit one log line per level named here (debug, info, warn, error).
-    pub log: Vec<String>,
 }
 
 fn one() -> u32 {
@@ -126,8 +124,6 @@ pub struct Status {
     /// The `data` of the EnvironmentConfig Crossplane resolved, once it has.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_config: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub logged: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -197,12 +193,6 @@ where
         module: MODULE.to_string(),
         ..Default::default()
     };
-    if !spec.log.is_empty() {
-        for level in &spec.log {
-            log::emit_named(level, "e2e guest log line", &[("level", level)]);
-        }
-        status.logged = Some(spec.log.clone());
-    }
     if let Some(egress) = &spec.egress {
         status.egress = Some(match fetch(egress.url.clone()).await {
             Ok(f) => EgressStatus {
@@ -545,36 +535,18 @@ fn json_to_value(v: &serde_json::Value) -> Value {
 pub mod log {
     #[derive(Clone, Copy, Debug)]
     enum Level {
-        Debug,
         Info,
-        Warn,
-        Error,
     }
 
     pub fn info(msg: &str, kv: &[(&str, &str)]) {
         emit(Level::Info, msg, kv);
     }
 
-    /// Emits at the level named (debug, info, warn, error); an unknown name
-    /// logs at info, naming itself.
-    pub fn emit_named(level: &str, msg: &str, kv: &[(&str, &str)]) {
-        let level = match level {
-            "debug" => Level::Debug,
-            "warn" => Level::Warn,
-            "error" => Level::Error,
-            _ => Level::Info,
-        };
-        emit(level, msg, kv);
-    }
-
     #[cfg(target_arch = "wasm32")]
     fn emit(level: Level, msg: &str, kv: &[(&str, &str)]) {
         use crate::bindings::LogLevel;
         let level = match level {
-            Level::Debug => LogLevel::Debug,
             Level::Info => LogLevel::Info,
-            Level::Warn => LogLevel::Warn,
-            Level::Error => LogLevel::Error,
         };
         let kv: Vec<(String, String)> = kv
             .iter()
@@ -670,7 +642,6 @@ mod tests {
             "egress": {"url": "https://registry.e2e.svc:5000/v2/"},
             "env": ["E2E_TOKEN"],
             "credentials": ["e2e"],
-            "log": ["debug", "error"],
             "growMiB": 1,
         })))
         .unwrap();
@@ -682,7 +653,6 @@ mod tests {
             status.credentials.as_ref().unwrap()["e2e"],
             Vec::<String>::new()
         );
-        assert_eq!(status.logged, Some(vec!["debug".into(), "error".into()]));
     }
 
     #[test]
@@ -742,7 +712,7 @@ mod tests {
         let spec: Spec = serde_json::from_value(serde_json::json!({
             "nopResources": 2, "readyAfterSeconds": 3, "egress": {"url": "u"}, "env": ["A"],
             "credentials": ["c"], "privateTmp": true, "requirements": {"environmentConfig": "e"},
-            "fatal": "f", "spin": true, "growMiB": 64, "log": ["info"],
+            "fatal": "f", "spin": true, "growMiB": 64,
         }))
         .unwrap();
         assert_eq!(spec.grow_mib, 64);

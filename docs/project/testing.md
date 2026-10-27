@@ -65,9 +65,9 @@ for the rollout. One profile per binary.
 
 | Profile | Runtime | Tests |
 |---|---|---|
-| `default` | `--cosign-key` (the suite's key) and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with the public-good root); a policy that requires signatures from the suite's registry and the published examples, trusts the suite's release identity and this repository's release workflow, grants egress to the registry host with a `dialAddress` hole for kind's service CIDR, the step credential `e2e`, the env binding and the private `/tmp`; the registry CA through `SSL_CERT_FILE`, with `SSL_CERT_DIR` naming the image's bundle again | every admitted case: signatures (key, keyless trusted and untrusted, the published pdb-addon against the public-good root), egress and an in-band rule refusal, credentials, env, tmp with and without the requirement, the requirements round trip, a fatal result, the deadline, the memory limit, `module.from` inside and outside its fence, unsigned, and skipped under `allowEmpty`, guest logs |
+| `default` | `--cosign-key` (the suite's key) and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with the public-good root); a policy that requires signatures from the suite's registry and the published examples, trusts the suite's release identity and this repository's release workflow, grants egress to the registry host with a `dialAddress` hole for kind's service CIDR, the step credential `e2e`, the env binding and the private `/tmp`; the registry CA through `SSL_CERT_FILE`, with `SSL_CERT_DIR` naming the image's bundle again | every admitted case: signatures (key, keyless trusted and untrusted, the published pdb-addon against the public-good root), egress and an in-band rule refusal, credentials, env, tmp with and without the requirement, the requirements round trip, a fatal result, the deadline, the memory limit, `module.from` inside and outside its fence, unsigned, and skipped under `allowEmpty` |
 | `strict` | no verifier; a policy that requires a signature for the plain variant only and grants egress to the registry host with no `dialAddress` hole | the no-verifier refusal, the block list refusing the service CIDR in band, env, credential and tmp refusals |
-| `lifecycle` | `--debug`, `--warm-modules` on the published pdb-addon, a PVC-backed cache bounded below that module's size, a readiness probe on `/readyz` | readiness waiting for the warm-up, caches surviving a restart while the sweep bounds them, debug logging |
+| `lifecycle` | `--debug`, `--warm-modules` on the published pdb-addon, a PVC-backed cache bounded below that module's size, a readiness probe on `/readyz` | readiness waiting for the warm-up, caches surviving a restart while the sweep bounds them |
 
 ### The test module
 
@@ -85,7 +85,6 @@ to exercise:
 | `privateTmp` | writes and reads back a file under `/tmp`, reporting the outcome |
 | `requirements.environmentConfig` | asks Crossplane for that EnvironmentConfig and echoes its data once resolved |
 | `fatal`, `spin`, `growMiB` | a fatal result with the message; a spin past the deadline; a memory growth refused at the limit |
-| `log` | one line per level through the world's `log` import |
 
 The variants are one binary under nine manifests (`crates/e2e/guest/manifests`
 and three signature variants derived from the plain one), each with a

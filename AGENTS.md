@@ -434,7 +434,7 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             workspace root, fn.wasm checked in (make e2e.guest rebuilds it), whose
                             Guest XR's spec says which feature to exercise (nopResources,
                             egress.url, env, credentials, privateTmp, requirements, fatal, spin,
-                            growMiB, log) and which composes provider-nop NopResources and
+                            growMiB) and which composes provider-nop NopResources and
                             writes what it observed into the XR's status. The engine's
                             tests/committed_guest.rs drives the same fn.wasm with a fake
                             requester on every push (#150)

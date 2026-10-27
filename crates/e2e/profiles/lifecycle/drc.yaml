@@ -1,4 +1,4 @@
-# The lifecycle profile: debug logging, the published pdb-addon warmed at
+# The lifecycle profile: --debug, the published pdb-addon warmed at
 # startup (a 75 MB module: a visible warm-up and a cache entry the sweep has
 # to remove), the caches on a volume that outlives the pod, bounded below
 # that module's size so the startup sweep has work. No policy file: the

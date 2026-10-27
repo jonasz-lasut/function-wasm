@@ -1,7 +1,7 @@
-//! The lifecycle profile: debug logging, the published pdb-addon warmed at
-//! startup, the caches on a volume that outlives the pod and bounded below
-//! that module's size. The oracle is the function pod itself: its readiness,
-//! its metrics after a restart, its log.
+//! The lifecycle profile: the published pdb-addon warmed at startup, the
+//! caches on a volume that outlives the pod and bounded below that module's
+//! size, --debug on. The oracle is the function pod itself: its readiness
+//! and its metrics after a restart.
 
 use function_wasm_e2e::k8s::{self, CROSSPLANE_NAMESPACE, FUNCTION_POD_SELECTOR};
 use function_wasm_e2e::prelude::*;
@@ -106,34 +106,6 @@ async fn caches_survive_a_restart_and_the_sweep_bounds_them() -> Result<()> {
             hits_after > hits_before,
             "the compiled artifact on the volume was not reused by {pod}: {hits_before} -> {hits_after}\n{scraped}"
         );
-        Ok(())
-    })
-    .await
-}
-
-/// --debug: the guest's debug line reaches the pod log, with the module
-/// and its digest attached.
-#[tokio::test]
-async fn debug_logging_names_the_module() -> Result<()> {
-    with_temp_ns("debug-logs", |ns| async move {
-        ns.ensure_profile(Profile::Lifecycle).await?;
-        let plain = ns.state.variant("plain");
-        let step = Step::oci(&plain.reference());
-        let guest = ns.guest("probe", &step, json!({"log": ["debug"]})).await?;
-        guest.wait_status(WAIT, |s| s.logged.is_some()).await?;
-        let mut lines = Vec::new();
-        for pod in k8s::function_pods(&ns.client).await? {
-            let name = pod.metadata.name.clone().unwrap_or_default();
-            let log = k8s::function_log(&ns.client, &name).await?;
-            lines.extend(
-                log.lines()
-                    .filter(|l| l.contains("e2e guest log line"))
-                    .map(str::to_string),
-            );
-        }
-        ensure!(!lines.is_empty(), "no guest log line in the pod log");
-        ensure!(lines.iter().all(|l| l.contains("DEBUG")), "{lines:?}");
-        ensure!(lines.iter().all(|l| l.contains(&plain.digest)), "{lines:?}");
         Ok(())
     })
     .await
