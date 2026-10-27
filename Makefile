@@ -77,10 +77,10 @@ e2e.done: e2e.down
 e2e.up: controlplane.up e2e.setup xpkg.build.function-wasm local.xpkg.deploy.function.function-wasm
 	@$(INFO) waiting for the function to become healthy
 	@$(KUBECTL) wait function.pkg.crossplane.io/function-wasm --for=condition=Healthy --timeout=300s || $(FAIL)
-	@$(OK) the end-to-end cluster is up: make e2e.test.<default|strict|lifecycle>
+	@$(OK) the end-to-end cluster is up, run make e2e.test.default, e2e.test.strict or e2e.test.lifecycle
 
 e2e.setup:
-	@$(INFO) setting up the registry, provider-nop and the test module (crates/e2e e2e-setup)
+	@$(INFO) setting up the registry, provider-nop and the test module
 	@PROVIDER_NOP_VERSION=$(PROVIDER_NOP_VERSION) $(E2E_CARGO) --bin e2e-setup || $(FAIL)
 	@$(OK) setting up the registry, provider-nop and the test module
 
@@ -124,9 +124,9 @@ e2e.test: $(addprefix e2e.test.,$(E2E_PROFILES))
 define e2e.test.profile
 .PHONY: e2e.test.$(1)
 e2e.test.$(1):
-	@$$(INFO) running the $(1) profile's suite
+	@$$(INFO) running the $(1) profile suite
 	@cargo test -p function-wasm-e2e --features cluster --test $(1) || $$(FAIL)
-	@$$(OK) running the $(1) profile's suite
+	@$$(OK) running the $(1) profile suite
 endef
 $(foreach p,$(E2E_PROFILES),$(eval $(call e2e.test.profile,$(p))))
 
