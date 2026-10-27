@@ -13,28 +13,8 @@ use function_sdk_rust::proto::v1::{
     CredentialData, Credentials, RequestMeta, RunFunctionRequest, credentials,
 };
 use function_sdk_rust::resource;
-use function_wasm::authz::IpRules;
-use function_wasm::cache::{CacheOptions, ModuleCache};
-use function_wasm::grpc;
-use function_wasm::resolver::Resolver;
-use function_wasm::runner::WasmFunction;
-use function_wasm_engine::{Config, Engine};
+use function_wasm::testing::{guests, runtime};
 use prost::Message as _;
-
-/// A component whose run returns the request list it was given.
-const ECHO_WAT: &str = r#"(component
-  (core module $m
-    (memory (export "memory") 2)
-    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
-    (func (export "run") (param i32 i32) (result i32)
-      (i32.store8 (i32.const 64) (i32.const 0))
-      (i32.store (i32.const 68) (local.get 0))
-      (i32.store (i32.const 72) (local.get 1))
-      (i32.const 64)))
-  (core instance $i (instantiate $m))
-  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-)"#;
 
 /// A pass-through client codec: gRPC messages as raw bytes.
 #[derive(Default)]
@@ -92,45 +72,9 @@ impl tonic::codec::Decoder for RawDecoder {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_served_runtime_is_byte_transparent() {
     let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::write(
-        dir.path().join("fn.wasm"),
-        wat::parse_str(ECHO_WAT).expect("wat"),
-    )
-    .expect("write");
-    let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
-    let function = WasmFunction {
-        cache: Arc::new(ModuleCache::new(
-            Arc::clone(&engine),
-            CacheOptions::default(),
-        )),
-        engine,
-        resolver: Arc::new(Resolver::new(Some(dir.path().to_owned()), 128 << 20, None)),
-        ttl: std::time::Duration::from_secs(60),
-        policy: None,
-        egress: Arc::new(function_wasm::egress::Egress::new(
-            IpRules::default(),
-            0.0,
-            0,
-        )),
-        step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
-        verifier: None,
-    };
-
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("bind")
-        .local_addr()
-        .expect("addr")
-        .port();
-    let args = function_sdk_rust::Args {
-        debug: false,
-        address: format!("127.0.0.1:{port}"),
-        tls_certs_dir: None,
-        insecure: true,
-        max_recv_message_size: None,
-        metrics_address: String::new(),
-    };
-    let (_health, server) = grpc::serve(Arc::new(function), &args).await.expect("serve");
-    tokio::spawn(server);
+    std::fs::write(dir.path().join("fn.wasm"), guests::echo_component()).expect("write");
+    let function = runtime::builder().module_dir(dir.path()).build();
+    let port = runtime::serve(Arc::new(function)).await;
 
     let typed = RunFunctionRequest {
         meta: Some(RequestMeta {

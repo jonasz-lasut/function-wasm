@@ -200,22 +200,6 @@ mod tests {
     use super::*;
     use function_wasm_engine::Config;
 
-    /// A component implementing the wasmfn:function world with a
-    /// sync-lifted run that returns an empty response.
-    const WAT: &str = r#"(component
-      (core module $m
-        (memory (export "memory") 1)
-        (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
-        (func (export "run") (param i32 i32) (result i32)
-          (i32.store8 (i32.const 64) (i32.const 0))
-          (i32.store (i32.const 68) (i32.const 1024))
-          (i32.store (i32.const 72) (i32.const 0))
-          (i32.const 64)))
-      (core instance $i (instantiate $m))
-      (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-        (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-    )"#;
-
     fn engine() -> Arc<Engine> {
         Arc::new(Engine::new(Config::default()).expect("engine"))
     }
@@ -225,7 +209,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let disk = Arc::new(Store::open_dir(dir.path(), false).expect("store"));
         let engine = engine();
-        let wasm = wat::parse_str(WAT).expect("wat");
+        let wasm = crate::testing::guests::tiny_component();
 
         let first = ModuleCache::new(
             Arc::clone(&engine),
@@ -265,7 +249,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let wasm = wat::parse_str(WAT).expect("wat");
+        let wasm = crate::testing::guests::tiny_component();
         cache.get("sha256:m", move || Ok(wasm)).await.expect("load");
         cache
             .get("sha256:m", || {
@@ -283,7 +267,7 @@ mod tests {
             .await
             .expect_err("fail");
         assert_eq!(err, "cannot fetch module: boom");
-        let wasm = wat::parse_str(WAT).expect("wat");
+        let wasm = crate::testing::guests::tiny_component();
         cache
             .get("sha256:m", move || Ok(wasm))
             .await

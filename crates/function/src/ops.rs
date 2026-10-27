@@ -190,22 +190,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn warms_path_entries_into_the_cache() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let wasm = wat::parse_str(
-            r#"(component
-              (core module $m
-                (memory (export "memory") 1)
-                (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
-                (func (export "run") (param i32 i32) (result i32)
-                  (i32.store8 (i32.const 64) (i32.const 0))
-                  (i32.store (i32.const 68) (i32.const 1024))
-                  (i32.store (i32.const 72) (i32.const 0))
-                  (i32.const 64)))
-              (core instance $i (instantiate $m))
-              (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-                (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-            )"#,
-        )
-        .expect("wat");
+        let wasm = crate::testing::guests::tiny_component();
         std::fs::write(dir.path().join("fn.wasm"), &wasm).expect("write");
         let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
         let resolver = Arc::new(Resolver::new(Some(dir.path().to_owned()), 128 << 20, None));

@@ -15,6 +15,9 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use function_wasm::testing::guests::tiny_component;
+use function_wasm::testing::registry::{Registry, module_artifact};
+
 struct Case {
     name: &'static str,
     args: &'static [&'static str],
@@ -809,42 +812,6 @@ fn validate_resolve_oci_source_matches_the_goldens() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
-/// The smallest ABI v2 component: a sync-lifted run that returns an empty
-/// response, enough for `function validate --resolve` to inspect.
-fn tiny_component() -> Vec<u8> {
-    wat::parse_str(
-        r#"(component
-          (core module $m
-            (memory (export "memory") 1)
-            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
-            (func (export "run") (param i32 i32) (result i32)
-              (i32.store8 (i32.const 64) (i32.const 0))
-              (i32.store (i32.const 68) (i32.const 1024))
-              (i32.store (i32.const 72) (i32.const 0))
-              (i32.const 64)))
-          (core instance $i (instantiate $m))
-          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-            (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-        )"#,
-    )
-    .expect("wat")
-}
-
-/// An OCI manifest of one wasm layer and the empty config, titled name so
-/// two modules of the same bytes get distinct digests.
-fn module_manifest(wasm: &[u8], name: &str) -> Vec<u8> {
-    use function_wasm::oci::testregistry::digest_of;
-    let config = br#"{}"#;
-    serde_json::to_vec(&serde_json::json!({
-        "schemaVersion": 2,
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(config), "size": config.len()},
-        "layers": [{"mediaType": "application/wasm", "digest": digest_of(wasm), "size": wasm.len()}],
-        "annotations": {"org.opencontainers.image.title": name},
-    }))
-    .expect("manifest json")
-}
-
 /// Cosign verification under the all-or-nothing --cosign-key: the harness
 /// signs an artifact with a P-256 key the way cosign 3's key-based flow
 /// does (a Sigstore bundle - DSSE over an in-toto statement - attached as
@@ -854,39 +821,31 @@ fn module_manifest(wasm: &[u8], name: &str) -> Vec<u8> {
 /// this runtime's own.
 #[test]
 fn validate_resolve_cosign_matches_the_goldens() {
-    use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey, attach};
-    use function_wasm::oci::testregistry::{TestRegistry, digest_of, serve};
+    use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey};
+    use function_wasm::oci::testregistry::digest_of;
 
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
     let cwd = crate_dir();
 
     let wasm = tiny_component();
-    let module_manifest = |name: &str| module_manifest(&wasm, name);
+    let module_manifest = |name: &str| module_artifact(&wasm, None, name);
     let signed_manifest = module_manifest("signed");
     let unsigned_manifest = module_manifest("unsigned");
     let (signed_digest, unsigned_digest) =
         (digest_of(&signed_manifest), digest_of(&unsigned_manifest));
 
     // The registry: both artifacts, the signed one's bundle as a referrer.
-    let mut registry = TestRegistry {
-        manifests: [
-            (signed_digest.clone(), signed_manifest),
-            (unsigned_digest.clone(), unsigned_manifest),
-        ]
-        .into(),
-        blobs: [(digest_of(&wasm), wasm.clone())].into(),
-        bearer: false,
-        referrers_api: false,
-        basic: false,
-    };
+    let mut registry = Registry::new();
+    registry.blob(&wasm);
+    registry.manifest(&signed_manifest);
+    registry.manifest(&unsigned_manifest);
     let key = TestKey::from_seed(5);
-    attach(
-        &mut registry,
+    registry.attach(
         &signed_digest,
         &key.bundle(&signed_digest, COSIGN_SIGN_PREDICATE),
         Shape::ArtifactType,
     );
-    let addr = serve(registry);
+    let addr = registry.serve();
 
     let dir = tempfile::tempdir().expect("tempdir");
     let key_path = dir.path().join("cosign.pub");
@@ -922,20 +881,15 @@ fn validate_resolve_cosign_matches_the_goldens() {
     // A registry behind Basic auth, which only the local Docker config can
     // read: the signature check must read the referrers with the same
     // credential the pull uses, or a signed module is refused as unreadable.
-    let mut private = TestRegistry {
-        manifests: [(signed_digest.clone(), module_manifest("signed"))].into(),
-        blobs: [(digest_of(&wasm), wasm.clone())].into(),
-        bearer: false,
-        referrers_api: false,
-        basic: true,
-    };
-    attach(
-        &mut private,
+    let mut private = Registry::new().basic();
+    private.blob(&wasm);
+    private.manifest(&module_manifest("signed"));
+    private.attach(
         &signed_digest,
         &key.bundle(&signed_digest, COSIGN_SIGN_PREDICATE),
         Shape::ArtifactType,
     );
-    let private_addr = serve(private);
+    let private_addr = private.serve();
     let docker = dir.path().join("docker");
     std::fs::create_dir_all(&docker).expect("docker config dir");
     {
@@ -990,28 +944,21 @@ fn validate_resolve_cosign_matches_the_goldens() {
 #[test]
 fn validate_resolve_keyless_cosign_matches_the_goldens() {
     use function_wasm::cosign::Signer;
-    use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey, attach};
-    use function_wasm::oci::testregistry::{TestRegistry, digest_of, serve};
+    use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey};
+    use function_wasm::oci::testregistry::digest_of;
     use function_wasm::testsigstore::Instance;
 
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
     let cwd = crate_dir();
     let wasm = tiny_component();
-    let keyless_manifest = module_manifest(&wasm, "keyless");
-    let keyed_manifest = module_manifest(&wasm, "keyed");
+    let keyless_manifest = module_artifact(&wasm, None, "keyless");
+    let keyed_manifest = module_artifact(&wasm, None, "keyed");
     let (keyless_digest, keyed_digest) = (digest_of(&keyless_manifest), digest_of(&keyed_manifest));
 
-    let mut registry = TestRegistry {
-        manifests: [
-            (keyless_digest.clone(), keyless_manifest),
-            (keyed_digest.clone(), keyed_manifest),
-        ]
-        .into(),
-        blobs: [(digest_of(&wasm), wasm.clone())].into(),
-        bearer: false,
-        referrers_api: false,
-        basic: false,
-    };
+    let mut registry = Registry::new();
+    registry.blob(&wasm);
+    registry.manifest(&keyless_manifest);
+    registry.manifest(&keyed_manifest);
     let instance = Instance::new();
     let signer = Signer {
         issuer: "https://token.actions.githubusercontent.com".to_string(),
@@ -1019,20 +966,18 @@ fn validate_resolve_keyless_cosign_matches_the_goldens() {
             "https://github.com/example/greeter/.github/workflows/release.yml@refs/tags/v1.0.0"
                 .to_string(),
     };
-    attach(
-        &mut registry,
+    registry.attach(
         &keyless_digest,
         &instance.sign(&keyless_digest, COSIGN_SIGN_PREDICATE, &signer),
         Shape::AnnotationsOnly,
     );
     let key = TestKey::from_seed(5);
-    attach(
-        &mut registry,
+    registry.attach(
         &keyed_digest,
         &key.bundle(&keyed_digest, COSIGN_SIGN_PREDICATE),
         Shape::ArtifactType,
     );
-    let addr = serve(registry);
+    let addr = registry.serve();
 
     let dir = tempfile::tempdir().expect("tempdir");
     let write = |name: &str, bytes: &[u8]| {

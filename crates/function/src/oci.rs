@@ -840,47 +840,19 @@ pub mod testregistry {
         format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)))
     }
 
-    /// A single-wasm-layer artifact; returns (manifest digest, registry).
+    /// A single-wasm-layer artifact, served; returns (manifest digest,
+    /// registry address).
     pub fn wasm_artifact(
         wasm: &[u8],
         module_manifest: Option<&[u8]>,
         bearer: bool,
     ) -> (String, String) {
-        let mut blobs = HashMap::new();
-        let wasm_digest = digest_of(wasm);
-        blobs.insert(wasm_digest.clone(), wasm.to_vec());
-        let mut layers = vec![serde_json::json!({
-            "mediaType": "application/wasm",
-            "digest": wasm_digest,
-            "size": wasm.len(),
-        })];
-        if let Some(m) = module_manifest {
-            let d = digest_of(m);
-            blobs.insert(d.clone(), m.to_vec());
-            layers.push(serde_json::json!({
-                "mediaType": super::MANIFEST_LAYER_TYPE,
-                "digest": d,
-                "size": m.len(),
-            }));
+        let mut registry = crate::testing::registry::Registry::new();
+        if bearer {
+            registry = registry.bearer();
         }
-        let manifest = serde_json::to_vec(&serde_json::json!({
-            "schemaVersion": 2,
-            "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(b"{}"), "size": 2},
-            "layers": layers,
-        }))
-        .expect("manifest json");
-        let manifest_digest = digest_of(&manifest);
-        let mut manifests = HashMap::new();
-        manifests.insert(manifest_digest.clone(), manifest);
-        let addr = serve(TestRegistry {
-            manifests,
-            blobs,
-            bearer,
-            referrers_api: false,
-            basic: false,
-        });
-        (manifest_digest, addr)
+        let digest = registry.module(wasm, module_manifest, "");
+        (digest, registry.serve())
     }
 }
 
@@ -952,17 +924,15 @@ mod tests {
         .expect("referrer");
         let referrer_digest = testregistry::digest_of(&referrer);
         for referrers_api in [true, false] {
-            let mut registry = testregistry::TestRegistry {
-                manifests: HashMap::new(),
-                blobs: HashMap::new(),
-                bearer: true,
-                referrers_api,
-                basic: false,
-            };
+            let mut registry = crate::testing::registry::Registry::new().bearer();
+            if referrers_api {
+                registry = registry.referrers_api();
+            }
             registry.push_referrer(referrer.clone());
             // Only the listing the registry offers exists: the API answers
             // 404 without it, and a client pushing to a registry with it
             // writes no tag.
+            let registry = registry.into_inner();
             assert_eq!(
                 registry.manifests.contains_key(&referrers_tag(&subject)),
                 !referrers_api

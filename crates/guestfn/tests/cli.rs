@@ -5,23 +5,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use function_wasm::oci::testregistry::{TestRegistry, serve};
-
-/// A component implementing the world with a sync-lifted run that returns
-/// an empty response.
-const COMPONENT_WAT: &str = r#"(component
-  (core module $m
-    (memory (export "memory") 1)
-    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
-    (func (export "run") (param i32 i32) (result i32)
-      (i32.store8 (i32.const 64) (i32.const 0))
-      (i32.store (i32.const 68) (i32.const 1024))
-      (i32.store (i32.const 72) (i32.const 0))
-      (i32.const 64)))
-  (core instance $i (instantiate $m))
-  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
-)"#;
+use function_wasm::testing::guests::tiny_component;
+use function_wasm::testing::registry::Registry;
 
 /// A component that does not implement the world.
 const NO_RUN_WAT: &str = "(component)";
@@ -65,23 +50,13 @@ fn guestfn(dir: &Path, args: &[&str]) -> (String, String, bool) {
 }
 
 fn empty_registry() -> String {
-    serve(TestRegistry {
-        manifests: Default::default(),
-        blobs: Default::default(),
-        bearer: false,
-        referrers_api: false,
-        basic: false,
-    })
+    Registry::new().serve()
 }
 
 #[test]
 fn push_then_inspect_and_show() {
     let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::write(
-        dir.path().join("fn.wasm"),
-        wat::parse_str(COMPONENT_WAT).expect("wat"),
-    )
-    .expect("write");
+    std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
     std::fs::write(dir.path().join("wasmfn.yaml"), MANIFEST_YAML).expect("write");
     let addr = empty_registry();
     let reference = format!("{addr}/example/greeter:v1");
@@ -230,11 +205,7 @@ fn a_core_module_with_the_section_is_told_to_build() {
 #[test]
 fn inspect_a_file() {
     let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::write(
-        dir.path().join("fn.wasm"),
-        wat::parse_str(COMPONENT_WAT).expect("wat"),
-    )
-    .expect("write");
+    std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
     let (stdout, stderr, ok) = guestfn(dir.path(), &["inspect", "fn.wasm"]);
     assert!(ok, "inspect failed: {stderr}");
     assert!(stdout.contains("ABI v2"), "{stdout}");
@@ -352,11 +323,7 @@ fn init_names_a_component_project_after_its_directory() {
 #[test]
 fn scaffold_composition_from_a_file() {
     let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::write(
-        dir.path().join("fn.wasm"),
-        wat::parse_str(COMPONENT_WAT).expect("wat"),
-    )
-    .expect("write");
+    std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
     std::fs::write(dir.path().join("wasmfn.yaml"), MANIFEST_YAML).expect("write");
     let (stdout, stderr, ok) = guestfn(dir.path(), &["scaffold", "composition"]);
     assert!(ok, "{stderr}");

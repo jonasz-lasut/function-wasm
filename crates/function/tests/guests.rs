@@ -21,7 +21,6 @@
 //! toolchain fails the guest instead: a runner that lost a toolchain would
 //! otherwise shrink the suite and stay green.
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -30,12 +29,9 @@ use function_sdk_rust::proto::v1::{
     RunFunctionRequest, RunFunctionResponse, Severity, State, Status, Target,
 };
 use function_sdk_rust::resource;
-use function_wasm::authz::{IpPrefix, IpRules, OperatorPolicy};
-use function_wasm::cache::{CacheOptions, ModuleCache};
 use function_wasm::oci::testregistry;
-use function_wasm::resolver::Resolver;
-use function_wasm::runner::WasmFunction;
-use function_wasm_engine::{Config, Engine, componentize};
+use function_wasm::testing::{http, policy, runtime};
+use function_wasm_engine::componentize;
 use sha2::Digest as _;
 
 /// Every log line of the process, captured by a global subscriber so lines
@@ -321,50 +317,6 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
     Some(std::fs::read(out).expect("read built module"))
 }
 
-/// A tiny greeting server: /en answers "howdy\n".
-fn greeting_server() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    std::thread::spawn(move || {
-        for conn in listener.incoming().flatten() {
-            let mut conn = conn;
-            let mut buf = [0u8; 1024];
-            let n = std::io::Read::read(&mut conn, &mut buf).unwrap_or(0);
-            let head = String::from_utf8_lossy(&buf[..n]).into_owned();
-            let path = head.split_whitespace().nth(1).unwrap_or_default();
-            let (status, body) = if path == "/en" {
-                ("200 OK", "howdy\n")
-            } else {
-                ("404 Not Found", "")
-            };
-            let _ = conn.write_all(
-                format!(
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .as_bytes(),
-            );
-        }
-    });
-    addr.to_string()
-}
-
-/// An operator grant policy that enables every sandbox capability for any
-/// caller - a fully open operator layer. The layer is the enabler, so a
-/// function without one grants nothing.
-fn permissive_policy() -> OperatorPolicy {
-    OperatorPolicy::new(
-        "test.cedar",
-        r#"
-permit (principal, action == Action::"usePrivateTmp", resource);
-permit (principal, action == Action::"setEnv", resource);
-permit (principal, action == Action::"grantEgress", resource);
-permit (principal, action == Action::"spendCredential", resource);
-"#,
-    )
-    .expect("policy")
-}
-
 fn digest_of(b: &[u8]) -> String {
     format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)))
 }
@@ -448,10 +400,19 @@ fn run_guest(guest: &str) {
     };
     assert!(!wasm.is_empty(), "building the {guest} guest failed");
 
+    // The runtime the guest runs through: --module-dir on the build, the
+    // open operator policy, and the loopback ranges opened in the egress
+    // block list so the greeting server can be dialled (every resolved
+    // address is judged).
+    let f = runtime::builder()
+        .module_dir(dir.path())
+        .policy(policy::permissive())
+        .allow_loopback()
+        .build();
+
     // What guestfn inspect and validate --resolve report: a component that
     // implements the world and exports its run.
-    let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
-    let shape = engine.inspect(&wasm).expect("inspect");
+    let shape = f.engine.inspect(&wasm).expect("inspect");
     assert!(shape.abi_error.is_none(), "{:?}", shape.abi_error);
     assert!(
         shape.exports.iter().any(|x| x.name == "run"),
@@ -459,7 +420,7 @@ fn run_guest(guest: &str) {
         shape.exports
     );
 
-    let greetings = greeting_server();
+    let greetings = http::greeting_server();
     let greetings_host = greetings.split(':').next().expect("host").to_string();
     let egress_manifest = format!(
         r#"{{"abi":2,"requires":{{"egress":{{"http":[{{"host":"{greetings_host}","methods":["GET"]}}]}}}}}}"#
@@ -473,29 +434,6 @@ fn run_guest(guest: &str) {
     let egress_ref = format!("{registry}/hello-{guest}@{artifact_digest}");
     let path_manifest = format!("{guest}-manifest.yaml");
     std::fs::write(dir.path().join(&path_manifest), &egress_manifest).expect("write");
-
-    // The egress ceiling lifts the loopback ranges the block list would
-    // otherwise refuse (every resolved address is judged).
-    let rules = IpRules {
-        blocked: Vec::new(),
-        allowed: vec![
-            IpPrefix::parse("127.0.0.0/8").expect("prefix"),
-            IpPrefix::parse("::1/128").expect("prefix"),
-        ],
-    };
-    let f = WasmFunction {
-        cache: Arc::new(ModuleCache::new(
-            Arc::clone(&engine),
-            CacheOptions::default(),
-        )),
-        engine,
-        resolver: Arc::new(Resolver::new(Some(dir.path().to_owned()), 128 << 20, None)),
-        ttl: std::time::Duration::from_secs(60),
-        policy: Some(std::sync::Arc::new(permissive_policy())),
-        egress: Arc::new(function_wasm::egress::Egress::new(rules, 0.0, 0)),
-        step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
-        verifier: None,
-    };
 
     let module_digest = digest_of(&wasm);
     let cases: Vec<(&str, String, RunFunctionResponse, Vec<String>)> = vec![

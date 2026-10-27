@@ -19,41 +19,6 @@ use function_wasm::input::{API_VERSION, API_VERSION_V1BETA1, V1BETA1_DEPRECATION
 
 const GUEST_MSG: &str = "a debug record from the guest";
 
-/// A component that logs one record at the world's `debug` level and
-/// returns an empty response. The log import is lowered against the memory
-/// of a core module instantiated first, as a toolchain's libc would be.
-fn logging_guest() -> Vec<u8> {
-    wat::parse_str(format!(
-        r#"(component
-          (type $level_def (enum "debug" "info" "warn" "error"))
-          (import "level" (type $level (eq $level_def)))
-          (import "log" (func $log (param "level" $level) (param "msg" string) (param "kv" (list (tuple string string)))))
-          (core module $libc
-            (memory (export "memory") 1)
-            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096))
-          (core instance $libc_inst (instantiate $libc))
-          (core func $log_lowered (canon lower (func $log) (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
-          (core module $m
-            (import "env" "memory" (memory 1))
-            (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
-            (func (export "run") (param i32 i32) (result i32)
-              (call $log (i32.const 0) (i32.const 2048) (i32.const {len}) (i32.const 0) (i32.const 0))
-              (i32.store8 (i32.const 64) (i32.const 0))
-              (i32.store (i32.const 68) (i32.const 1024))
-              (i32.store (i32.const 72) (i32.const 0))
-              (i32.const 64))
-            (data (i32.const 2048) "{GUEST_MSG}"))
-          (core instance $m_inst (instantiate $m
-            (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
-            (with "host" (instance (export "log" (func $log_lowered))))))
-          (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
-            (canon lift (core func $m_inst "run") (memory (core memory $libc_inst "memory")) (realloc (core func $libc_inst "cabi_realloc"))))
-        )"#,
-        len = GUEST_MSG.len(),
-    ))
-    .expect("wat")
-}
-
 /// Serves the guest with the given flags and environment, runs it once and
 /// returns every log line the process wrote (the subscriber writes to stdout).
 fn serve_and_run(flags: &[&str], rust_log: Option<&str>) -> Vec<String> {
@@ -69,7 +34,11 @@ fn serve_and_run_input(
     settled_by: &str,
 ) -> Vec<String> {
     let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::write(dir.path().join("fn.wasm"), logging_guest()).expect("write");
+    std::fs::write(
+        dir.path().join("fn.wasm"),
+        function_wasm::testing::guests::logging_component(GUEST_MSG),
+    )
+    .expect("write");
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .expect("bind")
         .local_addr()
