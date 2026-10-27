@@ -19,6 +19,8 @@ pub mod duration;
 pub mod metrics;
 mod run;
 mod sandbox;
+#[cfg(any(test, feature = "testutil"))]
+pub mod testing;
 mod wasihttp;
 pub mod wire;
 

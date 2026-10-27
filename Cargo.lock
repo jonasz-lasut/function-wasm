@@ -1520,6 +1520,7 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "function-sdk-rust",
+ "function-wasm-engine",
  "http",
  "http-body-util",
  "pbjson-types",

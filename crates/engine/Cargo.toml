@@ -39,11 +39,20 @@ wasi-preview1-component-adapter-provider = "49.0.4"
 wasmparser = { version = "0.258.3", default-features = false }
 wit-component = "0.258.3"
 wit-parser = "0.258.3"
+# The WAT fixtures of the testing module (feature testutil) are assembled
+# with wat.
+wat = { version = "1", optional = true }
 
 [dev-dependencies]
 function-sdk-rust = "0.4.0"
+# The crate's own tests use its testing module.
+function-wasm-engine = { path = ".", features = ["testutil"] }
 prost = "0.14"
 # The committed-guest tests build the composite resource a RunFunctionRequest
 # carries (function-sdk-rust's Struct is pbjson's, serde-capable).
 pbjson-types = "0.9"
-wat = "1"
+
+[features]
+# The testing module: the WAT component fixtures every suite in the
+# workspace drives the engine with (docs/project/testing.md).
+testutil = ["dep:wat"]
