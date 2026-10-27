@@ -159,10 +159,11 @@ an `*http.Client`, over wit-bindgen's Go bindings),
 Zig and C carry theirs beside the module (`src/wasmfn.zig`, `src/wasmfn.c`)
 over wit-bindgen's C bindings (the typed `log`, a `wasi:http@0.2` client);
 each example
-has a `make render-check` that runs it through the runtime and asserts what it
-composes with an [xprin](https://github.com/crossplane-contrib/xprin) suite,
-and the root tests build every scaffold and run it through the host as well -
-with and without an egress grant.
+has unit tests in its own language and a build job that checks its generated
+codec and bindings for drift, and the root tests build every scaffold and run
+it through the host as well - with and without an egress grant. The runtime's
+behaviour in a cluster is proved by the [end-to-end suite](../project/testing.md),
+through a module of its own.
 
 **Possible, untested.** A 2026-10-07 survey
 ([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)) found

@@ -36,6 +36,7 @@
 # Project
 
 - [Development](project/development.md)
+- [Testing](project/testing.md)
 - [Security policy](project/security.md)
 - [Use-case examples](one-pager-use-case-examples.md)
 - [Design records](project/design-records.md)

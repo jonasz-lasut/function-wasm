@@ -10,8 +10,9 @@ every 1.x release. Stable for the whole line:
   `policy` and `sandbox` fields are refused by name);
 - the runtime flags, what each means and its default;
 - the wording of refusals and fatal results, as the conformance goldens pin
-  it (`crates/function/testdata/conformance/`): operators grep logs and XR
-  conditions for these strings;
+  it (`crates/function/testdata/conformance/`; a golden changes only by a
+  deliberate re-record, `UPDATE_GOLDENS=1`, called out in the commit):
+  operators grep logs and XR conditions for these strings;
 - the module manifest (`wasmfn.yaml`): its fields and what each one
   requests;
 - the ABI v2 world, versioned on its own terms in

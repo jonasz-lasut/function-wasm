@@ -255,7 +255,7 @@ examples/pdb-addon          #112's Go use case, an ABI v2 component on the go sc
                             PodDisruptionBudget for every desired apps/v1 Deployment of 2+ replicas
                             that the function-go-templating step before it composed, in the
                             default sandbox (its manifest requires nothing). Its render runs that
-                            step in Docker; its xprin suite renders with and without an add-on.
+                            step in Docker.
                             Its example/ is also the package's examples (publish-pkg.yml). ~75 MB
 examples/hello-zig          the same guest in Zig, an ABI v2 component on the zig scaffold's
                             plumbing (examples-share-the-scaffold-plumbing): zig-protobuf over
@@ -266,20 +266,20 @@ examples/hello-zig          the same guest in Zig, an ABI v2 component on the zi
                             src/wasmfn.zig is the glue (the run export, the typed log, the
                             wasi:http client, and realloc/free/abort/strlen for the generated
                             C from the guest's bump heap: no libc, no preview1 imports, so
-                            guestfn build wraps the core module with no adapter). Its xprin
-                            suite renders the configured greeting and one fetched through the
-                            host's egress (example/policy.cedar, example/wasmfn.local.yaml
-                            named by module.manifestPath, example/fixtures). ~60 KB
+                            guestfn build wraps the core module with no adapter). Its render
+                            fetches one greeting through the host's egress (example/policy.cedar,
+                            example/wasmfn.local.yaml named by module.manifestPath,
+                            example/fixtures). ~60 KB
 examples/hello-c            the same guest in C, an ABI v2 component on the c scaffold's plumbing
                             (examples-share-the-scaffold-plumbing): nanopb over the vendored
                             proto, wit-bindgen's C bindings (src/gen, checked in; make
                             gen-bindings with wit-bindgen-cli 0.62.0) over its sync-lifted
                             local:guest world with wasi:http@0.2 egress, compiled by zig cc
                             behind build.zig into a core module that guestfn build wraps (it
-                            imports no preview1: no adapter). Its xprin suite renders the
-                            configured greeting and one fetched through the host's egress
-                            (example/policy.cedar, example/wasmfn.local.yaml named by
-                            module.manifestPath, example/fixtures). ~62 KB
+                            imports no preview1: no adapter). Its render fetches one greeting
+                            through the host's egress (example/policy.cedar,
+                            example/wasmfn.local.yaml named by module.manifestPath,
+                            example/fixtures). ~62 KB
 examples/hello-odin         the same guest in Odin, an ABI v2 component on the c scaffold's
                             plumbing (examples-share-the-scaffold-plumbing: wit/, src/gen/,
                             src/fnv1/ and proto/ byte for byte; no scaffold of its own, #155):
@@ -297,7 +297,7 @@ examples/hello-odin         the same guest in Odin, an ABI v2 component on the c
                             guestfn build takes it for a c project and wraps it with no
                             adapter. make test runs odin test natively over the C half
                             compiled for the host, make lint runs odin check -vet
-                            -strict-style and zig fmt. Its xprin suite is the c example's.
+                            -strict-style and zig fmt. Its example/ is the c example's.
                             ~71 KB
 examples/hello-moonbit      the same guest in MoonBit, an ABI v2 component and an example only
                             (#155: no scaffold, guestfn build detects it by its moon.mod; its
@@ -329,9 +329,9 @@ examples/hello-moonbit      the same guest in MoonBit, an ABI v2 component and a
                             generators trip (implicit_impl_as_method, derive(Show)) - some
                             240 warnings per moon run otherwise, the hand-written packages
                             keep every warning; a guest never calls println (it imports spectest.print_char). Its
-                            xprin suite renders the configured greeting and one fetched through
-                            the host's egress (example/policy.cedar, example/wasmfn.local.yaml
-                            named by module.manifestPath, example/fixtures). ~107 KB
+                            render fetches one greeting through the host's egress
+                            (example/policy.cedar, example/wasmfn.local.yaml named by
+                            module.manifestPath, example/fixtures). ~107 KB
 examples/cloudflare-origin  #112's Rust use case, an ABI v2 component on the rust scaffold's
                             plumbing (examples-share-the-scaffold-plumbing): an Origin XR's AWS
                             security group plus, for exposure: cloudflare, one ingress rule per
@@ -344,8 +344,8 @@ examples/cloudflare-origin  #112's Rust use case, an ABI v2 component on the rus
                             vendored byte-identical under wit/deps/. Its render runs under
                             example/policy.cedar against a fixture of the IP list
                             (example/fixtures, module.manifestPath naming the fixture host) and
-                            its xprin suite validates the output against the vendored
-                            provider-upjet-aws CRDs (example/crds). ~315 KB
+                            the vendored
+                            provider-upjet-aws CRDs sit under example/crds. ~315 KB
 examples/policy-gate        #112's TypeScript use case, an ABI v2 component on the ts scaffold's
                             plumbing (examples-share-the-scaffold-plumbing): the organisation's
                             policy as the last pipeline step, after function-go-templating
@@ -362,8 +362,8 @@ examples/policy-gate        #112's TypeScript use case, an ABI v2 component on t
                             async-lift a custom world yet - the world accepts sync); root-world
                             imports arrive as default imports (import log from "log", kept
                             external in the bundle). Its render supplies the EnvironmentConfigs
-                            from example/required-resources.yaml and its xprin suite validates
-                            against the vendored provider-upjet-aws Instance CRD (example/crds).
+                            from example/required-resources.yaml and the vendored
+                            provider-upjet-aws Instance CRD sits under example/crds.
                             ~14 MB (SpiderMonkey)
 examples/team-tags          #112's Python use case, an ABI v2 component on the python scaffold's
                             plumbing (examples-share-the-scaffold-plumbing): after
@@ -386,9 +386,8 @@ examples/team-tags          #112's Python use case, an ABI v2 component on the p
                             componentize-py's poll loop; requirements.txt is a template pin.
                             Its render passes example/function-credentials.yaml, runs under
                             example/policy.cedar against fixture records (example/fixtures,
-                            module.manifestPath naming the fixture host) and its xprin suite
-                            validates the output against the vendored provider-upjet-aws S3
-                            Bucket CRD (example/crds). ~21 MB (CPython)
+                            module.manifestPath naming the fixture host) and the vendored
+                            provider-upjet-aws S3 Bucket CRD sits under example/crds. ~21 MB (CPython)
 examples/dashboard-bundle   #112's C# use case (example only: no scaffold, guestfn build does not
                             detect it; make build), an ABI v2 component from componentize-dotnet
                             on NativeAOT-LLVM with wit-bindgen's generated bindings: a
@@ -409,17 +408,55 @@ examples/dashboard-bundle   #112's C# use case (example only: no scaffold, guest
                             compiler: make builds in the .NET SDK container there. Its render
                             runs under example/policy.cedar against fixture bundles
                             (example/fixtures, packed from example/bundles by make bundles). ~4.5 MB
-test/e2e/                   end-to-end scenarios against real infrastructure (README.md: the tiers
-                            and conventions): oci/ pushes examples/pdb-addon to a registry behind
-                            basic auth, signs it with cosign and renders a WebApp that names it
-                            through module.from (pull by digest with a step credential, the
-                            pullModule fence, requireSignature); run.sh sets the stage, xprin and
-                            function validate's JSON assert; the /e2e job e2e (oci) runs it
-examples/render.sh          shared: cargo-build the runtime, function validate every example/xr*.yaml,
+crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
+                            package function-wasm-e2e, empty without its `cluster` feature so
+                            `cargo test --workspace` builds none of it. src/ is the library
+                            (ns.rs: a namespace per test, Linkerd's with_temp_ns, kept with its
+                            state dumped under _output/e2e/logs when a test fails; fixtures.rs:
+                            the Guest XRD, a Composition per test, the Guest XR, Secrets;
+                            profile.rs: the three runtime profiles, switched by the Function's
+                            runtimeConfigRef once per test binary; registry.rs: the in-cluster
+                            registry:3 with TLS from a generated CA and Basic auth, the pusher
+                            that attaches signatures through the sha256-<hex> referrers tag
+                            index registry:3 needs; forward.rs: a TCP bridge over the API
+                            server's port-forward; metrics.rs: /metrics and /readyz reads;
+                            guest.rs: the variants, one fn.wasm under nine manifests, each with
+                            its own digest since a verdict is cached per digest), src/bin/setup.rs
+                            what `make e2e.up` runs after controlplane.up (registry, provider-nop,
+                            the variants pushed and signed, the profiles' ConfigMaps and Secrets,
+                            the XRD, _output/e2e/state.json for the tests), profiles/<p>/
+                            (drc.yaml + policy.cedar: default grants everything the admitted
+                            cases need under both verifiers, strict grants nothing and has no
+                            verifier, lifecycle warms the published pdb-addon on a PVC-backed
+                            cache under --debug), tests/<p>.rs one target per profile, and
+                            guest/ the committed test module: a Rust ABI v2 guest on the rust
+                            scaffold's wit/ and proto (read in place, not vendored), its own
+                            workspace root, fn.wasm checked in (make e2e.guest rebuilds it), whose
+                            Guest XR's spec says which feature to exercise (nopResources,
+                            egress.url, env, credentials, privateTmp, requirements, fatal, spin,
+                            growMiB, log) and which composes provider-nop NopResources and
+                            writes what it observed into the XR's status. The engine's
+                            tests/committed_guest.rs drives the same fn.wasm with a fake
+                            requester on every push (#150)
+examples/render.sh          the development loop of an example (docs/guests/render-locally.md):
+                            cargo-build the runtime, function validate every example/xr*.yaml,
                             serve the example dir (example/policy.cedar as the operator policy,
-                            example/fixtures/ on a local HTTP server for egress), then crossplane
-                            render example/xr.yaml - or, with --check, run example/xprin.yaml
-                            (xprin, crossplane-contrib's render test framework) against it
+                            example/fixtures/ on a local HTTP server for egress), crossplane
+                            render example/xr.yaml. Not a test: nothing in CI asserts what an
+                            example composes
+build/                      the crossplane build submodule (makelib): common.mk, k8s_tools.mk,
+                            controlplane.mk and local.xpkg.mk, included by the root Makefile for
+                            the end-to-end cluster (pinned kind, kubectl, helm and crossplane CLI
+                            under .cache/tools; kind + Crossplane at CROSSPLANE_VERSION; the
+                            package synced into Crossplane's cache with packagePullPolicy Never).
+                            Provisioning only: releases stay in publish-pkg.yml
+Makefile                    the end-to-end targets (e2e.up, e2e.test.<profile>, e2e.test,
+                            e2e.down, e2e, e2e.guest, e2e.image, xpkg.build.function-wasm,
+                            local.xpkg.deploy.function.%) over the submodule, then the vendoring
+                            loops (vendor-proto, vendor-docs-highlight, gen-bindings)
+Dockerfile, Dockerfile.dev  the release image (the workspace compiled in a Rust build stage) and
+                            the same image around a prebuilt binary (CI's e2e job wraps the
+                            binary build-tools compiled; make e2e.image uses it under FUNCTION_BIN)
 package/                    crossplane.yaml + the checked-in Input CRD (documentation for tooling;
                             Crossplane never installs a function's Input CRD - the CRD is maintained
                             by hand now that the Go types that generated it are gone)
@@ -462,7 +499,7 @@ The Go implementation was the reference until 2026-08; the contract is **logical
 
 ### Conformance goldens
 
-`crates/function/tests/conformance.rs` runs `function validate` over the fixture corpus and generated modules/servers/registries and compares stdout, stderr and exit codes against goldens under `testdata/conformance/`. The goldens were recorded from this runtime the day it last diffed **byte-identical** against the Go runtime's own `function validate` (the original differential harness, retired with the Go tree), so they carry the Go runtime's words wherever parity held. A change fails the suite until re-recorded deliberately with `UPDATE_CONFORMANCE=1 cargo test` — treat a re-record as a user-visible behaviour change and say so in the commit.
+`crates/function/tests/conformance.rs` runs `function validate` over the fixture corpus and generated modules/servers/registries and compares stdout, stderr and exit codes against goldens under `testdata/conformance/`. The goldens were recorded from this runtime the day it last diffed **byte-identical** against the Go runtime's own `function validate` (the original differential harness, retired with the Go tree), so they carry the Go runtime's words wherever parity held. A change fails the suite until re-recorded deliberately with `UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` — treat a re-record as a user-visible behaviour change and say so in the commit.
 
 `docs/contract/compatibility.md` ("Compatibility" on the documentation site) is the 1.x promise the goldens enforce: the pinned wording, the Input's fields, the flags and their defaults, `function validate`'s exit codes and JSON field names change only at a major, and a minor may only add or widen. A deprecation runs for at least one minor with a `function validate` warning and one runtime line per load or request before the next major removes it: `input::V1BETA1_DEPRECATION` is the pattern, ABI v1 the precedent.
 
@@ -515,11 +552,15 @@ crossplane xpkg build -f package --embed-runtime-image=runtime
 
 ### Testing
 
+Two tiers (docs/project/testing.md): Rust unit and component tests under `cargo test`, and the Kubernetes-native end-to-end suite under `make e2e`. Nothing in between: no render tests, no shell scenarios.
+
 ```bash
-cargo test --workspace                    # everything below
-cargo test -p function-wasm-engine        # the engine over WAT fixtures
+cargo test --workspace                    # the first tier: everything below
+cargo test -p function-wasm-engine        # the engine over WAT fixtures, and the committed e2e guest with a fake requester
 cargo test -p function-wasm               # runtime units, conformance goldens, guest suite, raw client
 cargo test -p guestfn                     # scaffold goldens, the examples' shared plumbing, CLI against an in-memory registry
+make e2e                                  # the second tier: kind + Crossplane + the package, the three profiles in turn, teardown
+make e2e.up && make e2e.test.default      # or one profile at a time (strict, lifecycle); make e2e.down when done
 (cd examples/pdb-addon && go test -race ./...)
 (cd examples/hello-zig && zig build test)
 (cd examples/hello-c && zig build test)
@@ -528,15 +569,15 @@ make -C examples/hello-moonbit test       # moon test, on moonrun
 make -C examples/dashboard-bundle test    # dotnet test (in the .NET SDK container off Linux)
 ```
 
-`crates/function/tests/guests.rs` builds every language's scaffold - its golden under `crates/guestfn/testdata`, copied fresh into the OS temp dir (outside the workspace), so the suite proves what `guestfn init` writes and runs each through the whole host with the same expectations: default and configured greeting, a greeting fetched through the host's egress (via an OCI manifest layer and via `module.manifestPath`) and refused without a grant, guest-side fatal on a bad config, guest logs. The guests must stay behaviourally identical; the examples under `examples/` are free to solve their own use cases and are checked by their render jobs - C#, whose only guest is the dashboard-bundle example (it does not greet), and Odin, whose only guest is the hello-odin example (no scaffold), have no place in the suite and are covered by their examples' unit tests and render jobs. A scaffold has no lockfile, so the suite resolves dependencies the way a user's first build does (`go mod tidy`, `npm install`, a fresh `Cargo.lock`). A guest whose toolchain is not on PATH is skipped. Toolchains: the rust scaffold's `rust-toolchain.toml` brings its own pinned toolchain with `wasm32-wasip3`, installed by rustup on first use; Zig 0.16; `protoc` for the rust scaffold's prost-build and the codec regeneration targets; `nanopb_generator` (`pip install nanopb==0.4.9.1`) only for `zig build gen-proto` in hello-c and hello-odin; `wit-bindgen-cli` 0.62.0 only for `zig build gen-bindings` in hello-c, hello-zig and hello-odin and `make gen-bindings` in pdb-addon and hello-moonbit (`make gen-bindings` at the root installs it pinned, regenerates all five, mirrors the c, zig and go results into the templates and refreshes the goldens); Odin (dev-2026-10) only for hello-odin; `moon` (0.1.20260920, the official installer, then `moon update` once for the registry index) only for hello-moonbit, whose `make gen-proto` runs `protoc-gen-mbt` 0.2.0 through `moonx` (no install).
+`crates/function/tests/guests.rs` builds every language's scaffold - its golden under `crates/guestfn/testdata`, copied fresh into the OS temp dir (outside the workspace), so the suite proves what `guestfn init` writes and runs each through the whole host with the same expectations: default and configured greeting, a greeting fetched through the host's egress (via an OCI manifest layer and via `module.manifestPath`) and refused without a grant, guest-side fatal on a bad config, guest logs. The guests must stay behaviourally identical; the examples under `examples/` are free to solve their own use cases and are checked by their render jobs - C#, whose only guest is the dashboard-bundle example (it does not greet), and Odin, whose only guest is the hello-odin example (no scaffold), have no place in the suite and are covered by their examples' unit tests and render jobs. A scaffold has no lockfile, so the suite resolves dependencies the way a user's first build does (`go mod tidy`, `npm install`, a fresh `Cargo.lock`). A guest whose toolchain is not on PATH is skipped, naming the guest, unless `FUNCTION_WASM_REQUIRE_TOOLCHAINS=1` (set by the `/e2e` guest-suite job) turns the skip into a failure. Toolchains: the rust scaffold's `rust-toolchain.toml` brings its own pinned toolchain with `wasm32-wasip3`, installed by rustup on first use; Zig 0.16; `protoc` for the rust scaffold's prost-build and the codec regeneration targets; `nanopb_generator` (`pip install nanopb==0.4.9.1`) only for `zig build gen-proto` in hello-c and hello-odin; `wit-bindgen-cli` 0.62.0 only for `zig build gen-bindings` in hello-c, hello-zig and hello-odin and `make gen-bindings` in pdb-addon and hello-moonbit (`make gen-bindings` at the root installs it pinned, regenerates all five, mirrors the c, zig and go results into the templates and refreshes the goldens); Odin (dev-2026-10) only for hello-odin; `moon` (0.1.20260920, the official installer, then `moon update` once for the registry index) only for hello-moonbit, whose `make gen-proto` runs `protoc-gen-mbt` 0.2.0 through `moonx` (no install).
 
-Goldens: `UPDATE_CONFORMANCE=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
+Goldens, one variable: `UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
 
-CI runs lint and the toolchain-free workspace tests on every push and PR (`ci.yml`); the render jobs and the full guest behavioural suite live in `e2e.yml` (its `build-tools` job compiles the release runtime and `guestfn` once per run, fetches xprin pinned by checksum, and hands all three to every render job as an artifact, which `examples/render.sh` and pdb-addon's Makefile pick up from `FUNCTION_BIN`, `GUESTFN` and `XPRIN`; without them they build from the tree and take xprin from PATH), hand-triggered by commenting `/e2e` on a pull request - the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head. The per-guest codec drift checks ride with the render jobs, so they too run on `/e2e`, not on every push. `e2e.yml`'s `e2e (oci)` job runs `test/e2e/oci/run.sh` (`test/e2e/README.md`: unit and integration tests use in-memory stand-ins for registries and signatures; a scenario there is where the real thing must agree with them).
+CI runs lint (`--all-features`, so `crates/e2e` is checked) and the toolchain-free workspace tests on every push and PR (`ci.yml`). `e2e.yml`, hand-triggered by commenting `/e2e` on a pull request (the run acknowledges the comment with a reaction and reports one `e2e` commit status on the PR's head), runs the rest: `build-tools` compiles the release runtime and `guestfn` once; `guest-suite` runs the full guest behavioural suite with `FUNCTION_WASM_REQUIRE_TOOLCHAINS=1`; one `build-<lang>` job per example toolchain builds, tests and lints that example and checks its generated codec and bindings for drift (no render); and `e2e-cluster` wraps the prebuilt runtime into the image with `Dockerfile.dev`, runs `make e2e.up` (kind, Crossplane at `CROSSPLANE_VERSION`, provider-nop, the registry, the package), `make e2e.test.default`, `strict` and `lifecycle` in turn, uploads `make e2e.dump`'s output on failure and tears the cluster down. The end-to-end suite is documented in `docs/project/testing.md`.
 
 ### Test Patterns
 
-Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration suites under `tests/`. Guest modules for tests are WAT fixtures assembled with the `wat` crate: components implementing the world with a sync-lifted `run` (the engine's tests carry fixtures that misbehave in one way each; the sandbox is tested through WASI 0.2 interfaces lowered by hand - `wasi:cli/environment`, `wasi:filesystem/preopens`, `wasi:cli/exit`, `wasi:clocks/monotonic-clock` - against a `$libc` core instance whose memory the main module imports; the one core-module fixture proves the ABI v1 refusal). Registry-backed tests use `oci::testregistry` (feature `testutil`): an in-memory distribution registry that serves and accepts artifacts, optionally behind the Bearer token flow, with OCI 1.1 referrers through the referrers API (`referrers_api: true`) or the tag schema (`push_referrer` maintains the `sha256-<hex>` index); `cosign::testutil` signs cosign-3-shaped key-based Sigstore bundles into it, and `testsigstore::Instance` (feature `testutil`; rcgen, x509-cert and time are its dependencies) is an in-memory Sigstore instance - a Fulcio CA, a CT log and a Rekor log from fixed seeds - that issues keyless bundles (ten-minute certificate with an embedded SCT, Rekor dsse 0.0.1 entry with SET, inclusion proof and checkpoint) at a fixed past time and publishes the trusted root that verifies them, so the keyless path is covered offline and deterministically (`validate_resolve_keyless_cosign_matches_the_goldens`). Expected `RunFunctionResponse`s are constructed whole and compared with `assert_eq!` on the prost types, including fatal cases, whose per-guest message wording is blanked before the comparison.
+Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration suites under `tests/`. Guest modules for tests are WAT fixtures assembled with the `wat` crate: components implementing the world with a sync-lifted `run` (the engine's tests carry fixtures that misbehave in one way each; the sandbox is tested through WASI 0.2 interfaces lowered by hand - `wasi:cli/environment`, `wasi:filesystem/preopens`, `wasi:cli/exit`, `wasi:clocks/monotonic-clock` - against a `$libc` core instance whose memory the main module imports; the one core-module fixture proves the ABI v1 refusal), plus the end-to-end suite's committed guest (`crates/e2e/guest/fn.wasm`), the one real wasi:http guest the engine's tests drive, with a fake `HttpRequester`. Registry-backed tests use `oci::testregistry` (feature `testutil`): an in-memory distribution registry that serves and accepts artifacts, optionally behind the Bearer token flow, with OCI 1.1 referrers through the referrers API (`referrers_api: true`) or the tag schema (`push_referrer` maintains the `sha256-<hex>` index); `cosign::testutil` signs cosign-3-shaped key-based Sigstore bundles into it, and `testsigstore::Instance` (feature `testutil`; rcgen, x509-cert and time are its dependencies) is an in-memory Sigstore instance - a Fulcio CA, a CT log and a Rekor log from fixed seeds - that issues keyless bundles (ten-minute certificate with an embedded SCT, Rekor dsse 0.0.1 entry with SET, inclusion proof and checkpoint) at a fixed past time and publishes the trusted root that verifies them, so the keyless path is covered offline and deterministically (`validate_resolve_keyless_cosign_matches_the_goldens`). Expected `RunFunctionResponse`s are constructed whole and compared with `assert_eq!` on the prost types, including fatal cases, whose per-guest message wording is blanked before the comparison.
 
 ### Linting
 
@@ -587,11 +628,10 @@ Edit the template set under `crates/guestfn/templates/<lang>` (templates use `[[
 
 ### Rendering Locally
 
-Each example's `example/xprin.yaml` is its render test: [xprin](https://github.com/crossplane-contrib/xprin) cases (an XR plus any required resources, observed resources or function credentials) with declarative assertions on what the module composes - `Count`, `Exists`/`NotExists`, `FieldValue` - never string matching over the render output. A suite asserts outcomes as composed resources or XR status, never function results (they carry no name, so xprin collapses them onto one `Result/` key); a fatal path is tested in the guest's own unit tests, because a fatal result fails the render. `render.sh` owns the runtime's side: `function validate` over every `example/xr*.yaml`, the operator policy and the fixture server.
+`make render` in an example is the development loop, not a test: `examples/render.sh` runs `function validate` over every `example/xr*.yaml`, serves the directory with `example/policy.cedar` as the operator policy and `example/fixtures/` on a local HTTP server, and prints `crossplane render` of `example/xr.yaml`. What an example composes is asserted by nothing in CI; the end-to-end suite drives its own module in a cluster (`docs/project/testing.md`), and each example's unit tests and `build-<lang>` job cover the guest.
 
 ```bash
 make -C examples/pdb-addon render         # build fn.wasm (guestfn via cargo), serve it, crossplane render example/
-make -C examples/pdb-addon render-check   # same, running example/xprin.yaml (xprin on PATH, or XPRIN) - what the /e2e render job runs
 make -C examples/hello-zig render         # the Zig guest (zig on PATH: zig builds the core module, guestfn wraps it)
 make -C examples/hello-c render           # the C guest (zig on PATH: zig cc builds the core module, guestfn wraps it)
 make -C examples/hello-odin render        # the Odin guest (odin and zig on PATH: odin builds the object, zig cc links, guestfn wraps it)
@@ -664,6 +704,7 @@ A new refusal gets its entry there, beside its fixture under `testdata/validate/
 - `docs/one-pager-module-source-schema.md`, `docs/one-pager-module-manifest.md`, `docs/one-pager-manifest-less-sources.md` — the Input and the manifest
 - `docs/one-pager-admission-tooling.md` — validate and inspection
 - `docs/one-pager-language-support.md` — the guest language matrix
-- `docs/one-pager-use-case-examples.md` - the use-case examples: why these, how they are tested (scaffold goldens, shared plumbing, xprin suites), how they are published
+- `docs/project/testing.md` - the two test tiers, where a new test goes, the end-to-end suite's profiles, module and workflow
+- `docs/one-pager-use-case-examples.md` - the use-case examples: why these, how they are tested (scaffold goldens, shared plumbing, unit tests, the build jobs), how they are published
 - `crates/function/src/input.rs` — authoritative Input schema
 - `.claude/skills/cut-release/SKILL.md`, `.claude/skills/remediate-cves/SKILL.md` — releasing

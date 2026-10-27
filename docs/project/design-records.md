@@ -26,7 +26,7 @@ describes. The status below is each document's own, at the time of writing.
 | [WASM Sandbox](../one-pager-sandbox.md) | Implemented, revision 1.8 |
 | [Three-Layer Authorization Model](../one-pager-three-layer-authz.md) | Implemented, revision 1.1 |
 | [Trust Model](../one-pager-trust-model.md) | Implemented, revision 1.6 |
-| [Use-Case Examples](../one-pager-use-case-examples.md) | Implemented, revision 1.3 |
+| [Use-Case Examples](../one-pager-use-case-examples.md) | Implemented, revision 1.6 |
 
 The guest ABI is not a one-pager: [ABI v2](../abi-v2.md) is the contract
 itself, versioned on its own terms.
