@@ -23,13 +23,10 @@
 # up as a check by itself.
 #
 # An issue_comment run uses this file from the default branch but builds the
-# pull request's code, so a change to this file is exercised only after it
-# merges - unless the workflow is dispatched by hand on its branch
-# (workflow_dispatch runs the file from the chosen ref, against that ref),
-# which reports no commit status. Only the repository's owner, members and
-# collaborators can start a comment run, the jobs that run that code get a
-# read-only token, and no checkout leaves the token behind for the code to
-# read. Nor do
+# pull request's code (so a change to this file is exercised by the first
+# /e2e after it merges), only the repository's owner, members and
+# collaborators can start it, the jobs that run that code get a read-only
+# token, and no checkout leaves the token behind for the code to read. Nor do
 # the jobs restore or save caches (rust-cache, setup-go, setup-zig, npm): they
 # run in the default branch's cache scope, where trusted workflows would
 # restore whatever the pull request's code wrote.
@@ -38,7 +35,6 @@ name: E2E
 on:
   issue_comment:
     types: [created]
-  workflow_dispatch: {}
 
 # Read-only by default; start and report, which run none of the pull
 # request's code, take the write scopes they need.
@@ -49,10 +45,9 @@ jobs:
   start:
     runs-on: ubuntu-26.04
     if: >-
-      github.event_name == 'workflow_dispatch'
-      || (github.event.issue.pull_request
+      github.event.issue.pull_request
       && startsWith(github.event.comment.body, '/e2e')
-      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     # Reactions and the head lookup on a pull request's comment go through
     # the pull-requests permission; issues: write stays for comments on
     # plain issues.
@@ -62,34 +57,22 @@ jobs:
       statuses: write
     outputs:
       sha: ${{ steps.pr.outputs.sha }}
-      ref: ${{ steps.pr.outputs.ref }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       # Best effort: the acknowledgement is cosmetic and must never take
       # the run down.
       - name: Acknowledge the Comment
-        if: github.event_name == 'issue_comment'
         run: |
           gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=rocket || true
 
-      # The code under test: the pull request's merge ref for a comment run,
-      # the dispatched ref otherwise.
-      - name: Resolve the Code Under Test
+      - name: Resolve the PR Head
         id: pr
         run: |
-          if [ "${{ github.event_name }}" = "issue_comment" ]; then
-            sha=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" -q .head.sha)
-            ref="refs/pull/${{ github.event.issue.number }}/merge"
-          else
-            sha="${{ github.sha }}"
-            ref="${{ github.ref }}"
-          fi
+          sha=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" -q .head.sha)
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Mark the Status Pending
-        if: github.event_name == 'issue_comment'
         run: |
           gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
             -f state=pending -f context=e2e -f description="running" \
@@ -107,7 +90,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       - name: Setup Rust
@@ -151,7 +134,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # The rust-v2 guest's rust-toolchain.toml brings its own toolchain and
@@ -213,7 +196,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # guestfn comes from build-tools; the Makefiles take it from GUESTFN
@@ -277,7 +260,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # guestfn comes from build-tools; the Makefiles take it from GUESTFN
@@ -332,7 +315,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # guestfn comes from build-tools; the Makefiles take it from GUESTFN
@@ -413,7 +396,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # guestfn comes from build-tools; the Makefiles take it from GUESTFN
@@ -514,7 +497,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # guestfn comes from build-tools; the Makefiles take it from GUESTFN
@@ -629,7 +612,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # guestfn comes from build-tools; the Makefiles take it from GUESTFN
@@ -727,7 +710,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # guestfn comes from build-tools; the Makefiles take it from GUESTFN
@@ -764,7 +747,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # guestfn comes from build-tools; the Makefiles take it from GUESTFN
@@ -795,7 +778,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
 
       # guestfn comes from build-tools; the Makefiles take it from GUESTFN
@@ -842,7 +825,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.start.outputs.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/merge
           persist-credentials: false
           submodules: true
 
@@ -918,10 +901,6 @@ jobs:
               description="at least one job did not pass"
             fi
           done
-          if [ "${{ github.event_name }}" = "issue_comment" ]; then
-            gh api "repos/${{ github.repository }}/statuses/${{ needs.start.outputs.sha }}" \
-              -f state="$state" -f context=e2e -f description="$description" \
-              -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          fi
-          # The run itself carries the verdict too, for a dispatched run.
-          [ "$state" = success ]
+          gh api "repos/${{ github.repository }}/statuses/${{ needs.start.outputs.sha }}" \
+            -f state="$state" -f context=e2e -f description="$description" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
