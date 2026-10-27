@@ -21,7 +21,8 @@ use sigstore_trust_root::TrustedRoot;
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
 use x509_cert::der::asn1::ObjectIdentifier;
-use x509_cert::der::{Decode as _, Encode as _};
+use x509_cert::der::{Decode as _, Encode as _, Header, SliceReader};
+use x509_cert::ext::Extensions;
 
 use crate::cosign::{BUNDLE_MEDIA_TYPE, IN_TOTO_PAYLOAD_TYPE, IN_TOTO_STATEMENT, Signer};
 
@@ -325,22 +326,43 @@ fn leaf_params(
 /// log signed, and what a verifier reconstructs.
 fn tbs_without_sct(cert_der: &[u8]) -> Vec<u8> {
     let cert = x509_cert::Certificate::from_der(cert_der).expect("certificate");
+    let tbs = cert.tbs_certificate();
+    let extensions = tbs
+        .extensions()
+        .expect("a leaf certificate carries extensions");
     let sct_oid = ObjectIdentifier::new_unwrap(CT_PRECERT_SCTS_OID);
-    let mut tbs = cert.tbs_certificate;
-    tbs.extensions = tbs
-        .extensions
-        .map(|exts| exts.into_iter().filter(|e| e.extn_id != sct_oid).collect());
-    let mut out = Vec::new();
-    tbs.encode_to_vec(&mut out).expect("tbs");
-    out
+    let kept: Extensions = extensions
+        .iter()
+        .filter(|e| e.extn_id != sct_oid)
+        .cloned()
+        .collect();
+
+    // x509-cert reads a TBS but no longer lets one be edited (its fields went
+    // private in 0.3), so the extensions, the TBS's last field ([3] EXPLICIT),
+    // are re-encoded over the kept list and spliced in under a recomputed
+    // SEQUENCE header.
+    let full = tbs.to_der().expect("tbs");
+    let before = der(0xa3, &extensions.to_der().expect("extensions"));
+    assert!(
+        full.ends_with(&before),
+        "the extensions are the TBS's last field"
+    );
+    let header_len = Header::peek(&SliceReader::new(&full).expect("tbs reader"))
+        .expect("tbs header")
+        .to_der()
+        .expect("tbs header")
+        .len();
+    let mut body = full[header_len..full.len() - before.len()].to_vec();
+    body.extend_from_slice(&der(0xa3, &kept.to_der().expect("extensions")));
+    der(0x30, &body)
 }
 
 /// The issuer's SubjectPublicKeyInfo as its certificate encodes it.
 fn issuer_spki(ca_der: &[u8]) -> Vec<u8> {
     x509_cert::Certificate::from_der(ca_der)
         .expect("ca certificate")
-        .tbs_certificate
-        .subject_public_key_info
+        .tbs_certificate()
+        .subject_public_key_info()
         .to_der()
         .expect("spki")
 }
