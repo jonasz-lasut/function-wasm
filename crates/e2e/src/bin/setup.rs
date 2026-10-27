@@ -222,11 +222,13 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    // Ten minutes: the package manager pulls provider-nop from
+    // xpkg.crossplane.io on the runner, and a slow pull has taken five.
     step("waiting for provider-nop to be healthy");
     wait_for(
         &providers,
         "provider-nop",
-        Duration::from_secs(300),
+        Duration::from_secs(600),
         "Healthy=True",
         |p| condition_is(p, "Healthy", "True"),
     )

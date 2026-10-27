@@ -27,7 +27,7 @@
 # /e2e after it merges), only the repository's owner, members and
 # collaborators can start it, the jobs that run that code get a read-only
 # token, and no checkout leaves the token behind for the code to read. Nor do
-# the jobs restore or save caches (rust-cache, setup-go, setup-zig, npm): they
+# the jobs restore or save caches (rust-cache, setup-go, npm): they
 # run in the default branch's cache scope, where trusted workflows would
 # restore whatever the pull request's code wrote.
 name: E2E
@@ -40,6 +40,18 @@ on:
 # request's code, take the write scopes they need.
 permissions:
   contents: read
+
+# The Zig every guest job installs (the zig and c scaffolds and the odin
+# example build with it; the guest suite builds their goldens), one pin per
+# runner architecture as <version>@<sha256 of the tarball>. Renovate moves
+# each line, version and checksum together, through the custom.zig-*
+# datasources in renovate.json5, which read ziglang.org's download index;
+# the two lines must name one version.
+env:
+  # renovate: datasource=custom.zig-x86_64-linux depName=zig
+  ZIG_X86_64_LINUX: 0.16.0@70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+  # renovate: datasource=custom.zig-aarch64-linux depName=zig
+  ZIG_AARCH64_LINUX: 0.16.0@ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17
 
 jobs:
   start:
@@ -150,11 +162,25 @@ jobs:
           cache: false
           go-version-file: examples/pdb-addon/go.mod
 
+      # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
+      # below: the setup action picks a community mirror and has hung for
+      # a quarter of an hour on one; the runner's architecture selects the
+      # tarball (guest-suite runs on arm64).
       - name: Setup Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          use-cache: false
-          version: 0.16.0
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) pin="${ZIG_X86_64_LINUX}" ;;
+            aarch64) pin="${ZIG_AARCH64_LINUX}" ;;
+            *) echo "no zig pin for ${arch}" >&2; exit 1 ;;
+          esac
+          version="${pin%@*}"
+          sha="${pin#*@}"
+          curl -fsSL -o "${RUNNER_TEMP}/zig.tar.xz" \
+            "https://ziglang.org/download/${version}/zig-${arch}-linux-${version}.tar.xz"
+          echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
 
       - name: Setup protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -331,11 +357,25 @@ jobs:
           chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
+      # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
+      # below: the setup action picks a community mirror and has hung for
+      # a quarter of an hour on one; the runner's architecture selects the
+      # tarball (guest-suite runs on arm64).
       - name: Setup Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          use-cache: false
-          version: 0.16.0
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) pin="${ZIG_X86_64_LINUX}" ;;
+            aarch64) pin="${ZIG_AARCH64_LINUX}" ;;
+            *) echo "no zig pin for ${arch}" >&2; exit 1 ;;
+          esac
+          version="${pin%@*}"
+          sha="${pin#*@}"
+          curl -fsSL -o "${RUNNER_TEMP}/zig.tar.xz" \
+            "https://ziglang.org/download/${version}/zig-${arch}-linux-${version}.tar.xz"
+          echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
 
       - name: Check Generated Codec
         working-directory: examples/hello-zig
@@ -408,11 +448,25 @@ jobs:
           chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
+      # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
+      # below: the setup action picks a community mirror and has hung for
+      # a quarter of an hour on one; the runner's architecture selects the
+      # tarball (guest-suite runs on arm64).
       - name: Setup Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          use-cache: false
-          version: 0.16.0
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) pin="${ZIG_X86_64_LINUX}" ;;
+            aarch64) pin="${ZIG_AARCH64_LINUX}" ;;
+            *) echo "no zig pin for ${arch}" >&2; exit 1 ;;
+          esac
+          version="${pin%@*}"
+          sha="${pin#*@}"
+          curl -fsSL -o "${RUNNER_TEMP}/zig.tar.xz" \
+            "https://ziglang.org/download/${version}/zig-${arch}-linux-${version}.tar.xz"
+          echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
 
       - name: Setup protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -505,11 +559,25 @@ jobs:
           chmod +x "${RUNNER_TEMP}/e2e-tools/function" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
+      # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
+      # below: the setup action picks a community mirror and has hung for
+      # a quarter of an hour on one; the runner's architecture selects the
+      # tarball (guest-suite runs on arm64).
       - name: Setup Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          use-cache: false
-          version: 0.16.0
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) pin="${ZIG_X86_64_LINUX}" ;;
+            aarch64) pin="${ZIG_AARCH64_LINUX}" ;;
+            *) echo "no zig pin for ${arch}" >&2; exit 1 ;;
+          esac
+          version="${pin%@*}"
+          sha="${pin#*@}"
+          curl -fsSL -o "${RUNNER_TEMP}/zig.tar.xz" \
+            "https://ziglang.org/download/${version}/zig-${arch}-linux-${version}.tar.xz"
+          echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
 
       - name: Setup protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0

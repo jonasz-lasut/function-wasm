@@ -1,0 +1,22 @@
+# The build context of the Dockerfile, whose build stage bind-mounts this
+# directory and compiles the workspace (crates/, Cargo.toml, Cargo.lock,
+# wit/). Everything else is sent to the daemon for nothing, and the build
+# outputs and caches below weigh gigabytes: the workspace's target/, the
+# worktrees under .claude/ with target directories of their own, the pinned
+# tools, the end-to-end suite's output, the examples with their toolchains'
+# caches, the documentation site.
+.git
+.claude
+.cache
+_output
+.work
+book
+target
+**/target
+build
+docs
+examples
+package
+test
+.github
+*.xpkg
