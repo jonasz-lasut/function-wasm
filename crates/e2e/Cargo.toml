@@ -39,7 +39,7 @@ hex = { version = "0.4", optional = true }
 k8s-openapi = { version = "0.28", features = ["v1_36"], optional = true }
 # One crypto provider in the process: the runtime's crates use aws-lc-rs.
 kube = { version = "4.2", default-features = false, features = ["client", "ws", "rustls-tls", "aws-lc-rs"], optional = true }
-rand = { version = "0.9", optional = true }
+rand = { version = "0.10", optional = true }
 # The registry's CA and server certificate.
 rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem"], optional = true }
 # The suite's own registry client (pushes through a port-forward) and the

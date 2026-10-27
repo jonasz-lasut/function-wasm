@@ -22,7 +22,7 @@ serde_json = "1"
 
 # The component bindings (src/bindings.rs) exist only in the wasm build.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wit-bindgen = "0.62"
+wit-bindgen = "0.63"
 
 [build-dependencies]
 prost-build = "0.14"
