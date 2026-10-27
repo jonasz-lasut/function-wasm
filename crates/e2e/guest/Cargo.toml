@@ -1,0 +1,38 @@
+[package]
+name = "e2e-guest"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "function-wasm's end-to-end test module: an ABI v2 guest whose composite resource's spec says which runtime feature to exercise, composing provider-nop resources"
+
+# Its own workspace root: a package under a member's directory (crates/e2e)
+# cannot be excluded from the root workspace, and this one is a standalone
+# wasm32-wasip3 guest on the rust scaffold's pinned toolchain.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+prost = "0.14"
+prost-types = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The component bindings (src/bindings.rs) exist only in the wasm build.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen = "0.62"
+
+[build-dependencies]
+prost-build = "0.14"
+
+[dev-dependencies]
+pollster = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

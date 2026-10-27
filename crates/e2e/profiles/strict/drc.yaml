@@ -1,0 +1,36 @@
+# The strict profile: no verifier, the strict policy, the registry CA.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: e2e-strict
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      strategy: {}
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            image: function-wasm-e2e:dev
+            args:
+            - --sandbox-policy-file=/etc/function-wasm/policy/policy.cedar
+            env:
+            - name: SSL_CERT_FILE
+              value: /etc/function-wasm/registry-ca/ca.crt
+            - name: SSL_CERT_DIR
+              value: /etc/ssl/certs
+            volumeMounts:
+            - name: policy
+              mountPath: /etc/function-wasm/policy
+              readOnly: true
+            - name: registry-ca
+              mountPath: /etc/function-wasm/registry-ca
+              readOnly: true
+          volumes:
+          - name: policy
+            configMap:
+              name: e2e-policy-strict
+          - name: registry-ca
+            configMap:
+              name: e2e-registry-ca

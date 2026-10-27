@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+
+# The runtime image around a binary built elsewhere: the end-to-end workflow
+# compiles the runtime once with a warm cargo cache (its build-tools job) and
+# wraps it here, instead of compiling the workspace cold in the Dockerfile's
+# build stage. The build context is a directory holding the linux binary as
+# `function`, for the platform the image is built for:
+#
+#   docker buildx build -f Dockerfile.dev --platform linux/amd64 -t function-wasm-e2e:dev <dir>
+#
+# The base is the Dockerfile's (see there for why glibc-dynamic); Renovate
+# keeps both digests current.
+FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88
+WORKDIR /
+COPY function /function
+EXPOSE 9443
+USER nonroot:nonroot
+ENTRYPOINT ["/function"]

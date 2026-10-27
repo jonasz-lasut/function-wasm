@@ -1,3 +1,155 @@
+# function-wasm's Makefile. Two kinds of targets live here:
+#
+# - The end-to-end suite's cluster (`make e2e`, "Testing" in AGENTS.md and
+#   docs/project/testing.md): a kind cluster with Crossplane, provider-nop,
+#   a module registry and this tree's runtime installed as a Function, and
+#   the Rust suite under crates/e2e run against it, one profile at a time.
+#   The crossplane build submodule (build/) provides the make library:
+#   common.mk's pipelines and variables, k8s_tools.mk's pinned kind,
+#   kubectl, helm and crossplane CLI (installed under .cache/tools on first
+#   use), controlplane.mk's kind + Crossplane cluster at CROSSPLANE_VERSION,
+#   and local.xpkg.mk's package cache sync, which installs a locally built
+#   package with packagePullPolicy: Never. What the library lacks for a
+#   Function package - xpkg.build embeds the runtime image only for a
+#   Provider, and there is no local.xpkg.deploy.function.% - is written
+#   below, in the library's shape.
+#
+# - The vendoring loops (vendor-proto, vendor-docs-highlight, gen-bindings):
+#   further down, unchanged by the submodule.
+PROJECT_NAME := function-wasm
+PROJECT_REPO := github.com/jonasz-lasut/$(PROJECT_NAME)
+# The runtime image's platforms; the suite builds the host's only.
+PLATFORMS ?= linux_amd64 linux_arm64
+
+ifeq (,$(wildcard build/makelib/common.mk))
+$(error the crossplane build submodule is missing: run git submodule update --init)
+endif
+
+# The cluster the suite provisions and the Crossplane it installs. Both are
+# overridable from the environment (CI sets CROSSPLANE_VERSION; a release
+# matrix would run the suite once per supported version).
+KIND_CLUSTER_NAME ?= function-wasm-e2e
+CROSSPLANE_VERSION ?= 2.4.3
+PROVIDER_NOP_VERSION ?= v0.6.0
+
+include build/makelib/common.mk
+include build/makelib/k8s_tools.mk
+include build/makelib/controlplane.mk
+# local.xpkg.mk reads the package from XPKG_OUTPUT_DIR/linux_<arch>/, where
+# xpkg.mk would have written it; the Function package target below does.
+XPKG_OUTPUT_DIR := $(OUTPUT_DIR)/xpkg
+include build/makelib/local.xpkg.mk
+
+# The end-to-end suite
+#
+# make e2e            up, the three profiles in turn, down (the library's
+#                     e2e pipeline: e2e.init, e2e.run, e2e.done)
+# make e2e.up         the cluster: kind + Crossplane (controlplane.up), the
+#                     suite's setup (crates/e2e's e2e-setup binary: the
+#                     registry with its TLS and auth, provider-nop, the test
+#                     module pushed and signed under every variant, the
+#                     profiles' ConfigMaps and Secrets, the XRD), the runtime
+#                     image and the Function package installed from it
+# make e2e.test.<p>   one profile's suite: cargo test --test <p>, which
+#                     switches the Function to that profile's runtime config
+#                     first (default, strict, lifecycle)
+# make e2e.test       the three in turn
+# make e2e.down       delete the cluster
+# make e2e.guest      rebuild the committed test module, crates/e2e/guest/fn.wasm
+#
+# FUNCTION_BIN names a prebuilt linux runtime binary for the host's
+# architecture (CI's build-tools job hands one over), wrapped by
+# Dockerfile.dev; without it the image is built from the Dockerfile, which
+# compiles the workspace in a container.
+E2E_IMAGE := function-wasm-e2e:dev
+E2E_DIR := $(OUTPUT_DIR)/e2e
+E2E_PROFILES := default strict lifecycle
+E2E_CARGO := cargo run -q -p function-wasm-e2e --features cluster
+E2E_GUEST_DIR := crates/e2e/guest
+FUNCTION_PKG_EXAMPLES := examples/pdb-addon/example
+
+.PHONY: e2e.up e2e.setup e2e.image e2e.test e2e.down e2e.guest e2e.dump xpkg.build.function-wasm
+
+e2e.init: e2e.up
+e2e.run: e2e.test
+e2e.done: e2e.down
+
+e2e.up: controlplane.up e2e.setup xpkg.build.function-wasm local.xpkg.deploy.function.function-wasm
+	@$(INFO) waiting for the function to become healthy
+	@$(KUBECTL) wait function.pkg.crossplane.io/function-wasm --for=condition=Healthy --timeout=300s || $(FAIL)
+	@$(OK) the end-to-end cluster is up: make e2e.test.<default|strict|lifecycle>
+
+e2e.setup:
+	@$(INFO) setting up the registry, provider-nop and the test module (crates/e2e e2e-setup)
+	@PROVIDER_NOP_VERSION=$(PROVIDER_NOP_VERSION) $(E2E_CARGO) --bin e2e-setup || $(FAIL)
+	@$(OK) setting up the registry, provider-nop and the test module
+
+e2e.image:
+	@$(INFO) building the runtime image $(E2E_IMAGE) for linux/$(TARGETARCH)
+ifdef FUNCTION_BIN
+	@mkdir -p $(E2E_DIR)/prebuilt && cp $(FUNCTION_BIN) $(E2E_DIR)/prebuilt/function
+	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.dev -t $(E2E_IMAGE) $(E2E_DIR)/prebuilt || $(FAIL)
+else
+	@docker buildx build --load --platform linux/$(TARGETARCH) --target image -t $(E2E_IMAGE) . || $(FAIL)
+endif
+	@$(OK) building the runtime image $(E2E_IMAGE)
+
+# The Function package from the image: what xpkg.mk's xpkg.build.% would do
+# for a Provider. --examples-root must hold Crossplane objects only (xpkg
+# build parses every YAML file under it), which the pdb-addon example's
+# directory does.
+xpkg.build.function-wasm: $(CROSSPLANE_CLI) e2e.image
+	@$(INFO) building package function-wasm-$(VERSION).xpkg
+	@mkdir -p $(XPKG_OUTPUT_DIR)/linux_$(TARGETARCH)
+	@$(CROSSPLANE_CLI) xpkg build --package-root package --examples-root $(FUNCTION_PKG_EXAMPLES) \
+		--embed-runtime-image $(E2E_IMAGE) \
+		--package-file $(XPKG_OUTPUT_DIR)/linux_$(TARGETARCH)/function-wasm-$(VERSION).xpkg || $(FAIL)
+	@$(OK) building package function-wasm-$(VERSION).xpkg
+
+# local.xpkg.deploy.provider.%'s shape for a Function: the runtime image
+# loaded into the kind node, the profiles' DeploymentRuntimeConfigs applied,
+# the Function installed from the synced cache with packagePullPolicy Never
+# on the default profile.
+local.xpkg.deploy.function.%: $(KIND) $(KUBECTL) local.xpkg.sync
+	@$(INFO) deploying function package $* $(VERSION)
+	@$(KIND) load docker-image $(E2E_IMAGE) -n $(KIND_CLUSTER_NAME) || $(FAIL)
+	@for p in $(E2E_PROFILES); do $(KUBECTL) apply -f crates/e2e/profiles/$$p/drc.yaml || exit 1; done
+	@echo '{"apiVersion":"pkg.crossplane.io/v1","kind":"Function","metadata":{"name":"$*"},"spec":{"package":"xpkg.crossplane.internal/dev/$*@$(LOCAL_XPKG_DIGEST)","skipDependencyResolution":true,"packagePullPolicy":"Never","runtimeConfigRef":{"name":"e2e-default"}}}' | $(KUBECTL) apply -f - || $(FAIL)
+	@$(OK) deploying function package $* $(VERSION)
+
+e2e.test: $(addprefix e2e.test.,$(E2E_PROFILES))
+
+# One explicit target per profile (a phony target is never matched by a
+# pattern rule).
+define e2e.test.profile
+.PHONY: e2e.test.$(1)
+e2e.test.$(1):
+	@$$(INFO) running the $(1) profile's suite
+	@cargo test -p function-wasm-e2e --features cluster --test $(1) || $$(FAIL)
+	@$$(OK) running the $(1) profile's suite
+endef
+$(foreach p,$(E2E_PROFILES),$(eval $(call e2e.test.profile,$(p))))
+
+e2e.down: controlplane.down
+
+# The cluster's state for a failed run (controlplane.dump plus the suite's
+# own logs under _output/e2e/logs); CI uploads the directory.
+e2e.dump: controlplane.dump
+
+# The committed test module. cargo builds it on the rust scaffold's pinned
+# toolchain (crates/e2e/guest/rust-toolchain.toml); guestfn inspect states
+# the verdict the runtime will give it.
+e2e.guest:
+	@$(INFO) building $(E2E_GUEST_DIR)/fn.wasm
+	@cd $(E2E_GUEST_DIR) && cargo build --release --target wasm32-wasip3 || $(FAIL)
+	@cp $(E2E_GUEST_DIR)/target/wasm32-wasip3/release/e2e_guest.wasm $(E2E_GUEST_DIR)/fn.wasm
+	@cargo run -q -p guestfn -- inspect $(E2E_GUEST_DIR)/fn.wasm || $(FAIL)
+	@$(OK) building $(E2E_GUEST_DIR)/fn.wasm
+
+# The vendoring loops
+#
+# The vendoring loops
+#
 # Re-vendoring crossplane/crossplane's proto/fn/v1/run_function.proto (AGENTS.md
 # "Changing the scaffold"). Every tracked proto/run_function.proto - the files
 # Renovate's version-header rule reads: five templates, five goldens, seven
@@ -8,7 +160,7 @@
 # branch, review the diff and comment /e2e.
 #
 # `make vendor-proto` takes the release from the headers (the rust template's);
-# `make vendor-proto VERSION=vX.Y.Z` vendors one Renovate has not proposed.
+# `make vendor-proto PROTO_VERSION=vX.Y.Z` vendors one Renovate has not proposed.
 #
 # `make gen-bindings` is the same loop for the wit-bindgen bindings: the c,
 # zig and odin guests' C bindings (examples/hello-c/src/gen,
@@ -59,17 +211,17 @@ WITH_TOOLS := PATH="$(TOOLS)/bin:$$PATH"
 
 PROTO_COPIES := $(shell git ls-files '*/proto/run_function.proto')
 PROTO_VERSION_FILE := crates/guestfn/templates/rust/proto/run_function.proto
-VERSION := $(shell sed -n '1s/.*crossplane\/crossplane \(v[0-9.]*\)\..*/\1/p' $(PROTO_VERSION_FILE))
-PROTO_URL := https://raw.githubusercontent.com/crossplane/crossplane/$(VERSION)/proto/fn/v1/run_function.proto
+PROTO_VERSION := $(shell sed -n '1s/.*crossplane\/crossplane \(v[0-9.]*\)\..*/\1/p' $(PROTO_VERSION_FILE))
+PROTO_URL := https://raw.githubusercontent.com/crossplane/crossplane/$(PROTO_VERSION)/proto/fn/v1/run_function.proto
 
-vendor-proto: vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens ## Re-vendor every copy at $(VERSION), regenerate the codecs and the scaffold goldens
-	@echo "vendored run_function.proto $(VERSION): review git diff, then comment /e2e on the PR"
+vendor-proto: vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens ## Re-vendor every copy at $(PROTO_VERSION), regenerate the codecs and the scaffold goldens
+	@echo "vendored run_function.proto $(PROTO_VERSION): review git diff, then comment /e2e on the PR"
 
 # Renovate's header regex reads vX.Y.Z only; anything else would leave the
 # copies untracked.
-vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(VERSION), keeping each copy's own header
-	@expr '$(VERSION)' : 'v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$$' >/dev/null || \
-		{ echo "VERSION='$(VERSION)' is not a crossplane/crossplane release (vX.Y.Z)" >&2; exit 1; }
+vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(PROTO_VERSION), keeping each copy's own header
+	@expr '$(PROTO_VERSION)' : 'v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$$' >/dev/null || \
+		{ echo "PROTO_VERSION='$(PROTO_VERSION)' is not a crossplane/crossplane release (vX.Y.Z)" >&2; exit 1; }
 	@set -e; \
 	upstream=$$(mktemp); trap 'rm -f "$$upstream"' EXIT; \
 	echo "fetching $(PROTO_URL)"; \
@@ -77,7 +229,7 @@ vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(VERSION)
 	for f in $(PROTO_COPIES); do \
 		case "$$(head -n 1 "$$f")" in "// Vendored from crossplane/crossplane v"*) ;; \
 			*) echo "$$f: line 1 is not the vendored-from header" >&2; exit 1 ;; esac; \
-		{ head -n 4 "$$f" | sed '1s#crossplane/crossplane v[0-9.]*\.#crossplane/crossplane $(VERSION).#'; \
+		{ head -n 4 "$$f" | sed '1s#crossplane/crossplane v[0-9.]*\.#crossplane/crossplane $(PROTO_VERSION).#'; \
 			echo; cat "$$upstream"; } > "$$f.tmp"; \
 		mv "$$f.tmp" "$$f"; \
 		echo "  $$f"; \

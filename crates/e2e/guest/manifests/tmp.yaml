@@ -1,0 +1,8 @@
+# The test module requiring a private /tmp.
+abi: 2
+name: e2e-guest
+version: 0.1.0-tmp
+description: function-wasm's end-to-end test module, requiring a private /tmp
+requires:
+  filesystem:
+    privateTmp: true

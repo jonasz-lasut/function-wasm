@@ -1,0 +1,72 @@
+[package]
+name = "function-wasm-e2e"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Kubernetes-native end-to-end suite: this tree's runtime installed as a Function in a kind cluster, driven through composite resources of a committed test module"
+publish = false
+
+[features]
+# Everything here needs a cluster, so the crate is empty without the feature:
+# cargo test --workspace builds none of it, make e2e.test.<profile> turns it
+# on (docs/project/testing.md).
+cluster = [
+  "dep:anyhow",
+  "dep:base64",
+  "dep:function-wasm",
+  "dep:hex",
+  "dep:k8s-openapi",
+  "dep:kube",
+  "dep:rand",
+  "dep:rcgen",
+  "dep:reqwest",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:serde_yaml",
+  "dep:sha2",
+  "dep:sigstore-trust-root",
+  "dep:tokio",
+]
+
+[dependencies]
+anyhow = { version = "1", optional = true }
+base64 = { version = "0.23", optional = true }
+# The runtime's own pieces the suite reuses: the module manifest, the test
+# signer (cosign::testutil) and the in-memory Sigstore instance.
+function-wasm = { path = "../function", features = ["testutil"], optional = true }
+hex = { version = "0.4", optional = true }
+k8s-openapi = { version = "0.28", features = ["v1_36"], optional = true }
+# One crypto provider in the process: the runtime's crates use aws-lc-rs.
+kube = { version = "4.2", default-features = false, features = ["client", "ws", "rustls-tls", "aws-lc-rs"], optional = true }
+rand = { version = "0.9", optional = true }
+# The registry's CA and server certificate.
+rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem"], optional = true }
+# The suite's own registry client (pushes through a port-forward) and the
+# scrapes of the function pod's metrics and health endpoints.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"], optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+serde_yaml = { version = "0.9", optional = true }
+sha2 = { version = "0.11", optional = true }
+# The public-good trusted root the default profile merges with the test
+# instance's.
+sigstore-trust-root = { version = "0.15.1", default-features = false, features = ["aws-lc-rs"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"], optional = true }
+
+[[bin]]
+name = "e2e-setup"
+path = "src/bin/setup.rs"
+required-features = ["cluster"]
+
+[[test]]
+name = "default"
+required-features = ["cluster"]
+
+[[test]]
+name = "strict"
+required-features = ["cluster"]
+
+[[test]]
+name = "lifecycle"
+required-features = ["cluster"]

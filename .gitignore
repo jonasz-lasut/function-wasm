@@ -2,6 +2,8 @@
 /guestfn
 *.xpkg
 *.wasm
+# The end-to-end suite's committed test module (crates/e2e/guest, make e2e.guest).
+!/crates/e2e/guest/fn.wasm
 # Native builds of the example guests (`go build` in their directories names
 # the binary after the directory); only their fn.wasm is meaningful.
 /examples/pdb-addon/pdb-addon
@@ -12,6 +14,9 @@ target/
 node_modules/
 target/
 /.cache
+# The crossplane build submodule's output and work directories (common.mk).
+/_output
+/.work
 
 # The mdBook output (book.toml: build-dir).
 /book
