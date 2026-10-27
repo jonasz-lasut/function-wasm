@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+{"file":"testdata/validate/compose.yaml","composition":"compose","document":0,"index":0,"step":"fenced","function":"function-wasm","status":"ok","module":"path fn.wasm","details":["compositionPolicy","composeResource"],"warnings":["module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest"]}
+{"file":"testdata/validate/compose.yaml","composition":"compose","document":0,"index":1,"step":"unfenced","function":"function-wasm","status":"ok","module":"path fn.wasm","details":["compositionPolicy"],"warnings":["module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest"]}
+--- stderr

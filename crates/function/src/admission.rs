@@ -12,8 +12,9 @@ use std::time::Duration;
 use function_wasm_engine::duration;
 
 use crate::authz::{
-    ACTION_GRANT_EGRESS, ACTION_SET_ENV, ACTION_SPEND_CREDENTIAL, ACTION_USE_PRIVATE_TMP,
-    CompositionPolicy, EgressGrant, OperatorPolicy, Principal, compile_composition_policy,
+    ACTION_COMPOSE_RESOURCE, ACTION_GRANT_EGRESS, ACTION_SET_ENV, ACTION_SPEND_CREDENTIAL,
+    ACTION_USE_PRIVATE_TMP, Change, CompositionPolicy, EgressGrant, OperatorPolicy, Principal,
+    compile_composition_policy,
 };
 use crate::egress_rules::HttpRule;
 use crate::input::{Input, ModuleSource};
@@ -143,6 +144,85 @@ pub fn admit_requires(
 
 fn scopes(comp: Option<&CompositionPolicy>, action: &str) -> bool {
     comp.is_some_and(|c| c.scopes_action(action))
+}
+
+/// Whether either layer scopes composeResource - when a run's output is
+/// judged at all. A runtime where no rule anywhere names the action pays
+/// nothing beyond this boolean.
+pub fn compose_fenced(policy: Option<&OperatorPolicy>, comp: Option<&CompositionPolicy>) -> bool {
+    scopes(comp, ACTION_COMPOSE_RESOURCE) || policy.is_some_and(|p| p.scopes_compose_resource())
+}
+
+/// The layer that refused a change, for the sentence that names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    Composition,
+    Operator,
+}
+
+impl Layer {
+    pub fn describe(self) -> &'static str {
+        match self {
+            Layer::Composition => "the compositionPolicy",
+            Layer::Operator => "the operator policy (--sandbox-policy-file)",
+        }
+    }
+}
+
+/// The output fence (composeResource) over one change: the composition
+/// layer first, then the operator's, each only where it scopes the action -
+/// a layer with no such rule does not narrow a module's output. None when
+/// both admit it.
+pub fn compose_refused_by(
+    change: &Change,
+    policy: Option<&OperatorPolicy>,
+    comp: Option<&CompositionPolicy>,
+    principal: &Principal,
+) -> Option<Layer> {
+    if scopes(comp, ACTION_COMPOSE_RESOURCE)
+        && !comp.expect("scoped").permits_compose(principal, change)
+    {
+        return Some(Layer::Composition);
+    }
+    if let Some(policy) = policy
+        && policy.scopes_compose_resource()
+        && !policy.permits_compose(principal, change)
+    {
+        return Some(Layer::Operator);
+    }
+    None
+}
+
+/// Judges every change a module made to the desired state, in order; the
+/// first refusal is the error, worded for a fatal result the caller
+/// prefixes with the module's name.
+pub fn admit_compose(
+    changes: &[Change],
+    policy: Option<&OperatorPolicy>,
+    comp: Option<&CompositionPolicy>,
+    principal: &Principal,
+) -> Result<(), String> {
+    for change in changes {
+        if let Some(layer) = compose_refused_by(change, policy, comp, principal) {
+            return Err(format!(
+                "composed {}, which {} does not permit (composeResource)",
+                describe_change(change),
+                layer.describe()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// One change as a refusal names it: `apps/Deployment "deployment" (modify)`
+/// for a composed resource, `platform.example.org/WebApp (composite,
+/// modify)` for the composite resource.
+pub fn describe_change(c: &Change) -> String {
+    if c.composite {
+        format!("{} (composite, {})", c.kind_id(), c.change.as_str())
+    } else {
+        format!("{} {:?} ({})", c.kind_id(), c.name, c.change.as_str())
+    }
 }
 
 /// Runs both policy layers over the module's egress rules, once per rule and
@@ -688,5 +768,128 @@ mod tests {
             ..Default::default()
         };
         admit(&input, &ceilings()).expect("admitted");
+    }
+
+    fn change(group: &str, kind: &str, change: crate::authz::ChangeKind, name: &str) -> Change {
+        Change {
+            group: group.to_string(),
+            kind: kind.to_string(),
+            change,
+            name: name.to_string(),
+            composite: false,
+        }
+    }
+
+    #[test]
+    fn admit_compose_names_the_layer_that_refused_and_only_narrows_where_scoped() {
+        use crate::authz::ChangeKind;
+        let principal = Principal::default();
+        let budgets_only = compile_composition_policy(
+            r#"permit (principal, action == Action::"composeResource", resource in Group::"policy")
+               when { context.change == "add" };"#,
+        )
+        .expect("compiles")
+        .expect("present");
+        let ceiling = OperatorPolicy::new(
+            "test",
+            r#"forbid (principal, action == Action::"composeResource", resource == Kind::"core/Secret");
+               permit (principal, action == Action::"composeResource", resource);"#,
+        )
+        .expect("policy");
+        let unrelated = OperatorPolicy::new(
+            "test",
+            r#"permit (principal, action == Action::"usePrivateTmp", resource);"#,
+        )
+        .expect("policy");
+        let pdb = change(
+            "policy",
+            "PodDisruptionBudget",
+            ChangeKind::Add,
+            "deployment-pdb",
+        );
+        let deployment = change("apps", "Deployment", ChangeKind::Modify, "deployment");
+        let secret = change("core", "Secret", ChangeKind::Add, "db-password");
+        let mut composite = change("platform.example.org", "WebApp", ChangeKind::Modify, "");
+        composite.composite = true;
+
+        // Nothing scoped anywhere: nothing is narrowed, no policy file included.
+        assert!(!compose_fenced(None, None));
+        assert!(!compose_fenced(Some(&unrelated), None));
+        assert!(
+            admit_compose(
+                &[secret.clone(), deployment.clone()],
+                None,
+                None,
+                &principal
+            )
+            .is_ok()
+        );
+        assert!(
+            admit_compose(
+                std::slice::from_ref(&secret),
+                Some(&unrelated),
+                None,
+                &principal
+            )
+            .is_ok(),
+            "an operator policy that scopes no composeResource rule must not narrow the output"
+        );
+
+        // The composition layer, first and whole.
+        assert!(compose_fenced(None, Some(&budgets_only)));
+        assert!(
+            admit_compose(
+                std::slice::from_ref(&pdb),
+                Some(&ceiling),
+                Some(&budgets_only),
+                &principal
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            admit_compose(
+                &[pdb.clone(), deployment.clone()],
+                Some(&ceiling),
+                Some(&budgets_only),
+                &principal
+            )
+            .unwrap_err(),
+            r#"composed apps/Deployment "deployment" (modify), which the compositionPolicy does not permit (composeResource)"#
+        );
+        assert_eq!(
+            admit_compose(
+                std::slice::from_ref(&secret),
+                Some(&ceiling),
+                Some(&budgets_only),
+                &principal
+            )
+            .unwrap_err(),
+            r#"composed core/Secret "db-password" (add), which the compositionPolicy does not permit (composeResource)"#,
+            "the composition layer is read first even where the operator would also refuse"
+        );
+        assert_eq!(
+            admit_compose(&[composite.clone()], None, Some(&budgets_only), &principal).unwrap_err(),
+            "composed platform.example.org/WebApp (composite, modify), which the compositionPolicy does not permit (composeResource)"
+        );
+
+        // The operator's ceiling alone.
+        assert!(compose_fenced(Some(&ceiling), None));
+        assert!(
+            admit_compose(
+                &[deployment.clone(), composite],
+                Some(&ceiling),
+                None,
+                &principal
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            admit_compose(&[secret], Some(&ceiling), None, &principal).unwrap_err(),
+            r#"composed core/Secret "db-password" (add), which the operator policy (--sandbox-policy-file) does not permit (composeResource)"#
+        );
+        assert_eq!(
+            compose_refused_by(&pdb, Some(&ceiling), None, &principal),
+            None
+        );
     }
 }

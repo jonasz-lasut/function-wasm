@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use function_sdk_rust::proto::v1::function_runner_service_server::FunctionRunnerService;
-use function_sdk_rust::proto::v1::{ResponseMeta, RunFunctionRequest, RunFunctionResponse};
+use function_sdk_rust::proto::v1::{
+    ResponseMeta, RunFunctionRequest, RunFunctionResponse, Severity,
+};
 use function_sdk_rust::{request, response};
 use function_wasm_engine::{Engine, RunOptions};
 use prost::Message;
@@ -23,10 +25,11 @@ use crate::resolver::Resolver;
 use crate::sandboxenv;
 
 /// Request outcomes, as the Go runtime's metrics label them: refused is the
-/// runtime declining before running the module, error is the load or the run
-/// failing. Skipped is this runtime's own: the composite resource chose no
-/// module and the Input allowed it, so the step ran nothing and returned the
-/// desired state unchanged.
+/// runtime declining before running the module (or, since the output fence,
+/// a policy layer refusing what the module composed), error is the load or
+/// the run failing. Skipped is this runtime's own: the composite resource
+/// chose no module and the Input allowed it, so the step ran nothing and
+/// returned the desired state unchanged.
 const OUTCOME_REFUSED: &str = "refused";
 const OUTCOME_ERROR: &str = "error";
 const OUTCOME_SKIPPED: &str = "skipped";
@@ -527,6 +530,44 @@ impl WasmFunction {
                 )));
             }
         };
+        // The output fence (composeResource, #174): where a policy layer
+        // scopes the action, every change the module made to the desired
+        // state must be permitted - judged over the decoded copies, so the
+        // guest's bytes stay untouched either way. A response carrying a
+        // fatal result is never applied by Crossplane, so it is not judged
+        // and the guest's own message stays the one the author reads.
+        if admission::compose_fenced(self.policy.as_deref(), admitted.composition.as_deref())
+            && !carries_fatal(&got)
+        {
+            let composite = composite_kind_from(&req);
+            let judged = crate::compose::changes(
+                req.desired.as_ref(),
+                got.desired.as_ref(),
+                composite.as_ref().map(|(g, k)| (g.as_str(), k.as_str())),
+            )
+            .and_then(|changes| {
+                tracing::debug!(
+                    module = %resolved.description,
+                    digest = %resolved.digest,
+                    changes = changes.len(),
+                    names = ?changes.iter().map(admission::describe_change).collect::<Vec<_>>(),
+                    "Judging the module's changes to the desired state"
+                );
+                admission::admit_compose(
+                    &changes,
+                    self.policy.as_deref(),
+                    admitted.composition.as_deref(),
+                    &principal,
+                )
+            });
+            if let Err(e) = judged {
+                return Ok(raw_rsp(self.fatal(
+                    rsp,
+                    OUTCOME_REFUSED,
+                    format!("module {} {e}", resolved.description),
+                )));
+            }
+        }
         // A guest that skipped the response meta (a non-Go guest, typically)
         // still gets a well-formed reply - appended to its own bytes, which
         // otherwise travel back exactly as produced.
@@ -570,6 +611,23 @@ impl FunctionRunnerService for WasmFunction {
             .map_err(|e| Status::internal(format!("cannot encode the response: {e}")))?;
         Ok(Response::new(rsp))
     }
+}
+
+/// Whether a response carries a fatal result, which ends the pipeline run
+/// and applies nothing.
+fn carries_fatal(rsp: &RunFunctionResponse) -> bool {
+    rsp.results
+        .iter()
+        .any(|r| r.severity == Severity::Fatal as i32)
+}
+
+/// The composite resource's group and kind from the observed composite,
+/// for the output fence's judgement of the composite's own desired state.
+fn composite_kind_from(req: &RunFunctionRequest) -> Option<(String, String)> {
+    req.observed
+        .as_ref()
+        .and_then(|o| o.composite.as_ref())
+        .and_then(crate::compose::kind_of)
 }
 
 /// The operator-policy principal from the observed composite resource: its
@@ -1269,5 +1327,233 @@ mod tests {
                 result.message
             );
         }
+    }
+
+    /// The output fence's stage: a module whose run returns `rsp` as given
+    /// (an unknown field appended, so transparency on the fenced path is
+    /// proven too), a request whose observed composite is a WebApp of
+    /// team-a and whose desired state is `desired`.
+    fn fenced_stage(rsp: &RunFunctionResponse, tail: &[u8]) -> (tempfile::TempDir, Vec<u8>) {
+        let mut bytes = rsp.encode_to_vec();
+        bytes.extend_from_slice(tail);
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            wat::parse_str(function_wasm_engine::testing::fixed_component(&bytes)).expect("wat"),
+        )
+        .expect("write");
+        (dir, bytes)
+    }
+
+    fn fence_request(
+        composition_policy: &str,
+        desired: function_sdk_rust::proto::v1::State,
+    ) -> RunFunctionRequest {
+        let mut input = input(serde_json::json!({"type": "Path", "path": "fn.wasm"}));
+        if !composition_policy.is_empty() {
+            input["compositionPolicy"] = serde_json::Value::String(composition_policy.to_string());
+        }
+        RunFunctionRequest {
+            meta: Some(RequestMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            observed: Some(function_sdk_rust::proto::v1::State {
+                composite: Some(resource_of(serde_json::json!({
+                    "apiVersion": "platform.example.org/v1", "kind": "WebApp",
+                    "metadata": {"name": "shop", "namespace": "team-a"},
+                }))),
+                ..Default::default()
+            }),
+            desired: Some(desired),
+            input: Some(resource::json_to_struct(input.as_object().expect("object"))),
+            ..Default::default()
+        }
+    }
+
+    fn resource_of(v: serde_json::Value) -> function_sdk_rust::proto::v1::Resource {
+        function_sdk_rust::proto::v1::Resource {
+            resource: Some(resource::json_to_struct(v.as_object().expect("object"))),
+            ..Default::default()
+        }
+    }
+
+    fn desired_with(
+        resources: &[(&str, serde_json::Value)],
+    ) -> function_sdk_rust::proto::v1::State {
+        function_sdk_rust::proto::v1::State {
+            composite: None,
+            resources: resources
+                .iter()
+                .map(|(n, v)| (n.to_string(), resource_of(v.clone())))
+                .collect(),
+        }
+    }
+
+    const BUDGETS_ONLY: &str = r#"permit (principal, action == Action::"composeResource", resource in Group::"policy")
+when { context.change == "add" };"#;
+
+    fn deployment() -> serde_json::Value {
+        serde_json::json!({"apiVersion": "apps/v1", "kind": "Deployment", "spec": {"replicas": 2}})
+    }
+
+    fn secret() -> serde_json::Value {
+        serde_json::json!({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "db"}})
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_output_fence_refuses_a_kind_the_policy_does_not_permit() {
+        let composed = RunFunctionResponse {
+            meta: Some(ResponseMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            desired: Some(desired_with(&[
+                ("deployment", deployment()),
+                ("db-password", secret()),
+            ])),
+            ..Default::default()
+        };
+        let (dir, _) = fenced_stage(&composed, &[]);
+        let f = function(Some(dir.path().to_owned()));
+        let refused_before = function_wasm_engine::metrics::sample(
+            "function_wasm_module_requests_total",
+            &[("outcome", "refused")],
+        )
+        .unwrap_or_default();
+        let req = fence_request(BUDGETS_ONLY, desired_with(&[("deployment", deployment())]));
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        assert_eq!(rsp.results.len(), 1);
+        assert_eq!(rsp.results[0].severity, Severity::Fatal as i32);
+        assert_eq!(
+            rsp.results[0].message,
+            r#"module module file fn.wasm composed core/Secret "db-password" (add), which the compositionPolicy does not permit (composeResource)"#
+        );
+        // The fatal result rides a fresh response that echoes the request's
+        // desired state: what the module composed is not in it.
+        let desired = rsp.desired.expect("the request's desired state");
+        assert!(desired.resources.contains_key("deployment"));
+        assert!(
+            !desired.resources.contains_key("db-password"),
+            "nothing the module composed is returned"
+        );
+        let refused_after = function_wasm_engine::metrics::sample(
+            "function_wasm_module_requests_total",
+            &[("outcome", "refused")],
+        )
+        .unwrap_or_default();
+        assert!(refused_after >= refused_before + 1.0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_output_fence_returns_a_permitted_response_verbatim() {
+        let composed = RunFunctionResponse {
+            meta: Some(ResponseMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            desired: Some(desired_with(&[
+                ("deployment", deployment()),
+                (
+                    "deployment-pdb",
+                    serde_json::json!({"apiVersion": "policy/v1", "kind": "PodDisruptionBudget"}),
+                ),
+            ])),
+            ..Default::default()
+        };
+        // A field this runtime's vendored proto does not know: field 999.
+        let unknown = [0xba, 0x3e, 0x03, b'x', b'y', b'z'];
+        let (dir, bytes) = fenced_stage(&composed, &unknown);
+        let f = function(Some(dir.path().to_owned()));
+        let req = fence_request(BUDGETS_ONLY, desired_with(&[("deployment", deployment())]));
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        assert_eq!(
+            out, bytes,
+            "the guest's bytes travel back untouched through the fence"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pass_through_under_a_scoped_policy_is_admitted() {
+        let echoed = RunFunctionResponse {
+            meta: Some(ResponseMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            desired: Some(desired_with(&[("deployment", deployment())])),
+            ..Default::default()
+        };
+        let (dir, bytes) = fenced_stage(&echoed, &[]);
+        let f = function(Some(dir.path().to_owned()));
+        let req = fence_request(BUDGETS_ONLY, desired_with(&[("deployment", deployment())]));
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        assert_eq!(out, bytes, "no change, nothing to refuse");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_response_with_a_fatal_result_is_not_judged() {
+        let fatal = RunFunctionResponse {
+            meta: Some(ResponseMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            desired: Some(desired_with(&[("db-password", secret())])),
+            results: vec![function_sdk_rust::proto::v1::Result {
+                severity: Severity::Fatal as i32,
+                message: "the guest says no".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let (dir, bytes) = fenced_stage(&fatal, &[]);
+        let f = function(Some(dir.path().to_owned()));
+        let req = fence_request(BUDGETS_ONLY, desired_with(&[]));
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        assert_eq!(
+            out, bytes,
+            "Crossplane applies nothing from a fatal response; the guest's message stays"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_operator_ceiling_refuses_with_its_own_sentence() {
+        let composed = RunFunctionResponse {
+            meta: Some(ResponseMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            desired: Some(desired_with(&[("db-password", secret())])),
+            ..Default::default()
+        };
+        let (dir, _) = fenced_stage(&composed, &[]);
+        let mut f = function(Some(dir.path().to_owned()));
+        f.policy = Some(Arc::new(
+            crate::authz::OperatorPolicy::new(
+                "test",
+                r#"forbid (principal, action == Action::"composeResource", resource == Kind::"core/Secret");
+                   permit (principal, action == Action::"composeResource", resource);"#,
+            )
+            .expect("policy"),
+        ));
+        let req = fence_request("", desired_with(&[]));
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        assert_eq!(
+            rsp.results[0].message,
+            r#"module module file fn.wasm composed core/Secret "db-password" (add), which the operator policy (--sandbox-policy-file) does not permit (composeResource)"#
+        );
+        // Without a scoping rule the same operator policy file narrows nothing.
+        f.policy = Some(Arc::new(
+            crate::authz::OperatorPolicy::new(
+                "test",
+                r#"permit (principal, action == Action::"usePrivateTmp", resource);"#,
+            )
+            .expect("policy"),
+        ));
+        let req = fence_request("", desired_with(&[]));
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        assert!(rsp.results.is_empty(), "{:?}", rsp.results);
     }
 }

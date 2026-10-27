@@ -706,6 +706,37 @@ impl Validator {
         ) {
             refuse!(format!("module {} {e}", resolved.description));
         }
+        // What the manifest declares the module composes, held against the
+        // policy layers' composeResource rules: advisory, since only a run
+        // can judge the module's actual output, so a declared change the
+        // layers would refuse is a warning naming the layer, not a refusal.
+        for c in &m.composes {
+            let Some((group, kind)) = c.group_and_kind() else {
+                continue;
+            };
+            for change in c.change_kinds() {
+                let declared = crate::authz::Change {
+                    group: group.to_string(),
+                    kind: kind.to_string(),
+                    change,
+                    name: String::new(),
+                    composite: false,
+                };
+                if let Some(layer) = admission::compose_refused_by(
+                    &declared,
+                    self.policy.as_deref(),
+                    comp,
+                    &principal,
+                ) {
+                    r.warnings.push(format!(
+                        "the module declares it composes {} ({}), which {} does not permit (composeResource)",
+                        c.kind,
+                        change.as_str(),
+                        layer.describe()
+                    ));
+                }
+            }
+        }
         // The credentials the module was granted are checked against the
         // request at run time; whether one is the pull credential the
         // Input already says.
@@ -850,8 +881,10 @@ fn describe_source(src: &ModuleSource) -> String {
     format!("path {}", src.path)
 }
 
-/// Lists what the step was admitted: its limits, and whether a
-/// compositionPolicy layer is present.
+/// Lists what the step was admitted: its limits, whether a
+/// compositionPolicy layer is present and, when that layer scopes
+/// composeResource, that the module's output is fenced - which only a run
+/// can judge.
 fn describe_admitted(input: &Input, admitted: &admission::Admitted) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(l) = &input.limits {
@@ -871,8 +904,11 @@ fn describe_admitted(input: &Input, admitted: &admission::Admitted) -> Vec<Strin
             out.push(format!("limits {}", limits.join(" ")));
         }
     }
-    if admitted.composition.is_some() {
+    if let Some(comp) = &admitted.composition {
         out.push("compositionPolicy".to_string());
+        if comp.scopes_action(crate::authz::ACTION_COMPOSE_RESOURCE) {
+            out.push("composeResource".to_string());
+        }
     }
     out
 }
