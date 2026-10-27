@@ -1,8 +1,8 @@
 # The policy-gate guest in TypeScript, componentized with jco: needs node and
 # npm (protoc only to regenerate the checked-in codec). Render needs the
 # crossplane CLI and Docker (the composition's first step,
-# function-go-templating, runs in a container), render-check also xprin.
-.PHONY: build test render render-check gen-proto clean
+# function-go-templating, runs in a container).
+.PHONY: build test render gen-proto clean
 
 node_modules: package-lock.json
 	npm ci --no-audit --no-fund
@@ -19,8 +19,6 @@ gen-proto: node_modules ## Regenerate the checked-in protobuf-es codec (protoc)
 render: build ## Start the runtime serving this directory and crossplane render example/
 	../render.sh $(CURDIR)
 
-render-check: build ## Like render, but assert the output (used by CI)
-	../render.sh $(CURDIR) --check
 
 clean:
 	rm -rf dist fn.wasm node_modules

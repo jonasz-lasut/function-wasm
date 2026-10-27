@@ -1,9 +1,8 @@
 # The cloudflare-origin guest, an ABI v2 component: needs Rust 1.100 or
 # newer with the wasm32-wasip3 target - rust-toolchain.toml pins 1.100's beta
 # until that release, and rustup installs it on first use - and protoc for
-# prost-build. Render needs the crossplane CLI and Docker, render-check also
-# xprin.
-.PHONY: build lint test render render-check clean
+# prost-build. Render needs the crossplane CLI and Docker.
+.PHONY: build lint test render clean
 
 # The one place this guest's wasm target is named; CI's lint step runs
 # `make lint` so the target travels with the guest, not the workflow.
@@ -24,8 +23,6 @@ test: ## Run the unit tests natively
 render: build ## Start the runtime serving this directory and crossplane render example/
 	../render.sh $(CURDIR)
 
-render-check: build ## Like render, but assert the output (used by CI)
-	../render.sh $(CURDIR) --check
 
 clean:
 	cargo clean

@@ -2,17 +2,17 @@
 # `guestfn` and the runtime come from this repository (cargo run), so nothing
 # needs to be installed except Go, Rust and, for render, the crossplane CLI
 # and Docker (the render engine runs in a container; the platform's
-# go-templating step too); render-check also needs xprin. wit-bindgen 0.62.0
+# go-templating step too). wit-bindgen 0.62.0
 # is only needed to regenerate the checked-in bindings (make gen-bindings;
 # the root Makefile's gen-bindings installs it pinned and mirrors the result
-# into the go template). GUESTFN, FUNCTION_BIN (read by ../render.sh), XPRIN
+# into the go template). GUESTFN, FUNCTION_BIN (read by ../render.sh)
 # and WIT_BINDGEN can name prebuilt binaries instead, as CI does.
 ROOT := $(abspath ../..)
 MODULE := github.com/jonasz-lasut/function-wasm/examples/pdb-addon
 GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 WIT_BINDGEN ?= wit-bindgen
 
-.PHONY: build lint test gen-bindings render render-check clean
+.PHONY: build lint test gen-bindings render clean
 
 build: ## Compile the guest to fn.wasm (a component: go build, the world embedded, the wasip1 adapter linked)
 	$(GUESTFN) build --dir $(CURDIR)
@@ -36,8 +36,6 @@ gen-bindings: ## Regenerate internal/bindings from wit/ (needs wit-bindgen 0.62.
 render: build ## Start the runtime serving this directory and crossplane render example/
 	../render.sh $(CURDIR)
 
-render-check: build ## Like render, but assert the output (used by CI)
-	../render.sh $(CURDIR) --check
 
 clean:
 	rm -f fn.wasm

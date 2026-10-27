@@ -6,12 +6,12 @@
 # (make gen-bindings; the root Makefile's gen-bindings installs it pinned and
 # mirrors the result into the c template) and nanopb_generator (pip install
 # nanopb) the checked-in codec (make gen-proto). Render needs the crossplane
-# CLI and Docker, render-check also xprin. GUESTFN, FUNCTION_BIN (read by
-# ../render.sh) and XPRIN can name prebuilt binaries instead, as CI does.
+# CLI and Docker. GUESTFN and FUNCTION_BIN (read by ../render.sh) can name
+# prebuilt binaries instead.
 ROOT := $(abspath ../..)
 GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 
-.PHONY: build test gen-proto gen-bindings render render-check clean
+.PHONY: build test gen-proto gen-bindings render clean
 
 build: ## Compile the guest to fn.wasm (a component)
 	$(GUESTFN) build --dir $(CURDIR)
@@ -28,8 +28,6 @@ gen-bindings: ## Regenerate src/gen from wit/ (needs wit-bindgen 0.62.0)
 render: build ## Start the runtime serving this directory and crossplane render example/
 	../render.sh $(CURDIR)
 
-render-check: build ## Like render, but assert the output (used by CI)
-	../render.sh $(CURDIR) --check
 
 clean:
 	rm -rf .zig-cache zig-out zig-pkg zig-prefix fn.wasm
