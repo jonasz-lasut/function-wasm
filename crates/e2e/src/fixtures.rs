@@ -115,6 +115,13 @@ impl Step {
         }
     }
 
+    /// The Input's compositionPolicy for a static source: the composition
+    /// author's narrowing layer (the output fence, a sandbox narrowing).
+    pub fn with_composition_policy(mut self, policy: &str) -> Step {
+        self.composition_policy = Some(policy.to_string());
+        self
+    }
+
     pub fn with_limits(mut self, limits: Value) -> Step {
         self.limits = Some(limits);
         self

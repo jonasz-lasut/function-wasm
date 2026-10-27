@@ -417,3 +417,51 @@ async fn module_from_unset_skips_the_step() -> Result<()> {
     })
     .await
 }
+
+/// The output fence (composeResource): a compositionPolicy that permits
+/// adding the guest's NopResources and writing its own status admits the
+/// module as before.
+#[tokio::test]
+async fn a_fenced_module_composes_what_the_policy_permits() -> Result<()> {
+    with_temp_ns("compose-permitted", |ns| async move {
+        ns.ensure_profile(Profile::Default).await?;
+        let step = Step::oci(&ns.state.variant("plain").reference()).with_composition_policy(
+            r#"permit (principal, action == Action::"composeResource", resource in Group::"nop.crossplane.io")
+when { context.change == "add" || context.change == "modify" };
+permit (principal, action == Action::"composeResource", resource)
+when { context.target == "composite" };"#,
+        );
+        let guest = ns
+            .guest("probe", &step, json!({"nopResources": 2}))
+            .await?;
+        guest.wait_ready(WAIT).await?;
+        ensure!(guest.composed_nops().await?.len() == 2, "two NopResources expected");
+        Ok(())
+    })
+    .await
+}
+
+/// The same guest under a policy that permits only its status: the first
+/// NopResource it composes is refused by name, with the layer, and nothing it
+/// composed is applied.
+#[tokio::test]
+async fn a_fenced_module_is_refused_for_a_kind_the_policy_does_not_permit() -> Result<()> {
+    with_temp_ns("compose-refused", |ns| async move {
+        ns.ensure_profile(Profile::Default).await?;
+        let step = Step::oci(&ns.state.variant("plain").reference()).with_composition_policy(
+            r#"permit (principal, action == Action::"composeResource", resource)
+when { context.target == "composite" };"#,
+        );
+        let guest = ns.guest("probe", &step, json!({})).await?;
+        let message = guest.wait_fatal(WAIT).await?;
+        ensure!(
+            message.contains(
+                r#"composed nop.crossplane.io/NopResource "nop-0" (add), which the compositionPolicy does not permit (composeResource)"#
+            ),
+            "{message}"
+        );
+        ensure!(guest.composed_nops().await?.is_empty(), "nothing composed must be applied");
+        Ok(())
+    })
+    .await
+}
