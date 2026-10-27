@@ -42,13 +42,12 @@ impl Profile {
         }
     }
 
-    /// The operator policy the profile mounts, None for a profile with no
-    /// --sandbox-policy-file.
+    /// The operator policy the profile mounts.
     pub fn policy(self) -> Option<&'static str> {
         match self {
             Profile::Default => Some(include_str!("../profiles/default/policy.cedar")),
             Profile::Strict => Some(include_str!("../profiles/strict/policy.cedar")),
-            Profile::Lifecycle => None,
+            Profile::Lifecycle => Some(include_str!("../profiles/lifecycle/policy.cedar")),
         }
     }
 
