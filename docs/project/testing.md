@@ -9,7 +9,7 @@ are no render tests and no shell scenarios; `crossplane render` is a
 | Tier | Runs | What it proves |
 |---|---|---|
 | unit and component | `cargo test --workspace`, every push and pull request | the engine over WAT fixtures and the committed end-to-end guest; the runtime's admission, resolver, policy, egress and signature code against in-memory stand-ins (a registry, a Sigstore instance); `function validate` against recorded goldens; the served runtime over gRPC; every scaffold built and run through the host (the guest suite) |
-| end-to-end | `make e2e` (`/e2e` on a pull request) | the package installed by Crossplane in a kind cluster: the runtime's behaviour as an XR author and an operator see it, one profile of runtime flags at a time |
+| end-to-end | `make e2e` (`/e2e` on a pull request; the [release matrix](#the-release-matrix) on a release branch) | the package installed by Crossplane in a kind cluster: the runtime's behaviour as an XR author and an operator see it, one profile of runtime flags at a time |
 
 ## Where a new test goes
 
@@ -36,8 +36,11 @@ make library (`build/makelib`, pinned kind, kubectl, helm and crossplane CLI
 under `.cache/tools`) and the suite's own setup binary:
 
 1. `controlplane.up`: a kind cluster (`KIND_CLUSTER_NAME`, default
-   `function-wasm-e2e`) with Crossplane at `CROSSPLANE_VERSION` (default
-   2.4.3; the environment overrides it).
+   `function-wasm-e2e`) with Crossplane at `CROSSPLANE_VERSION` (the
+   Makefile's default is the current Crossplane release, moved by Renovate;
+   the environment overrides it), then `e2e.crossplane`, a `kubectl wait`
+   for the Crossplane deployment and the package CRDs its init container
+   registers.
 2. `e2e-setup` (`crates/e2e/src/bin/setup.rs`): the `e2e` namespace; a
    `registry:3` behind Basic auth and TLS from a CA the setup generates
    (reused across runs); provider-nop (`PROVIDER_NOP_VERSION`); the test
@@ -104,7 +107,8 @@ make e2e.down
 `FUNCTION_BIN=<linux binary> make e2e.up` wraps a prebuilt runtime with
 `Dockerfile.dev` instead of compiling the workspace in the Dockerfile's build
 stage (what CI does). `KUBECONFIG` and the current context are the cluster's
-after `controlplane.up`.
+after `controlplane.up`. `CROSSPLANE_VERSION=2.2.7 make e2e` runs the whole
+suite on another Crossplane (the chart version, no `v`).
 
 ### In CI
 
@@ -113,4 +117,29 @@ every push. `/e2e` on a pull request runs `e2e.yml`: the guest suite with
 `FUNCTION_WASM_REQUIRE_TOOLCHAINS=1` (a missing toolchain fails instead of
 skipping), one build job per example toolchain (build, unit tests, lint,
 codec and bindings drift), and the cluster job: the three profiles in turn on
-one kind cluster, `make e2e.dump` uploaded on failure.
+one kind cluster at the Makefile's `CROSSPLANE_VERSION`, `make e2e.dump`
+uploaded on failure. A push to a `release-*` branch runs the release matrix
+below.
+
+### The release matrix
+
+Crossplane maintains its three most recent minor releases, shipped
+quarterly and each maintained for about nine months
+([release cycle](https://docs.crossplane.io/latest/learn/release-cycle/)),
+and the function supports the same three: the current minor, which every
+`/e2e` run tests, and the two before it. `release-matrix-e2e.yml` (#189)
+proves it before a release ships: every push to a `release-X.Y` branch (the
+cut of a new line, or a patch on an existing one) builds the runtime from
+the branch and runs `make e2e` three times in parallel, one kind cluster per
+version, the cluster dump uploaded for a failed version; `gh workflow run
+"Release Matrix E2E" --ref <ref>` runs it by hand on any ref. The versions live
+in two places and nowhere else: the Makefile's `CROSSPLANE_VERSION` default
+is the current one, and the workflow's `CROSSPLANE_PREVIOUS` and
+`CROSSPLANE_OLDEST` are the latest patch of the two older minors. Renovate
+moves all three (`renovate.json5`): the default to any new release, the
+two pins to a new patch of their own minor only, so when a new Crossplane
+minor ships, Renovate's PR that moves the default is the signal to shift
+both pins down one minor by hand in that PR. The `cut-release` skill pushes
+the branch, waits for the run and cuts the tag only when it is green: a
+red version is a release blocker, or the floor this page then states. The
+supported versions today are 2.4, 2.3 and 2.2.

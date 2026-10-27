@@ -1,0 +1,153 @@
+# Copyright 2026 The function-wasm Authors.
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The release matrix (#189, docs/project/testing.md): the end-to-end cluster
+# suite (`make e2e`: kind, Crossplane, provider-nop, the registry, the
+# package built from this ref, the three profiles, teardown) run once per
+# Crossplane minor the project supports, in parallel on three runners.
+# Crossplane maintains its three most recent minor releases
+# (docs.crossplane.io/latest/learn/release-cycle), so the matrix is the
+# current one - the Makefile's CROSSPLANE_VERSION default, what every /e2e
+# run tests - and the latest patch of the two minors before it, pinned
+# below. Nothing else runs here: the guest suite and the build jobs do not
+# depend on Crossplane.
+#
+# Runs on every push to a release-X.Y branch: the cut of a new line (the
+# cut-release skill pushes the branch, waits for this run and cuts the tag
+# only when it is green) and a patch on an existing one (remediate-cves).
+# A red version is a release blocker, or the floor the documentation then
+# states. It can also be started by hand on any ref, to try the matrix
+# itself:
+#   gh workflow run "Release Matrix E2E" --ref main
+name: Release Matrix E2E
+
+on:
+  push:
+    branches:
+      - 'release-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The two older minors. Renovate moves each to the latest patch of its own
+# minor only (renovate.json5: a minor or major update of these pins is
+# disabled); when a new Crossplane minor ships, Renovate's PR for the
+# Makefile's CROSSPLANE_VERSION is the signal to shift both pins down one
+# minor by hand in the same PR.
+env:
+  # renovate: datasource=github-releases depName=crossplane/crossplane
+  CROSSPLANE_PREVIOUS: '2.3.7'
+  # renovate: datasource=github-releases depName=crossplane/crossplane
+  CROSSPLANE_OLDEST: '2.2.7'
+
+jobs:
+  # The release runtime, built once and handed to every cluster job.
+  build-tools:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+
+      - name: Build the Runtime and guestfn
+        run: cargo build --locked --release -p function-wasm -p guestfn
+
+      - name: Upload the Runtime and guestfn
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-matrix-tools
+          path: |
+            target/release/function
+            target/release/guestfn
+          if-no-files-found: error
+          retention-days: 1
+
+  # One kind cluster per Crossplane version, all three at once. `current`
+  # leaves CROSSPLANE_VERSION to the Makefile's default; the other two set
+  # it from the pins above.
+  e2e:
+    name: e2e (crossplane ${{ matrix.crossplane }})
+    runs-on: ubuntu-26.04
+    needs: build-tools
+    strategy:
+      fail-fast: false
+      matrix:
+        crossplane: [current, previous, oldest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-matrix-tools
+          path: ${{ runner.temp }}/release-matrix-tools
+
+      - name: Use the Prebuilt Runtime
+        run: |
+          chmod +x "${RUNNER_TEMP}/release-matrix-tools/function"
+          echo "FUNCTION_BIN=${RUNNER_TEMP}/release-matrix-tools/function" >> "$GITHUB_ENV"
+
+      - name: Select the Crossplane Version
+        run: |
+          case "${{ matrix.crossplane }}" in
+            current) version="$(make -s -f Makefile print-crossplane-version)" ;;
+            previous) version="$CROSSPLANE_PREVIOUS"; echo "CROSSPLANE_VERSION=$version" >> "$GITHUB_ENV" ;;
+            oldest) version="$CROSSPLANE_OLDEST"; echo "CROSSPLANE_VERSION=$version" >> "$GITHUB_ENV" ;;
+          esac
+          echo "crossplane=$version" >> "$GITHUB_OUTPUT"
+          echo "Crossplane $version (${{ matrix.crossplane }})"
+        id: select
+
+      - name: Run the Suite
+        run: make e2e
+
+      - name: Dump the Cluster
+        if: failure()
+        run: make e2e.dump
+
+      - name: Upload the Dump
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-matrix-dump-${{ matrix.crossplane }}
+          path: |
+            _output/controlplane-dump
+            _output/e2e/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Tear the Cluster Down
+        if: always()
+        run: make e2e.down
+
+      - name: Summarize
+        if: always()
+        run: |
+          echo "- Crossplane ${{ steps.select.outputs.crossplane }} (${{ matrix.crossplane }}): ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"

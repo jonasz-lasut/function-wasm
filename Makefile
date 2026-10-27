@@ -26,9 +26,14 @@ $(error the crossplane build submodule is missing: run git submodule update --in
 endif
 
 # The cluster the suite provisions and the Crossplane it installs. Both are
-# overridable from the environment (CI sets CROSSPLANE_VERSION; a release
-# matrix would run the suite once per supported version).
+# overridable from the environment: /e2e runs the default, the release
+# matrix (.github/workflows/release-matrix-e2e.yml) runs the suite once per
+# Crossplane minor the project supports, setting CROSSPLANE_VERSION for the
+# two older ones. Renovate moves the default to the latest release (the
+# `# renovate:` comment); its PR for a new minor is the signal to shift the
+# matrix's two pins down one minor in the same PR.
 KIND_CLUSTER_NAME ?= function-wasm-e2e
+# renovate: datasource=github-releases depName=crossplane/crossplane
 CROSSPLANE_VERSION ?= 2.4.3
 PROVIDER_NOP_VERSION ?= v0.6.0
 
@@ -44,7 +49,9 @@ include build/makelib/local.xpkg.mk
 #
 # make e2e            up, the three profiles in turn, down (the library's
 #                     e2e pipeline: e2e.init, e2e.run, e2e.done)
-# make e2e.up         the cluster: kind + Crossplane (controlplane.up), the
+# make e2e.up         the cluster: kind + Crossplane (controlplane.up, then
+#                     e2e.crossplane waits for its deployment and the package
+#                     CRDs its init container registers), the
 #                     suite's setup (crates/e2e's e2e-setup binary: the
 #                     registry with its TLS and auth, provider-nop, the test
 #                     module pushed and signed under every variant, the
@@ -56,6 +63,9 @@ include build/makelib/local.xpkg.mk
 # make e2e.test       the three in turn
 # make e2e.down       delete the cluster
 # make e2e.guest      rebuild the committed test module, crates/e2e/guest/fn.wasm
+# make print-crossplane-version
+#                     the CROSSPLANE_VERSION in effect (the release matrix
+#                     reads the default this way)
 #
 # FUNCTION_BIN names a prebuilt linux runtime binary for the host's
 # architecture (CI's build-tools job hands one over), wrapped by
@@ -68,16 +78,27 @@ E2E_CARGO := cargo run -q -p function-wasm-e2e --features cluster
 E2E_GUEST_DIR := crates/e2e/guest
 FUNCTION_PKG_EXAMPLES := examples/pdb-addon/example
 
-.PHONY: e2e.up e2e.setup e2e.image e2e.test e2e.down e2e.guest e2e.dump xpkg.build.function-wasm
+.PHONY: e2e.up e2e.crossplane e2e.setup e2e.image e2e.test e2e.down e2e.guest e2e.dump xpkg.build.function-wasm print-crossplane-version
+print-crossplane-version:
+	@echo $(CROSSPLANE_VERSION)
 
 e2e.init: e2e.up
 e2e.run: e2e.test
 e2e.done: e2e.down
 
-e2e.up: controlplane.up e2e.setup xpkg.build.function-wasm local.xpkg.deploy.function.function-wasm
+e2e.up: controlplane.up e2e.crossplane e2e.setup xpkg.build.function-wasm local.xpkg.deploy.function.function-wasm
 	@$(INFO) waiting for the function to become healthy
 	@$(KUBECTL) wait function.pkg.crossplane.io/function-wasm --for=condition=Healthy --timeout=300s || $(FAIL)
 	@$(OK) the end-to-end cluster is up, run make e2e.test.default, e2e.test.strict or e2e.test.lifecycle
+
+# controlplane.up returns as soon as the chart is installed; Crossplane's
+# init container registers the package CRDs after that, and an older
+# release takes long enough for the setup's Provider to meet a 404.
+e2e.crossplane: $(KUBECTL)
+	@$(INFO) waiting for crossplane and its package api
+	@$(KUBECTL) wait --namespace $(CROSSPLANE_NAMESPACE) --for=condition=Available --timeout=300s deployment/crossplane || $(FAIL)
+	@$(KUBECTL) wait --for=condition=Established --timeout=120s crd/providers.pkg.crossplane.io crd/functions.pkg.crossplane.io crd/deploymentruntimeconfigs.pkg.crossplane.io || $(FAIL)
+	@$(OK) waiting for crossplane and its package api
 
 e2e.setup:
 	@$(INFO) setting up the registry, provider-nop and the test module
