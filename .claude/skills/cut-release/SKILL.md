@@ -8,11 +8,12 @@ description: Use when asked to cut a new minor or major release of function-wasm
 ## Overview
 
 Cutting a minor or major release ships everything currently merged to `main` as
-a brand-new version line: a new `release-X.Y` branch, tag, GitHub release,
-published package, and signed/attested artifacts. Unlike a CVE security patch
-(see `remediate-cves`), there is no fix to author — the branch is cut
-straight from `main` HEAD, and the version bump (minor vs major) is chosen by
-the user, never inferred.
+a brand-new version line: a new `release-X.Y` branch, the release matrix run
+on it (the end-to-end suite against every Crossplane minor the project
+supports), tag, GitHub release, published package, and signed/attested
+artifacts. Unlike a CVE security patch (see `remediate-cves`), there is no fix
+to author — the branch is cut straight from `main` HEAD, and the version bump
+(minor vs major) is chosen by the user, never inferred.
 
 Through the 0.x line the repo kept exactly **one** `release-X.Y` branch at a
 time, the latest, because CVE remediations only ever targeted that line, so
@@ -136,6 +137,35 @@ confirmation before continuing.
 git push -u origin "$NEW_BRANCH"
 ```
 
+### 5b. Wait for the release matrix — `Release Matrix E2E`, on the new branch
+
+The push starts it (`.github/workflows/release-matrix-e2e.yml` runs on every
+push to a `release-*` branch, #189; its `workflow_dispatch` is for trying the
+matrix on another ref, not for releasing). Find the run the push started and
+wait for it, as for green CI:
+
+```bash
+sleep 30   # the run appears a few seconds after the push
+RUN=$(gh run list --workflow "Release Matrix E2E" --branch "$NEW_BRANCH" --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RUN" --exit-status
+```
+
+The workflow builds the runtime from the branch and runs the end-to-end
+cluster suite (`make e2e`) three times in parallel: on the Makefile's
+`CROSSPLANE_VERSION` default, what every `/e2e` run tests, and on the two
+older minors pinned in the workflow's `env` - the three minors Crossplane
+maintains (docs.crossplane.io/latest/learn/release-cycle). It takes about
+twenty minutes. Nothing externally visible beyond the branch has happened
+yet, so a failure here is cheap: **a red version is a release blocker**.
+Stop and report which version failed and why (its
+`release-matrix-dump-<name>` artifact holds the cluster dump) - either the
+branch gets a fix (merged to `main`, the branch re-cut, the push starting the
+matrix again) or the user decides the version is no longer supported, in
+which case `docs/project/testing.md` states the new floor and the pins move
+before the release continues. Never cut the tag over a red matrix. On a
+release line cut before #189 merged the workflow does not exist on the
+branch and no run appears: say so and continue.
+
 ### 6. Cut the tag — `Tag` workflow, from the new release branch
 
 ```bash
@@ -248,6 +278,7 @@ superseded release branches, if any, were deleted.
 | Step | Ref to run from | Key inputs |
 |---|---|---|
 | Cut branch | `main` HEAD | new `release-X.Y` |
+| `Release Matrix E2E` | started by the push of `release-X.Y` | none; `gh run watch --exit-status` on it |
 | `Tag` | new release branch (`release-X.Y`) | `version`, `message` |
 | (n/a) `gh release create` | — | tag name, `--target` branch |
 | `Publish Function Package` | the new tag (`vX.Y.0` / `vX.0.0`) | `version` |
@@ -265,6 +296,9 @@ superseded release branches, if any, were deleted.
   is cut exactly once; if it exists, this version was already released.
 - Cutting from a red `main` — unlike CVE remediation there's no fix step or
   completeness gate to catch this, so a broken `main` ships broken as-is.
+- Cutting the tag before the release matrix is green on the branch, or
+  skipping it: `/e2e` covered the current Crossplane only; the two older
+  minors are tested nowhere else.
 - Running `Publish Function Package` against the branch instead of the new
   tag — builds a moving target if the branch gets more commits later.
 - Running `Supply Chain and Xpkg Extensions` from the tag instead of `main`
