@@ -80,7 +80,40 @@
   // examples rules switch it off for every package file - the workspace's
   // Cargo.lock included - and back on for the four example lockfiles.
   lockFileMaintenance: { enabled: true },
+  // The zig the e2e workflow installs, per runner architecture: each env line
+  // is <version>@<sha256 of the tarball>, and these datasources read both from
+  // ziglang.org's download index (every key but master is a release; the
+  // checksum is the architecture's tarball shasum), so a bump moves the
+  // version and its checksum together. One datasource per architecture, since
+  // a release has one digest per datasource.
+  customDatasources: {
+    'zig-x86_64-linux': {
+      defaultRegistryUrlTemplate: 'https://ziglang.org/download/index.json',
+      format: 'json',
+      transformTemplates: [
+        '{ "releases": $each($, function($v, $k) { $k != "master" and $exists($v."x86_64-linux") ? { "version": $k, "digest": $v."x86_64-linux".shasum } }), "homepage": "https://ziglang.org/download/" }',
+      ],
+    },
+    'zig-aarch64-linux': {
+      defaultRegistryUrlTemplate: 'https://ziglang.org/download/index.json',
+      format: 'json',
+      transformTemplates: [
+        '{ "releases": $each($, function($v, $k) { $k != "master" and $exists($v."aarch64-linux") ? { "version": $k, "digest": $v."aarch64-linux".shasum } }), "homepage": "https://ziglang.org/download/" }',
+      ],
+    },
+  },
   customManagers: [
+    {
+      // The zig pin of the e2e workflow: a `# renovate:` comment names the
+      // architecture's datasource above each <version>@<sha256> line.
+      customType: 'regex',
+      description: 'zig per runner architecture in .github/workflows/e2e.yml',
+      managerFilePatterns: ['/^\\.github/workflows/e2e\\.ya?ml$/'],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\s+ZIG_[A-Z0-9_]+: (?<currentValue>[^@\\s]+)@(?<currentDigest>[0-9a-f]{64})',
+      ],
+      versioningTemplate: 'semver',
+    },
     {
       // Crossplane CLI version installed by install.sh in the release workflows.
       // Since v2.3.0 the CLI is released from crossplane/cli (XP_CHANNEL=stable).
@@ -164,6 +197,20 @@
   ],
   // Rules are evaluated in order; later rules win.
   packageRules: [
+    {
+      // The two zig lines of e2e.yml are one dependency: one PR moves both.
+      // A new minor of Zig 0.x is a new language version: the zig and c
+      // templates and the examples are written for 0.16, so a minor moves
+      // with them by hand at release time; a patch release flows.
+      matchDepNames: ['zig'],
+      groupName: 'zig',
+      matchUpdateTypes: ['major', 'minor'],
+      enabled: false,
+    },
+    {
+      matchDepNames: ['zig'],
+      groupName: 'zig',
+    },
     // GitHub Actions: let a release settle before pulling its digest, batch
     // non-major bumps into one PR, and keep majors as separate PRs since they
     // tend to need workflow changes.
