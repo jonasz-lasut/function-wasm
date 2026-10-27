@@ -98,8 +98,8 @@ when { resource in Repository::"ghcr.io/acme/prod" };
 
 The crypto is unchanged: `--cosign-key` still provides the keys and performs
 the check; Cedar only decides *whether* a given repository must be signed, and
-the refusal (a required module that is unsigned, or that the runtime has no
-`--cosign-key` to verify) happens before any cache, exactly as the
+the refusal (a required module that is unsigned, or that the runtime has
+neither flag to verify it with) happens before any cache, exactly as the
 all-or-nothing check does. Precedence: **without** `--sandbox-policy-file`, `--cosign-key`
 keeps its all-or-nothing meaning unchanged; **with** a `--sandbox-policy-file`, the
 per-repository `requireSignature` decision governs which modules must be signed

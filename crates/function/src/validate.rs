@@ -562,7 +562,7 @@ impl Validator {
         if signature_required {
             let Some(verifier) = &self.verifier else {
                 refuse!(format!(
-                    "cannot verify module {}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it",
+                    "cannot verify module {}: the operator policy requires a cosign signature, but the runtime has neither --cosign-key nor --cosign-trusted-root to verify it",
                     resolved.description
                 ));
             };
@@ -642,7 +642,7 @@ impl Validator {
             && !self.verifier_configured
         {
             r.warnings.push(
-                "the module requires egress but is not signature-verified: no --cosign-key was given"
+                "the module requires egress but is not signature-verified: neither --cosign-key nor --cosign-trusted-root was given"
                     .to_string(),
             );
         }

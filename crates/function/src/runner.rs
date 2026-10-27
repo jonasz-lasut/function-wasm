@@ -262,7 +262,7 @@ impl WasmFunction {
                     rsp,
                     OUTCOME_REFUSED,
                     format!(
-                        "cannot verify module {}: the operator policy requires a cosign signature, but the runtime has no --cosign-key to verify it",
+                        "cannot verify module {}: the operator policy requires a cosign signature, but the runtime has neither --cosign-key nor --cosign-trusted-root to verify it",
                         resolved.description
                     ),
                 )));

@@ -210,7 +210,8 @@ by a signer a `trustSigner` rule trusts; a module from
 `ghcr.io/open/greeter` runs unsigned. With the rule but no `--cosign-key`,
 a required module is refused: `cannot verify module oci
 ghcr.io/secure/greeter@sha256:…: the operator policy requires a cosign
-signature, but the runtime has no --cosign-key to verify it`. A required
+signature, but the runtime has neither --cosign-key nor --cosign-trusted-root
+to verify it`. A required
 HTTP source is refused before any fetch, since only OCI artifacts carry a
 signature: `module.http "https://example.com/fn.wasm" requires a cosign
 signature (operator policy), but only OCI modules can be
@@ -365,8 +366,8 @@ is the zero principal, which matches no per-tenant condition, and a
 its fence checked only for the policy's presence. Exit codes: 0 when every
 step is admitted, 1 when at least one is refused, 2 when the tool itself
 failed. A module that requires egress on a run without `--cosign-key` gets
-the warning `the module requires egress but is not signature-verified: no
---cosign-key was given`.
+the warning `the module requires egress but is not signature-verified:
+neither --cosign-key nor --cosign-trusted-root was given`.
 
 ## Further reading
 

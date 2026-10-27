@@ -78,7 +78,7 @@ reported as chosen by the XR and checked for the rule the runtime enforces
 
 ```
 composition.yaml: Composition/hello pipeline[0] greeter: OK (oci ghcr.io/example/greeter:v1@sha256:3f2a…, limits timeout 5s memory 128Mi, compositionPolicy)
-  warning: the module requires egress but is not signature-verified: no --cosign-key was given
+  warning: the module requires egress but is not signature-verified: neither --cosign-key nor --cosign-trusted-root was given
 composition.yaml: Composition/hello pipeline[1] labeler: refused: module oci ghcr.io/example/labeler@sha256:9d1c… requires egress GET to host "evil.example.com" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit
 ```
 
