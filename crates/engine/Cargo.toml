@@ -43,4 +43,7 @@ wit-parser = "0.258.3"
 [dev-dependencies]
 function-sdk-rust = "0.4.0"
 prost = "0.14"
+# The committed-guest tests build the composite resource a RunFunctionRequest
+# carries (function-sdk-rust's Struct is pbjson's, serde-capable).
+pbjson-types = "0.9"
 wat = "1"
