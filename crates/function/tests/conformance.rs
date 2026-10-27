@@ -197,6 +197,8 @@ fn run_validate_env(
     for var in [
         "MODULE_DIR",
         "COSIGN_KEY",
+        "COSIGN_TRUSTED_ROOT",
+        "COSIGN_TRUST_INSTANCE",
         "SANDBOX_POLICY_FILE",
         "EGRESS_RATE_LIMIT_PER_MINUTE",
         "EGRESS_RATE_LIMIT_BURST",
@@ -1065,6 +1067,44 @@ fn validate_resolve_keyless_cosign_matches_the_goldens() {
             (addr.to_string(), "<REGISTRY>"),
         ];
         if let Some(f) = assert_golden(&format!("Cosign/{name}"), &rust_out, &subs) {
+            failures.push(f);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}
+
+/// The trusted root over TUF (--cosign-trust-instance, #183): the flag and
+/// --cosign-trusted-root exclude each other, and without --resolve nothing
+/// is fetched - the verdicts are a plain validate's - so both cases run
+/// offline. The fetch itself is covered by tests/trustroot.rs against a
+/// local repository.
+#[test]
+fn validate_trust_instance_matches_the_goldens() {
+    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let cwd = crate_dir();
+    let mut failures = Vec::new();
+    for (name, args) in [
+        (
+            "Exclusive",
+            vec![
+                "testdata/validate/ok.yaml",
+                "--cosign-trusted-root",
+                "trusted_root.json",
+                "--cosign-trust-instance",
+                "public-good",
+            ],
+        ),
+        (
+            "WithoutResolve",
+            vec![
+                "testdata/validate/ok.yaml",
+                "--cosign-trust-instance",
+                "public-good",
+            ],
+        ),
+    ] {
+        let out = run_validate(rust, &args, "", &cwd);
+        if let Some(f) = assert_golden(&format!("TrustInstance/{name}"), &out, &[]) {
             failures.push(f);
         }
     }
