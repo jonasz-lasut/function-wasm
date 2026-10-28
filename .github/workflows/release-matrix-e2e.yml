@@ -74,6 +74,9 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-on-failure: true
+          # A release branch's own cache; a workflow_dispatch run on another
+          # ref restores it and saves nothing (ci.yml says why).
+          save-if: ${{ startsWith(github.ref, 'refs/heads/release-') }}
 
       - name: Build the Runtime and guestfn
         run: cargo build --locked --release -p function-wasm -p guestfn
@@ -126,6 +129,9 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-on-failure: true
+          # A release branch's own cache; a workflow_dispatch run on another
+          # ref restores it and saves nothing (ci.yml says why).
+          save-if: ${{ startsWith(github.ref, 'refs/heads/release-') }}
 
       - name: Select the Crossplane Version
         run: |
