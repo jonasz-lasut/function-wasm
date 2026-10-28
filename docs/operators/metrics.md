@@ -3,7 +3,9 @@
 This page is for operators building dashboards and alerts on the runtime. It
 lists every series served on `--metrics-address` and the formats it speaks.
 The endpoint is `:8080/metrics` by default, and an empty value disables it.
-Probes are on [Readiness and warm-up](readiness.md).
+It's plain HTTP with no authentication: admit it from the scraper's namespace
+only ([the side ports](install.md#the-side-ports)). Probes are on
+[Readiness and warm-up](readiness.md).
 
 | metric | labels | meaning |
 |---|---|---|

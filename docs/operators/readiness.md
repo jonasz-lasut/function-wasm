@@ -14,7 +14,9 @@ caches are open, the engine is up and the modules named by `--warm-modules`
 
 Use the HTTP endpoints for Kubernetes probes. Crossplane runs functions with
 mTLS on the function port and kubelet's gRPC probe dials without credentials,
-so a `grpc:` probe never succeeds outside `--insecure`.
+so a `grpc:` probe never succeeds outside `--insecure`. The health port is
+plain HTTP with no authentication; [the side ports](install.md#the-side-ports)
+shows a `NetworkPolicy` for it.
 
 ```yaml
 apiVersion: pkg.crossplane.io/v1beta1
