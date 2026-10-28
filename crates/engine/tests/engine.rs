@@ -756,3 +756,35 @@ fn a_tail_call_is_refused_at_compile() {
     let err = e.compile(&wasm).expect_err("tail call").to_string();
     assert!(err.starts_with("cannot compile module: "), "{err}");
 }
+
+#[test]
+fn the_ceiling_is_per_run_across_regions() {
+    // Eight pages of ceiling. The prelude's four-page memory is charged at
+    // instantiation; a table of 40,000 elements (320 KB on a 64-bit host)
+    // fits the ceiling on its own but not beside the memory, so a ceiling
+    // checked per region would admit it and the per-run one denies it.
+    let e = Engine::new(Config {
+        memory_limit: 8 << 16,
+        ..Config::default()
+    })
+    .expect("engine");
+    let m = compile(&e, &function_wasm_engine::testing::grow_table_guest(40_000));
+    let out = e.run(&m, b"", RunOptions::default()).expect("run");
+    assert_eq!(
+        out.len(),
+        0,
+        "a growth past the run's total should be denied"
+    );
+    // Under a sixteen-page ceiling the same run fits.
+    let roomy = Engine::new(Config {
+        memory_limit: 16 << 16,
+        ..Config::default()
+    })
+    .expect("engine");
+    let m = compile(
+        &roomy,
+        &function_wasm_engine::testing::grow_table_guest(40_000),
+    );
+    let out = roomy.run(&m, b"", RunOptions::default()).expect("run");
+    assert_eq!(out.len(), 1, "the growth should succeed with room for both");
+}

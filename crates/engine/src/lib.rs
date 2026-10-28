@@ -159,14 +159,14 @@ impl Drop for PoolHold {
 }
 
 /// The per-run memory limiter: enforces the run's ceiling (limits.memory or
-/// the engine's memory_limit) per growable region - each linear memory and
-/// each table, whose elements cost a host pointer apiece - and reserves
-/// every growth - the initial memory included, since a component reserves
-/// nothing before it is instantiated - from the shared pool incrementally,
-/// so a run's pool footprint is what its guest actually claimed, not the
-/// worst-case ceiling. A growth the pool cannot serve before the run's
-/// deadline is denied: the guest sees memory.grow or table.grow fail,
-/// exactly as it does at the ceiling.
+/// the engine's memory_limit) over the sum of the run's growable regions -
+/// every linear memory and every table, whose elements cost a host pointer
+/// apiece - and reserves every growth - the initial memory included, since
+/// a component reserves nothing before it is instantiated - from the
+/// shared pool incrementally, so a run's pool footprint is what its guest
+/// actually claimed, not the worst-case ceiling. A growth the pool cannot
+/// serve before the run's deadline is denied: the guest sees memory.grow or
+/// table.grow fail, exactly as it does at the ceiling.
 pub(crate) struct RunLimiter {
     limit: usize,
     hold: Option<PoolHold>,
@@ -186,14 +186,16 @@ impl RunLimiter {
         }
     }
 
-    /// Charges a growth of `delta` bytes to a region that would then hold
-    /// `desired` bytes: denied past the ceiling, counted under `limit`, and
-    /// denied when the pool cannot serve the delta before the run's
-    /// deadline, counted under `pool`; `region` names the region in the log
-    /// line. Memories and tables go through here alike, so the pool sees
-    /// their sum.
-    fn charge(&mut self, delta: u64, desired: usize, region: &str) -> bool {
-        if desired > self.limit {
+    /// Charges a growth of `delta` bytes: denied when the run's regions
+    /// would then hold more than the ceiling together, counted under
+    /// `limit`, and denied when the pool cannot serve the delta before the
+    /// run's deadline, counted under `pool`; `region` names the region in
+    /// the log line. Memories and tables go through here alike, so the
+    /// ceiling and the pool both see their sum - which is what
+    /// --module-memory-limit's row promises ("memory one run may use"),
+    /// where a per-region check let a run hold the ceiling once per region.
+    fn charge(&mut self, delta: u64, region: &str) -> bool {
+        if self.charged + delta > self.limit as u64 {
             metrics::MEMORY_DENIALS.with_label_values(&["limit"]).inc();
             return false;
         }
@@ -220,7 +222,7 @@ impl wasmtime::ResourceLimiter for RunLimiter {
         desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        Ok(self.charge((desired - current) as u64, desired, "memory"))
+        Ok(self.charge((desired - current) as u64, "memory"))
     }
 
     fn table_growing(
@@ -234,7 +236,7 @@ impl wasmtime::ResourceLimiter for RunLimiter {
         // charge here a guest's table.grow loop allocated host memory the
         // ceiling and the pool never saw (the 1.0 audit's F-1).
         let elem = std::mem::size_of::<usize>();
-        Ok(self.charge(((desired - current) * elem) as u64, desired * elem, "table"))
+        Ok(self.charge(((desired - current) * elem) as u64, "table"))
     }
 }
 
