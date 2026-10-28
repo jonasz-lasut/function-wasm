@@ -112,6 +112,12 @@ struct ServeArgs {
     #[arg(long, default_value_t = 1, env = "MAX_CONCURRENT_COMPILES")]
     max_concurrent_compiles: usize,
 
+    /// Wall-clock bound on a cold load (the fetch and compile of a module
+    /// not yet cached); past it the request fails with a fatal result while
+    /// the compile finishes and stores its artifact. 0 leaves it unbounded.
+    #[arg(long, default_value = "0", env = "MODULE_COMPILE_TIMEOUT", value_parser = duration::parse)]
+    module_compile_timeout: Duration,
+
     /// Sustained egress requests per minute per module digest. 0 leaves
     /// egress unrated.
     #[arg(
@@ -351,6 +357,8 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             no_memory: !args.enable_memory_cache,
             max_entries: args.max_cached_modules,
             max_concurrent_compiles: args.max_concurrent_compiles,
+            compile_timeout: (!args.module_compile_timeout.is_zero())
+                .then_some(args.module_compile_timeout),
             ..Default::default()
         },
     ));

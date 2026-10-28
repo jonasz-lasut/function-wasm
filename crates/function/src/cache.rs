@@ -34,6 +34,11 @@ pub struct CacheOptions {
     /// Most compiled modules kept in memory at once; the least recently
     /// used is dropped beyond it. 0 leaves it to the idle TTL alone.
     pub max_entries: usize,
+    /// Wall-clock bound on a cold load, the fetch and compile of a module
+    /// no tier holds; None leaves it unbounded. Past it the request fails
+    /// while the compile runs to its end on its thread, keeps its compile
+    /// slot until then and stores its artifact for the next request.
+    pub compile_timeout: Option<Duration>,
     /// Most modules compiling at once - a compile uses every core and
     /// about a gigabyte for a large guest. 0 means 1.
     pub max_concurrent_compiles: usize,
@@ -45,7 +50,8 @@ pub struct ModuleCache {
     ttl: Duration,
     no_memory: bool,
     max_entries: usize,
-    compiles: Semaphore,
+    compiles: Arc<Semaphore>,
+    compile_timeout: Option<Duration>,
     entries: Mutex<HashMap<String, Entry>>,
     loading: AsyncMutex<HashMap<String, Arc<OnceCell<Module>>>>,
 }
@@ -63,7 +69,8 @@ impl ModuleCache {
             ttl: o.idle_ttl.unwrap_or(DEFAULT_IDLE_TTL),
             no_memory: o.no_memory,
             max_entries: o.max_entries,
-            compiles: Semaphore::new(o.max_concurrent_compiles.max(1)),
+            compiles: Arc::new(Semaphore::new(o.max_concurrent_compiles.max(1))),
+            compile_timeout: o.compile_timeout,
             entries: Mutex::new(HashMap::new()),
             loading: AsyncMutex::new(HashMap::new()),
         }
@@ -133,15 +140,18 @@ impl ModuleCache {
         }
         // Fetch and compile, at most max_concurrent_compiles at a time;
         // further loads wait their turn, and their requesters with them.
-        let _permit = self
-            .compiles
-            .acquire()
+        // The permit travels into the blocking closure: a load cut short by
+        // the bound keeps its slot until the compile ends, so the bound
+        // never admits a second runaway compile beside the first.
+        let permit = Arc::clone(&self.compiles)
+            .acquire_owned()
             .await
             .expect("the semaphore is never closed");
         let engine = Arc::clone(&self.engine);
         let disk = self.disk.clone();
         let key = digest.to_string();
-        let m = tokio::task::spawn_blocking(move || {
+        let load = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             let wasm = fetch()?;
             let m = engine.compile(&wasm).map_err(|e| e.to_string())?;
             if let Some(disk) = disk {
@@ -152,9 +162,26 @@ impl ModuleCache {
                 }
             }
             Ok::<Module, String>(m)
-        })
-        .await
-        .map_err(|e| format!("internal error while loading the module: {e}"))??;
+        });
+        let joined = match self.compile_timeout {
+            // Wasmtime cannot cancel a compile in progress: past the bound the
+            // request fails and the thread finishes on its own, writing its
+            // artifact for the next request (the 1.0 audit's F-4).
+            Some(bound) => match tokio::time::timeout(bound, load).await {
+                Ok(joined) => joined,
+                Err(_) => {
+                    CACHE_EVENTS
+                        .with_label_values(&[metrics::CACHE_COMPILED, metrics::EVENT_TIMEOUT])
+                        .inc();
+                    return Err(format!(
+                        "compile exceeded --module-compile-timeout {}",
+                        function_wasm_engine::duration::format(bound)
+                    ));
+                }
+            },
+            None => load.await,
+        };
+        let m = joined.map_err(|e| format!("internal error while loading the module: {e}"))??;
         Ok(m)
     }
 
@@ -257,6 +284,40 @@ mod tests {
             })
             .await
             .expect("reload");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_slow_load_is_cut_at_the_compile_timeout() {
+        // The fetch stands in for a slow compile: both run on the load's
+        // thread under the bound. The late load keeps the one compile slot
+        // until it ends, so the retry queues behind it and then succeeds.
+        let cache = ModuleCache::new(
+            engine(),
+            CacheOptions {
+                compile_timeout: Some(Duration::from_millis(50)),
+                ..Default::default()
+            },
+        );
+        let wasm = crate::testing::guests::tiny_component();
+        let slow = wasm.clone();
+        let err = cache
+            .get("sha256:m", move || {
+                std::thread::sleep(Duration::from_millis(300));
+                Ok(slow)
+            })
+            .await
+            .expect_err("cut short");
+        assert_eq!(err, "compile exceeded --module-compile-timeout 50ms");
+        let timeouts = function_wasm_engine::metrics::sample(
+            "function_wasm_module_cache_events_total",
+            &[("cache", "compiled"), ("event", "timeout")],
+        )
+        .unwrap_or(0.0);
+        assert!(timeouts >= 1.0, "the timeout should be counted");
+        cache
+            .get("sha256:m", move || Ok(wasm))
+            .await
+            .expect("a retry after the slow load succeeds");
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -13,7 +13,7 @@ Probes are on [Readiness and warm-up](readiness.md).
 | `function_wasm_module_hostcall_duration_seconds` | | histogram of the time a run spent inside host imports (the `log` import, HTTP egress over `wasi:http`, and WASI); the rest of `run_duration_seconds` is guest compute |
 | `function_wasm_module_compile_duration_seconds` | | histogram of Wasmtime compile time on compiled-cache misses |
 | `function_wasm_module_fetch_duration_seconds` | `source` = `oci`, `http`, `path` | histogram of fetch and verify time, blob-cache hits and served-file reads included |
-| `function_wasm_module_cache_events_total` | `cache` = `compiled` (memory), `compiled-disk`, `blob`; `event` = `hit`, `miss`, `stale` | cache lookups; `stale` is an artifact on disk that Wasmtime refused, and appears for `compiled-disk` only |
+| `function_wasm_module_cache_events_total` | `cache` = `compiled` (memory), `compiled-disk`, `blob`; `event` = `hit`, `miss`, `stale`, `timeout` | cache lookups; `timeout` is a cold load cut short by `--module-compile-timeout`; `stale` is an artifact on disk that Wasmtime refused, and appears for `compiled-disk` only |
 | `function_wasm_module_cache_bytes` | `cache` = `compiled-disk`, `blob` | bytes on disk per store, measured every ten minutes |
 | `function_wasm_module_http_requests_total` | `outcome` = `ok`, `refused`, `budget`, `error` | HTTP requests modules made through the host (`requires.egress.http`) |
 | `function_wasm_module_memory_denials_total` | `reason` = `limit`, `pool` | guest memory and table growths denied; the guest sees `memory.grow` or `table.grow` fail |

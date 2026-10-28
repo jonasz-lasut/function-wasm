@@ -26,6 +26,7 @@ By default nothing is bounded: concurrency is the caller's, set by Crossplane's 
 | `--max-concurrent-runs` | `MAX_CONCURRENT_RUNS` | `0` (unbounded) | no | module runs executing at once; a request that can't get a slot before its deadline is a fatal result (`waiting for a run slot: deadline exceeded`) and never ran |
 | `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | no | total memory budget in MB across running modules, linear memories and tables together; see below |
 | `--max-concurrent-compiles` | `MAX_CONCURRENT_COMPILES` | `1` | no | modules compiled at once; a compile is heavy on CPU and memory, so further first requests wait their turn |
+| `--module-compile-timeout` | `MODULE_COMPILE_TIMEOUT` | `0` (unbounded) | no | wall-clock bound on a cold load, the fetch and compile of a module that isn't cached yet. Past it the request fails with `cannot load module …: compile exceeded --module-compile-timeout <duration>`; the compile runs to its end, keeps its compile slot until then and stores its artifact for the next request. The syntax of `--module-timeout` |
 
 A component reserves nothing up front. The runtime charges each memory or table growth, the initial memory included, to the `--max-total-run-memory` pool as the guest claims it, and a run waits under its deadline while the pool is full. A growth the pool can't serve before the deadline fails inside the guest as a failed `memory.grow`, counted in `function_wasm_module_memory_denials_total`. See [Sizing](sizing.md) for what these bounds cost.
 
