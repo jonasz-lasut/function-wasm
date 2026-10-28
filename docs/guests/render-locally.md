@@ -12,7 +12,7 @@ crossplane render example/xr.yaml example/composition.yaml example/functions.yam
 
 The example Composition uses `module.type: Path` with `path: fn.wasm`; swap
 in `type: OCI` and the `oci` reference for a cluster. In this repository `make -C examples/pdb-addon render`
-does all of the above for the Go example. It is a loop for your eyes, not
-a test: what an example composes is asserted by the repository's
+runs those three steps for the Go example. It's a loop for your eyes and
+doesn't test anything: what an example composes is asserted by the repository's
 [end-to-end suite](../project/testing.md) in a cluster, through a module of
 its own.

@@ -6,20 +6,23 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features
 (cd examples/pdb-addon && go test ./...)            # the Go example and its vendored internal/wasmfn glue
 make -C examples/pdb-addon render                   # the development loop: function validate, the runtime served, crossplane render
 make e2e                                            # the end-to-end suite in a kind cluster (testing.md)
+make vale                                           # the prose of docs/, README.md and SECURITY.md under Vale (.vale.ini; any alert fails, as in CI)
 ```
 
 The workspace tests build every scaffold (what `guestfn init` writes) to
 WebAssembly and run them all through the host when
-their toolchains (go, cargo with the rust scaffold's pinned
-toolchain, zig, npm, python3) are on PATH, and skip the ones that are not.
+their toolchains (`go`, `cargo` with the `rust` scaffold's pinned
+toolchain, `zig`, `npm`, `python3`) are on PATH, and skip the ones that
+aren't.
 [Testing](testing.md) sets out the two tiers and where a new test goes. See
 [AGENTS.md](https://github.com/jonasz-lasut/function-wasm/blob/main/AGENTS.md) for the layout and conventions.
 
-Design documents live under `docs/` as one-pagers: the implemented ones
-(cache, module source schema, trust model, resource governance, sandbox,
-admission and inspection tooling, the module manifest, manifest-less
-sources, the three-layer authorization model, the policy engine,
-governance and performance phases, the use-case examples) and the drafts
-(ABI v2 on the component model, guest language support, a Nix development
-environment).
+Design documents are under `docs/` as one-pagers, one per feature, each
+headed by its status - implemented (cache, module source schema, trust
+model, resource governance, sandbox, admission and inspection tooling,
+the module manifest, manifest-less sources, the three-layer authorization
+model, the policy engine, governance and performance phases, the use-case
+examples, ABI v2 on the component model, guest language support),
+withdrawn (the local loop, a Nix development environment) or superseded
+(request-delivered secrets).
 [Design records](design-records.md) lists them.

@@ -195,7 +195,7 @@ e2e.guest:
 # change to a world, a re-vendoring of the WASI WIT, or a wit-bindgen bump
 # (the generated files' header names the version; e2e.yml's drift checks
 # install the same one).
-.PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens vendor-docs-highlight gen-bindings tools tools-clean
+.PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens vendor-docs-highlight gen-bindings tools tools-clean vale
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:
 
@@ -229,6 +229,20 @@ WIT_BINDGEN := $(TOOLS)/wit-bindgen-$(WIT_BINDGEN_VERSION)/bin/wit-bindgen
 # Only the three pinned binaries, never the nanopb venv's bin/ (its python3
 # would shadow the system one), go in front of PATH.
 WITH_TOOLS := PATH="$(TOOLS)/bin:$$PATH"
+
+# Vale, the prose linter over the documentation (.vale.ini names the paths'
+# styles and pins the style packages): the release tarball for this OS and
+# architecture, checked against the release's checksum file. Renovate moves
+# the pin through the `# renovate:` comment. The packages are synced once
+# per change of .vale.ini (the stamp file), under the gitignored part of
+# .vale/styles.
+# renovate: datasource=github-releases depName=errata-ai/vale
+VALE_VERSION := 3.25.1
+VALE_OS := $(if $(filter Darwin,$(shell uname -s)),macOS,Linux)
+VALE_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,64-bit)
+VALE := $(TOOLS)/vale-$(VALE_VERSION)/vale
+VALE_SYNCED := .vale/styles/.synced
+VALE_PATHS := docs README.md SECURITY.md
 
 PROTO_COPIES := $(shell git ls-files '*/proto/run_function.proto')
 PROTO_VERSION_FILE := crates/guestfn/templates/rust/proto/run_function.proto
@@ -376,3 +390,31 @@ $(WIT_BINDGEN):
 
 tools-clean: ## Remove the installed tools
 	rm -rf .cache/tools
+
+# Every alert fails, warnings included (Vale's own exit code is 1 for
+# errors only): the line output is empty when the prose is clean, and a run
+# that printed nothing but did not exit 0 is a broken configuration, which
+# fails too rather than passing as clean.
+vale: $(VALE) $(VALE_SYNCED) ## Lint the documentation's prose with the pinned Vale (installs it and syncs the style packages first); any alert fails
+	@if out=$$($(VALE) --output=line $(VALE_PATHS)); then status=0; else status=$$?; fi; \
+	if [ -n "$$out" ]; then printf '%s\n' "$$out"; echo "vale: $$(printf '%s\n' "$$out" | wc -l | tr -d ' ') alerts"; exit 1; fi; \
+	if [ "$$status" -ne 0 ]; then echo "vale: exited $$status with no alerts"; exit "$$status"; fi; \
+	echo "vale: no alerts"
+
+$(VALE):
+	@set -e; \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	echo "installing vale $(VALE_VERSION) ($(VALE_OS)-$(VALE_ARCH))"; \
+	mkdir -p "$(dir $(VALE))"; \
+	base=https://github.com/errata-ai/vale/releases/download/v$(VALE_VERSION); \
+	asset=vale_$(VALE_VERSION)_$(VALE_OS)_$(VALE_ARCH).tar.gz; \
+	curl -fsSL -o "$$tmp/$$asset" "$$base/$$asset"; \
+	curl -fsSL -o "$$tmp/checksums.txt" "$$base/vale_$(VALE_VERSION)_checksums.txt"; \
+	(cd "$$tmp" && grep " $$asset\$$" checksums.txt | shasum -a 256 -c -); \
+	tar -xzf "$$tmp/$$asset" -C "$$tmp" vale; \
+	cp "$$tmp/vale" "$(VALE)"
+
+$(VALE_SYNCED): .vale.ini $(VALE)
+	@echo "syncing the Vale packages .vale.ini names"
+	@$(VALE) sync
+	@touch "$@"

@@ -3,21 +3,21 @@
 [![CI](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml)
 
 > [!CAUTION]
-> **Experimental.** function-wasm is young: the sandbox has not had an
+> **Experimental.** function-wasm is young: the sandbox hasn't had an
 > independent security review, and nothing here has run in production yet.
 > From 1.0.0 the Input, the guest ABI, the runtime flags and the rest of
-> the surface listed under [Compatibility](contract/compatibility.md) change only
+> what [Compatibility](contract/compatibility.md) lists change only
 > through its deprecation policy; before it they could change between
 > minor releases. Try it, break it and
 > [open an issue](https://github.com/jonasz-lasut/function-wasm/issues),
-> but do not build a platform on it yet.
+> but don't build a platform on it yet.
 
 A [Crossplane](https://crossplane.io) composition function that runs a
-WebAssembly module in a [wasmtime](https://wasmtime.dev) sandbox. The module
-implements the same contract as a native composition function —
-`RunFunction(RunFunctionRequest) → RunFunctionResponse` — so you write an
+WebAssembly module in a [Wasmtime](https://wasmtime.dev) sandbox. The module
+follows the same contract as a native composition function,
+`RunFunction(RunFunctionRequest) → RunFunctionResponse`. You write an
 ordinary [function-sdk-go](https://github.com/crossplane/function-sdk-go)
-function, compile it to WebAssembly, publish the module, and point a
+function and compile it to WebAssembly, then publish the module and point a
 Composition step at it. One installed `function-wasm` serves any number of
 modules; changing composition logic never means building, publishing and
 installing another Function package.

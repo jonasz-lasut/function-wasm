@@ -1,18 +1,18 @@
 # Operator grant policy
 
-`--sandbox-policy-file` is the **sole authority that enables a sandbox
-capability**: a [Cedar](https://www.cedarpolicy.com) document, the operator's
-grant policy and the top layer of the three-layer decision, that decides
+`--sandbox-policy-file` is the **one authority that enables a sandbox
+capability**: a [Cedar](https://www.cedarpolicy.com) document with the
+operator's grant policy, the top layer of the three-layer decision. It decides
 *which callers* a module's manifest may be granted a private `/tmp`
 (`usePrivateTmp`), environment bound to step credentials (`setEnv`,
 `spendCredential`), the step credentials it reads from its request
 (`spendCredential`) or egress (`grantEgress`, which is also the host
-allowlist) for. It is evaluated **default-deny** (a `forbid` overrides a
-`permit`): a capability no permit matches is refused. Without a
+allowlist) for. It's evaluated **default-deny** (a `forbid` overrides a
+`permit`): the runtime refuses a capability unless a permit matches it. Without a
 `--sandbox-policy-file` no sandbox capability is grantable at all and a runtime
-offers only the default sandbox (nothing but the request). The document lives
-on the operator boundary alone - a module's manifest can only request, and
-the Input's `compositionPolicy` can only narrow, so neither can widen past
+offers only the default sandbox (nothing but the request). The document belongs
+to the operator boundary alone. A module's manifest can only request, and
+the Input's `compositionPolicy` can only narrow. Neither can widen past
 it.
 
 The schema both layers share (the principal, the entity types, the eight
@@ -22,13 +22,13 @@ the operator's side of it.
 
 The principal every rule sees is the caller: `principal.namespace` and
 `principal.xrKind` come from the observed composite resource (a
-`RunFunctionRequest` carries no Composition name, so `principal.composition`
+`RunFunctionRequest` doesn't include the Composition name, so `principal.composition`
 is presently always empty). The actions are `usePrivateTmp`, `setEnv`,
 `spendCredential` and `grantEgress`; for a step credential the resource is
 `Credential::"<name>"`, for egress the host or pattern within a
 boundary-correct `HostPattern` hierarchy, and the context carries the method
 and path. A separate, caller-independent action `requireSignature` (over the
-`Repository` hierarchy) decides which repositories must carry a cosign
+`Repository` hierarchy) decides which repositories require a cosign
 signature - see [signing](signatures.md). A policy that lets only `team-a`
 use a private `/tmp` and lets any namespace reach `*.example.com`:
 
@@ -59,11 +59,11 @@ spec:
             configMap: {name: function-wasm-policy}
 ```
 
-One action is not a capability: `composeResource` is the operator's ceiling
+One action isn't a capability: `composeResource` is the operator's ceiling
 on what any module may compose, judged over the module's response after the
 run, and it narrows only where a rule scopes it (a runtime with no policy
 file, or a file with no such rule, serves every module's output as before).
-A `forbid` alone scopes it and permits nothing, so a ceiling needs a
+A `forbid` alone scopes it and permits nothing. A ceiling needs a
 `permit` beside it:
 
 ```cedar

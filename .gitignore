@@ -20,3 +20,11 @@ target/
 
 # The mdBook output (book.toml: build-dir).
 /book
+
+# The style packages `make vale` syncs from .vale.ini (ai-tells also drops
+# a config/templates/); the project's own vocabulary (config/vocabularies)
+# beside them is tracked.
+/.vale/styles/*
+!/.vale/styles/config
+/.vale/styles/config/*
+!/.vale/styles/config/vocabularies

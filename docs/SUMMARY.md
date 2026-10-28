@@ -3,7 +3,7 @@
 [Introduction](introduction.md)
 
 - [Use cases](use-cases.md)
-- [How a request runs](how-a-request-runs.md)
+- [A request, step by step](how-a-request-runs.md)
 
 # Guest authors
 
@@ -11,7 +11,7 @@
 - [Other languages](guests/other-languages.md)
 - [Module manifests](guests/module-manifests.md)
 - [Render locally](guests/render-locally.md)
-- [Validate a Composition](guests/validate.md)
+- [Check a composition](guests/validate.md)
 
 # Operators
 
@@ -40,19 +40,19 @@
 - [Security policy](project/security.md)
 - [Use-case examples](one-pager-use-case-examples.md)
 - [Design records](project/design-records.md)
-  - [ABI v2 and the Rust Host (Draft, revision 0.5)](one-pager-abi-v2.md)
-  - [Admission and Inspection Tooling (Implemented, revision 1.0)](one-pager-admission-tooling.md)
-  - [Module and Compiled Artifacts Cache (Implemented, revision 2.2)](one-pager-cache.md)
-  - [Governance and Performance Additions (Implemented, revision 0.2)](one-pager-governance-perf.md)
-  - [Guest Language Support (Draft, revision 0.5)](one-pager-language-support.md)
-  - [Local Loop and Run Diagnostics (Withdrawn)](one-pager-local-loop.md)
-  - [Manifests for Manifest-less Sources (Implemented, revision 0.1)](one-pager-manifest-less-sources.md)
-  - [Module Manifest (Implemented, revision 1.2)](one-pager-module-manifest.md)
-  - [Module Source Schema (Implemented, revision 2.2)](one-pager-module-source-schema.md)
-  - [Nix Development Environment (Draft, revision 0.1)](one-pager-nix-devenv.md)
-  - [Policy Engine (Cedar) Evaluation (Implemented, revision 0.4)](one-pager-policy-engine.md)
-  - [Request-Delivered Secrets and Files (Superseded)](one-pager-request-secrets.md)
-  - [Runtime Resource Governance (Implemented, revision 1.3)](one-pager-resource-governance.md)
-  - [WASM Sandbox (Implemented, revision 1.8)](one-pager-sandbox.md)
-  - [Three-Layer Authorization Model (Implemented, revision 1.1)](one-pager-three-layer-authz.md)
-  - [Trust Model (Implemented, revision 1.6)](one-pager-trust-model.md)
+  - [ABI v2 and the Rust Host (Implemented, revision 0.6)](one-pager-abi-v2.md)
+  - [Admission and inspection tooling (Implemented, revision 1.0)](one-pager-admission-tooling.md)
+  - [Module and compiled artifacts cache (Implemented, revision 2.2)](one-pager-cache.md)
+  - [Governance and performance additions (Implemented, revision 0.2)](one-pager-governance-perf.md)
+  - [Guest language support (Implemented, revision 0.7)](one-pager-language-support.md)
+  - [Local loop and run diagnostics (Withdrawn)](one-pager-local-loop.md)
+  - [Manifests for manifest-less sources (Implemented, revision 0.1)](one-pager-manifest-less-sources.md)
+  - [Module manifest (Implemented, revision 1.3)](one-pager-module-manifest.md)
+  - [Module source schema (Implemented, revision 2.2)](one-pager-module-source-schema.md)
+  - [Nix development environment (Withdrawn)](one-pager-nix-devenv.md)
+  - [Policy engine (Cedar) evaluation (Implemented, revision 0.4)](one-pager-policy-engine.md)
+  - [Request-delivered secrets and files (Superseded)](one-pager-request-secrets.md)
+  - [Runtime resource governance (Implemented, revision 1.3)](one-pager-resource-governance.md)
+  - [WASM sandbox (Implemented, revision 1.8)](one-pager-sandbox.md)
+  - [Three-layer authorization model (Implemented, revision 1.2)](one-pager-three-layer-authz.md)
+  - [Trust model (Implemented, revision 1.9)](one-pager-trust-model.md)

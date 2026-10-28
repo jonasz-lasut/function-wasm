@@ -212,6 +212,33 @@
       depNameTemplate: 'cedar-policy/highlightjs-cedar',
       datasourceTemplate: 'github-releases',
     },
+    {
+      // Vale, the prose linter the Makefile installs under .cache/tools for
+      // `make vale` (run by the docs workflow too): a `# renovate:` comment
+      // above the VALE_VERSION pin. Releases are tagged vX.Y.Z; the pin
+      // carries no v.
+      customType: 'regex',
+      description: 'the Vale release the Makefile installs',
+      managerFilePatterns: ['/^Makefile$/'],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\s+VALE_VERSION := (?<currentValue>\\d+\\.\\d+\\.\\d+)',
+      ],
+      extractVersionTemplate: '^v(?<version>.*)$',
+      versioningTemplate: 'semver',
+    },
+    {
+      // The Vale style packages .vale.ini syncs, each pinned to a GitHub
+      // release by URL (a bare catalog name floats). A bump PR moves the
+      // URL; `make vale` re-syncs on the next run, since the stamp file
+      // depends on .vale.ini, and the docs workflow proves the new rules.
+      customType: 'regex',
+      description: 'the Vale style packages .vale.ini pins',
+      managerFilePatterns: ['/^\\.vale\\.ini$/'],
+      matchStrings: [
+        'https://github\\.com/(?<depName>[^/\\s]+/[^/\\s]+)/releases/download/(?<currentValue>v\\d+\\.\\d+\\.\\d+)/',
+      ],
+      datasourceTemplate: 'github-releases',
+    },
   ],
   // Rules are evaluated in order; later rules win.
   packageRules: [
@@ -342,6 +369,21 @@
       matchManagers: ['custom.regex'],
       matchPackageNames: ['@highlightjs/cdn-assets', 'cedar-policy/highlightjs-cedar'],
       groupName: 'docs Cedar highlighting',
+    },
+    // Vale and its style packages: the binary's pin in the Makefile and the
+    // package URLs in .vale.ini move in one PR, which the docs workflow's
+    // prose job checks against the whole book.
+    {
+      matchManagers: ['custom.regex'],
+      matchDepNames: [
+        'errata-ai/vale',
+        'errata-ai/Google',
+        'errata-ai/Microsoft',
+        'errata-ai/proselint',
+        'errata-ai/write-good',
+        'tbhb/vale-ai-tells',
+      ],
+      groupName: 'vale',
     },
 
     // The monthly examples refresh. The examples are illustrative and never
