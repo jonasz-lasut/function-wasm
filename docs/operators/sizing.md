@@ -1,7 +1,7 @@
 # Sizing
 
 What a request and a module cost depends almost entirely on the guest's
-toolchain - the host adds about 60 µs. A historical measurement
+toolchain. A historical measurement
 (2026-08-16, linux/arm64, the ABI v1 guests of the time: a
 `function-sdk-go` Go guest, a raw-proto Go guest using only the vendored
 glue, TinyGo, Rust), kept as the approximate scale per toolchain: the
@@ -9,7 +9,7 @@ TinyGo flavour is gone and the other guests are ABI v2
 components (the Go module's size and compile cost didn't move; the Rust
 scaffold is now ~240 KB):
 
-| | Go (~75 MB) | Go, raw proto (~20 MB) | TinyGo (~1.4 MB, retired) | Rust (~150 KB) |
+| | Go (~75 MB) | Go, raw proto (~20 MB) | TinyGo (~1.4 MB, retired) | Rust (~240 KB) |
 |---|---|---|---|---|
 | one request (CPU) | 8-11 ms, 91 % of it the Go runtime's own init | 1.2 ms | 0.4 ms | 0.05 ms |
 | first compile of a module | 23-28 CPU-seconds, ~1 GB peak | 6 CPU-s | 1 CPU-s | 0.1 CPU-s |
@@ -27,7 +27,6 @@ into a second, `--warm-modules` moves either ahead of readiness; disk grows
 by one module + artifact per digest ever served unless `--max-cache-size`
 bounds it. Requests scale linearly with cores - nothing in the run path is
 serialised unless `--max-concurrent-runs` says so. Large observed state
-costs on every request regardless of the guest (about 20 ms per MB of
-composite resource, four Protobuf passes). The full model of bounds and
+costs on every request regardless of the guest. The full model of bounds and
 budgets is
 [docs/one-pager-resource-governance.md](../one-pager-resource-governance.md).

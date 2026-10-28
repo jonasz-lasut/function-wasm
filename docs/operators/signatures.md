@@ -3,8 +3,10 @@
 To restrict a Function to modules your organisation signed, sign them with
 cosign 3, `cosign sign --key cosign.key <ref>`, and start the runtime with
 `--cosign-key cosign.pub` (a `DeploymentRuntimeConfig` mounts the key and
-sets the flag or `COSIGN_KEY`). Every OCI module is then verified once per
-manifest digest per process before it's run - before it consults any
+sets the flag or `COSIGN_KEY`). The runtime then verifies each OCI module (under a
+`--sandbox-policy-file`, each module from a repository its `requireSignature`
+rules name; the rest run unsigned) once per manifest digest per process
+before it's run - before it consults any
 cache, so an artifact left on a persisted volume by a runtime without
 the key isn't served by one with it - and unsigned sources are refused.
 

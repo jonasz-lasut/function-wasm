@@ -23,8 +23,10 @@ the operator's side of it.
 The principal every rule sees is the caller: `principal.namespace` and
 `principal.xrKind` come from the observed composite resource (a
 `RunFunctionRequest` doesn't include the Composition name, so `principal.composition`
-is presently always empty). The actions are `usePrivateTmp`, `setEnv`,
-`spendCredential` and `grantEgress`; for a step credential the resource is
+is presently always empty). The capability actions are `usePrivateTmp`, `setEnv`,
+`spendCredential` and `grantEgress` (`dialAddress` is on the [egress
+page](http-egress.md), `requireSignature` and `trustSigner` on
+[signatures](signatures.md)); for a step credential the resource is
 `Credential::"<name>"`, for egress the host or pattern within a
 boundary-correct `HostPattern` hierarchy, and the context carries the method
 and path. A separate, caller-independent action `requireSignature` (over the

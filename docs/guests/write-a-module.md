@@ -89,7 +89,7 @@ and a `pullModule` permit for its repository for a `module.from` source).
 `--full` writes a whole Composition. The `compositionPolicy` block is commented:
 it's a starting point for narrowing, never an active grant.
 
-`guestfn push` produces a CNCF WASM OCI artifact: one `application/wasm`
+`guestfn push` produces a CNCF Wasm OCI artifact: one `application/wasm`
 layer, the manifest as an `application/vnd.wasmfn.manifest.v1+json` layer
 when the project has one, a WASM config listing both digests in
 `layerDigests`, and the standard `org.opencontainers.image.*` annotations

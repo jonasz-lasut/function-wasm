@@ -34,8 +34,8 @@ Ready isn't warm: the first request for a module on a pod pays a
 deserialize (with a warm volume) or a compile (~2 s for a large Go module).
 `--warm-modules` moves that ahead of readiness: the runtime listens at
 once but reports Not Serving while it loads the listed modules - a warm
-volume makes that milliseconds, a cold cache one compile per module,
-`--max-concurrent-compiles` at a time - and Serving when every entry has
+volume makes that milliseconds, a cold cache one compile per module
+(the entries load one after another) - and Serving when every entry has
 loaded or has failed. Failures are logged (`Cannot warm module` with the
 entry and the reason) and never hold readiness back. A wrong entry or an
 unreachable registry costs that module its first request, and the pod keeps

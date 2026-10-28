@@ -11,7 +11,7 @@ validate` runs the runtime's own admission over a Composition against an
 operator's flags and policy; `guestfn build`, `guestfn push` and `guestfn
 inspect` read a module's ABI, exports and imports with the runtime's own
 engine, so a module the runtime would refuse is refused before it's
-published; and `guestfn push` writes the `layerDigests` the CNCF WASM
+published; and `guestfn push` writes the `layerDigests` the CNCF Wasm
 artifact specification requires. It adds neither a new trust boundary nor a
 new Input field.
 

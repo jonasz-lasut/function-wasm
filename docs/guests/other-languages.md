@@ -33,7 +33,7 @@ runtime refuses a core module at load, as a fatal result that identifies
 the module
 (`cannot load module …: module is a core module, which function-wasm 1.0.0
 no longer runs (ABI v1 was removed); build it as an ABI v2 component
-(../abi-v2.md)`), and `guestfn build`, `guestfn inspect` and
+(docs/abi-v2.md)`), and `guestfn build`, `guestfn inspect` and
 `function validate --resolve` print the same sentence for one; rebuild
 such a guest on a current scaffold. `guestfn` scaffolds and builds six
 flavours - the same greeting function each time, every one an ABI v2

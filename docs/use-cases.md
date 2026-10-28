@@ -78,7 +78,8 @@ calls it, so the limit is one of scope.
 ## Worked examples
 
 Each guest language under [`examples/`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples) solves one of these, built,
-rendered and asserted on every `/e2e` run
+tested and linted on every `/e2e` run (nothing in CI asserts what an example
+composes)
 ([docs/one-pager-use-case-examples.md](one-pager-use-case-examples.md) has
 why these, how they're tested and published). Each release publishes the ones
 that work as published (`cloudflare-origin`, `policy-gate`, `pdb-addon`) at

@@ -66,7 +66,7 @@ world (below).
 A release that brings a new world version publishes it, signed and
 attested:
 
-- as an OCI artifact in the CNCF WASM OCI layout (the format of `wkg`):
+- as an OCI artifact in the CNCF Wasm OCI layout (the format of `wkg`):
   `ghcr.io/jonasz-lasut/wasmfn/function:<version>`;
 - as `wasmfn-wit-<version>.tar.gz` on that GitHub release.
 

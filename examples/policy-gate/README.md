@@ -95,7 +95,6 @@ npm install
 npm test               # tsc --noEmit, then the unit tests natively under node
 make build             # fn.wasm, a component (npm run build)
 make render            # serve it with function-wasm and crossplane render example/xr.yaml
-make render-check      # the render test, example/xprin.yaml (needs xprin)
 ```
 
 A local render needs no cluster and no AWS account; the first step,
@@ -108,11 +107,8 @@ function-go-templating, runs in Docker. `example/` holds:
   gate runs, served from this directory.
 - `required-resources.yaml`: the `prod` and `dev` EnvironmentConfigs, which
   render hands the gate when it asks for one.
-- `crds/`: provider-upjet-aws's RDS `Instance` CRD, vendored, so the render
-  test validates what the composition composes against the provider's own
-  schema.
-- `xprin.yaml`: the render test, one case per XR: the tags added and kept,
-  and `status.policy`.
+- `crds/`: provider-upjet-aws's RDS `Instance` CRD, vendored, to validate
+  what the composition composes against the provider's own schema.
 
 A request the policy refuses ends in a fatal result, which fails a render,
 so the unit tests (`test/fn.test.ts`) cover every fatal path, along with the

@@ -78,7 +78,6 @@ pod go anyway or blocks the drain.
 go test ./...         # the function's unit tests, natively
 make build            # fn.wasm, with guestfn from this repository
 make render           # serve it with function-wasm and crossplane render example/xr.yaml
-make render-check     # the render test, example/xprin.yaml (needs xprin)
 ```
 
 `example/` holds:
@@ -95,7 +94,6 @@ make render-check     # the render test, example/xprin.yaml (needs xprin)
   `xr-single-replica.yaml`: one of a single replica, which gets no budget.
 - `functions.yaml`: function-go-templating, and function-wasm on the
   Development runtime.
-- `xprin.yaml`: the render test, one case per XR.
 
 ## In a cluster
 

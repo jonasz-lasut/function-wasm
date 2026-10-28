@@ -145,7 +145,7 @@ render job.
 ## Publishing
 
 The `publish-examples` job of `publish-pkg.yml` releases the examples that work
-as published as CNCF WASM OCI artifacts, with their module manifests:
+as published as CNCF Wasm OCI artifacts, with their module manifests:
 
 - **Names:** `ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, beside the WIT
   world at `wasmfn/function`. A namespace per kind of artifact is the

@@ -561,7 +561,7 @@ Three on-disk stores under `/tmp/function-wasm-cache` (fixed; `store.rs`): `modu
 
 ### Readiness, warm-up and the run bound
 
-Readiness is answered twice — gRPC health on the function port and plain-HTTP `/readyz` (`/livez` always 200) on `--health-address` `:8081` — and starts as NOT_SERVING/503; warm-up loads every `--warm-modules` entry through the request's own path (at most `--max-concurrent-compiles` at once, failures logged, never fatal) and then both flip — while the server already listens, so a probe reads not-ready rather than a refused connection and an early request is served cold or joins the load in flight. `--max-concurrent-runs` is a fair round-robin slot scheduler keyed by module digest in the engine; slot, memory-pool and step-slot waits are all capped by the request's own gRPC deadline, and a request cut short while waiting is a fatal result that is not counted as a run.
+Readiness is answered twice — gRPC health on the function port and plain-HTTP `/readyz` (`/livez` always 200) on `--health-address` `:8081` — and starts as NOT_SERVING/503; warm-up loads every `--warm-modules` entry through the request's own path (one entry after another, failures logged, never fatal) and then both flip — while the server already listens, so a probe reads not-ready rather than a refused connection and an early request is served cold or joins the load in flight. `--max-concurrent-runs` is a fair round-robin slot scheduler keyed by module digest in the engine; slot, memory-pool and step-slot waits are all capped by the request's own gRPC deadline, and a request cut short while waiting is a fatal result that is not counted as a run.
 
 ### Metrics
 
@@ -741,7 +741,7 @@ A new refusal gets its entry there, beside its fixture under `testdata/validate/
 
 ## Key Reference Documents
 
-- `docs/` (the documentation site: `book.toml`, `docs/SUMMARY.md`): user-facing behaviour - `docs/operators/input-reference.md` (the Input reference), `docs/operators/runtime-flags.md`, `docs/operators/cedar-policy.md` (both policy layers: the schema, the seven actions, the evaluation rules and the refusal sentences, from authz.rs and admission.rs), `docs/operators/trust-model.md`, `docs/contract/compatibility.md`, `docs/operators/troubleshooting.md`; `README.md` is the landing page only
+- `docs/` (the documentation site: `book.toml`, `docs/SUMMARY.md`): user-facing behaviour - `docs/operators/input-reference.md` (the Input reference), `docs/operators/runtime-flags.md`, `docs/operators/cedar-policy.md` (both policy layers: the schema, the nine actions, the evaluation rules and the refusal sentences, from authz.rs and admission.rs), `docs/operators/trust-model.md`, `docs/contract/compatibility.md`, `docs/operators/troubleshooting.md`; `README.md` is the landing page only
 - `docs/abi-v2.md` - the host/guest contract (ABI v2, the component world; ABI v1 was removed in 1.0.0)
 - `docs/one-pager-abi-v2.md` — ABI v2 on the component model and this Rust host (the port delivered its phases 1-4; the v2 spike is issue #65)
 - `docs/one-pager-three-layer-authz.md`, `docs/one-pager-trust-model.md`, `docs/one-pager-sandbox.md` — the authorization and sandbox model

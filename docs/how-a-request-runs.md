@@ -13,7 +13,9 @@
    doesn't perform I/O: the **digest** that pins the module comes from the
    Input - the manifest digest of an OCI reference, `http.digest` for a
    URL - or from hashing a served file when it changes.
-2. The runtime looks the digest up in the caches - compiled modules in memory (kept
+2. Where a signature is required, the runtime verifies it first, once per manifest
+   digest per process and before any cache ([signatures](operators/signatures.md)).
+   It then looks the digest up in the caches - compiled modules in memory (kept
    ten minutes after their last use), then Wasmtime artifacts on disk, then
    fetched modules on disk under `/tmp/function-wasm-cache`. Only a module
    never seen by this node is fetched (verified against its digest, written
@@ -28,7 +30,7 @@
    (AND-combined - a manifest can only make a run fail earlier), and a
    `config` outside the module's schema is a fatal result before anything
    runs.
-3. Each request gets a fresh instance (about ten milliseconds) and the
+3. Each request gets a fresh instance and the
    caller's request bytes, less every step credential the three layers
    didn't grant (the pull credential always among them): WASI without
    network access, with only the filesystem and environment the three
@@ -51,6 +53,6 @@
    identifies the module - never a crashed function pod. A request that,
    with `--max-concurrent-runs` set, reaches its deadline while waiting
    for a run slot (`waiting for a run
-   slot: context deadline exceeded`) is a fatal result too: it never ran.
+   slot: deadline exceeded`) is a fatal result too: it never ran.
 
 The full host/guest contract is in [`docs/abi-v2.md`](abi-v2.md).
