@@ -41,7 +41,7 @@ for memory, restart with an empty cache and begin again.
 | resident compiled modules | LRU over the memory tier, on top of its 10-minute idle TTL | `--max-cached-modules` | 0 (TTL only) | the least recently used module is dropped |
 | the memory tier itself | off maps the artifact per request and releases it | `--enable-memory-cache` | true | nothing stays resident |
 | concurrent compiles | semaphore around fetch and compile | `--max-concurrent-compiles` | 1 | further first requests, and those waiting on the same load, queue |
-| one cold load, wall clock | `tokio::time::timeout` around the load's thread | `--module-compile-timeout` | 0 (unbounded) | the request fails with a fatal result that states the bound; the compile finishes on its thread, keeps its slot until then and stores its artifact; counted in `cache_events_total{cache="compiled",event="timeout"}` |
+| one cold load, wall clock | `tokio::time::timeout` around the load's thread | `--module-compile-timeout` | `0s` (unbounded) | the request fails with a fatal result that states the bound; the compile finishes on its thread, keeps its slot until then and stores its artifact; counted in `cache_events_total{cache="compiled",event="timeout"}` |
 | disk | LRU sweep over the stores, a read counting as a use | `--max-cache-size` | 0 (unbounded) | entries removed down to nine tenths of the bound, at startup and every ten minutes |
 | module size | cap on fetched bytes, and on tar extraction at eight times the cap | `--max-module-size` | 128 MB | the fetch fails: a fatal result |
 | concurrent runs | fair run slots, taken after the module is loaded | `--max-concurrent-runs` | 0 (the caller's concurrency) | a further request waits under its own deadline |

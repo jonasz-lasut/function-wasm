@@ -114,8 +114,8 @@ struct ServeArgs {
 
     /// Wall-clock bound on a cold load (the fetch and compile of a module
     /// not yet cached); past it the request fails with a fatal result while
-    /// the compile finishes and stores its artifact. 0 leaves it unbounded.
-    #[arg(long, default_value = "0", env = "MODULE_COMPILE_TIMEOUT", value_parser = duration::parse)]
+    /// the compile finishes and stores its artifact. 0s leaves it unbounded.
+    #[arg(long, default_value = "0s", env = "MODULE_COMPILE_TIMEOUT", value_parser = duration::parse)]
     module_compile_timeout: Duration,
 
     /// Sustained egress requests per minute per module digest. 0 leaves
