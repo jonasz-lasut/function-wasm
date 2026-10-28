@@ -1,21 +1,31 @@
 # Render locally
 
-Build the module, then run the runtime from a checkout serving your project
-directory, and render with the Development runtime the scaffold's
-`example/functions.yaml` declares:
+This page is for a module author with a scaffolded guest project who wants to
+see what their Composition produces before publishing anything. It runs the
+runtime built from a checkout of this repository against a `Path` module on
+your machine. Installing the runtime in a cluster is out of scope.
+
+You need the `crossplane` CLI, Docker (the render engine runs in it) and a
+Rust toolchain to build the runtime from the checkout.
+
+Use two terminals. In the checkout, start the runtime with
+`--module-dir` set to your project directory (an absolute path is simplest):
+
+```shell
+cargo run --release -p function-wasm -- --insecure --debug --module-dir=<your project directory>
+```
+
+In your project directory, build the module and render with the Development
+runtime that the scaffold's `example/functions.yaml` declares:
 
 ```shell
 guestfn build
-cargo run --release -p function-wasm -- --insecure --debug --module-dir=.   # from a checkout, in the project directory that holds fn.wasm
 crossplane render example/xr.yaml example/composition.yaml example/functions.yaml
 ```
 
-The example Composition uses `module.type: Path` with `path: fn.wasm`; swap
-in `type: OCI` and the `oci` reference for a cluster. In this repository `make -C examples/pdb-addon render`
-runs the same loop for the Go example through `examples/render.sh`, which
-also runs `function validate` over the example's Compositions first and serves
-`example/policy.cedar` and `example/fixtures/` beside the module. It's a loop
-for your eyes and
-doesn't test anything: what an example composes is asserted by the repository's
-[end-to-end suite](../project/testing.md) in a cluster, through a module of
-its own.
+The example Composition uses `module.type: Path` with `path: fn.wasm`. For a
+cluster, use `type: OCI` with an `oci` reference, as the
+[Input reference](../operators/input-reference.md) describes.
+
+Rendering asserts nothing. To run this loop on the examples in this
+repository, see the [development guide](../project/development.md).

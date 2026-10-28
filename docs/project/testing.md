@@ -1,102 +1,132 @@
 # Testing
 
-function-wasm has two test tiers, with nothing between them: the Rust unit
-and component tests, run by `cargo test` on every push, and a
-Kubernetes-native end-to-end suite, also Rust, run against a kind cluster by
-`make e2e`. The project has no render tests and no shell scenarios:
-`crossplane render` is a [development loop](../guests/render-locally.md)
-rather than a test.
+This page is for contributors adding or changing a test. It says which of the
+two test tiers a change belongs in and how to run the end-to-end suite on your
+machine. It assumes a Rust toolchain for the first tier and Docker for the
+second.
 
-| Tier | Runs | What it proves |
+`crossplane render` belongs to the
+[development loop](../guests/render-locally.md) and isn't part of either tier.
+
+| Tier | Runs | What it covers |
 |---|---|---|
-| unit and component | `cargo test --workspace`, every push and pull request | the engine over WAT fixtures and the committed end-to-end guest; the runtime's admission, resolver, policy, egress and signature code against in-memory stand-ins (a registry, a Sigstore instance); `function validate` against recorded goldens; the served runtime over gRPC; every scaffold built and run through the host (the guest suite) |
-| end-to-end | `make e2e` (`/e2e` on a pull request; the [release matrix](#the-release-matrix) on a release branch) | the package installed by Crossplane in a kind cluster: the runtime's behaviour as an XR author and an operator see it, one profile of runtime flags at a time |
+| unit and component | `cargo test --workspace`, on every push and on a pull request that changes code | the engine, the runtime and `function validate` against in-memory stand-ins and recorded goldens, and every scaffold built and run through the host (the guest suite) |
+| end-to-end | `make e2e`, `/e2e` on a pull request, the [release matrix](#the-release-matrix) on a release branch | the package installed by Crossplane in a kind cluster, as an XR author and an operator see it |
 
 ## The tier for a new test
 
 | The change | The test |
 |---|---|
 | a guest-visible behaviour of the engine (a trap, a limit, a WASI interface) | a WAT fixture in `crates/engine/tests/engine.rs`, or a setting of the committed guest driven from `crates/engine/tests/committed_guest.rs` |
-| an Input rule, a refusal, a policy decision | a unit test beside the code, a fixture under `crates/function/testdata/validate/` and a conformance golden (`UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` records it; a re-record is a behaviour change, say so in the commit) |
+| an Input rule, a refusal, a policy decision | a unit test beside the code, a fixture under `crates/function/testdata/validate/` and a conformance golden |
 | a scaffold change | the template, then `UPDATE_GOLDENS=1 cargo test -p guestfn`; the guest suite builds the goldens |
-| a new fixture or stand-in a test needs | `function_wasm_engine::testing` for a guest component, `function_wasm::testing` for a registry, a signer, an in-process runtime, a server or a policy (both behind the `testutil` feature); a suite never declares its own copy |
-| something only Crossplane shows - a condition, an event, a Secret read, a `requirements` entry resolved, a pod restarted, a metric as scraped | a feature in the end-to-end suite |
+| a fixture or stand-in a test needs | `function_wasm_engine::testing` for a guest component, `function_wasm::testing` for a registry, a signer, an in-process runtime, a server or a policy (both behind the `testutil` feature) |
+| something only Crossplane shows, such as a condition, an event, a resolved `requirements` entry, a pod restart or a scraped metric | a feature in the end-to-end suite |
+
+`UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` records a
+conformance golden. A re-record is a behaviour change, so say so in the commit.
+A suite uses the shared `testing` modules and never declares its own copy of a
+fixture.
 
 ## The end-to-end suite
 
-The suite is in `crates/e2e` (package `function-wasm-e2e`), shaped like
-Linkerd's `policy-test`, with a namespace per test, typed helpers over
-kube-rs, waits with timeouts and `assert_eq!` on what the cluster contains.
-`make e2e.up` provisions the cluster before the tests, never from inside
-one. The crate is empty without its `cluster` feature, so `cargo test --workspace`
-builds none of it.
+The suite is in `crates/e2e` (package `function-wasm-e2e`). It gives each
+test its own namespace (`with_temp_ns` in `crates/e2e/src/ns.rs`) and uses typed
+kube-rs helpers. Tests wait with timeouts and compare what the cluster contains with
+`assert_eq!`. The crate is empty without its `cluster` feature, so
+`cargo test --workspace` builds none of it.
 
 ### The cluster
 
-`make e2e.up` provisions everything through the Crossplane build submodule's
-make library (`build/makelib`, pinned `kind`, `kubectl`, `helm` and
-`crossplane` CLI under `.cache/tools`) and the suite's own setup binary:
+`make e2e.up` provisions the cluster before the tests. It uses the Crossplane build submodule's make library (`build/makelib`, with
+pinned `kind`, `kubectl`, `helm` and `crossplane` CLI under `.cache/tools`) and
+the suite's own setup binary, in three steps:
 
-1. `controlplane.up`: a kind cluster (`KIND_CLUSTER_NAME`, default
-   `function-wasm-e2e`) with Crossplane at `CROSSPLANE_VERSION` (the
-   Makefile's default is the current Crossplane release, moved by Renovate;
-   the environment overrides it), then `e2e.crossplane`, a `kubectl wait`
-   for the Crossplane deployment and the package CRDs its init container
-   registers.
-2. `e2e-setup` (`crates/e2e/src/bin/setup.rs`) sets up the `e2e` namespace;
-   a `registry:3` behind Basic auth and TLS from a CA the setup generates
-   (reused across runs); provider-nop (`PROVIDER_NOP_VERSION`); the test
-   module pushed under every variant and signed; the profiles' ConfigMaps,
-   Secrets and volume in `crossplane-system`; the Guest XRD; and
-   `_output/e2e/state.json`, which the tests read.
-3. The runtime image (`make e2e.image`: the Dockerfile, or `Dockerfile.dev`
-   around a prebuilt binary named by `FUNCTION_BIN`), the Function package
-   from it (`xpkg.build.function-wasm`), and the package installed from
-   Crossplane's cache with `packagePullPolicy: Never`
-   (`local.xpkg.deploy.function.function-wasm`), on the default profile.
+1. `controlplane.up` creates a kind cluster (`KIND_CLUSTER_NAME`, default
+   `function-wasm-e2e`) with Crossplane at `CROSSPLANE_VERSION`. The Makefile's
+   default is the current Crossplane release, which Renovate moves, and the
+   environment overrides it. `e2e.crossplane` then waits for the Crossplane
+   deployment and its package CRDs.
+2. `e2e-setup` (`crates/e2e/src/bin/setup.rs`) creates the `e2e` namespace and
+   a `registry:3` behind Basic auth and TLS from a CA it generates. It installs
+   provider-nop (`PROVIDER_NOP_VERSION`), a provider whose `NopResource`
+   managed resources do nothing, so the tests can compose resources without a
+   cloud. It pushes and signs the test module under every variant, creates the
+   profiles' ConfigMaps, Secrets and volume in `crossplane-system` and the
+   Guest XRD, and writes `_output/e2e/state.json`, which the tests read.
+3. `make e2e.image` builds the runtime image from the Dockerfile, or from
+   `Dockerfile.dev` around a prebuilt binary named by `FUNCTION_BIN`.
+   `xpkg.build.function-wasm` builds the Function package from it, and
+   `local.xpkg.deploy.function.function-wasm` installs it from Crossplane's
+   cache with `packagePullPolicy: Never`, on the `default` profile.
 
-`make e2e.test.<profile>` runs one profile's tests and `make e2e.test` the
-three in sequence. `make e2e.down` deletes the cluster, and `make e2e` does
-everything. `make e2e.dump` writes the cluster's state under
-`_output/controlplane-dump` for a failed run, and a failed test keeps its
-namespace and dumps its objects, events and the function pod's log under
+`make e2e.test.<profile>` runs one profile's tests, `make e2e.test` runs the
+three in sequence, `make e2e.down` deletes the cluster and `make e2e` does
+everything. After a failed run, `make e2e.dump` writes the cluster's state under
+`_output/controlplane-dump`. A failed test also keeps its namespace and dumps
+its objects, events and the function pod's log under
 `_output/e2e/logs/<namespace>`.
 
 ### The profiles
 
-The Function is reconfigured between suites: each test binary switches its
-`runtimeConfigRef` to the profile's `DeploymentRuntimeConfig`
-(`crates/e2e/profiles/<profile>/drc.yaml`) before its first test and waits
-for the rollout. One profile per binary.
+A profile is one runtime configuration: a set of flags, an operator policy and
+the mounts they need. Each test binary switches the Function's
+`runtimeConfigRef` to its profile's `DeploymentRuntimeConfig`
+(`crates/e2e/profiles/<profile>/drc.yaml`) before its first test and waits for
+the rollout. Each binary uses one profile.
 
-| Profile | Runtime | Tests |
-|---|---|---|
-| `default` | `--cosign-key` (the suite's key) and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with the public-good root); a policy that requires signatures from the suite's registry and the published examples, that permits the suite's release identity and this repository's release workflow as signers (`trustSigner`) and that grants egress to the registry host with a `dialAddress` hole for kind's service CIDR, the step credential `e2e`, the env binding and the private `/tmp`; the registry CA through `SSL_CERT_FILE`, with `SSL_CERT_DIR` naming the image's bundle again | every admitted case - signatures (key, keyless trusted and untrusted, the published pdb-addon against the public-good root), egress and an in-band rule refusal, credentials, env, the private `/tmp` with and without the manifest requiring it, the `requirements` round trip, a fatal result, the deadline, the memory limit, `module.from` inside and outside its fence, unsigned, skipped under `allowEmpty`, and the `composeResource` fence admitting the guest's NopResources under a permit and refusing them by name without one |
-| `strict` | no verifier; a policy that requires a signature for the plain variant only and grants egress to the registry host with no `dialAddress` hole | the no-verifier refusal, the block list refusing the service CIDR in band, env, credential and `/tmp` refusals |
-| `lifecycle` | `--debug`, `--warm-modules` on the published pdb-addon, a PVC-backed cache bounded below that module's size, a readiness probe on `/readyz`, `--cosign-trust-instance public-good` with a policy requiring the published examples' signatures and trusting this repository's release workflow (no root file mounted) | readiness waiting for the warm-up, caches kept across a restart while the sweep bounds them, the trusted root fetched over TUF from the real public-good repository (the metrics, the keyless pdb-addon admitted, again after a restart from the cache on the volume) |
+| Profile | What it tests |
+|---|---|
+| `default` | every case a runtime admits, under both signature verifiers |
+| `strict` | the refusals: no verifier and no grants |
+| `lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
+
+The `default` profile runs the runtime with `--cosign-key` (the suite's key)
+and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with
+the public-good root). Its policy requires signatures from the suite's registry
+and the published examples, and grants the egress, credential, env and private
+`/tmp` cases the tests need. The policy is `crates/e2e/profiles/default/policy.cedar`
+and the tests are in `crates/e2e/tests/default.rs`.
+
+The `strict` profile has no verifier. Its policy requires a signature for the
+plain variant only and grants egress to the registry host with no
+`dialAddress` hole. Its tests cover the no-verifier refusal, the block list
+refusing the service CIDR in band, and the env, credential and `/tmp`
+refusals.
+
+The `lifecycle` profile runs with `--debug`, `--warm-modules` on the published
+pdb-addon, a PVC-backed cache bounded below that module's size, a readiness
+probe on `/readyz`, and `--cosign-trust-instance public-good` with no root file
+mounted. Its policy requires the published examples' signatures and accepts
+this repository's release workflow as a signer. Its tests cover readiness
+waiting for the warm-up, the caches across a restart, and the trusted root
+fetched over TUF from the real public-good repository.
 
 ### The test module
 
-`crates/e2e/guest` is the one module the suite drives: a Rust ABI v2 guest
-on the `rust` scaffold's `wit/` and `proto/` (read in place rather than
-vendored) in its own Cargo workspace, built with `make e2e.guest` on the
-scaffold's pinned toolchain and committed as `fn.wasm`. Its Guest XR's
-`spec` says what to exercise:
+`crates/e2e/guest` is the one module the suite drives: a Rust ABI v2 guest in
+its own Cargo workspace, reading the `rust` scaffold's `wit/` and `proto/` in
+place. `make e2e.guest` builds it on the scaffold's pinned
+toolchain and the result is committed as `fn.wasm`.
 
-| Knob | What the module does |
+The Guest XR is the composite resource the suite creates for each test, and its
+`spec` says what the module exercises:
+
+| Field | What the module does |
 |---|---|
-| `nopResources`, `readyAfterSeconds` | composes that many provider-nop `NopResource`s, Ready after the delay; marks each ready once its observed counterpart is |
+| `nopResources`, `readyAfterSeconds` | composes that many provider-nop `NopResource`s, Ready after the delay, and marks each ready once its observed counterpart is |
 | `egress.url` | sends a GET request to the URL through `wasi:http` and writes the status and body, or the host's refusal, to `status.egress` |
 | `env`, `credentials` | writes those variables and the keys of those step credentials to status |
 | `privateTmp` | writes and reads back a file under `/tmp`, reporting the outcome |
 | `requirements.environmentConfig` | asks Crossplane for that EnvironmentConfig and echoes its data once resolved |
-| `fatal`, `spin`, `growMiB` | a fatal result with the message; a spin past the deadline; a memory growth refused at the limit |
+| `fatal`, `spin`, `growMiB` | a fatal result with the message, a spin past the deadline, a memory growth refused at the limit |
 
-The variants are one binary under nine manifests (`crates/e2e/guest/manifests`
-and three signature variants derived from the plain one), each with a
-distinct digest: the runtime caches a signature verdict per digest, so two
-variants sharing one would share a verdict. The same `fn.wasm` is the
-engine's `wasi:http` fixture (`crates/engine/tests/committed_guest.rs`).
+A variant is the same `fn.wasm` published under one manifest. The suite has
+nine, one for each of the six manifests in `crates/e2e/guest/manifests`, plus
+three signature variants derived from the plain one. Each has its own digest,
+because the runtime caches a signature verdict per digest and two variants
+sharing one would share a verdict. The same `fn.wasm` is the engine's `wasi:http` fixture
+(`crates/engine/tests/committed_guest.rs`).
 
 ### Running it locally
 
@@ -108,48 +138,44 @@ make e2e.down
 
 `FUNCTION_BIN=<linux binary> make e2e.up` wraps a prebuilt runtime with
 `Dockerfile.dev` instead of compiling the workspace in the Dockerfile's build
-stage (what CI does). `KUBECONFIG` and the current context are the cluster's
-after `controlplane.up`. `CROSSPLANE_VERSION=2.2.7 make e2e` runs the whole
-suite on another Crossplane (the chart version, no `v`).
+stage, as CI does. After `controlplane.up`, `KUBECONFIG` and the
+current context point at the cluster. `CROSSPLANE_VERSION=2.2.7 make e2e` runs
+the whole suite on another Crossplane, given as the chart version without a
+`v`. 2.2.7 is also the release matrix's oldest pin.
 
 ### The workflows
 
-`ci.yml` runs lint with `--all-features` and `cargo test --workspace` on
-every push. `/e2e` on a pull request runs `e2e.yml` - the guest suite with
-`FUNCTION_WASM_REQUIRE_TOOLCHAINS=1` (a missing toolchain fails instead of
-skipping), one build job per example toolchain (build, unit tests, lint,
-codec and bindings drift), and the cluster job, which runs the three
-profiles one after another on one kind cluster at the Makefile's
-`CROSSPLANE_VERSION` and uploads `make e2e.dump` on failure. The jobs cache
-the Rust builds and the guests' dependencies under keys prefixed `e2e-`, a
-namespace of their own. The run builds a pull request's code in the default
-branch's cache scope, so no trusted workflow (`ci.yml`, the release matrix)
-ever restores an `e2e-` key, and a poisoned cache could mislead only this
-workflow's verdict. GitHub hands a run that anyone may start (an
-`issue_comment` run) a read-only cache token, under which every save is
-skipped. The workflow declares `cache-mode: write` in response, the
-documented opt-in that the namespace makes acceptable. A push to a
-`release-*` branch runs the release matrix below.
+`ci.yml` runs lint with `--all-features` and `cargo test --workspace` on every
+push, and on a pull request unless it touches only Markdown, JSON or SVG files.
+
+A `/e2e` comment on a pull request runs `e2e.yml`:
+
+- the guest suite, with `FUNCTION_WASM_REQUIRE_TOOLCHAINS=1` so a missing
+  toolchain fails instead of skipping
+- one build job per example toolchain: build, unit tests, lint, and codec and
+  bindings drift
+- the cluster job, which runs the three profiles one after another on one kind
+  cluster at the Makefile's `CROSSPLANE_VERSION` and uploads `make e2e.dump` on
+  failure
+
+The jobs cache under `e2e-` keys that no trusted workflow restores, and the
+workflow sets `cache-mode: write` because a comment-started run gets a
+read-only cache token.
 
 ### The release matrix
 
-Crossplane maintains its three most recent minor releases, published
-quarterly and each maintained for about nine months
-([release cycle](https://docs.crossplane.io/latest/learn/release-cycle/)),
-and the function supports the same three - the current minor, which every
-`/e2e` run tests, and the two before it. `release-matrix-e2e.yml` (#189)
-proves it before a release is cut. Each push to a `release-X.Y` branch (the
-cut of a new line, or a patch on an existing one) builds the runtime from
-the branch and runs `make e2e` three times in parallel, one kind cluster per
-version, with the cluster dump uploaded for a failed version. `gh workflow run
-"Release Matrix E2E" --ref <ref>` runs it by hand on any ref. The versions live
-in two places and nowhere else: the Makefile's `CROSSPLANE_VERSION` default
-is the current one, and the workflow's `CROSSPLANE_PREVIOUS` and
-`CROSSPLANE_OLDEST` are the latest patch of the two older minors. Renovate
-moves all three (`renovate.json5`) - the default to any new release, the
-two pins to a new patch of their own minor only. When a new Crossplane
-minor is released, Renovate's PR that moves the default is the signal to
-shift both pins down one minor by hand in that PR. The `cut-release` skill
-pushes the branch, waits for the run and cuts the tag only when it's green.
-A red version is a release blocker, or the floor this page then states. The
-supported versions today are 2.4, 2.3 and 2.2.
+Crossplane maintains its three most recent minor releases
+([release cycle](https://docs.crossplane.io/latest/learn/release-cycle/)), and
+the function supports the same three. Every `/e2e` run tests the current minor, and the matrix
+adds the two before it.
+
+`release-matrix-e2e.yml` runs on every push to a `release-X.Y` branch. It
+builds the runtime from the branch and runs `make e2e` three times in parallel,
+one kind cluster per version, and uploads the cluster dump for a failed
+version. `gh workflow run "Release Matrix E2E" --ref <ref>` runs it by hand on
+any ref.
+
+The Makefile's `CROSSPLANE_VERSION` default names the current version. The
+workflow's `env` (`CROSSPLANE_PREVIOUS`, `CROSSPLANE_OLDEST`) pins the latest
+patch of the two older minors. A red version blocks the release: the release
+process pushes the branch, waits for the matrix and tags only when it's green.

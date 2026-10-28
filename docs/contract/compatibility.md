@@ -1,43 +1,53 @@
 # Compatibility
 
-function-wasm 1.x is one line with one promise. What a Composition, an
-operator's flags, a dashboard or a CI job depends on today keeps working on
-every 1.x release. Stable for the whole line:
+This page is for anyone who depends on function-wasm across releases:
+composition authors, operators and module authors. It lists what's stable
+throughout 1.x, what a minor release may add and how a removal is announced.
 
-- the Input, `wasm.fn.crossplane.io/v1`: its field names, types and
-  semantics, and what becomes of a field the runtime doesn't know (the
-  runtime ignores it and `function validate` warns naming it; `function
-  validate` refuses the removed `policy` and `sandbox` fields by name, and
-  the runtime ignores them as it does any unknown field);
-- the runtime flags, what each means and its default;
-- the wording of refusals and fatal results, as the conformance goldens pin
-  it (`crates/function/testdata/conformance/`; a golden changes only by a
-  deliberate re-record, `UPDATE_GOLDENS=1`, called out in the commit):
-  operators grep logs and XR conditions for these strings;
-- the module manifest (`wasmfn.yaml`): its fields and what each one
-  requests;
-- the ABI v2 world, versioned on its own terms in
-  [`docs/abi-v2.md`](../abi-v2.md);
-- the metric names and labels (`function_wasm_*`, `grpc_server_*`);
+What a Composition, a flag, a dashboard or a CI job relies on keeps working
+on every 1.x release, with one exception: a minor release may add a refusal
+for a rule that didn't exist before.
+
+## What's stable
+
+- The Input, `wasm.fn.crossplane.io/v1`: its field names, types and
+  semantics. A field the runtime doesn't know is ignored, and `function
+  validate` warns naming it; the removed `policy` and `sandbox` fields it
+  refuses by name.
+- Each runtime flag's meaning and default.
+- The wording of refusals and fatal results, as the conformance goldens pin
+  it (`crates/function/testdata/conformance/`). Operators grep logs and XR
+  conditions for these strings.
+- The module manifest (`wasmfn.yaml`): its fields and what each requests.
+- The ABI v2 world, which has its own version (see [ABI v2](../abi-v2.md)).
+- The metric names and labels (`function_wasm_*`, `grpc_server_*`).
 - `function validate`: its exit codes (0 admitted, 1 refused, 2 the tool
-  failed) and the field names of its `--output json`;
-- the `guestfn` commands, their arguments and flags.
+  failed) and the field names of `--output json`.
+- The `guestfn` commands, their arguments and flags.
 
-A minor release may add to any of these without changing what's there. An
-addition is an Input field, a flag, a manifest field, a refusal for a rule
-that didn't exist or a metric. A minor release may also widen what's
-accepted, so a document one release refused is admitted by the next. A
-major release is what it takes to remove or rename any of them or to change
-a pinned wording or a default. Narrowing what's accepted takes a major
-release too. What the list doesn't name (the layout of a log line, the
-on-disk cache format, when a sweep runs) isn't promised.
+The log line layout, the on-disk cache format and when a sweep runs aren't
+on the list, so they aren't promised.
+
+## Minor and major releases
+
+A minor release may add to the list without changing what's already on it:
+new Input fields, flags, manifest fields and metrics, and refusals for rules
+that didn't exist. It may also widen what's accepted, so a document one
+release refused is admitted by the next.
+
+Removing or renaming anything on the list takes a major release, after the
+deprecation below, and so does changing a pinned wording or a default or
+narrowing what's accepted.
 
 ## Deprecation policy
 
-Removing anything on the list takes two steps. A deprecated thing keeps
-working for at least one minor release, with a warning under the steps that
-use it in `function validate` and one runtime log line per load or request
-that does, and is listed as deprecated in the release notes; the next major
-removes it. `wasm.fn.crossplane.io/v1beta1` is the first instance:
-accepted throughout 1.x with the warning, removed in 2.0.0. ABI v1 was the
-precedent, deprecated in 0.6.0 and removed in 1.0.0.
+A removal runs in two steps:
+
+1. The next release deprecates it. A deprecated thing keeps working for at
+   least one minor release. `function validate` warns under the steps that
+   use it, and the runtime logs one line per load or request that does.
+2. The next major release removes it.
+
+`wasm.fn.crossplane.io/v1beta1` is the current instance: it's accepted
+throughout 1.x with the warning and removed in 2.0.0. ABI v1 set the
+precedent: deprecated in 0.6.0, removed in 1.0.0.

@@ -1,64 +1,84 @@
 # Signatures
 
-To restrict a Function to modules your organisation signed, sign them with
-cosign 3, `cosign sign --key cosign.key <ref>`, and start the runtime with
-`--cosign-key cosign.pub` (a `DeploymentRuntimeConfig` mounts the key and
-sets the flag or `COSIGN_KEY`). The runtime then verifies each OCI module (under a
-`--sandbox-policy-file`, each module from a repository its `requireSignature`
-rules name; the rest run unsigned) once per manifest digest per process
-before it's run - before it consults any
-cache, so an artifact left on a persisted volume by a runtime without
-the key isn't served by one with it - and unsigned sources are refused.
+This page is for operators who want the runtime to refuse modules that aren't
+signed by a signer they trust. It covers key-based and keyless verification,
+the Sigstore trusted root and per-repository requirements. It assumes
+cosign 3 and OCI modules; how to sign in CI is out of scope beyond the
+cosign commands shown.
+
+Without a `--sandbox-policy-file`, `--cosign-key` makes every module need a
+signature. With one, its `requireSignature` rules select the repositories
+that must be signed and the rest run unsigned. `--cosign-key` then only
+supplies keys (see [per repository](#requiring-signatures-per-repository)).
+Only OCI artifacts have a cosign signature, so a source of another type is
+refused wherever a signature is required. With `--cosign-key` alone, that's
+every `Path` and `HTTP` source. Under a policy it's an `HTTP` source whose URL a
+`requireSignature` rule matches. A `Path` source has no repository, so no
+rule matches it and it runs unsigned.
+
+## Key-based signatures
+
+Sign a module with `cosign sign --key cosign.key <ref>` and start the runtime
+with `--cosign-key cosign.pub`. A `DeploymentRuntimeConfig` mounts the key and
+sets the flag or `COSIGN_KEY`.
+
+The runtime verifies a module once per manifest digest per process, before it
+consults any cache. An artifact left on a persisted volume by a runtime
+without the key isn't served by one with it.
 
 cosign 3 stores a signature as a Sigstore bundle: a DSSE envelope around an
-in-toto statement whose subject is the module's manifest digest, pushed as
-an OCI 1.1 referrer of that manifest. The runtime lists the referrers
-through the registry's referrers API or, where the registry has none (GHCR,
-`registry:3`), through the `sha256-<hex>` tag index cosign maintains
-instead, with the same credentials as the pull. A module is signed when
-one bundle's signature verifies with a configured key and its statement is
-a cosign signature (predicate type `https://sigstore.dev/cosign/sign/v1`)
-of that digest. Other attestations among the referrers, such as SLSA
-provenance from `actions/attest`, aren't signatures and never admit a
-module, even when signed with a configured key. For a key-based bundle
-the keys are the trust root: its key hint and transparency-log entries
-aren't consulted.
+in-toto statement whose subject is the module's manifest digest, pushed as an
+OCI 1.1 referrer of that manifest. The runtime lists the referrers through
+the registry's referrers API. Where the registry has none (GHCR,
+`registry:3`), it reads the `sha256-<hex>` tag index cosign maintains, with
+the same credentials as the pull.
+
+A module is signed when one bundle verifies with a configured key and its
+statement is a cosign signature of that digest (predicate type
+`https://sigstore.dev/cosign/sign/v1`). Other attestations among the
+referrers, such as SLSA provenance, never admit a module. For a key-based
+bundle the keys are the trust root, so its key hint and transparency-log
+entries aren't consulted.
 
 cosign 2's legacy signatures (the `sha256-<hex>.sig` tag, which cosign 3
-still writes with `--new-bundle-format=false`) aren't read: a module
-signed only that way counts as unsigned and is refused, so re-sign it with cosign 3.
+writes with `--new-bundle-format=false`) aren't read. A module signed only
+that way counts as unsigned and is refused: re-sign it with cosign 3.
 
 ## Keyless signatures
 
-A keyless signature (`cosign sign <ref>` under an OIDC identity, which is
-how this repository's release workflow signs the examples it publishes)
-carries a Fulcio certificate valid for ten minutes, a Rekor
+A keyless signature is made with `cosign sign <ref>` under an OIDC identity.
+This repository's release workflow signs the examples it publishes that way.
+The bundle has a Fulcio certificate valid for ten minutes, a Rekor
 transparency-log entry and an RFC 3161 timestamp instead of a key hint.
-The runtime verifies it with `--cosign-trusted-root trusted_root.json`
-(`COSIGN_TRUSTED_ROOT`), a Sigstore trusted root - the Fulcio authorities,
-the Rekor and certificate-transparency keys and the timestamp authorities,
-each with its validity window. `cosign initialize` fetches the public-good
-instance's over TUF:
+
+### The trusted root
+
+The runtime verifies a keyless bundle against a Sigstore trusted root, which
+lists the Fulcio authorities, the Rekor and certificate-transparency keys and
+the timestamp authorities, each with a validity window. Pass it as
+`--cosign-trusted-root trusted_root.json` (`COSIGN_TRUSTED_ROOT`).
+`cosign initialize` fetches the public-good instance's root over TUF:
 
 ```shell
 cosign initialize
 cp ~/.sigstore/root/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json .
 ```
 
-Verification is offline and rests on the signing time, not the clock.
-Every RFC 3161 timestamp in the bundle must verify with a timestamp
-authority of the root, and the Rekor entry's signed entry timestamp with a
-Rekor key. The certificate must chain to a Fulcio authority and be valid
-at each of those times. The runtime then verifies the entry's inclusion proof and signed
-checkpoint, and then the signature itself. A bundle with no verifiable
-signing time is refused, so a signing key taken from a CI run after its
-certificate's ten minutes signs nothing the runtime accepts.
+Verification is offline and rests on the signing time, not the clock. Every
+RFC 3161 timestamp in the bundle must verify with a timestamp authority of the
+root, and the Rekor entry's signed entry timestamp with a Rekor key. The
+certificate must chain to a Fulcio authority and be valid at each of those
+times. The runtime then checks the entry's inclusion proof and signed
+checkpoint, and last the signature. A bundle with no verifiable signing time
+is refused, and so is a bundle whose certificate had expired at signing time.
+
+### Trusting a signer
 
 A trusted root alone admits nothing. The signer the certificate names (its
-OIDC issuer and its subject alternative name: a workflow URI, or an email)
+OIDC issuer and its subject alternative name, a workflow URI or an email)
 must be trusted for the module's repository by a `trustSigner` rule in the
-operator policy, default-deny, and the repository still needs its
-`requireSignature` rule:
+operator policy, default-deny. The repository also needs its
+`requireSignature` rule (see [per repository](#requiring-signatures-per-repository)):
 
 ```cedar
 permit (principal, action == Action::"requireSignature", resource)
@@ -72,83 +92,99 @@ when {
 };
 ```
 
-With that policy and the trusted root, the examples this repository
-publishes run on the identity of its release workflow, with no
-countersignature. A keyless signature by any other signer is refused with
-`keyless signature by <identity> (issuer <issuer>) is not trusted for
-<repository>: no trustSigner rule in the operator policy permits it`, and
-a keyless bundle met by a runtime without the flag with `keyless signature
-cannot be verified: the runtime has neither --cosign-trusted-root nor
---cosign-trust-instance`.
-`--cosign-key` and a trusted root combine. The runtime checks a bundle
-with a key hint against the keys and one with a certificate against the
-root, and a module is signed when one of its bundles verifies.
+With that policy and the trusted root, the examples this repository publishes
+run on the identity of its release workflow, with no countersignature.
+
+A keyless signature by any other signer is refused:
+
+```text
+keyless signature by <identity> (issuer <issuer>) is not trusted for <repository>: no trustSigner rule in the operator policy permits it
+```
+
+A keyless bundle met by a runtime with neither flag is refused:
+
+```text
+keyless signature cannot be verified: the runtime has neither --cosign-trusted-root nor --cosign-trust-instance
+```
+
+`--cosign-key` and a trusted root combine. The runtime checks a bundle with a
+key hint against the keys and one with a certificate against the root, and a
+module is signed when one of its bundles verifies.
 
 ### Fetching the trusted root over TUF
 
-Sigstore rotates the material in the trusted root (the public-good root
-already contains two generations of Rekor keys, Fulcio chains and CT keys),
-and a runtime holding a stale file keeps admitting old signatures while
-refusing every module signed after the next rotation. `--cosign-trusted-root`
-is the air-gapped mode. The runtime reads that file and nothing else,
-without network access, and the operator refreshes it (a mounted ConfigMap
-that `cosign initialize` rewrites). `--cosign-trust-instance public-good`
-(`COSIGN_TRUST_INSTANCE`; also `staging` and `github`) fetches the root
-instead and refreshes it while serving. The flags exclude each other.
-The TUF root embedded in the runtime's sigstore-trust-root crate
-bootstraps the walk: root, timestamp, snapshot and targets, each signed
-and expiring, and the runtime reads `trusted_root.json` by the length and hashes the
-verified metadata pins. It caches the verified metadata and the root
-under `/tmp/function-wasm-cache/tuf/<instance>` (outside the
-`--max-cache-size` sweep). A volume under the cache root preserves it
+The trusted root lists each key's and authority's validity window, and a
+bundle verifies against the material valid at its signing time. A file that
+predates a rotation can't verify bundles signed with the new material, so the
+root has to be refreshed. `--cosign-trusted-root` is the air-gapped mode. The runtime reads
+the file and nothing else, so you refresh it yourself, such as through a
+mounted ConfigMap that `cosign initialize` rewrites.
+
+`--cosign-trust-instance public-good` (`COSIGN_TRUST_INSTANCE`; also
+`staging` and `github`) fetches the root instead and refreshes it while
+serving. You can't set both flags. The refresh interval,
+`--cosign-tuf-refresh`, is described in [runtime flags](runtime-flags.md).
+
+The runtime verifies the metadata chain starting from the TUF root built into
+the runtime. It caches the verified
+metadata and the root under `/tmp/function-wasm-cache/tuf/<instance>`, outside
+the `--max-cache-size` sweep. A volume under the cache root preserves it
 across restarts.
 
-At startup the runtime fetches the root before it warms modules and
-reports ready, bounded to one minute; if the repository doesn't answer,
-the cache is re-verified offline from the embedded TUF root (as
-trustworthy as a fetch, only as old as the cache, and refused once the
-metadata has expired). With neither the runtime still starts and serves:
-every keyless signature is refused with `keyless signature cannot be
-verified: the trusted root of public-good has not been fetched yet (the
-last attempt failed: …)` until a refresh succeeds, retried once a minute
-until then. Key-signed and unsigned modules are unaffected, and so are
-readiness and liveness. While serving, the runtime refreshes the root every
-`--cosign-tuf-refresh` (`COSIGN_TUF_REFRESH`, default `1h`, at least
-`1m`, the duration syntax of `--module-timeout`). A changed root replaces
-the one in use and forgets the verified-digest memo, so a module whose
-signer the new root no longer vouches for is verified again on its next
-request. When a refresh fails, the runtime keeps the last good root.
-Verification itself never touches the network: a refresh failure can only
-make the root older and never slows a request. The metrics
-`function_wasm_trusted_root_refreshes_total{outcome}` and
-`function_wasm_trusted_root_last_refresh_timestamp_seconds` show the
-refreshes and the root's age (see [metrics](metrics.md)).
+At startup the runtime fetches the root before it warms modules and reports
+ready, giving up after one minute. It then falls back to the cache,
+re-verified offline from the built-in root, until the cached metadata expires.
+With neither available, the runtime still starts and refuses every keyless
+signature until a refresh succeeds, retried once a minute:
 
-`function validate --resolve --cosign-trust-instance public-good …` runs
-the same fetch (or reads the same cache) before it verifies, so an
-operator can rehearse the flags offline; without `--resolve` nothing is
-fetched. A private TUF mirror isn't offered yet.
+```text
+keyless signature cannot be verified: the trusted root of public-good has not been fetched yet (the last attempt failed: …)
+```
+
+Key-signed and unsigned modules, readiness and liveness are unaffected.
+
+While serving, a changed root replaces the one in use and clears the
+verified-digest memo, so a module whose signer the new root no longer vouches
+for is verified again on its next request. A failed refresh keeps the last
+good root. Verification never touches the network: a failed refresh makes the
+root older and never slows a request. The metrics
+`function_wasm_trusted_root_refreshes_total{outcome}` and
+`function_wasm_trusted_root_last_refresh_timestamp_seconds` show the refreshes
+and the root's age (see [metrics](metrics.md)).
+
+`function validate --resolve --cosign-trust-instance public-good …` runs the
+same fetch, or reads the same cache, before it verifies, so you can rehearse
+the flags offline. Without `--resolve` nothing is fetched. A private TUF
+mirror isn't supported.
 
 ## Requiring signatures per repository
 
-`--cosign-key` on its own is all-or-nothing: with it, every module must be
-signed. An operator grant policy (`--sandbox-policy-file`) can instead require a
-signature **per repository** through a `requireSignature` rule over the same
-boundary-correct `Repository` hierarchy the module fence uses, so only the
-repositories you name must be signed while others run unsigned:
+An operator policy (`--sandbox-policy-file`) can require a signature per
+repository through a `requireSignature` rule over the same `Repository`
+hierarchy the module fence uses. Only the repositories you name must be
+signed:
 
 ```cedar
 permit (principal, action == Action::"requireSignature", resource)
 when { resource in Repository::"ghcr.io/acme/prod" };
 ```
 
-The crypto is unchanged: `--cosign-key` still provides the keys and performs
-the check, and Cedar only decides *whether* a repository must be signed. The
-refusal (a required module that's unsigned, or one the runtime has neither
-flag to verify with) happens before any cache, exactly as the
-all-or-nothing check does. Precedence: **without** `--sandbox-policy-file`, `--cosign-key`
-keeps its all-or-nothing meaning unchanged; **with** a `--sandbox-policy-file`, the
-per-repository `requireSignature` decision selects which modules must be signed
-(a repository without a rule needn't be signed), and `--cosign-key` supplies the
-keys. A signature no key can check is refused, so the rule is
-fail-closed.
+A repository without a rule needn't be signed. A signature no configured key
+can check is refused: the rule fails closed. A required module that's unsigned, or that the runtime has no flag to
+verify, is refused before any cache is consulted.
+
+## Startup warnings
+
+The runtime warns at startup when a signing flag and the operator policy
+don't match, and serves anyway. Each line says what it leaves unverified:
+
+```text
+--cosign-key is set but the operator policy has no requireSignature rule: no module will be signature-verified
+--cosign-trusted-root is set but the operator policy has no trustSigner rule: no keyless signature will be trusted
+the operator policy has trustSigner rules but neither --cosign-trusted-root nor --cosign-trust-instance is set: every keyless signature will be refused
+```
+
+The second line names `--cosign-trust-instance` when that flag is set
+instead. `function validate --resolve` adds a warning of its own for a module
+that requires egress when it can't verify signatures (see the
+[warnings of `function validate`](../guests/validate.md#warnings-and-exit-codes)).

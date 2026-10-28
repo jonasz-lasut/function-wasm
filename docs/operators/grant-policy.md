@@ -1,38 +1,32 @@
 # Operator grant policy
 
-`--sandbox-policy-file` is the **one authority that enables a sandbox
-capability**: a [Cedar](https://www.cedarpolicy.com) document with the
-operator's grant policy, the top layer of the three-layer decision. It decides
-*which callers* a module's manifest may be granted a private `/tmp`
-(`usePrivateTmp`), environment bound to step credentials (`setEnv`,
-`spendCredential`), the step credentials it reads from its request
-(`spendCredential`) or egress (`grantEgress`, which is also the host
-allowlist) for. It's evaluated **default-deny** (a `forbid` overrides a
-`permit`): the runtime refuses a capability unless a permit matches it. Without a
-`--sandbox-policy-file` no sandbox capability is grantable at all and a runtime
-offers only the default sandbox (nothing but the request). The document belongs
-to the operator boundary alone. A module's manifest can only request, and
-the Input's `compositionPolicy` can only narrow. Neither can widen past
-it.
+This page is for operators of function-wasm. It shows how to write the Cedar
+policy that `--sandbox-policy-file` loads, mount it into the function's pod and
+check it offline with `function validate`. It covers the operator layer only:
+the schema and how each layer decides are in the
+[Cedar policy reference](cedar-policy.md).
 
-The schema both layers share (the principal, the entity types, the eight
-actions with their resources and context) and the rules by which each layer
-decides are in the [Cedar policy reference](cedar-policy.md); this page is
-the operator's side of it.
+The policy file is the only thing that enables a sandbox capability. A module's manifest requests a capability and the Input's `compositionPolicy` can narrow it, but neither can grant more than the operator's policy does.
 
-The principal every rule sees is the caller: `principal.namespace` and
-`principal.xrKind` come from the observed composite resource (a
-`RunFunctionRequest` doesn't include the Composition name, so `principal.composition`
-is presently always empty). The capability actions are `usePrivateTmp`, `setEnv`,
-`spendCredential` and `grantEgress` (`dialAddress` is on the [egress
-page](http-egress.md), `requireSignature` and `trustSigner` on
-[signatures](signatures.md)); for a step credential the resource is
-`Credential::"<name>"`, for egress the host or pattern within a
-boundary-correct `HostPattern` hierarchy, and the context carries the method
-and path. A separate, caller-independent action `requireSignature` (over the
-`Repository` hierarchy) decides which repositories require a cosign
-signature - see [signing](signatures.md). A policy that lets only `team-a`
-use a private `/tmp` and lets any namespace reach `*.example.com`:
+Evaluation is default-deny: a capability is refused unless a `permit` matches it, and a `forbid` overrides a `permit`. Without a `--sandbox-policy-file`, no capability is grantable and every module runs in the default sandbox, which has nothing but the request. A file that permits one capability still refuses every other one, so permit each capability you mean to allow.
+
+## Actions and principal
+
+The capability actions are:
+
+- `usePrivateTmp`: a private `/tmp`.
+- `setEnv`: environment variables bound to step credentials.
+- `spendCredential`: the step credentials a module reads.
+- `grantEgress`: HTTP egress, which is also the host allowlist.
+
+The operator layer also decides `dialAddress`, on the [egress page](http-egress.md), and `requireSignature` and `trustSigner` on [signatures](signatures.md). `composeResource`, below, fences a module's output rather than granting a capability.
+
+The principal's attributes, and the resources and context of each action, are in the [Cedar policy reference](cedar-policy.md).
+
+## Write the policy
+
+This policy lets only `team-a` use a private `/tmp`, and lets any
+namespace reach `*.example.com` with GET:
 
 ```cedar
 permit (principal, action == Action::"usePrivateTmp", resource)
@@ -42,7 +36,16 @@ permit (principal, action == Action::"grantEgress", resource)
 when { resource in HostPattern::"example.com" && context.method == "GET" };
 ```
 
-Mount it and point the flag at it:
+## Mount it and set the flag
+
+Put the policy in a ConfigMap in the namespace the Function runs in (here `crossplane-system`):
+
+```shell
+kubectl create configmap function-wasm-policy -n crossplane-system \
+  --from-file=policy.cedar
+```
+
+Then mount it through the Function's `DeploymentRuntimeConfig`:
 
 ```yaml
 spec:
@@ -61,12 +64,24 @@ spec:
             configMap: {name: function-wasm-policy}
 ```
 
-One action isn't a capability: `composeResource` is the operator's ceiling
-on what any module may compose, judged over the module's response after the
-run, and it narrows only where a rule scopes it (a runtime with no policy
-file, or a file with no such rule, serves every module's output as before).
-A `forbid` alone scopes it and permits nothing. A ceiling needs a
-`permit` beside it:
+The runtime compiles the policy at startup and doesn't reread it. After changing the ConfigMap, restart the function's pod.
+
+## Check it offline
+
+`function validate` reports the same verdicts as the runtime, without a cluster:
+
+```shell
+function validate composition.yaml --resolve \
+  --sandbox-policy-file policy.cedar --xr xr.yaml
+```
+
+The principal comes from `--xr`. Without it, the zero principal matches no per-tenant condition. The command and its other flags are in [Check a composition](../guests/validate.md).
+
+## Fence what modules compose
+
+`composeResource` isn't a capability. It's a ceiling on what any module may compose, judged over the response after the run. It applies only where a rule scopes it. Otherwise every module's output is applied unchanged.
+
+A `forbid` alone scopes the action and permits nothing. A ceiling needs a `permit` beside it. This policy refuses RBAC resources and Secrets and permits everything else:
 
 ```cedar
 forbid (principal, action == Action::"composeResource", resource)
@@ -74,10 +89,3 @@ when { resource in Group::"rbac.authorization.k8s.io" || resource == Kind::"core
 
 permit (principal, action == Action::"composeResource", resource);
 ```
-
-Because the policy is default-deny for capabilities, a document that governs
-one capability refuses every *other* capability a module requires unless it
-also permits it: with a `--sandbox-policy-file` set, permit every capability
-you mean to allow. `function validate --sandbox-policy-file …` reports the same verdicts offline
-(the principal comes from `--xr`, else a zero principal that matches no
-per-tenant condition).

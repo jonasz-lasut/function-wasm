@@ -1,202 +1,130 @@
 # Other languages
 
-**Supported and tested.** A language is *supported* when its toolchain
-produces a WebAssembly component that targets the [ABI v2](../abi-v2.md)
-world, `wasmfn:function`; the runtime checks the world, never the language.
-Today that's every language with a
-[wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) generator (Rust,
-C, C++, C#, Go, MoonBit) and the componentizers for JavaScript and TypeScript
-([componentize-js](https://github.com/bytecodealliance/componentize-js)),
-Python ([componentize-py](https://github.com/bytecodealliance/componentize-py))
-and .NET
-([componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet)).
-A language is *tested* when this repository works with it: a scaffold or an
-example here, built and run through the host by the guest suite and the render
-jobs on every `/e2e`. Tested on ABI v2 are Go, Rust, Zig, C, TypeScript,
-Python, C#, Odin and MoonBit - every scaffold and example here, since
-[#114](https://github.com/jonasz-lasut/function-wasm/issues/114) moved the
-last of them (Go, 2026-10-07) off ABI v1 and
-[#155](https://github.com/jonasz-lasut/function-wasm/issues/155) added
-MoonBit as an example. A
-supported language that's not tested should work, and a
-guest that runs here moves it into the tested set. A language with
-no component path isn't supported: the project retired AssemblyScript for that
-reason (#114, 2026-10-07).
+This page is for a module author choosing a guest language. It lists the six
+flavours `guestfn init` scaffolds, the guests that exist only as examples, and
+what the project hasn't tested. Pick a flavour, scaffold it, then follow [Write
+a module](write-a-module.md). Any toolchain that produces a component for the
+[ABI v2](../abi-v2.md) world, `wasmfn:function`, works: the runtime checks the
+world and never the language.
 
-The [ABI v2](../abi-v2.md) world is one export, one import and Protobuf
-bytes, which any component-model toolchain can produce. **ABI v1** - a
-wasip1 core module exporting `wasmfn_run`, the contract before the
-component model - was deprecated in v0.6.0 and **is removed in 1.0.0**
-([#114](https://github.com/jonasz-lasut/function-wasm/issues/114),
-[#129](https://github.com/jonasz-lasut/function-wasm/issues/129)): the
-runtime refuses a core module at load, as a fatal result that identifies
-the module
-(`cannot load module …: module is a core module, which function-wasm 1.0.0
-no longer runs (ABI v1 was removed); build it as an ABI v2 component
-(docs/abi-v2.md)`), and `guestfn build`, `guestfn inspect` and
-`function validate --resolve` print the same sentence for one; rebuild
-such a guest on a current scaffold. `guestfn` scaffolds and builds six
-flavours - the same greeting function each time, every one an ABI v2
-component:
+## Scaffolded flavours
 
-| `guestfn init --lang` | example | toolchain | how it talks Protobuf | module size |
+`guestfn init --lang <flavour>` writes the same greeting function in each of
+these, and `guestfn build` detects the toolchain from the project. All six build
+an ABI v2 component, and the guest suite runs them through the host, and the
+example build jobs build, test and lint them, on every `/e2e`. The sizes are of
+the built module.
+
+| `--lang` | example | toolchain | Protobuf codec | module size |
 |---|---|---|---|---|
-| `go` (default) | [`examples/pdb-addon`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/pdb-addon) | Go + function-sdk-go (vendored `internal/wasmfn` glue over [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s Go bindings, checked in and redone by `make gen-bindings` with `wit-bindgen-cli` 0.62.0) - **an ABI v2 component**, sync-lifted `run`, `*http.Client` over `wasi:http@0.2`; `guestfn build` embeds the world into the wasip1 reactor `go build` emits and wraps it, in place of componentize-go and `wasm-tools` | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) |
-| `rust` | [`examples/cloudflare-origin`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/cloudflare-origin) | Rust 1.100+ (its beta, pinned by `rust-toolchain.toml`, until 1.100.0), `wasm32-wasip3` (`cargo`, `protoc`) - **an ABI v2 component**, async `run` + `wasi:http` fetch ([`docs/abi-v2.md`](../abi-v2.md)) | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
-| `zig` | [`examples/hello-zig`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-zig) | [Zig](https://ziglang.org) 0.16 (one binary) over [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C bindings through translate-c (the `c` flavour's, checked in and redone by `make gen-bindings` with `wit-bindgen-cli` 0.62.0) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2`; `guestfn build` wraps the core module that `zig` links, without libc, `wasm-tools` or an adapter | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto (generated codec checked in; `protoc` only to regenerate) | ~60 KB |
-| `c` | [`examples/hello-c`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-c) | C via `zig cc` (the same `zig` binary, without wasi-sdk) over [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C bindings (checked in and redone by `make gen-bindings` with `wit-bindgen-cli` 0.62.0) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2`; `guestfn build` wraps the core module that `zig` links, without `wasm-tools` or an adapter | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto (heap-allocated fields, generated codec checked in; `nanopb_generator` only to regenerate) | ~62 KB |
-| `ts` | [`examples/policy-gate`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/policy-gate) | node + npm: [esbuild](https://esbuild.github.io) bundles, [jco](https://github.com/bytecodealliance/jco) componentizes - **an ABI v2 component**, sync-lifted `run`, `fetch()` over `wasi:http@0.2` | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto (`js+dts` codec checked in; `npm run gen-proto` + protoc to redo) | ~14 MB (SpiderMonkey) |
-| `python` | [`examples/team-tags`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/team-tags) | `python3` (a venv with [componentize-py](https://github.com/bytecodealliance/componentize-py)) - **an ABI v2 component**, sync-lifted `run`, fetch over `wasi:http@0.2` | protoc's Python codec over the vendored proto (checked in), on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
+| `go` (default) | [`examples/pdb-addon`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/pdb-addon) | Go | function-sdk-go's `request`/`response`/`resource` helpers | ~75 MB |
+| `rust` | [`examples/cloudflare-origin`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/cloudflare-origin) | Rust 1.100+, target `wasm32-wasip3`, `cargo` and `protoc` | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
+| `zig` | [`examples/hello-zig`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-zig) | [Zig](https://ziglang.org) 0.16 | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto | ~60 KB |
+| `c` | [`examples/hello-c`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-c) | C compiled by `zig cc` | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto | ~62 KB |
+| `ts` | [`examples/policy-gate`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/policy-gate) | node and npm | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto | ~14 MB (SpiderMonkey) |
+| `python` | [`examples/team-tags`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/team-tags) | `python3` | protoc's Python codec on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
 
-**TinyGo** is possible if needed: #114's spike built this greeting guest as a
-1.5 MB ABI v2 component on TinyGo's own `wasip2` target with
-[wit-bindgen-go](https://github.com/bytecodealliance/go-modules) (vtprotobuf
-for the codec, since protobuf-go's panics under TinyGo), at 0.4 s of runtime
-compile and 1.8 ms a run. It has no scaffold or test here. That generator is
-unmaintained since 2025-05, and TinyGo can't use componentize-go's bindings
-(`tinygo#4072`), so the `go` flavour in the table is the one this
-repository maintains.
+Each flavour keeps its ABI glue in the project, so you own and can edit it. The
+sections below give each toolchain and how `guestfn build` finishes the
+component.
 
-A **C#** ABI v2 guest exists as an example only as well
-([`examples/dashboard-bundle`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/dashboard-bundle), ~4.5 MB; the
-.NET 10 SDK, `make build`): compiled by NativeAOT-LLVM with
-[componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet)
-over wit-bindgen's generated bindings, its codec protoc's C# output on
-`Google.Protobuf`, its bundle fetched over `wasi:http@0.2` through the same
-egress policy and unpacked with `System.IO.Compression` into its private
-`/tmp`. Its `run` is sync-lifted, because wit-bindgen's C# async bindings
-don't compile for this world yet. NativeAOT-LLVM doesn't publish a
-macOS compiler, so on macOS the Makefile builds in the .NET SDK container
-(Docker). It solves its own use case instead of greeting, so its unit tests
-and its render test cover it rather than the behaviour tests the other
-flavours share, and `guestfn` neither scaffolds nor builds it yet.
+### Go
 
-An **Odin** ABI v2 guest is an example only too
-([`examples/hello-odin`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-odin),
-~71 KB, built with Odin dev-2026-10 and Zig 0.16 by `make build`). It's the
-hello guest again, on the `c` flavour's plumbing - its wit-bindgen C
-bindings, nanopb codec, WIT and proto byte for byte, kept identical by the
-plumbing test. `odin
-build -target:freestanding_wasm32 -build-mode:obj` compiles the guest to one
-object in 0.2 s, `zig cc` compiles the C half and links the core module (a
-wasip1 reactor that imports nothing from `wasi_snapshot_preview1`), and
-`guestfn build` takes the project for a `c` one by its `build.zig` and wraps
-the result with no adapter: about 7 s cold, 0.2 s warm, and the runtime
-compiles the component in about 10 ms, as it does the C and Zig ones. The
-Odin side defines the bindings' `exports_function_run` through Odin's
-foreign interface and declares nanopb's generated structs again with their
-wasm32 layout held by `#assert`s. It uses the host's HTTP egress through
-the `c` glue's `wasi:http@0.2` client, and its allocator is wasi-libc's
-heap, the module's one heap, so the canonical ABI can take what Odin allocates and
-free it there. The guest leaves out `core:fmt` on purpose: its
-reflection tables would make the module 198 KB. Odin's runtime defines
-`bzero` on every WASM target with a return value where libc's has none.
-`wasm-ld` reports that as a signature mismatch. The example links through
-`zig cc`, which only warns about it, because `zig build-exe` treats it as
-an error. A panic traps without a message on the freestanding runtime. Its
-unit tests run natively (`make test`, over the C half compiled for the
-host), and `guestfn` builds it but doesn't scaffold it.
+The scaffold vendors `internal/wasmfn` over the Go bindings that
+[wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) writes under
+`internal/bindings`. Both are checked in. `make gen-bindings` regenerates them
+with `wit-bindgen-cli` 0.62.0. Your function is a plain function-sdk-go
+`RunFunction`. `go build` emits a wasip1 reactor, and `guestfn build` embeds the
+world from the project's `wit/` and wraps the result into a component. `run` is
+sync-lifted, and an `*http.Client` reaches the host's egress over
+`wasi:http@0.2`.
 
-A **MoonBit** ABI v2 guest is an example only too
-([`examples/hello-moonbit`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-moonbit),
-~107 KB, built with `moon` at `0.1.20260920`, the one binary that compiles,
-builds, tests and fetches packages): the greeting guest over
-[wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s MoonBit
-bindings (0.62.0, checked in; `make gen-bindings` to redo) and
-[protoc-gen-mbt](https://github.com/moonbitlang/protoc-gen-mbt)'s codec
-(0.2.0, run through `moonx`, checked in; `make gen-proto` to redo) with the
-well-known types from the `moonbitlang/protobuf` runtime, its module's one
-dependency. `moon build --target wasm` links a 101 KB core module over
-linear memory in about a second; `guestfn build` detects the project by its
-`moon.mod` (or `moon.mod.json`), embeds the world from `wit/` stated
-**UTF-16**, how MoonBit stores strings (the canonical ABI then transcodes
-every string the guest lowers), and wraps it with no adapter (nothing
-imports `wasi_snapshot_preview1`); the runtime compiles the component in
-about 170 ms. `run` is sync-lifted, like the C and Zig guests'; the async
-lift works too (wit-bindgen's callback-driven `[async-lift]run` over its
-bundled `async-core` scheduler, when the world declares `run` async), but
-`--async=all` doesn't, as it async-lowers the sync imports. Its unit tests
-run on `moonrun` with the host injected (any package that links the
-bindings imports the world's `log`). Note two caveats: moon now writes `moon.mod`
-and `moon.pkg` and deprecates the `.json` manifests the generators still
-write, which `moon fmt` migrates in place (the example keeps the generated
-packages' JSON and its own in the new format); and a guest must never
-`println`, which imports `spectest.print_char`. `guestfn init` doesn't
-scaffold it.
+### Rust
 
-The **TypeScript** flavour (`npm install` is the whole toolchain) is typed
-end to end (protobuf-es generated types, `tsc --noEmit` in the test gate),
-and its greeting is fetched with the platform's own `fetch()`, which the
-runtime serves over `wasi:http@0.2` through the same egress policy as every
-other guest. Its `run` is sync-lifted (componentize-js can't async-lift a
-custom world yet - the world accepts that); the TypeScript itself is free
-to await. The scaffold has no `package-lock.json`: `guestfn build` runs
-`npm install` for a project without one, and `npm ci` once it has one.
+The `rust` flavour needs Rust 1.100 and the `wasm32-wasip3` target. The
+scaffold's `rust-toolchain.toml` pins the toolchain, which your Rust installer
+fetches on first use. `run` is async, and a fetch awaits `wasi:http`. See [ABI
+v2](../abi-v2.md) for the world.
 
-The **Python** flavour (`python3` is the whole toolchain) bundles the
-pure-Python `protobuf` runtime and fetches its greeting over `wasi:http@0.2`
-on componentize-py's poll loop, through the same egress policy. Sync-lifted
-like the TypeScript guest. `guestfn build` makes the venv from
-`requirements.txt` when the project has none.
+### Zig and the C flavour
 
-`guestfn build` picks the toolchain from the project. A `Cargo.toml` means
-`cargo` targeting `wasm32-wasip3`, a `build.zig` means `zig` (the `zig` and
-`c` guests alike), a `package.json` means npm (the TypeScript guest), a
-`requirements.txt` means a venv with componentize-py (the Python guest), a
-`go.mod` means `go`, and a `moon.mod` or `moon.mod.json` means `moon` (the
-MoonBit example). `--lang` states it instead (`build` takes `moonbit` too,
-and `init` scaffolds the six in the table). When a build leaves a core
-module that contains wit-bindgen's `component-type` section (what its C
-generator links in: the `zig` and `c` flavours' `zig build`; for a `go` or
-MoonBit project `guestfn build` embeds the world from its `wit/` into the
-module `go build` or `moon build` emits first, since wit-bindgen's Go and
-MoonBit generators write bindings only, UTF-16 for MoonBit), `guestfn
-build` wraps it into an ABI v2 component itself, linking the wasip1 adapter
-of the runtime's own Wasmtime when the module imports
-`wasi_snapshot_preview1`. That spares a `wasm-tools` install and an adapter
-download, and the adapter can't drift from the runtime. Each flavour keeps
-its ABI glue in the open: the Go scaffold vendors it under `internal/wasmfn`
-(the world's `run` export, the typed `log`, a `wasi:http@0.2` client behind
-an `*http.Client`, over wit-bindgen's Go bindings),
-Zig and C keep theirs beside the module (`src/wasmfn.zig`, `src/wasmfn.c`)
-over wit-bindgen's C bindings (the typed `log`, a `wasi:http@0.2` client);
-each example
-has unit tests in its own language and a build job that checks its generated
-codec and bindings for drift, and the root tests build every scaffold and run
-it through the host as well - with and without an egress grant. The runtime's
-behaviour in a cluster is proved by the [end-to-end suite](../project/testing.md),
-through a module of its own.
+Both compile with the `zig` binary and share wit-bindgen's C bindings, checked
+in under `src/gen` and regenerated by `make gen-bindings`. Zig reads them
+through translate-c, and the C flavour compiles them with `zig cc` without
+wasi-sdk. `run` is sync-lifted, with `wasi:http@0.2` fetch. The glue is beside
+the module in `src/wasmfn.zig` and `src/wasmfn.c`. `zig` links a core module
+without libc, and `guestfn build` wraps it into a component without an adapter
+or `wasm-tools`. `protoc` or `nanopb_generator` is needed only to regenerate the
+codec.
 
-**Possible, untested.** A 2026-10-07 survey
-([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)) found
-these paths to a component. None has a guest in this repository yet, so
-none is in the tested set, and none needs a world change (MoonBit and Odin,
-surveyed the same day, have their examples earlier on this page):
+### TypeScript
 
-- **D**: wit-bindgen's `d` generator (since 0.61.0) with `ldc2 -betterC`,
-  the core module wrapped like a Go guest. LDC 1.43 brings `druntime` to
-  wasip1 and wasip2, and nanopb would be the codec.
-- **C++**: hello-c's C bindings compile as C++ with `zig c++`; the separate
-  community `cpp` generator needs C++20 or newer and has no async.
-- **Kotlin on WebAssembly**: experimental Component Model support in Kotlin
-  2.4.0 through JetBrains' wit-bindgen fork, a WasmGC module plus the wasip1
-  adapter (this runtime's Wasmtime enables GC); no `.proto` codec with
-  well-known types yet.
-- **Swift**: the official Swift SDK for WebAssembly (6.2 and later) exports a
-  reactor over the C bindings; `swift-protobuf` doesn't build for WASM today
-  and Foundation costs about 50 MB.
-- **Haskell**: GHC's WASM back end (a tech preview) as a `foreign export
-  ccall` reactor over the C bindings. A Protobuf library under it remains
-  unverified.
-- **Lua, Ruby, PHP**: an interpreter embedded in a C reactor; all three need
-  setjmp/longjmp, which `zig cc` can't build for WASM (wasi-sdk's `sjlj` plus
-  the exception-handling proposal can); Ruby is tens of MB, PHP has no
-  maintained WASI build.
-- **Scala** through the `scala-wasm` fork (wasip2 on WasmGC); **Nim** and **V**
-  through their C output and a community WASI recipe; any compile-to-JS
-  language through the `ts` flavour's componentize-js path.
+`npm install` is the whole toolchain. [esbuild](https://esbuild.github.io)
+bundles the guest, and [jco](https://github.com/bytecodealliance/jco)
+componentizes it with componentize-js. The types come from protobuf-es, the test
+gate runs `tsc --noEmit`, and the greeting comes from the platform's `fetch()`,
+served over `wasi:http@0.2` through the same egress policy as every other guest.
+`run` is sync-lifted because componentize-js can't async-lift a custom world
+yet, and your TypeScript can still `await`. The scaffold has no
+`package-lock.json`: `guestfn build` runs `npm install` without one and `npm ci`
+with one.
 
-AssemblyScript (its project marks the Component Model as harmful), Java
-(TeaVM dropped WASI, GraalVM targets browser WasmGC), Dart, OCaml, Grain,
-Elixir, Julia, Perl, R and Crystal don't qualify for now, each because it
-lacks a WASI-hosted reactor path.
+### Python
+
+[componentize-py](https://github.com/bytecodealliance/componentize-py) is the
+toolchain, and `guestfn build` makes the venv from `requirements.txt` when the
+project has none. The guest bundles the pure-Python `protobuf` runtime, and
+`run` is sync-lifted. Fetches go over `wasi:http@0.2` on componentize-py's poll
+loop, through the same egress policy.
+
+### How build chooses a toolchain
+
+`guestfn build` reads the project: `Cargo.toml` selects `cargo`, `build.zig`
+selects `zig` (both the `zig` and `c` flavours), `package.json` selects npm,
+`requirements.txt` selects componentize-py, `go.mod` selects `go`, and
+`moon.mod` or `moon.mod.json` selects `moon`. `--lang` overrides the choice, and
+`build` also accepts `moonbit`.
+
+When a build leaves a core module, `guestfn build` wraps it into a component
+with the wasip1 adapter of the runtime's own Wasmtime, which is the adapter
+version the runtime was built with. The `zig` and `c` builds already leave a
+core module with wit-bindgen's `component-type` section, and `guestfn build`
+wraps it directly. For `go` and MoonBit, wit-bindgen writes bindings only, so
+`guestfn build` embeds the world from `wit/` first.
+
+## Examples without a scaffold
+
+These guests solve their own use case or show one more language. Each has unit
+tests in its language and a build job that checks its generated code for drift.
+`guestfn init` scaffolds none of them, and `guestfn build` detects only Odin (as
+a `c` project) and MoonBit.
+
+- **C#**:
+  [`examples/dashboard-bundle`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/dashboard-bundle),
+  ~4.5 MB, needs the .NET 10 SDK. `make build` compiles it with NativeAOT-LLVM
+  and
+  [componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet),
+  in the .NET SDK container on macOS, which has no NativeAOT-LLVM compiler.
+- **Odin**:
+  [`examples/hello-odin`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-odin),
+  ~71 KB, built with Odin dev-2026-10 and Zig 0.16 by `make build`. It reuses
+  the `c` flavour's bindings, nanopb codec, WIT and proto. Odin compiles the
+  guest to an object, `zig cc` links it with the C half, and `guestfn build`
+  treats the project as a `c` one and wraps it without an adapter. `make test`
+  runs the unit tests natively.
+- **MoonBit**:
+  [`examples/hello-moonbit`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-moonbit),
+  ~107 KB, built with `moon` (version `0.1.20260920`). It uses wit-bindgen's
+  MoonBit bindings and the protoc-gen-mbt codec, regenerated by `make
+  gen-bindings` and `make gen-proto`. `guestfn build` detects it by `moon.mod`,
+  embeds the world stated as UTF-16, MoonBit's string encoding, and wraps it
+  without an adapter. The unit tests run on `moonrun`. A guest must never call
+  `println`: it imports `spectest.print_char`.
+
+## Untested
+
+- **C++**: no guest here.
+- **TinyGo**: the scaffold was retired on 2026-10-07 (#114). The `go` flavour is
+  the Go path.
+- **AssemblyScript**: not supported, because it has no component path.
+

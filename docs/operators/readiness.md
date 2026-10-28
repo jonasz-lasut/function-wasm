@@ -1,12 +1,20 @@
 # Readiness and warm-up
 
-The runtime reports readiness - caches open, engine up, the modules named
-by `--warm-modules` (none by default) loaded - in two places: the gRPC
-health service (`grpc.health.v1.Health`) on the function port, and plain
-HTTP `/readyz` (plus `/livez`) on `--health-address` (`:8081`). Use the
-HTTP one for Kubernetes probes, because Crossplane runs functions with mTLS
-on the function port and kubelet's gRPC probe dials without credentials, so
-a `grpc:` probe on `9443` never succeeds outside `--insecure`.
+This page is for operators who wire Kubernetes probes for a function-wasm pod
+and decide whether to preload modules. It assumes Crossplane runs the function
+from a package with a `DeploymentRuntimeConfig`.
+
+## Probes
+
+The runtime reports readiness in two places: the gRPC health service
+(`grpc.health.v1.Health`) on the function port, and plain HTTP `/readyz` on
+`--health-address` (`:8081`), which also serves `/livez`. Readiness means the
+caches are open, the engine is up and the modules named by `--warm-modules`
+(none by default) are loaded.
+
+Use the HTTP endpoints for Kubernetes probes. Crossplane runs functions with
+mTLS on the function port and kubelet's gRPC probe dials without credentials,
+so a `grpc:` probe never succeeds outside `--insecure`.
 
 ```yaml
 apiVersion: pkg.crossplane.io/v1beta1
@@ -30,21 +38,33 @@ spec:
                 port: 8081
 ```
 
-Ready isn't warm: the first request for a module on a pod pays a
-deserialize (with a warm volume) or a compile (~2 s for a large Go module).
-`--warm-modules` moves that ahead of readiness: the runtime listens at
-once but reports Not Serving while it loads the listed modules - a warm
-volume makes that milliseconds, a cold cache one compile per module
-(the entries load one after another) - and Serving when every entry has
-loaded or has failed. Failures are logged (`Cannot warm module` with the
-entry and the reason) and never hold readiness back. A wrong entry or an
-unreachable registry costs that module its first request, and the pod keeps
-its traffic. `/livez` answers throughout, so a liveness probe is unaffected.
-Only `/readyz` (and the gRPC status) waits for warm-up. Warm-up runs the same
-path a request does, so a warmed module is a memory hit for its first
-request; with `--enable-memory-cache=false` it leaves the artifact on disk,
-as intended. With `--cosign-trust-instance` the first fetch of the
-Sigstore trusted root runs just before the modules, bounded to one minute
-and never held against readiness either. A pod that can't fetch from the
-TUF repository reports ready on its cache or, with none, refuses keyless
-signatures by name until a retry succeeds ([signing](signatures.md)).
+## Warm-up
+
+A ready pod hasn't necessarily loaded any module. The first request for a
+module on a pod deserializes its compiled artifact from the disk cache, which a restart keeps
+only on a volume, or compiles the module when the cache is cold.
+`--warm-modules` moves that work ahead of readiness.
+
+With the flag set, the runtime listens at once but reports `NOT_SERVING` (and `/readyz` answers 503)
+while it loads the listed modules, one after another. With a warm volume each load takes
+milliseconds. With a cold cache each costs one compile. The runtime reports
+`SERVING` when every entry has loaded or failed. `/livez` answers throughout, so
+a liveness probe is unaffected.
+
+Warm-up runs the path a request does, so a warmed module is a memory hit for
+its first request. With `--enable-memory-cache=false` the artifact stays on
+disk instead.
+
+## Failed entries
+
+A failed entry is logged as `Cannot warm module` with the entry and the reason,
+and never holds readiness back. The module loads on its first request, and the
+pod remains ready. [Troubleshooting](troubleshooting.md) covers a readiness
+probe that fails for a while after start.
+
+## Trusted root
+
+With `--cosign-trust-instance`, the first fetch of the Sigstore trusted root
+runs just before the modules and is bounded to one minute. It never holds
+readiness back either; [signatures](signatures.md) covers what a pod does
+without a root.

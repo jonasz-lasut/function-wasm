@@ -12,15 +12,23 @@
 > [open an issue](https://github.com/jonasz-lasut/function-wasm/issues),
 > but don't build a platform on it yet.
 
-A [Crossplane](https://crossplane.io) composition function that runs a
-WebAssembly module in a [Wasmtime](https://wasmtime.dev) sandbox. The module
-follows the same contract as a native composition function,
-`RunFunction(RunFunctionRequest) → RunFunctionResponse`. You write an
-ordinary [function-sdk-go](https://github.com/crossplane/function-sdk-go)
-function and compile it to WebAssembly, then publish the module and point a
-Composition step at it. One installed `function-wasm` serves any number of
-modules; changing composition logic never means building, publishing and
-installing another Function package.
+This page is for Crossplane users deciding whether to run composition
+logic as WebAssembly modules. It assumes you know Compositions and pipeline
+mode.
+
+function-wasm is a [Crossplane](https://crossplane.io) composition function
+that runs a WebAssembly module in a [Wasmtime](https://wasmtime.dev) sandbox.
+A module follows the contract of a native function,
+`RunFunction(RunFunctionRequest) → RunFunctionResponse`. You write an ordinary
+function, in Go with
+[function-sdk-go](https://github.com/crossplane/function-sdk-go) or in Rust,
+Zig, C, TypeScript or Python, compile it to WebAssembly, publish the module
+and point a Composition step at it.
+
+It fits when a pipeline step's logic should change without a new Function
+package, or when the people who maintain that logic aren't the people who
+maintain the Composition. One installed function-wasm serves any number of
+modules, so a new module version is a new reference in the Input.
 
 ```yaml
 apiVersion: apiextensions.crossplane.io/v1
@@ -47,7 +55,17 @@ spec:
         greeting: hi
 ```
 
-The whole `RunFunctionRequest` reaches the module and its whole
-`RunFunctionResponse` goes back to Crossplane, so desired resources, results,
-conditions, requirements (extra resources), context and TTL all work exactly
-as they do for a native function.
+The module receives the whole `RunFunctionRequest` and returns the whole
+`RunFunctionResponse`, so desired resources, results, conditions, requirements
+(extra resources), context and TTL pass through as they do for a native
+function. The runtime withholds only the step credentials a module wasn't
+granted.
+
+## Where to go next
+
+- [Write a module](guests/write-a-module.md) to scaffold, build and publish a
+  guest. [Other languages](guests/other-languages.md) lists the rest.
+- [Install the runtime](operators/install.md) to run function-wasm in a
+  cluster.
+- [A request, step by step](how-a-request-runs.md) to see what the runtime
+  does between Crossplane's request and the module's response.

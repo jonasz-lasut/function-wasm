@@ -1,57 +1,83 @@
 # Trust model
 
-The complete model - parties, what pins the code, credentials, what the
-guest sees, threats considered - is
-[docs/one-pager-trust-model.md](../one-pager-trust-model.md); this is the
-short version. How vulnerabilities in the dependencies of the runtime, of
-scaffolded projects and of the examples get fixed is in
-[SECURITY.md](../project/security.md).
+This page is for operators deciding what a function-wasm installation
+trusts. It names who can do what, and which policy or flag limits each
+party. It assumes Composition authors are trusted and that composite
+resource (XR) authors and module code aren't. The reasoning and the threats
+considered are in the
+[design record for the trust model](../one-pager-trust-model.md).
 
-A module runs with the privileges of the Composition that references it.
-It sees the request's observed and desired state and context exactly as a
-native function would, but of the step credentials only those granted to
-it: each one its manifest specifies (a `requires.env` binding's credential,
-or one in `requires.credentials`) and both Cedar layers permit
-(`spendCredential`). The runtime edits every other one out of the request
-at the wire level. The credential that pulled it (`module.oci.credentials`)
-is the host's and is never forwarded to the guest, whatever its manifest
-asks. A native function, like the Go runtime before this one, receives
-every step credential. With `module.from` the **composite resource's
-author** picks the module - use it where you trust XR authors to, fence
-what they can pick with the `compositionPolicy`'s `pullModule` permits
-(required for `OCI` and `HTTP` sources: without them the XR author would
-point the runtime at any host and read what its answer says), and restrict
-it to signed code with `--cosign-key`. A source read from the XR may
-specify a step credential only where a `spendCredential` permit matches it
-and only for a repository a `pullModule` permit admits. Otherwise the XR
-author would pick the registry host that receives the secret, and a registry
-that sends back a `Basic` challenge receives it. Without such a permit the
-runtime pulls an XR-chosen module with its own Docker config (mount one
-through a `DeploymentRuntimeConfig` and set `DOCKER_CONFIG`: its
-credentials are bound to their registry host) or anonymously.
-`compositionPolicy` and `limits` are read from the Input only, so an XR
-author can choose code but can't widen its permissions, grants or budget.
-Every one of these rules is enforced by the runtime on every request
-(Crossplane never installs the Input CRD), and
-[`function validate`](../guests/validate.md) runs the same code over a
-Composition offline. The sandbox protects the runtime process - and with
-it every other Composition sharing the Function - from a crashing, looping
-or memory-hungry module, and gives a module no filesystem, environment or
-network beyond what its manifest requires and both Cedar layers (the
-Input's `compositionPolicy` and the operator's `--sandbox-policy-file`)
-permit. The filesystem is a private `/tmp` that exists for one request
-(host directories are never mountable - the request is a module's only
-view of the world beyond what it writes for itself). Environment variables
-are exactly those its manifest binds to step credentials (non-secret
-configuration travels in `config`). Network access is HTTP requests
-through the host to the hosts, methods and paths its manifest lists within
-both policies (block list, budgets). A module granted egress can send
-whatever its request contains - the step credentials granted to it
-included - to those hosts. For that reason the grant is the policy layers'
-alone (a manifest can only ask and an XR author widens nothing). Every
-request leaves an audit line with the module digest, and `--cosign-key` is
-strongly recommended wherever egress is granted. Because each remote
-module is pinned by a digest the Composition states - the OCI reference's
-manifest digest (the manifest states the layer's digest, and both are
-verified on fetch) or `http.digest` - nothing that runs can change without
-the Composition changing.
+## Module privileges
+
+A module is the Composition author's code. It gets only what the
+Composition's step and the operator's policy grant it. It sees the request's
+observed state, desired state and context. Of the step credentials, it sees only those
+granted to it: those its
+[manifest](../guests/module-manifests.md) names in a `requires.env`
+binding or in `requires.credentials`, and that both Cedar layers permit
+through `spendCredential`. The runtime removes every other credential from
+the request before the module runs.
+
+The credential that pulled the module (`module.oci.credentials`) belongs to
+the host. The runtime never forwards it, whatever the manifest asks.
+
+The sandbox protects the runtime, and every other Composition sharing the
+Function, from a module that crashes, loops or exhausts memory. Beyond
+that, a module gets only what its manifest requests and both policy layers
+permit ([Cedar policy](cedar-policy.md)):
+
+- A private `/tmp` that exists for one request. Host directories can't be
+  mounted.
+- The environment variables its manifest binds to step credentials.
+  Non-secret configuration goes in `config`.
+- HTTP requests through the host ([HTTP egress](http-egress.md)).
+
+## Modules chosen by an XR author
+
+With `module.from`, the XR author picks the module. Use it only where you
+trust XR authors to choose code, and limit the choice in two ways:
+
+- Permit sources with `pullModule` rules in the Input's
+  `compositionPolicy`. `OCI` and `HTTP` sources need one. Without it, the XR
+  author could point the runtime at any host.
+- Require signatures with `--cosign-key` or the keyless options in
+  [Signatures](signatures.md).
+
+The runtime reads `compositionPolicy` and `limits` from the Input only,
+never from the XR. An XR author can choose code but can't widen its
+permissions, grants or budget. The runtime enforces every rule on every request, because Crossplane never
+installs the Input's CRD. [`function validate`](../guests/validate.md) runs
+the same checks over a Composition offline.
+
+## Credentials and the registry pull
+
+A source read from the XR can specify a step credential only where a
+`spendCredential` permit matches it and a `pullModule` permit admits the
+repository. Otherwise the XR author would choose the registry host that
+receives the secret. The runtime sends the pull credential to a registry
+as HTTP Basic when the registry challenges for it, or exchanges it for a bearer
+token.
+
+Without such a permit, the runtime pulls an XR-chosen module anonymously or
+with its own Docker config. Mount a Docker config through a
+`DeploymentRuntimeConfig` and set `DOCKER_CONFIG`. Its credentials apply
+only to their registry host.
+
+## Egress
+
+A module granted egress can forward its whole request to the hosts its
+rules allow, step credentials included. Only the
+policy layers grant egress: a manifest can request it, and an XR author
+can't widen it. Every request leaves an audit line with the module digest.
+
+Require signatures wherever egress is granted, so only code you've
+approved can send data out ([Signatures](signatures.md)).
+
+## Pinning
+
+A remote module that a Composition names is pinned by a digest the
+Composition states: the OCI reference's manifest digest or `http.digest`.
+The runtime verifies the manifest and layer digests when it fetches, so the
+code can't change without the Composition changing. This doesn't hold for
+modules chosen with `module.from`, which the XR author picks, or for `Path`
+sources, which have no digest.
