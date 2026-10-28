@@ -67,8 +67,16 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
+      # Saved on main only: GitHub scopes a cache to the ref that saved it,
+      # so a pull request's run restores main's cache (a partial restore when
+      # Cargo.lock differs) but would otherwise write a copy of its own under
+      # refs/pull/N/merge on every push. Those copies pushed the repository
+      # over the 10 GiB cache limit, and GitHub evicted the rarely read
+      # e2e- caches first.
       - name: Cache Rust Builds
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # --all-features: the end-to-end crate (crates/e2e) is empty without
       # its cluster feature, so this is where it gets compiled and linted on
@@ -104,6 +112,8 @@ jobs:
 
       - name: Cache Rust Builds
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Tests
         env:
