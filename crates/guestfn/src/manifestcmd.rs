@@ -78,7 +78,10 @@ impl ShowCmd {
             println!("{}", String::from_utf8_lossy(&m.json()?));
             return Ok(());
         }
-        print!("{}", serde_yaml::to_string(&m).map_err(|e| e.to_string())?);
+        print!(
+            "{}",
+            serde_norway::to_string(&m).map_err(|e| e.to_string())?
+        );
         Ok(())
     }
 }

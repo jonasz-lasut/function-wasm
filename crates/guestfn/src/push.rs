@@ -286,7 +286,7 @@ fn requires_block(m: &Manifest) -> Result<Option<String>, String> {
     struct Block<'a> {
         requires: &'a function_wasm::manifest::Requires,
     }
-    serde_yaml::to_string(&Block { requires: r })
+    serde_norway::to_string(&Block { requires: r })
         .map(Some)
         .map_err(|e| e.to_string())
 }

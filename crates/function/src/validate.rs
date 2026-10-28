@@ -369,7 +369,7 @@ fn read_documents(file: &str) -> Result<Vec<serde_json::Value>, String> {
         })?
     };
     let mut docs = Vec::new();
-    for de in serde_yaml::Deserializer::from_slice(&raw) {
+    for de in serde_norway::Deserializer::from_slice(&raw) {
         let doc = serde_json::Value::deserialize(de).map_err(|e| parse_error(file, &e))?;
         if doc.is_null() {
             continue;
@@ -383,10 +383,11 @@ use serde::Deserialize as _;
 
 /// Renders a YAML parse failure the way the Go tool does: its YAML layer
 /// reports "error converting YAML to JSON: yaml: line N: <message>", and the
-/// message wording is libyaml's, which serde_yaml shares.
-fn parse_error(file: &str, e: &serde_yaml::Error) -> String {
+/// message wording is libyaml's, which serde_norway, the maintained serde_yaml
+/// fork over libyaml-norway, shares.
+fn parse_error(file: &str, e: &serde_norway::Error) -> String {
     let mut msg = e.to_string();
-    // go-yaml prints libyaml's zero-based line; serde_yaml's location is
+    // go-yaml prints libyaml's zero-based line; serde_norway's location is
     // one-based.
     let line = e.location().map(|l| l.line().saturating_sub(1));
     if let Some(i) = msg.find(" at line ") {

@@ -144,7 +144,7 @@ fn composition_step(
         struct Block {
             config: std::collections::BTreeMap<String, serde_json::Value>,
         }
-        let yaml = serde_yaml::to_string(&Block { config }).map_err(|e| e.to_string())?;
+        let yaml = serde_norway::to_string(&Block { config }).map_err(|e| e.to_string())?;
         b += &indent(&yaml, "    ");
     }
     if let Some(skeleton) = composition_policy_skeleton(src, m) {

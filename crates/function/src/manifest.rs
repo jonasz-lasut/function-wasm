@@ -163,7 +163,7 @@ impl Manifest {
     pub fn load(path: &std::path::Path) -> Result<Manifest, String> {
         let raw =
             std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let value: serde_json::Value = serde_yaml::from_slice(&raw)
+        let value: serde_json::Value = serde_norway::from_slice(&raw)
             .map_err(|e| format!("{} is not valid YAML: {e}", path.display()))?;
         if let Some(map) = value.as_object() {
             const KNOWN: [&str; 9] = [
