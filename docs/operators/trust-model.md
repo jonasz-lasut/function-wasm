@@ -85,15 +85,15 @@ module now, forbid it: the `pullModule` fence for a `module.from` source, or
 ## The cache directory
 
 The caches under `/tmp/function-wasm-cache` belong to the runtime. The
-compiled tier holds Wasmtime artifacts, native code the runtime loads without
-checking it again. Whoever can write that directory runs code in the
-runtime: the checks before a load look at the module a file is named after,
-never at the file. Back it with an `emptyDir` or
-a volume that only this Function's pods mount. A host path, or a volume
-another workload can write, hands that workload the runtime
-([cache storage](runtime-flags.md#cache-storage)).
-A keyed check of the artifacts is proposed in the
-[cache key design record](../one-pager-cache-key.md).
+runtime checks each tier before it serves it. Fetched modules and manifests are
+verified against their digest on every read. Compiled artifacts, native
+code that Wasmtime loads without a check of its own, carry an HMAC under a
+key the process draws at startup and never writes anywhere, so an artifact
+this process didn't write, planted or left by an earlier process, is refused
+and the module is compiled again ([the cache key design
+record](../one-pager-cache-key.md)). Back the directory with an `emptyDir`,
+or with a volume for this pod alone to keep the fetched modules across
+restarts ([cache storage](runtime-flags.md#cache-storage)).
 
 ## Egress
 

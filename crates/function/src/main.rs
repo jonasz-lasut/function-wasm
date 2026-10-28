@@ -333,19 +333,30 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     let version = function_wasm_engine::version();
     store::remove_stale_versions(&compiled_parent, &version);
     let open = |dir: std::path::PathBuf, verify: bool| match store::Store::open_dir(dir, verify) {
-        Ok(s) => Arc::new(s),
+        Ok(s) => s,
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);
         }
     };
-    let compiled = open(compiled_parent.join(&version), false);
+    // The compiled store is keyed under 32 bytes drawn here and kept in
+    // the process: an artifact is native code wasmtime loads without a
+    // check of its own, so only what this process wrote is served, and a
+    // persisted volume's artifacts are compiled again after a restart
+    // rather than trusted (Jonasz, 2026-10-28: no flag, no key to mount,
+    // the cold start after a restart accepted).
+    let mut cache_key = [0u8; 32];
+    if let Err(e) = getrandom::fill(&mut cache_key) {
+        eprintln!("cannot draw the compiled cache's key: {e}");
+        std::process::exit(1);
+    }
+    let compiled = Arc::new(open(compiled_parent.join(&version), false).with_key(cache_key));
     let compiled_store = Arc::clone(&compiled);
-    let _modules = open(cache_dir.join(store::MODULES_DIR), true);
+    let _modules = Arc::new(open(cache_dir.join(store::MODULES_DIR), true));
     // The resolver's manifest cache writes this store, keyed by the
     // manifest's own digest and verified on read like the modules store,
     // never trusted by name (the 1.0 audit's F-5).
-    let manifests = open(cache_dir.join(store::MANIFESTS_DIR), true);
+    let manifests = Arc::new(open(cache_dir.join(store::MANIFESTS_DIR), true));
     let blobs = Arc::clone(&_modules);
 
     let resolver = Arc::new(

@@ -43,8 +43,8 @@ spec:
 ## Warm-up
 
 A ready pod hasn't necessarily loaded any module. The first request for a
-module on a pod deserializes its compiled artifact from the disk cache, which a restart keeps
-only on a volume, or compiles the module when the cache is cold.
+module on a pod compiles it. The compiled code is signed per process, and a
+restart compiles again even on a volume, which keeps only the fetched module.
 `--warm-modules` moves that work ahead of readiness.
 
 With the flag set, the runtime listens at once but reports `NOT_SERVING` (and `/readyz` answers 503)

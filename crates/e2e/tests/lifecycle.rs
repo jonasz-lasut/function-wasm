@@ -86,11 +86,13 @@ async fn readiness_waits_for_the_warm_up() -> Result<()> {
     .await
 }
 
-/// The caches on the volume: after a restart the test module's compiled
-/// artifact is a disk hit, while the warmed module, larger than the cache
-/// bound, was swept at startup and fetched again.
+/// The caches on the volume: after a restart the test module's bytes are
+/// a blob hit (no fetch) while its compiled artifact, written under the
+/// previous process's key, is refused as stale and compiled again; the
+/// warmed module, larger than the cache bound, was swept at startup and
+/// fetched again.
 #[tokio::test]
-async fn caches_survive_a_restart_and_the_sweep_bounds_them() -> Result<()> {
+async fn the_volume_keeps_fetched_modules_and_the_sweep_bounds_them() -> Result<()> {
     let _serial = ONE_AT_A_TIME.lock().await;
     with_temp_ns("caches", |ns| async move {
         ns.ensure_profile(Profile::Lifecycle).await?;
@@ -105,19 +107,29 @@ async fn caches_survive_a_restart_and_the_sweep_bounds_them() -> Result<()> {
             fetched.unwrap_or_default() >= 1.0,
             "after the restart the warm-up should have fetched the swept module again: {fetched:?}\n{scraped}"
         );
-        let hits_before =
-            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "hit")])
+        let blob_hits_before =
+            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "blob"), ("event", "hit")])
+                .unwrap_or_default();
+        let stale_before =
+            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "stale")])
                 .unwrap_or_default();
 
         let second = ns.guest("second", &step, json!({})).await?;
         second.wait_ready(WAIT).await?;
         let scraped = metrics::scrape(&ns.client).await?;
-        let hits_after =
-            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "hit")])
+        let blob_hits_after =
+            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "blob"), ("event", "hit")])
+                .unwrap_or_default();
+        let stale_after =
+            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "stale")])
                 .unwrap_or_default();
         ensure!(
-            hits_after > hits_before,
-            "the compiled artifact on the volume was not reused by {pod}: {hits_before} -> {hits_after}\n{scraped}"
+            blob_hits_after > blob_hits_before,
+            "the fetched module on the volume was not reused by {pod}: {blob_hits_before} -> {blob_hits_after}\n{scraped}"
+        );
+        ensure!(
+            stale_after > stale_before,
+            "the previous process's artifact should be refused as stale by {pod}: {stale_before} -> {stale_after}\n{scraped}"
         );
         Ok(())
     })

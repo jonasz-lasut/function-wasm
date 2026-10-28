@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use hmac::{KeyInit as _, Mac as _};
 use sha2::{Digest, Sha256};
 
 /// Where the runtime keeps its caches - a fixed location: a pod that must
@@ -30,11 +31,30 @@ pub const TUF_DIR: &str = "tuf";
 pub const STALE_VERSION_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 const TMP_MARKER: &str = ".put-";
+/// The suffix of a keyed entry's sidecar, the HMAC of the entry's bytes.
+const MAC_SUFFIX: &str = ".mac";
 
 /// A content-addressed store of one kind of artifact.
 pub struct Store {
     dir: PathBuf,
     verify: bool,
+    /// With a key, put writes an HMAC-SHA256 sidecar beside each entry and
+    /// path hands out only an entry whose sidecar verifies under it: the
+    /// compiled store's entries are native code wasmtime loads without a
+    /// check of its own, so whatever this process didn't write is refused.
+    key: Option<[u8; 32]>,
+}
+
+/// What a keyed lookup found.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Lookup {
+    /// The entry, verified where the store verifies.
+    Hit(PathBuf),
+    /// No entry.
+    Miss,
+    /// An entry the store refused and removed: its MAC was missing or wrong,
+    /// so it was written by another process or tampered with.
+    Stale,
 }
 
 impl Store {
@@ -46,7 +66,21 @@ impl Store {
         let dir = dir.into();
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("cannot create cache directory {}: {e}", dir.display()))?;
-        Ok(Store { dir, verify })
+        Ok(Store {
+            dir,
+            verify,
+            key: None,
+        })
+    }
+
+    /// Keys the store: entries put from now on carry an HMAC-SHA256
+    /// sidecar under key, and path hands out only entries whose sidecar
+    /// verifies. The runtime draws the key at startup and never writes it
+    /// anywhere, so a persisted volume's artifacts are refused by the next
+    /// process and compiled again, and a planted artifact is never loaded.
+    pub fn with_key(mut self, key: [u8; 32]) -> Store {
+        self.key = Some(key);
+        self
     }
 
     /// Returns the artifact stored under digest. (The blob and manifest
@@ -68,36 +102,45 @@ impl Store {
         if self.verify && digest_of(b) != digest {
             return Err(format!("content is {}, not {digest}", digest_of(b)));
         }
-        let mut nonce = [0u8; 8];
-        getrandom(&mut nonce);
         let target = self.entry_path(digest);
-        let tmp = PathBuf::from(format!(
-            "{}{TMP_MARKER}{}",
-            target.display(),
-            hex::encode(nonce)
-        ));
-        std::fs::write(&tmp, b).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            format!("cannot write cache entry: {e}")
-        })?;
-        std::fs::rename(&tmp, &target).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            format!("cannot store cache entry: {e}")
-        })
+        write_atomic(&target, b)?;
+        if let Some(key) = &self.key {
+            // The sidecar lands after the entry: a crash between the two
+            // leaves an entry with no MAC, which is a stale miss and a
+            // rewrite, never a served entry.
+            write_atomic(&mac_path(&target), hex::encode(mac(key, b)).as_bytes())?;
+        }
+        Ok(())
     }
 
-    /// The host filesystem path of the entry stored under digest, when it
-    /// exists - for callers that map the file instead of reading it
-    /// (verification is theirs; the compiled store does not verify, wasmtime
-    /// validates what it loads).
-    pub fn path(&self, digest: &str) -> Option<PathBuf> {
+    /// The host filesystem path of the entry stored under digest - for
+    /// callers that map the file instead of reading it. An unkeyed store
+    /// trusts the entry by name (wasmtime validates what it loads); a keyed
+    /// store recomputes the entry's MAC and refuses, removing both files,
+    /// an entry whose sidecar is missing or wrong.
+    pub fn path(&self, digest: &str) -> Lookup {
         let path = self.entry_path(digest);
-        let st = std::fs::metadata(&path).ok()?;
+        let Ok(st) = std::fs::metadata(&path) else {
+            return Lookup::Miss;
+        };
         if st.is_dir() {
-            return None;
+            return Lookup::Miss;
+        }
+        if let Some(key) = &self.key {
+            let verified = std::fs::read(&path).ok().is_some_and(|b| {
+                std::fs::read(mac_path(&path))
+                    .ok()
+                    .and_then(|tag| hex::decode(tag).ok())
+                    .is_some_and(|tag| verify_mac(key, &b, &tag))
+            });
+            if !verified {
+                let _ = std::fs::remove_file(&path);
+                let _ = std::fs::remove_file(mac_path(&path));
+                return Lookup::Stale;
+            }
         }
         touch(&path);
-        Some(path)
+        Lookup::Hit(path)
     }
 
     fn entry_path(&self, digest: &str) -> PathBuf {
@@ -113,7 +156,8 @@ pub struct Entry {
 }
 
 impl Store {
-    /// Lists the store's blobs, temporary files excluded.
+    /// Lists the store's blobs, temporary files and MAC sidecars excluded:
+    /// a sidecar goes wherever its entry goes.
     pub fn entries(&self) -> Vec<Entry> {
         let Ok(dir) = std::fs::read_dir(&self.dir) else {
             return Vec::new();
@@ -121,7 +165,9 @@ impl Store {
         dir.flatten()
             .filter_map(|e| {
                 let meta = e.metadata().ok()?;
-                if meta.is_dir() || e.file_name().to_string_lossy().contains(TMP_MARKER) {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                if meta.is_dir() || name.contains(TMP_MARKER) || name.ends_with(MAC_SUFFIX) {
                     return None;
                 }
                 Some(Entry {
@@ -161,6 +207,7 @@ pub fn sweep(stores: &[&Store], max_bytes: u64) -> u64 {
             break;
         }
         if std::fs::remove_file(&e.path).is_ok() {
+            let _ = std::fs::remove_file(mac_path(&e.path));
             remaining -= e.size;
             freed += e.size;
         }
@@ -213,6 +260,43 @@ fn file_name(digest: &str) -> String {
 
 fn digest_of(b: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(b)))
+}
+
+/// The sidecar beside a keyed entry.
+fn mac_path(entry: &Path) -> PathBuf {
+    PathBuf::from(format!("{}{MAC_SUFFIX}", entry.display()))
+}
+
+fn mac(key: &[u8; 32], b: &[u8]) -> Vec<u8> {
+    let mut m = hmac::Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes any key length");
+    m.update(b);
+    m.finalize().into_bytes().to_vec()
+}
+
+fn verify_mac(key: &[u8; 32], b: &[u8], tag: &[u8]) -> bool {
+    let mut m = hmac::Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes any key length");
+    m.update(b);
+    m.verify_slice(tag).is_ok()
+}
+
+/// Writes b at target through a temporary file and a rename, so a crash
+/// never leaves a partial file a later read would serve.
+fn write_atomic(target: &Path, b: &[u8]) -> Result<(), String> {
+    let mut nonce = [0u8; 8];
+    getrandom(&mut nonce);
+    let tmp = PathBuf::from(format!(
+        "{}{TMP_MARKER}{}",
+        target.display(),
+        hex::encode(nonce)
+    ));
+    std::fs::write(&tmp, b).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("cannot write cache entry: {e}")
+    })?;
+    std::fs::rename(&tmp, target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("cannot store cache entry: {e}")
+    })
 }
 
 fn getrandom(buf: &mut [u8]) {
@@ -282,9 +366,42 @@ mod tests {
     fn hands_out_paths() {
         let dir = tempfile::tempdir().expect("tempdir");
         let s = Store::open_dir(dir.path(), false).expect("open");
-        assert!(s.path("sha256:missing").is_none());
+        assert_eq!(s.path("sha256:missing"), Lookup::Miss);
         s.put("sha256:x", b"artifact").expect("put");
-        let p = s.path("sha256:x").expect("path");
+        let Lookup::Hit(p) = s.path("sha256:x") else {
+            panic!("an unkeyed entry is served by name");
+        };
         assert_eq!(std::fs::read(p).expect("read"), b"artifact");
+    }
+
+    #[test]
+    fn a_keyed_store_serves_only_what_it_wrote() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key = [7u8; 32];
+        let s = Store::open_dir(dir.path(), false)
+            .expect("open")
+            .with_key(key);
+        s.put("sha256:x", b"artifact").expect("put");
+        let Lookup::Hit(p) = s.path("sha256:x") else {
+            panic!("an entry this store wrote verifies");
+        };
+        assert_eq!(std::fs::read(&p).expect("read"), b"artifact");
+        // The sidecar is not an entry: the sweep and the gauge skip it.
+        assert_eq!(s.entries().len(), 1);
+
+        // Another process's key refuses the entry and removes both files.
+        let other = Store::open_dir(dir.path(), false)
+            .expect("open")
+            .with_key([8u8; 32]);
+        assert_eq!(other.path("sha256:x"), Lookup::Stale);
+        assert_eq!(s.path("sha256:x"), Lookup::Miss);
+
+        // A planted entry has no sidecar; a tampered one has the wrong MAC.
+        std::fs::write(dir.path().join(file_name("sha256:planted")), b"planted").expect("write");
+        assert_eq!(s.path("sha256:planted"), Lookup::Stale);
+        s.put("sha256:y", b"artifact").expect("put");
+        std::fs::write(dir.path().join(file_name("sha256:y")), b"tampered").expect("write");
+        assert_eq!(s.path("sha256:y"), Lookup::Stale);
+        assert!(!dir.path().join("sha256-y.mac").exists());
     }
 }

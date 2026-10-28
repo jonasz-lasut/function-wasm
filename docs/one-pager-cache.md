@@ -2,14 +2,16 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 2.6 (revision 2.6 puts the manifests tier to use, the performance audit's perf-02 under the F-5 rule. the cache posture of the 1.0 audit's F-5, a credential checked at a pull and never at a hit, with a manifests tier verify-on-read by the layer's digest; the compiled tier's trust boundary stated, with the cache key record proposing a keyed check; rewritten in the present tense over the Rust workspace; warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
+* Status: implemented, revision 2.7 (revision 2.7 keys the compiled tier per process, the cache key record's design. Revision 2.6 puts the manifests tier to use, the performance audit's perf-02 under the F-5 rule. Revision 2.5 states the cache posture of the 1.0 audit's F-5, and 2.4 the compiled tier's trust boundary. Revision 2.3 rewrote the record in the present tense over the Rust workspace, where warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
 
 function-wasm keeps its caches on disk under one fixed directory, every entry
 addressed by a content digest, plus a bounded in-memory tier for compiled
-modules. The directory is the runtime's alone. The compiled tier is native
-code the runtime loads without re-verification, and a writer there runs code
-in the runtime ([the cache key record](one-pager-cache-key.md) proposes a
-keyed check). Fetched modules are always written to disk and never held in memory.
+modules. The runtime checks each tier before it serves it. It verifies the
+fetched modules and the manifests against their digest. It verifies the
+compiled artifacts, native code Wasmtime loads without a check of its own,
+against an HMAC under a key the process draws at startup
+([the cache key record](one-pager-cache-key.md)), and compiles a module again
+when another process wrote its artifact. Fetched modules are always written to disk and never held in memory.
 Compiled modules are persisted as Wasmtime artifacts, mapped from disk when
 needed and held in memory while they're used. An entry never has to be
 invalidated: its name is its content. The flags are safety limits (how many
@@ -25,9 +27,9 @@ not how.
 │   └── sha256-<hex>                    verified against its name on every read
 ├── compiled/                         Wasmtime artifacts
 │   └── <engine::version()>/            e.g. rust-v<wasmtime version>-linux-aarch64
-│       └── sha256-<hex>                the artifact for the module that digest pins:
-│                                       native code, loaded without re-verification,
-│                                       so only the runtime may write this directory
+│       ├── sha256-<hex>                the artifact for the module that digest pins
+│       └── sha256-<hex>.mac            its HMAC under this process's key; an entry
+│                                       with no sidecar or another key's is refused
 ├── manifests/                        module manifests by their own digest (the manifest
 │   └── sha256-<hex>                    layer's for an OCI source, manifestDigest for an HTTP
 │                                       one), verified against the name on every read
@@ -47,8 +49,14 @@ and recompile on every restart, unnoticed.
 `Store` writes each entry through a temporary file and a rename. A crash
 can't leave a partial entry for a later read to serve. The `modules/`
 store is opened verifying: a read recomputes the digest, and a mismatch removes
-the entry and counts as a miss. The compiled store doesn't verify, because
-Wasmtime validates an artifact when it loads it.
+the entry and counts as a miss. The compiled store can't verify by name,
+since an artifact's name is its module's digest, so it verifies by key.
+`put` writes an HMAC-SHA256 sidecar beside each entry under 32 bytes the
+process draws at startup, and `path` checks it before it hands the path out.
+A missing or wrong sidecar is a stale miss that removes the entry. The
+runtime keeps the key in memory and nowhere else. A restart compiles every
+module again, a volume keeps only the fetched modules and the manifests, and
+the store refuses a planted artifact.
 
 ## Keys
 
