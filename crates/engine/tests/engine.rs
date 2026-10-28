@@ -664,3 +664,52 @@ fn the_pool_denies_table_growth_it_cannot_serve() {
     .unwrap_or(0.0);
     assert!(denied >= 1.0, "the denial should be counted");
 }
+
+#[test]
+fn a_shared_memory_is_refused_at_compile() {
+    // Threads are off: a module declaring a shared memory never compiles,
+    // in wasmtime's own words under the runtime's prefix.
+    let e = Engine::new(Config::default()).expect("engine");
+    let wasm = wat::parse_str(
+        r#"(component
+  (core module $m
+    (memory (export "memory") 1 1 shared)
+    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+    (func (export "run") (param i32 i32) (result i32) i32.const 64))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+)"#,
+    )
+    .expect("wat");
+    // The runtime keeps the first line of wasmtime's error, which is the
+    // parse failure; the cause (threads support is not enabled) is in the
+    // chain the runtime does not print.
+    let err = e.compile(&wasm).expect_err("shared memory").to_string();
+    assert!(err.starts_with("cannot compile module: "), "{err}");
+}
+
+#[test]
+fn relaxed_simd_is_deterministic() {
+    // i32x4.relaxed_trunc_f32x4_s may differ by host; under the
+    // deterministic semantics it saturates like i32x4.trunc_sat_f32x4_s:
+    // NaN to 0, out of range to the nearest bound.
+    let e = Engine::new(Config::default()).expect("engine");
+    let m = compile(
+        &e,
+        &component_with_run(
+            r#"(v128.store (i32.const 1024)
+        (i32x4.relaxed_trunc_f32x4_s (v128.const f32x4 nan 3e9 -3e9 1.5)))
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72) (i32.const 16))
+      (i32.const 64)"#,
+        ),
+    );
+    let out = e.run(&m, b"", RunOptions::default()).expect("run");
+    let mut want = Vec::new();
+    for lane in [0i32, i32::MAX, i32::MIN, 1] {
+        want.extend_from_slice(&lane.to_le_bytes());
+    }
+    assert_eq!(out, want);
+}

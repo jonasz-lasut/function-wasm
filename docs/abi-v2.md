@@ -29,6 +29,11 @@ The world doesn't import WASI. A guest brings whatever its toolchain emits, and 
 - WASI 0.2: components built by jco, componentize-py or Rust's `wasm32-wasip2`, and a guest that imports `wasi_snapshot_preview1`, the Go scaffold's, through the wasip1 adapter `guestfn build` links in.
 - WASI 0.3: a `wasm32-wasip3` build.
 
+The engine accepts the WebAssembly 3.0 feature set except threads: a module
+with a shared memory or atomics is refused at compile. Relaxed SIMD runs with
+its deterministic semantics, and a module computes the same result on every
+host.
+
 The sandbox allows:
 
 - no network sockets;
