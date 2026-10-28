@@ -8,7 +8,6 @@ description = "The wasmtime engine of function-wasm: compiles and runs guest com
 publish = false
 
 [dependencies]
-base64 = "0.23"
 bytes = "1"
 http = "1"
 http-body-util = "0.1"

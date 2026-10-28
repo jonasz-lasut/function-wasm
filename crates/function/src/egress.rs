@@ -16,7 +16,6 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use base64::Engine as _;
 use function_wasm_engine::wire;
 
 use crate::authz::{IpPrefix, IpRules};
@@ -363,19 +362,7 @@ impl Client {
                 String::new(),
             );
         }
-        let body = match base64::engine::general_purpose::STANDARD.decode(&req.body) {
-            Ok(b) => b,
-            Err(e) => {
-                return (
-                    wire::Response::refusal(format!(
-                        "sandbox.egress: cannot decode the request: {e}"
-                    )),
-                    "error",
-                    Some(url),
-                    String::new(),
-                );
-            }
-        };
+        let body = req.body.clone();
 
         // The policy's timeout applies on top of the run's remaining
         // deadline; the refusal names whichever was the shorter.
@@ -529,7 +516,7 @@ impl Client {
             let rsp = wire::Response {
                 status: i32::from(status),
                 headers,
-                body: base64::engine::general_purpose::STANDARD.encode(&limited),
+                body: limited,
                 error: String::new(),
             };
             return Ok((rsp, url));
@@ -906,12 +893,7 @@ mod tests {
         );
         assert_eq!(rsp.error, "", "unexpected error: {}", rsp.error);
         assert_eq!(rsp.status, 200);
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(&rsp.body)
-                .expect("base64"),
-            b"hello"
-        );
+        assert_eq!(rsp.body, b"hello");
         assert_eq!(
             rsp.headers.get("Content-Type"),
             Some(&vec!["text/plain".to_string()])
@@ -1013,12 +995,7 @@ mod tests {
         );
         assert_eq!(rsp.error, "", "unexpected error: {}", rsp.error);
         assert_eq!(rsp.status, 200);
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(&rsp.body)
-                .expect("base64"),
-            b"after"
-        );
+        assert_eq!(rsp.body, b"after");
     }
 
     #[test]

@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use base64::Engine as _;
 use http_body_util::BodyExt;
 use wasmtime_wasi_http::{Error as HttpError, RequestOptions, WasiBody, WasiHttpHooks};
 
@@ -130,7 +129,7 @@ async fn send(
         method: parts.method.as_str().to_string(),
         url: parts.uri.to_string(),
         headers,
-        body: base64::engine::general_purpose::STANDARD.encode(&collected),
+        body: collected.to_vec(),
     };
 
     // The policy client is blocking (the whole egress stack is); the guest
@@ -145,11 +144,6 @@ async fn send(
         return Err(HttpError::InternalError(Some(rsp.error)));
     }
 
-    let body = base64::engine::general_purpose::STANDARD
-        .decode(&rsp.body)
-        .map_err(|e| {
-            HttpError::InternalError(Some(format!("cannot decode the response body: {e}")))
-        })?;
     let mut builder = http::Response::builder().status(rsp.status as u16);
     for (name, values) in &rsp.headers {
         for value in values {
@@ -158,7 +152,7 @@ async fn send(
     }
     let response = builder
         .body(
-            http_body_util::Full::new(bytes::Bytes::from(body))
+            http_body_util::Full::new(bytes::Bytes::from(rsp.body))
                 .map_err(|e| match e {})
                 .boxed_unsync(),
         )
@@ -242,7 +236,7 @@ mod tests {
             answer: wire::Response {
                 status: 200,
                 headers: BTreeMap::from([("x-b".to_string(), vec!["2".to_string()])]),
-                body: base64::engine::general_purpose::STANDARD.encode(b"howdy"),
+                body: b"howdy".to_vec(),
                 error: String::new(),
             },
         });
@@ -267,10 +261,7 @@ mod tests {
         assert_eq!(asked[0].method, "POST");
         assert_eq!(asked[0].url, "https://api.example.com/greet?x=1");
         assert_eq!(asked[0].headers["x-a"], vec!["1".to_string()]);
-        assert_eq!(
-            asked[0].body,
-            base64::engine::general_purpose::STANDARD.encode(b"hello")
-        );
+        assert_eq!(asked[0].body, b"hello");
         assert!(counted.load(Ordering::Relaxed) > 0, "the wait was counted");
     }
 
