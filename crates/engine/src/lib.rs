@@ -557,9 +557,13 @@ impl Engine {
             return Err(Error(CORE_MODULE_REFUSAL.to_string()));
         }
         wasmtime::component::Component::from_binary(&self.inner, wasm).map_err(|e| {
+            // The alternate form joins the cause chain on one line, so a
+            // module that uses a refused proposal says which (threads
+            // support is not enabled) rather than only that it failed to
+            // parse; first_line still drops wasmtime's multi-line detail.
             Error(format!(
                 "cannot compile module: {}",
-                first_line(&e.to_string())
+                first_line(&format!("{e:#}"))
             ))
         })
     }

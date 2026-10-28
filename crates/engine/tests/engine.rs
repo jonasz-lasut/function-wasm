@@ -682,11 +682,11 @@ fn a_shared_memory_is_refused_at_compile() {
 )"#,
     )
     .expect("wat");
-    // The runtime keeps the first line of wasmtime's error, which is the
-    // parse failure; the cause (threads support is not enabled) is in the
-    // chain the runtime does not print.
+    // The refusal states wasmtime's cause, so the author learns which
+    // proposal the module uses.
     let err = e.compile(&wasm).expect_err("shared memory").to_string();
     assert!(err.starts_with("cannot compile module: "), "{err}");
+    assert!(err.contains("threads"), "{err}");
 }
 
 #[test]
