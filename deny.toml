@@ -1,0 +1,55 @@
+# cargo-deny: the dependency gate CI runs on every pull request (ci.yml, the
+# deny job) and once a week beside the image scan (grype-scan.yml). An
+# advisory against a crate in Cargo.lock fails the run; the fix is a bump,
+# or an entry in `ignore` naming the advisory id with a comment saying why
+# it does not apply here.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# A yanked crate is a warning: Renovate moves the pin, and the advisory, if
+# there is one, fails on its own.
+yanked = "warn"
+# Each entry: { id = "RUSTSEC-YYYY-NNNN", reason = "why it does not apply" }.
+ignore = [
+    # serde_yaml 0.9, which the runtime and guestfn read manifests and
+    # Compositions with, is unmaintained along with its unsafe-libyaml; the
+    # move to a maintained YAML crate is tracked for 1.0.0.
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml comes with serde_yaml 0.9; replacing the YAML crate is a separate change" },
+]
+
+[licenses]
+version = 2
+# The licenses the workspace's dependency graph uses today; a crate under
+# another license fails the run until it is added here deliberately.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

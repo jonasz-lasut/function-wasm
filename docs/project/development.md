@@ -10,9 +10,12 @@ pull request touching only Markdown, JSON or SVG files skips them):
 ```shell
 cargo build --workspace && cargo test --workspace
 cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo deny check advisories bans licenses sources   # cargo install cargo-deny --locked
 ```
 
-The tests include the conformance goldens and the scaffold goldens. A pull request that touches the documentation (`docs/`, `README.md`, `SECURITY.md` or `book.toml`) also runs Vale:
+The tests include the conformance goldens and the scaffold goldens. The
+`cargo deny` run checks `Cargo.lock` against `deny.toml`: every crate is
+free of published advisories, under an allowed license and from crates.io. A pull request that touches the documentation (`docs/`, `README.md`, `SECURITY.md` or `book.toml`) also runs Vale:
 
 ```shell
 make vale
