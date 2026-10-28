@@ -2,218 +2,173 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.2 (the output fence, `composeResource`,
-  #174; the inline `request` for manifest-less sources stays a separate
-  Draft: docs/one-pager-manifest-less-sources.md)
+* Status: implemented, revision 1.3 (rewritten in the present tense over the Rust workspace; supersedes the request-delivered-secrets record)
 
 ## Summary
 
-Collapse every sandbox/admission decision into one uniform rule: a capability is
-granted if and only if all three parties agree, down the trust ladder. The
-module's manifest is the **request**; two Cedar layers are the **grants**, each
-able only to narrow the preceding one.
+A capability is granted if and only if three parties agree, down the trust
+ladder (Jonasz, 2026-08-19). The module's manifest is the request. The
+composition policy and the operator policy, both Cedar, are the grants, and
+each can only narrow what the preceding layer allows.
 
 ```
 grant(capability) =
-      manifest REQUESTS it              (module author  - least trusted - the ask)
-    ∧ Composition-Cedar PERMITS it       (composition author - narrows this Composition)
-    ∧ operator-Cedar PERMITS it          (operator - the central ceiling, --sandbox-policy-file)
+      manifest REQUESTS it              (module author, least trusted: the ask)
+    ∧ composition policy PERMITS it     (composition author: narrows this Composition)
+    ∧ operator policy PERMITS it        (operator: the ceiling, --sandbox-policy-file)
 ```
 
-`capability` ∈ { `pullModule` (repo of a `from`-chosen source), `spendCredential`,
-`grantEgress` (host/method/path), `usePrivateTmp`, `setEnv`/read a credential-bound
-env var, read a step credential whole from the request (`spendCredential`) }.
+The capabilities are a private `/tmp` (`usePrivateTmp`), HTTP egress to a host,
+method and path (`grantEgress`), an environment variable bound to a step
+credential (`setEnv` and `spendCredential`), a step credential read whole from
+the request (`spendCredential`) and the repository of a source an XR chose
+(`pullModule`). A further action, `composeResource`, fences what a module
+writes rather than what it may do (see "The output fence").
 
-Revision 1.1 makes `spendCredential` decide what the module *sees*, not only
-what reaches its environment: the request it receives contains only the step
-credentials granted to it (see "Step credentials" below).
-
-This unifies, and removes the need for, these bespoke Input fields:
-
-| removed from the Input | replaced by |
-|---|---|
-| `policy.repositoryAllowList` | Composition-Cedar `permit(pullModule when resource in Repository::"…")` |
-| `policy.credentialsAllowList` | Composition-Cedar `spendCredential` ∧ operator-Cedar `spendCredential` |
-| `sandbox.egress` / `sandbox.filesystem` | manifest `requires` ∧ Composition-Cedar ∧ operator-Cedar |
-| `sandbox.env` / `sandbox.envFrom` literals | `config` (module reads via `wasmfn.GetConfig`) |
-| `sandbox.env` / `sandbox.envFrom` secrets | manifest `requires.env` credential-binding ∧ `spendCredential` |
-
-The Input shrinks to `module`, `limits` (numeric run budgets - Cedar is the wrong
-tool for a clamp, they stay), `config`, and an optional `compositionPolicy` (raw
-Cedar text - the composition-author layer).
+Because each decision belongs to a layer, the Input has no `sandbox` or
+`policy` field. It holds `module`, `limits`, `config` and an optional
+`compositionPolicy`, the composition author's raw Cedar. `limits` stay numeric
+clamps. Non-secret module settings live in `config`, which the guest reads
+through `GetConfig`.
 
 ## Trust safety
 
-Each layer is a **separate Cedar `PolicySet`, AND-combined**, so no layer can
-widen another. A greedy manifest → both Cedar layers still gate it. A Composition
-author writing `permit(everything)` → they have merely declined to narrow; the
-operator layer still caps. Injection-safe like the existing fences: a layer never
-reaches into another's evaluation.
+Each layer is a separate Cedar `PolicySet`, and the layers are AND-combined, so
+no layer can widen another. A greedy manifest still meets both policies, and a
+composition author who writes `permit(everything)` has only declined to narrow:
+the operator policy still caps. Each layer is evaluated apart from the others.
 
-## The per-layer, per-capability defaults (the security-critical part)
+## Defaults per layer
 
-An implementer must get this right: the layers don't share one default, and
-each default matches its trust role and preserves today's behaviour.
+The layers don't share a default: each matches its trust role.
 
-**Operator layer** (`--sandbox-policy-file`): **absent → deny-all.** Already true
-after the flag-drop change. It's the enabler; no policy = only the default
-sandbox.
+The operator layer is default-deny. Without `--sandbox-policy-file`, a module
+gets the default sandbox and nothing else.
 
-**Manifest layer**: **an absent manifest requests nothing: the default sandbox.**
-`path`/`http` and manifest-less OCI sources don't request anything. A fallback
-inline `request` has its design in its own one-pager
-(docs/one-pager-manifest-less-sources.md).
+An absent manifest requests nothing, so a `path`, `http` or OCI source without
+a manifest runs in the default sandbox. A manifest can only refuse earlier; it
+never makes a run possible. A `path` or `http` source can point at a
+`wasmfn.yaml` by reference (`manifestPath`, `manifestURL`). Such a source is a static source,
+fenced like any other, and the manifest read through it makes the same request.
+See [Module manifest](one-pager-module-manifest.md) and
+[Module manifests](guests/module-manifests.md).
 
-**Composition layer** (`compositionPolicy`): two regimes, by capability. It
-narrows sandbox capabilities and it's a *required fence* for XR-chosen sources -
-exactly what `sandbox` and the allowlists do today:
+The composition layer has two regimes, by capability:
 
 - Sandbox capabilities (`grantEgress`, `usePrivateTmp`, `setEnv`, and
-  `spendCredential` for a credential the module reads from its request - an
-  env binding's or a `requires.credentials` entry, judged with no
-  `context.repository`): **scoped default-permit.** If the composition
-  policy is absent, or contains no rule scoping that action, the layer
-  permits (no narrowing - operator ∧ manifest govern). If it contains any
-  rule for that action, that action becomes
-  default-deny *within the composition layer* (the author has opted into
-  narrowing it). Detected the way `HasSignatureRules`/`HasPrivateTmpRules` scan
-  for an action today.
-- Source fencing (`pullModule`, `spendCredential`) for a `from`-chosen source:
-  **default-deny.** A `from` source is refused unless the composition policy
-  explicitly permits its repository (and any credential), preserving today's rule
-  that `module.from` *requires* a `repositoryAllowList` (and `credentialsAllowList`
-  only within it). A **static** source (the Composition specifies the module
-  itself) isn't judged by this layer - it's the Composition's own choice, as today.
+  `spendCredential` for a credential the module reads from its request) are
+  scoped default-permit. A composition policy that's absent, or has no rule
+  for an action, doesn't narrow it, and the operator and manifest decide. Once
+  a rule scopes an action, that action becomes default-deny within this layer:
+  the author has opted in to narrowing it.
+- Source fencing (`pullModule`, and `spendCredential` for the source's pull
+  credential) of a `from`-chosen source is default-deny. An XR's choice of
+  module is refused unless the composition policy permits its repository. A
+  static source, one the Composition specifies itself, isn't judged by this
+  layer: it's the composition author's own choice.
 
-- The output fence (`composeResource`, revision 1.2, #174): **scoped
-  default-permit in both layers**, the operator's included. It's not a
-  capability a module requests but a fence on what it writes, judged over
-  the response after the run (every resource added, modified or removed,
-  the composite's status included, as `Kind::"<group>/<Kind>"` in a
-  `Group` hierarchy with `context.change`, `name` and `target`). A layer
-  with no rule scoping the action narrows nothing, and a runtime with no
-  policy file doesn't either: a module's output was never gated before the
-  fence existed, and a minor may only widen. Once scoped, Cedar's usual
-  rule; a `forbid` alone permits nothing. The runtime evaluates
-  the composition layer first and whole, then the operator's. The fence judges
-  `modify` on the entire resource (body, connection details, ready flag), compared by value;
-  a `context.fields` set that lets a policy permit the ready flag alone is a
-  known, additive extension no use case has asked for yet.
-
-Worked table (S = sandbox cap, F = from-source fence, O = the output fence;
-the O column holds for the operator layer too, which is where it differs
-from S):
-
-| composition policy state | S: `grantEgress`/`usePrivateTmp`/`setEnv`/`spendCredential` (request) | F: `pullModule`/`spendCredential` (from) | O: `composeResource` |
+| composition policy state | sandbox capability | `from` source fence | output fence |
 |---|---|---|---|
-| absent | permit (operator ∧ manifest decide) | deny (from-source refused) | permit, both layers |
+| absent | permit | deny | permit |
 | present, no rule for the action | permit | deny | permit |
-| present, has `permit` for it | permit if matched, else deny | permit if matched, else deny | permit if matched, else deny |
-| present, has `forbid` for it | forbid wins | forbid wins | forbid wins (and with no permit beside it, every change is refused) |
+| present, a `permit` for it | permit if matched, else deny | permit if matched, else deny | permit if matched, else deny |
+| present, a `forbid` for it | forbid wins | forbid wins | forbid wins |
 
-## The env model (#3)
+A malformed `compositionPolicy` is a fatal result at admission, and a
+malformed operator policy is a startup or `function validate` error. The
+runtime compiles the composition policy once per distinct text, cached by
+content hash.
 
-`sandbox.env`/`sandbox.envFrom` leave the Input entirely.
+## Environment and step credentials
 
-- **Non-secret config** (`LOG_LEVEL=debug`) was never env - it's
-  deployment config. It moves to the existing `config` field; the guest already
-  reads per-instance config through `wasmfn.GetConfig`. It takes no env
-  variable, ceiling or credential.
-- **Secret env** (a library that only reads `$DATABASE_URL`): the **manifest**
-  declares the binding - `requires.env: [{name: DATABASE_URL, fromCredential:
-  {name: db, key: url}}]` - and the module itself defines its env contract
-  there. At run time
-  `Materialize` (internal/sandbox) resolves it from the request's step
-  credentials exactly as `valueFrom.credential` does today (reuse
-  `credentialData`, the withheld-pull-credential and NUL guards unchanged), and
-  `spendCredential(db)` must permit it in **both** Cedar layers. The credential
-  VALUE still arrives at the pipeline step. The module never authors it. The
-  design drops the bulk-import-every-key `envFrom` shape - a binding specifies exactly
-  the keys it needs, which was the safer half anyway.
+A module that reads only `$DATABASE_URL` declares the binding in its manifest:
+`requires.env: [{name: DATABASE_URL, fromCredential: {name: db, key: url}}]`.
+The runtime resolves it from the request's step credentials, and
+`spendCredential` for `db` must be permitted by both Cedar layers. The module
+defines its env contract and never supplies the value. A binding lists exactly
+the keys it needs. There's no bulk import of every key of a credential.
 
-Both `env.valueFrom.credential` and `envFrom.credential` then disappear from
-the Input, and their one useful behaviour (inject a named credential key as
-a named env var) lives on as a manifest binding that Cedar judges. That closes
-the duplication question and the gap that a module can't request env for
-itself, in one move.
-
-## Step credentials (revision 1.1)
-
-A pipeline step's credentials arrive in every `RunFunctionRequest`. Before
-revision 1.1 the runtime forwarded every one of them but the pull credential,
-as Crossplane hands them to a native function (and as the Go runtime did), so
-`spendCredential` judged only an env binding - a convenience - while the module
-could read the same key from its request. Now the runtime edits the request, at the
-wire level, so it contains only the credentials granted to the module:
+Step credentials arrive in every `RunFunctionRequest`. Crossplane hands them
+all to a native function, and forwarding them all made `spendCredential` gate
+a convenience: a module denied an env binding could still read the key from
+its request (issue #122, 2026-10). The runtime edits the request at the wire
+level instead, and the module receives only:
 
 - the credential each admitted `requires.env` binding reads, whole;
-- each credential the manifest requires whole, `requires.credentials:
-  [cmdb]` - a shared Secret the module picks a key from - admitted by
-  `spendCredential` under both layers, exactly as an env binding's
-  credential is;
-- nothing else: a module with no manifest sees none, as does one whose
-  manifest doesn't require a credential. The pull credential is never
-  forwarded (the runtime refuses a manifest that names it).
+- each credential the manifest lists under `requires.credentials`, whole: a
+  shared Secret the module picks a key from, admitted by `spendCredential`
+  under both layers like an env binding's.
 
-A required credential either layer doesn't permit is a fatal result
-before the run (`… requires credential "cmdb" (requires.credentials[0]),
-which the operator policy (--sandbox-policy-file) does not permit`), and so
-is one the step doesn't include, as for an env binding. `function validate
---resolve` lists the credentials an admitted step's module receives.
+A module without a manifest, or whose manifest doesn't require a credential,
+sees none. The pull credential is never forwarded, and the runtime refuses a
+manifest that names it. A required credential that either layer doesn't
+permit, or that the step doesn't include, is a fatal result before the run:
 
-## Cedar schema (unchanged, reused for both layers)
+```
+… requires credential "cmdb" (requires.credentials[0]), which the operator policy (--sandbox-policy-file) does not permit
+```
 
-Both the operator and composition policies compile against the **same** schema
-already in `internal/authz`: actions `pullModule`, `spendCredential`,
-`grantEgress`, `usePrivateTmp`, `setEnv`, `requireSignature`, `dialAddress`,
-and entities `Repository`, `HostPattern`, `Capability`, `Credential`. The
-principal is `Request { namespace, xrKind, composition }`. The runtime
-compiles the composition policy from the Input's `compositionPolicy` text and
-**caches it by content hash** (it's per-Composition, not per-request). A malformed
-`compositionPolicy` is a fatal result at admission, in the runtime's words, the
-same as a malformed operator policy is a startup or `function validate` error.
+`function validate --resolve` lists the credentials an admitted step's module
+receives.
 
-## Code shape (for the implementer)
+## The output fence
 
-1. `input/v1beta1/input.go`: delete `Policy` and `Sandbox`; add
-   `CompositionPolicy string` (raw Cedar, `+optional`). Regenerate the CRD. Keep
-   `Module`, `Limits`, `Config`.
-2. `internal/authz`: add `CompositionPolicy` (compile-from-bytes, content-hash
-   cache) with `Permits*` mirroring `OperatorPolicy`, plus the scoped-default
-   helpers (`ScopesAction`). Add a small `Decision` helper that AND-combines
-   operator ∧ composition ∧ (manifest request) per capability with the
-   preceding defaults.
-3. `internal/manifest`: extend `Requires` with `Env []EnvBinding{Name,
-   FromCredential{Name,Key}}`. `Check`/`Sandbox`/`Validate` learn env bindings.
-4. `internal/sandbox`: `Materialize` sources env from the manifest bindings +
-   request credentials (not the Input). Drop the Input env/envFrom paths.
-5. `internal/admission`: replace the `policy`/`sandbox` checks with the
-   three-layer `Decision`. `module.FromComposite`/`policy.go`: the from-source
-   fence becomes the composition-layer `pullModule`/`spendCredential` default-deny.
-6. `cmd/function/fn.go`, `validate.go`: build both policy layers, with the
-   composition policy read from the Input.
-7. Tests to green. **Defer** (call out, don't attempt in this pass): the inline
-   `request` for manifest-less sources (still Draft), all `guestfn` changes
-   (scaffold/build/push/manifest), the examples, and the full doc scrub.
+`composeResource` (Jonasz, 2026-10-27, #174) fences what a module composes.
+After the run, the runtime diffs the response's desired state against the
+request's and judges every change (an addition, a modification or a removal,
+the composite's included) as `Kind::"<group>/<Kind>"` in a `Group` hierarchy,
+with `context.change`, `name` and `target`. `modify` is judged on the entire
+resource, compared by value. The composition layer is evaluated first and
+whole, then the operator's. A refusal is a fatal result naming kind, name,
+change and layer.
 
-## Migration / back-compat
+It's the one action that's scoped default-permit in the operator layer too.
+A module's output was never gated before the fence, and a default-deny would
+have refused every module's output on upgrade. A runtime with no policy file,
+or a layer with no rule for the action, narrows nothing. Once scoped, Cedar's
+usual rule applies, and a `forbid` alone permits nothing. A `context.fields`
+set that would let a policy permit the ready flag alone is a possible additive
+extension no use case has asked for yet.
 
-Breaking, and large - stacked on the flag-drop change. An existing Composition
-using `policy`/`sandbox` fails to decode (strict) or is refused. `function
-validate` reports the removed field and its replacement. A `vX.0` and a
-migration note are due, and `guestfn` should learn to emit a `compositionPolicy`
-skeleton from an old `sandbox`/`policy` block to ease the port (later).
+## Cedar schema
+
+Both policies compile against one schema. The composition policy can use
+`pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv` and
+`composeResource`, and the operator policy everything but `pullModule`, plus
+`requireSignature`, `trustSigner` and `dialAddress`. The principal is
+`Request { namespace, xrKind, composition }`. The entities, the contexts and
+the evaluation rules are on [Cedar policy](operators/cedar-policy.md).
+
+## Code shape
+
+`crates/function/src/authz.rs` is the only file that imports `cedar-policy`. It
+holds `CompositionPolicy` and `OperatorPolicy` with a `permits_*` method per
+action, and `scopes_action` (the composition layer's opt-in signal, with
+`scopes_compose_resource` for the operator's). `crates/function/src/admission.rs`
+combines them: `admit` runs the Input's checks, `admit_requires` intersects the
+manifest's request with both layers into `Capabilities`, and `admit_compose`
+judges the output fence. `crates/function/src/from.rs` applies the `from`
+fence. `crates/function/src/sandboxenv.rs` materializes the env bindings and
+checks the required credentials, and `crates/function/src/protowire.rs` drops
+the credentials that weren't granted. `function validate` calls the same
+functions.
+
+## Alternatives
+
+Cedar for `limits` was rejected: a numeric clamp isn't an authorization
+question. The limits remain Input fields under the runtime's ceiling flags.
+
+A default-deny output fence in the operator layer would have matched the other
+capabilities. It lost because it would have broken every existing module on
+upgrade.
 
 ## Non-goals
 
-- Letting the manifest or the composition policy **widen** past the operator
-  ceiling - the AND combination of the layers makes that impossible.
-- Cedar for `limits` - a numeric clamp isn't an authorization question.
-- A permissive default for the operator or the from-source fence - both stay
-  deny-by-default for capabilities. The output fence is the recorded
-  exception: scoped default-permit, since a default-deny would have refused
-  every module's output on upgrade.
-- Fencing `results`, `requirements` or `context` writes: `results` are
-  messages, `requirements` are reads the proxy already relays round trip,
-  and context writes could take an action of the same form later without
-  touching this design.
+- Letting the manifest or the composition policy widen past the operator
+  ceiling. The AND combination makes it impossible.
+- A permissive default for the operator layer or the `from` fence. Both stay
+  default-deny. The output fence is the recorded exception.
+- Fencing `results`, `requirements` or `context` writes. `results` are
+  messages, `requirements` are reads the proxy already relays, and a `context`
+  write could take an action of the same form later without touching this
+  design.

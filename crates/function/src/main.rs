@@ -1,6 +1,6 @@
 //! The Rust runtime of function-wasm: a Crossplane composition function that
 //! runs a user-supplied WebAssembly module in a wasmtime sandbox. This is
-//! the initial implementation (docs/one-pager-abi-v2.md, phase 1); the flags
+//! the initial implementation (docs/one-pager-abi-v2.md); the flags
 //! it carries are the subset of the Go runtime's it serves, with the same
 //! names, defaults and units. Serving is the default; `function validate`
 //! runs the same admission over Compositions offline.

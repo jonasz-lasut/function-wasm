@@ -2,181 +2,231 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.3
+* Status: implemented, revision 1.4 (rewritten in the present tense over the Rust workspace; merges in the governance-perf record, revision 0.2: the egress rate limit and the fair run slots are part of the model, and its dropped fuel phase is under Alternatives)
 
 One runtime serves many Compositions, many teams and many modules. This
-document is the model of what a module may consume, what bounds the runtime
-as a whole, and how an operator sizes and probes it - the limits that keep
-one team's module from taking every other team's reconcile down with it.
-Revision 1.1 adds the per-Composition `limits` (the module-source-schema
-one-pager defines the Input fields). Revision 1.2 adds the bound
-on concurrent runs (`--max-concurrent-runs`), the one setting 1.1 left to
-the caller. It also states what bounds the sandbox's private `/tmp` and
-adds the per-run HTTP egress budgets (sandbox one-pager, revision 1.0).
-Revision 1.3 makes the run deadline
-meter guest compute: the runtime credits the time a run spends blocked in
-`wasmfn.http` back to its epoch deadline, so a slow upstream no longer spends
-`limits.timeout`. The request's own gRPC deadline stays the hard wall-clock
-cap; without one the credit is still bounded, because every egress request
-is itself cut at the run's deadline - a run can stretch to at most about
-twice its budget, never indefinitely. Only `wasmfn.http` time is
-creditable: crediting arbitrary host time would let a `wasmfn.log` loop
-stretch the wall clock without such a bound. Revision 1.3 also adds
-`--module-stack-limit` (the call-stack ceiling, engine-wide), and the
-`--max-total-run-memory` pool is incremental since this revision. A run
-reserves its module's initial memory up front and every growth as its
-guest grows. The pool then contains only what runs actually use, and a
-small guest no longer blocks on a worst-case ceiling it never claims.
-Everything below is implemented.
+document is the model of what a module may consume, what bounds the runtime as
+a whole, how the bounds divide the runtime between modules, and how an operator
+sizes and probes it. The limits exist so that one team's module can't take
+every other team's reconcile down with it.
 
+Every ceiling is a runtime flag the operator sets. A Composition may lower a
+ceiling through the Input's `limits` and can't raise it (the
+[module source schema](one-pager-module-source-schema.md) defines the fields).
+The runtime reads `limits` from the Input only, never through `module.from`, so
+an XR author can't widen a budget. A value over its ceiling is a fatal result
+that states both, checked before anything is resolved or fetched:
+`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`,
+`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`. The
+exception is `limits.concurrency`, which has no ceiling of its own and is
+capped to `--max-concurrent-runs` without a message.
 
-## What was unbounded
+## Background
 
-Before this revision the sandbox bounded one run - a wall-clock deadline
-(`--module-timeout`) and a cap on the guest's linear memory
-(`--module-memory-limit`) - and nothing else. Measured on linux/arm64
-(review, 2026-08-16): a first request for a 75 MB Go guest costs 23-28
-CPU-seconds and 0.7-1.1 GB of peak memory to compile, and N such requests
-ran N compiles at once (four concurrent: 100 CPU-seconds, +2.9 GB); every
-distinct module used inside ten minutes stayed resident, 145 MB each for a
-Go guest, with no cap; a dropped module was freed only when the garbage
-collector eventually noticed a small Go wrapper; every module version ever
-served left ~230 MB on disk. A pod with 1-2 cores and a few hundred MB of
-memory serving twenty Go modules from a cold cache would not converge.
-OOM-killed, it restarted with an empty `/tmp` and began again from cold.
+A first request for a large guest costs seconds of CPU and about a gigabyte of
+peak memory to compile ([sizing](operators/sizing.md) has the measurements),
+and the run itself costs far less. Without bounds, N cold requests would run N
+compiles at once and every module used within ten minutes would stay resident.
+Every version ever served would also stay on disk. A pod with a core or two serving
+twenty large modules from a cold cache wouldn't converge: it would be killed
+for memory, restart with an empty cache and begin again.
 
 ## The model
 
-Every ceiling is a runtime flag set by the operator; a Composition may set
-a lower value than a ceiling through the Input's `limits`, never a higher one.
-
-| dimension | bound | flag / Input field | default | what happens at the bound |
+| dimension | bound | flag or Input field | default | at the bound |
 |---|---|---|---|---|
-| one run, wall clock | epoch deadline; the request context's deadline if shorter | `--module-timeout` | 30 s | the run is interrupted; fatal result naming the module and the budget |
-| one run, wall clock, per Composition | the same deadline, narrowed to `limits.timeout` (≤ `--module-timeout`) | `limits.timeout` | the flag | as in the preceding row, with the fatal result stating the narrower budget; a value over the flag is a fatal result stating both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`) before the module runs |
-| one run, guest memory | Wasmtime store limiter on linear memory | `--module-memory-limit` | 512 MB | the guest's `memory.grow` fails; a Go guest panics → fatal result |
-| one run, guest memory, per Composition | the same limiter, narrowed to `limits.memory` (≤ `--module-memory-limit`) | `limits.memory` | the flag | as in the preceding row; a value over the flag is a fatal result stating both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
-| resident compiled modules | LRU over the memory tier, on top of the 10-minute idle TTL | `--max-cached-modules` | 0 (TTL only) | the least recently used module is dropped and freed when its last run ends |
-| memory tier at all | `--enable-memory-cache=false` maps the artifact per request and releases it | `--enable-memory-cache` | true | 6-8 ms per request for the largest Go guest, nothing resident |
-| concurrent compiles | semaphore around `Compile` + `Serialize` | `--max-concurrent-compiles` | 1 | further first requests (and the requests waiting on them) queue; each waits under its own context |
-| one load (fetch + compile) | the cache's own context and timeout, detached from the requester's | `engine.DefaultLoadTimeout` | 10 min | the load fails for everyone waiting; nothing is cached; the next request retries |
-| disk | LRU eviction over both stores, a read counting as a use | `--max-cache-size` | 0 (unbounded) | least recently used entries removed down to 90 % of the bound, at startup and every ten minutes |
-| module size | cap on fetched bytes (and on tar extraction, ×8) | `--max-module-size` | 128 MB | fetch fails; fatal result |
-| concurrent runs | semaphore around one run (instantiate to response), taken after the module is loaded | `--max-concurrent-runs` | 0 (unbounded - see below) | a further request waits for a slot under its own deadline; if that passes first it's a fatal result (`waiting for a run slot: context deadline exceeded`) that didn't consume anything and isn't counted as a run |
-| concurrent runs, per step | per-module-digest semaphore, taken before the global slot so one step doesn't fill every slot | `limits.concurrency` | 0 (the global bound only) | a further request waits for one of this step's slots; capped to `--max-concurrent-runs` when set |
-| total run memory | a Run reserves its module's initial linear memory from a global pool before it starts and each growth beyond it as its guest grows (revision 1.3; before, the whole effective limit up front), releasing everything when its store drops; an initial reservation that can't fit waits under the run's deadline | `--max-total-run-memory` | 0 (unbounded) | an initial reservation waits. If the deadline passes first it's a fatal result (`waiting for 512Mi of run memory (--max-total-run-memory 2Gi): context deadline exceeded`) without having run. A growth the pool can't serve before the deadline is denied: the guest sees `memory.grow` fail, counted in `memory_denials_total{reason="pool"}` |
-| one run, private `/tmp` bytes | *none in the runtime* - the directory is created under the runtime's `$TMPDIR` and is removed when the run ends; the filesystem behind it sets the bound | `TMPDIR` → a tmpfs `emptyDir` with `sizeLimit` (private `/tmp` enabled by the policy's `usePrivateTmp`) | the pod's `/tmp` | the guest's write fails (ENOSPC), the run continues or ends as the guest decides; the runtime is unaffected |
-| one run, HTTP egress (`requires.egress`) | per-run budgets (fixed defaults): request count, response bytes, redirects, per-request timeout; a request is also cut at the run's deadline | fixed defaults (not operator-configurable) | 16, 4 MiB, 5, 10 s | the request is answered with an error the guest sees; the run goes on |
-| HTTP egress rate, per module | process-wide token bucket per module digest: a burst of concurrent requests and a sustained rate; keyed by the module's content digest so one module's traffic can't exhaust the rate for others | `--egress-rate-limit-per-minute`, `--egress-rate-limit-burst` | off (no rate limit) | the request is answered with a budget error the guest sees; the run goes on; idle entries are swept every ten minutes |
+| one run, wall clock | epoch deadline, or the request's gRPC deadline when that's sooner | `--module-timeout`; `limits.timeout` narrows it | 30 s | the run is interrupted and the fatal result states the module and the budget |
+| one run, guest memory | Wasmtime store limiter on linear memory | `--module-memory-limit`; `limits.memory` narrows it | 512 MB | `memory.grow` fails and the guest decides; counted in `memory_denials_total{reason="limit"}` |
+| one run, call stack | Wasmtime's stack ceiling, engine-wide | `--module-stack-limit` | 512 KB | the guest traps: a fatal result |
+| resident compiled modules | LRU over the memory tier, on top of its 10-minute idle TTL | `--max-cached-modules` | 0 (TTL only) | the least recently used module is dropped |
+| the memory tier itself | off maps the artifact per request and releases it | `--enable-memory-cache` | true | nothing stays resident |
+| concurrent compiles | semaphore around fetch and compile | `--max-concurrent-compiles` | 1 | further first requests, and those waiting on the same load, queue |
+| disk | LRU sweep over the stores, a read counting as a use | `--max-cache-size` | 0 (unbounded) | entries removed down to nine tenths of the bound, at startup and every ten minutes |
+| module size | cap on fetched bytes, and on tar extraction at eight times the cap | `--max-module-size` | 128 MB | the fetch fails: a fatal result |
+| concurrent runs | fair run slots, taken after the module is loaded | `--max-concurrent-runs` | 0 (the caller's concurrency) | a further request waits under its own deadline |
+| concurrent runs of one step | per-digest semaphore, taken before the global slot | `limits.concurrency` | 0 (the global bound only) | a further request of this step waits under its own deadline |
+| total run memory | pool charged as guests grow | `--max-total-run-memory` | 0 (unbounded) | a growth the pool can't serve before the run's deadline is denied |
+| private `/tmp` | none in the runtime: the filesystem behind `$TMPDIR` | `TMPDIR` | the pod's `/tmp` | the guest's write fails (`ENOSPC`); the runtime is unaffected |
+| one run, HTTP egress | per-run budgets, fixed at 16 requests, 4 MiB of response bytes, 5 redirects and a 10 s timeout per request | none | as stated | the request is answered with an error the guest reads; the run goes on |
+| HTTP egress rate | token bucket per module digest | `--egress-rate-limit-per-minute`, `--egress-rate-limit-burst` | off | a budget error the guest reads; the run goes on |
 
+A run's wall clock meters guest compute. Time blocked in `wasi:http` is
+credited back to the epoch deadline, so a slow upstream doesn't spend
+`limits.timeout`. The request's own gRPC deadline stays the hard cap. Without
+one the credit is still bounded: every egress request is cut at the run's
+deadline, and a run stretches to about twice its budget at most. Only
+`wasi:http` time is creditable. Crediting arbitrary host time would let a guest
+stretch its wall clock through a host import with no such bound.
 
-`limits` are read from the Input only - never through `module.from`, so an
-XR author can't widen a budget - checked against the flags before anything
-is resolved or fetched, and applied to that run's store through
-`engine.RunOptions`, which the engine caps at its `Config` whatever the
-caller passes. A Composition author who sets them low gets fatal
-results the operator didn't cause; the benefit is a shared runtime where
-the loudest module can't spend the whole ceiling. Only the operator can
-raise a ceiling.
+### Compiles and the memory tier
 
-Compiled modules are reference-counted (`engine.Module.Release`): a
-module dropped from the tier (by TTL or LRU, or because the tier is off)
-frees Wasmtime's code memory the moment its last run returns rather than
-at some later garbage collection of a Go wrapper. The runtime maps artifacts from their
-files, so a resident Go module costs ~90 MB of file-backed, reclaimable
-memory rather than 145 MB of heap.
+The compile semaphore defaults to one because Wasmtime compiles in parallel
+across every core it's given: two compiles at once finish no sooner than one
+after the other and add a second gigabyte of peak memory. A larger value suits
+large nodes serving many small modules, where a compile takes milliseconds and
+the queue, not the CPU, is the bottleneck. A failed load isn't cached, and
+the next request retries. [The cache record](one-pager-cache.md)
+describes the caches.
 
-The compile semaphore defaults to one because Wasmtime compiles in
-parallel across every core it's given, so two compiles at once finish no
-sooner than one after the other and only add a second gigabyte of peak
-memory. Two
-or more make sense on large nodes serving many small (Rust, TinyGo)
-modules, where a compile is milliseconds and the queue, not the CPU, would
-be the bottleneck.
+### Run slots and fairness
 
-The bound on concurrent runs is off by default because a run uses 11-16 MB
-for the largest guest and its linear memory is capped per run, so
-concurrency is bounded by the caller - Crossplane's reconcile workers - at
-a cost the operator can compute (`concurrent runs × --module-memory-limit`
-in the worst case, `× 16 MB` in practice), and a semaphore adds
-head-of-line blocking: with it set, one slow module's requests queue every
-other module's behind them. It exists for the deployments where the
-caller's concurrency isn't the number to size for - many Crossplane
-instances or a large worker count sharing one runtime, a memory-tight pod
-where `runs × --module-memory-limit` must not be reachable. It fails
-closed: a waiter is bounded by its own request deadline, so the queue can
-never grow past what the callers themselves are still waiting on. A
-request that gives up has run nothing. Each run takes its slot after the module
-has loaded (a wait for a compile slot is the cache's, separate) and around
-exactly one run, instantiate to response, which keeps the run-duration
-histogram measuring runs rather than queues.
-`function_wasm_module_runs_in_flight` pinned at the bound is the sign the
-queue is the bottleneck.
+The caller (Crossplane's reconcile workers) bounds concurrency unless the
+operator sets `--max-concurrent-runs`. The flag is off by default because a
+run's memory is capped per run and a semaphore adds head-of-line blocking. It
+exists for deployments where the caller's concurrency isn't the number to size
+for: many Crossplane instances or a large worker count sharing one runtime, or
+a memory-tight pod where concurrent runs times `--module-memory-limit` must not
+be reachable.
+
+With the flag set, the engine's `FairScheduler` (`crates/engine/src/concurrency.rs`)
+queues waiters per module digest and admits them round-robin. A freed slot goes
+to the next digest in rotation, first in first out within one digest. One hot
+module takes at most its share of the slots, and a request's wait
+scales with the modules queued ahead of it, not the requests. With one
+digest waiting the scheduler is a plain FIFO.
+
+`limits.concurrency` adds a bound per step. `StepSlots` keeps a semaphore per
+module digest, so two Compositions naming the same module share it. A run takes
+its step slot before the global one, so a step that has used its share doesn't
+occupy a global slot. A digest's slot count is set by the first step to use it
+and applies until the entry is swept after ten idle minutes.
+
+The run's budget or the request's gRPC deadline, whichever comes first, caps
+each wait. A queue never outgrows what its callers still wait for, and a request
+that gives up took no slot and isn't counted as a run. The refusals are fatal
+results:
+
+- `waiting for a run slot: deadline exceeded`
+- `waiting for one of this step's 2 run slots (limits.concurrency): deadline exceeded`
+
+A run takes its slot after the module has loaded, around exactly one run, so
+`function_wasm_module_run_duration_seconds` measures runs rather than queues.
+`function_wasm_module_runs_in_flight` pinned at `--max-concurrent-runs` means
+the queue is the bottleneck.
+
+### Run memory pool
+
+`--max-total-run-memory` bounds the total linear memory of all running guests.
+A component has no top-level memory to reserve ahead of the run. Each run
+charges the pool as its guest grows, the initial memory included, and releases
+everything when its store drops. The pool reflects what runs use, and a small
+guest doesn't wait on a worst-case ceiling it never claims. A growth the pool
+can't serve before the run's deadline is denied. The guest sees `memory.grow`
+fail, as at the per-run ceiling, the runtime logs `Denied a memory growth` and
+the denial counts in `memory_denials_total{reason="pool"}`. The runtime refuses
+at startup a pool smaller than `--module-memory-limit`, since no full-limit run
+could ever fit.
+
+The acquisition order is the step slot, the global slot, then memory as the run
+grows. A run waiting for the pool keeps its run slots, and runs with partial
+reservations can wait on each other. The run's deadline bounds each wait and
+denies the growth when it passes. A cycle lasts no longer than a deadline.
+
+### Egress rate
+
+A module called once per XR against one endpoint makes a request per reconcile
+per XR. `RateLimiters` in `crates/function/src/egress.rs` keeps a token bucket
+per module digest, process-wide, consulted after the per-run request count. The
+digest, not a host or a Composition, is the key: it's the unit of the audit
+line, idle buckets expire so the map follows the modules in use, and one
+module's traffic can't exhaust another's rate. A bucket starts full.
+`--egress-rate-limit-burst` sets its size, and `0` derives
+`max(1, requests per minute)`. Over the limit, the guest reads
+`sandbox.egress: the module's request rate exceeds the egress policy's rateLimit`
+and `http_requests_total{outcome="budget"}` counts the request. The check
+returns at once, and the module retries on its next reconcile. The ten-minute sweep drops
+idle buckets. The operator sets the rate, and a Composition can't change it.
 
 ## Sizing
 
-Per module class (linux/arm64, review measurements: the Sizing page,
-`docs/operators/sizing.md`, carries the full table):
+The [sizing page](operators/sizing.md) has the measurements. The terms are:
 
-- **Memory** ≈ base + Σ resident modules (Go ~90 MB, raw-proto Go ~40 MB,
-  TinyGo 3.5 MB, Rust 0.7 MB) + `--max-concurrent-compiles` × 1 GB +
-  concurrent runs × 16 MB - `--max-concurrent-runs`, when set, is the
-  ceiling of that last factor (`× --module-memory-limit` in the worst
-  case), otherwise the callers' concurrency is.
-- **CPU** ≈ requests/s × per-request cost (Go 8-11 ms, raw-proto Go 1.2 ms,
-  TinyGo 0.4 ms, Rust 0.05 ms) + compiles (Go 25 CPU-s each, once per module
-  version per cache).
-- **Cold start** ≈ Σ compile CPU / cores; a warm volume under
-  `/tmp/function-wasm-cache` replaces that with a few milliseconds per
-  module.
-- **Disk** ≈ 230 MB per Go module version (module + artifact) until
+- **Memory** is the resident compiled modules, plus `--max-concurrent-compiles`
+  times the peak of compiling the largest module, plus concurrent runs times the
+  per-run figure. `--max-concurrent-runs`, when set, caps the last factor (at
+  `--module-memory-limit` per run in the worst case), and `--max-total-run-memory`
+  caps the sum of what runs claim.
+- **CPU** is requests per second times the per-request cost, plus the compiles,
+  one per module version per cache.
+- **Cold start** is the compile CPU of every module over the cores. A volume
+  under `/tmp/function-wasm-cache` replaces compiles with loading the stored
+  artifact, and `--warm-modules` moves either ahead of readiness.
+- **Disk** is a module and its artifact per version served, until
   `--max-cache-size` bounds it.
 
-The dominant per-request cost is the guest's own runtime initialisation
-(91 % of a Go guest's request), not the host; the toolchain choice is the
-sizing decision.
+The dominant per-request cost is the guest's own initialisation, not the host,
+so the toolchain choice is the sizing decision.
 
 ## Readiness and warmth
 
-The runtime serves the gRPC health service on the function port and reports
-Serving once the caches are open and the engine is up. A Kubernetes gRPC
-readiness probe then has a target (README shows the `DeploymentRuntimeConfig`).
-Ready isn't warm by default: the first request for each module on a pod
-pays a map (warm volume) or a compile (cold); the volume-backed cache covers
-restarts and the compile semaphore keeps a cold fleet from thrashing.
-Warming modules before Serving with `--warm-modules` (what it loads, its
-ordering with the health service and the compile semaphore, what a failure
-costs) is a cache optimisation that the cache one-pager covers.
+The runtime reports the gRPC health service on the function port and plain-HTTP
+`/readyz` on `--health-address`, ready once the caches are open and the
+`--warm-modules` entries are loaded. Ready isn't warm by default: the first
+request for each module on a pod pays a map from a warm volume or a compile from
+cold. The volume-backed cache covers restarts, and the compile semaphore keeps a
+cold fleet from thrashing. [Readiness and warm-up](operators/readiness.md) is the
+manual page, and the cache record covers what warm-up loads.
 
 ## Failure containment
 
-A run that traps, exits, times out or exhausts its memory is a fatal result;
-the runtime recovers a host-side panic on the request path into a fatal result
-with the stack logged; a load that fails isn't cached and the next request
-retries. A load that panics doesn't leave anything wedged. The process
-itself is never the unit of failure for one request - that's the property
-every bound in this document protects.
+A run that traps, exits, times out or exhausts its memory is a fatal result. A
+panic in the host on the run path becomes a fatal result too, and a load that
+fails isn't cached. The process is never the unit of failure for one request,
+which is the property every bound here protects.
 
-## What comes next
-
-The sandbox one-pager's grants are all in and each has its bound. The
-private `/tmp` is bounded by the filesystem behind `$TMPDIR` (its row in
-the preceding table) - no runtime-side byte quota, since WASI pre-opens
-offer none - and HTTP egress by the per-run budgets in the table (policy
-file only, not lowerable per Input yet). Host directories aren't mountable,
-so nothing else on the pod's filesystem is a module's to read.
-
+The sandbox's other grants have bounds in the table. The filesystem behind
+`$TMPDIR` bounds the private `/tmp`, because WASI pre-opens don't support a
+quota and the runtime adds none. The per-run budgets bound egress, and an
+operator can't configure them. Host directories aren't mountable, so nothing
+else on the pod's filesystem is a module's to read.
 
 ## Observability
 
-`function_wasm_module_run_duration_seconds{outcome}` (timeouts are their
-own outcome; a wait for a run slot is outside it and a request that never
-got one isn't counted), `function_wasm_module_runs_in_flight` (runs
-executing now - at `--max-concurrent-runs`, requests are queueing),
+The series are [documented](operators/metrics.md). Those that govern resources
+are `function_wasm_module_run_duration_seconds{outcome}` (timeouts are an
+outcome of their own, and a wait for a run slot is outside it),
+`function_wasm_module_runs_in_flight`,
 `function_wasm_module_compile_duration_seconds`,
-`function_wasm_module_cache_events_total{cache,event}` (memory tier hits
-and misses, artifacts mapped or found stale, blob hits and misses),
-`function_wasm_module_cache_bytes{cache}` from the sweep, and function-sdk-go's
-gRPC metrics. Logs contain the module reference and digest, the panic
-stack if any, and every sweep that freed something. A metric never has a
-module label - the set of digests is unbounded.
+`function_wasm_module_cache_events_total{cache,event}`,
+`function_wasm_module_cache_bytes{cache}` from the sweep, and
+`function_wasm_module_memory_denials_total{reason}`. No series has a module,
+digest or host label: the set is unbounded.
+
+## Alternatives
+
+**Fuel.** Wasmtime's instruction counting (a fuel budget per run) would have
+bounded CPU rather than wall clock. The project dropped it while wazero was the
+fallback engine, because it couldn't build a feature tied to one WebAssembly
+engine. It also changes the generated code, which needs a separate compiled
+cache namespace. The epoch deadline, a wall clock that credits
+`wasi:http` time back, remains the run bound.
+
+**A response cache for egress.** Caching a module's HTTP responses would cut
+the thousand identical requests per sweep that the rate limit now bounds. The
+invalidation semantics (TTL, `Cache-Control`, key correctness across headers)
+add more complexity than the benefit repays when modules already run in
+milliseconds. The limit refuses instead.
+
+**A metric label from the Input's name.** An Input is a fragment embedded in a
+Composition, so its `metadata.name` is unset in practice and, when set, is
+neither unique nor informative across the many Compositions one runtime handles.
+The label's signal was unreliable.
+
+**One FIFO for run slots.** The first form of `--max-concurrent-runs` was one
+queue, which put a slow module's requests ahead of every other module's. The
+per-digest round-robin replaced it.
+
+**Reserving the whole memory limit up front.** A run reserved its effective
+limit before starting, which capped parallelism at what a worst case would
+claim. The pool charges growth as it happens instead.
+
+## Open questions
+
+- Should the egress rate limit also key by destination host? A per-host bucket
+  would protect a third party across modules, and needs a bounded key set
+  first. It stays per module digest until then.
+- Should warm-up load from a bounded "last served" file on the cache volume? It
+  would make the warm set a function of history that a fresh volume lacks and an
+  operator can't read from the deployment. `--warm-modules` covers cold starts
+  and a persistent volume keeps artifacts; revisit if a real fleet shows the
+  gap.
