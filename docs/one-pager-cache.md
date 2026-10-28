@@ -96,9 +96,9 @@ the development loop.
 The compiled store is namespaced by `engine::version()`
 (`crates/engine/src/lib.rs`): the Wasmtime crate version `build.rs` reads
 from `Cargo.lock`, plus the OS and architecture. A serialized artifact loads
-only in the Wasmtime that produced it on the same host type, and a bump moves the namespace on its own. The namespace is
-distinct from the Go runtime's on purpose: the two engines' artifacts are
-never assumed interchangeable. At startup `remove_stale_versions` deletes the
+only in the Wasmtime that produced it on the same host type, and a bump moves the namespace on its own. The `rust-v`
+prefix keeps the namespace apart from any directory an earlier runtime left on
+a volume. At startup `remove_stale_versions` deletes the
 other version directories under `compiled/` once nothing has written them for
 `STALE_VERSION_AGE` (a day). The running binary can't load them, but during a
 rolling upgrade pods of both versions share the volume, and deleting each

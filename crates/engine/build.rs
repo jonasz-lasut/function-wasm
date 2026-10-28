@@ -1,6 +1,6 @@
 // Embeds the wasmtime crate version the engine links, so the compiled-cache
 // namespace changes with every wasmtime bump without anyone remembering to -
-// the Rust counterpart of the Go engine's debug.ReadBuildInfo version.
+// the version is read from Cargo.lock at build time.
 fn main() {
     let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
         .unwrap_or_default();

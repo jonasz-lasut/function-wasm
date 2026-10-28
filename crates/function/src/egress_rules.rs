@@ -1,8 +1,7 @@
-//! The shape of HTTP egress rules - the subset of `internal/egress` the
-//! manifest and the policy layers need: HTTPRule, its validation, and the
-//! host/pattern coverage helpers manifest.Check compares grants with. The
-//! egress client (SSRF judgment, budgets, audit) is not ported yet; a module
-//! whose admitted rules would need it is refused by admission.
+//! The shape of HTTP egress rules the manifest and the policy layers need:
+//! HttpRule, its validation, and the host/pattern coverage helpers
+//! manifest::check compares grants with. The egress client (SSRF judgment,
+//! budgets, audit) lives in egress.rs.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,8 +27,8 @@ pub struct HttpRule {
 const METHODS: &[&str] = &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 
 /// Checks the shape of HTTP egress rules - a module manifest's
-/// requires.egress.http - naming a wrong rule as field[i]. Strings match the
-/// Go runtime's `egress.ValidateRules`.
+/// requires.egress.http - naming a wrong rule as field[i]. The strings are
+/// pinned by the conformance goldens.
 pub fn validate_rules(field: &str, rules: &[HttpRule]) -> Result<(), String> {
     for (i, r) in rules.iter().enumerate() {
         if r.host.is_empty() == r.host_pattern.is_empty() {

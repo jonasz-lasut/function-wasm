@@ -3,11 +3,9 @@
 //! registries, and compares stdout, stderr and the exit code against
 //! recorded goldens under `testdata/conformance/`.
 //!
-//! The goldens were recorded from this runtime the day it last diffed
-//! byte-identical against the Go runtime's own `function validate` (the
-//! original differential harness, retired with the Go tree) - so they are
-//! the Go runtime's words wherever parity held, and a change is a parity
-//! regression until re-recorded deliberately with UPDATE_GOLDENS=1.
+//! The goldens are the recorded contract of `function validate`'s words,
+//! exit codes and JSON, so a change is a user-visible behaviour change and
+//! fails the suite until re-recorded deliberately with UPDATE_GOLDENS=1.
 //! Run-specific values (temp directories, loopback ports) are replaced
 //! with stable placeholders before comparing.
 
@@ -295,8 +293,7 @@ fn validate_matches_the_goldens() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
-/// The --resolve path over generated modules, the shape of the Go tree's
-/// TestValidateResolve: a component implementing the world and importing
+/// The --resolve path over generated modules: a component implementing the world and importing
 /// its log, a core module (ABI v1, removed: refused by name), one that is
 /// not wasm at all, one missing file, a compiled artifact, a plain
 /// component and one that does not implement the world.
@@ -416,8 +413,7 @@ fn validate_resolve_matches_the_goldens() {
     }
 }
 
-/// The manifest path of the three-layer decision over generated fixtures,
-/// the shape of the Go tree's TestValidateResolvePathManifest: a module
+/// The manifest path of the three-layer decision over generated fixtures: a module
 /// whose wasmfn.yaml requires a private /tmp, env bindings, or egress, with
 /// and without an operator grant policy. Egress that both layers permit is
 /// the one recorded gap: this runtime does not carry the egress client yet.
@@ -500,7 +496,7 @@ fn validate_resolve_manifest_matches_the_goldens() {
         }
     }
     // With a permissive operator policy every ask - /tmp, egress, env - is
-    // granted exactly as the Go runtime granted it.
+    // granted.
     for (i, composition) in compositions.iter().enumerate() {
         let args = [
             composition.as_str(),
@@ -716,9 +712,8 @@ fn validate_resolve_http_source_matches_the_goldens() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
-/// The OCI source over a local registry both binaries pull from
-/// (go-containerregistry speaks plain HTTP to 127.0.0.1, as this runtime
-/// does): the module layer fetched and inspected, the artifact's manifest
+/// The OCI source over a local registry the runtime pulls from
+/// (plain HTTP to 127.0.0.1, as local registries speak): the module layer fetched and inspected, the artifact's manifest
 /// layer decided by the three layers.
 #[test]
 fn validate_resolve_oci_source_matches_the_goldens() {
@@ -847,9 +842,8 @@ fn validate_resolve_oci_source_matches_the_goldens() {
 /// signs an artifact with a P-256 key the way cosign 3's key-based flow
 /// does (a Sigstore bundle - DSSE over an in-toto statement - attached as
 /// an OCI 1.1 referrer, listed by the referrers tag schema as on GHCR and
-/// registry:3) and leaves another unsigned. The Go runtime read cosign 2's
-/// legacy .sig signatures instead, so the unsigned refusal's wording is
-/// this runtime's own.
+/// registry:3) and leaves another unsigned. Legacy cosign 2 .sig signatures
+/// are not read, so the unsigned refusal's wording is the runtime's own.
 #[test]
 fn validate_resolve_cosign_matches_the_goldens() {
     use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey};

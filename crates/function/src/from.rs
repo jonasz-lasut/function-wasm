@@ -1,7 +1,6 @@
 //! module.from: the composite resource chooses the module instance, the
-//! Input's compositionPolicy fences what it may pick - the Rust port of
-//! `internal/module`'s from.go and policy.go. Refusal strings match the Go
-//! runtime verbatim.
+//! Input's compositionPolicy fences what it may pick. Refusal strings are
+//! pinned by the conformance goldens.
 
 use serde::Deserialize;
 
@@ -249,7 +248,7 @@ fn kind_of(t: &str) -> &'static str {
 }
 
 /// Whether a module at this source must carry a cosign signature - settled
-/// before it is resolved, as the Go runtime does. With an operator policy
+/// before it is resolved. With an operator policy
 /// the requirement is per repository (a path source, operator-controlled
 /// and locationless, is never required); without one it is the legacy
 /// all-or-nothing --cosign-key: a configured verifier requires every

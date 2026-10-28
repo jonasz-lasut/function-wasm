@@ -126,7 +126,7 @@ async fn the_served_runtime_is_byte_transparent() {
     assert_eq!(rsp, want);
     assert!(!rsp.windows(6).any(|w| w == b"secret"));
 
-    // The served call showed up in the Go runtime's gRPC server series -
+    // The served call showed up in the gRPC server series -
     // started when it arrived, handled OK and one message each way when its
     // trailers went out (the trailers may land a beat after the client saw
     // the response, so the handled count is polled briefly).
@@ -173,9 +173,9 @@ async fn the_served_runtime_is_byte_transparent() {
         "msg_sent"
     );
 
-    // InitializeMetrics parity: the streaming methods this server carries
-    // exist as zero series from startup, never incremented (the Go
-    // interceptor was unary-only too).
+    // As grpc-prometheus's InitializeMetrics does: the streaming methods
+    // this server carries exist as zero series from startup, never
+    // incremented (the interceptor is unary-only).
     assert_eq!(
         sample(
             "grpc_server_started_total",

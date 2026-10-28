@@ -1,6 +1,6 @@
 //! The bounds around one run - the run slot, the memory reservation and
 //! the run metric - and the translation of wasmtime failures into the
-//! messages the Go runtime produces. The run itself (store, WASI, deadline,
+//! messages operators read (their wording is contract). The run itself (store, WASI, deadline,
 //! the world's export) is component::execute.
 
 use std::sync::Arc;

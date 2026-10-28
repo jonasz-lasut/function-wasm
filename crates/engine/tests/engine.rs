@@ -1,6 +1,5 @@
 //! Engine tests over WAT fixtures: components implementing the
-//! wasmfn:function world, in the spirit of the old Go tree's
-//! internal/testwasm - a component that returns fixed response bytes,
+//! wasmfn:function world: a component that returns fixed response bytes,
 //! components that misbehave in one way each, the world typecheck refusals,
 //! and the sandbox reached through WASI 0.2's own interfaces.
 //!
@@ -107,7 +106,7 @@ fn a_run_observes_the_hostcall_split() {
 #[test]
 fn the_stack_limit_bounds_recursion() {
     // 4000 frames fit in the default 512 KiB stack and overflow an 8 KiB
-    // one; the trap carries the Go runtime's wording.
+    // one; the trap carries the runtime's own wording.
     let wat = format!(
         r#"(component
   (core module $m
@@ -367,7 +366,7 @@ fn env_reaches_the_guest_sorted() {
         ..Default::default()
     };
     let out = e.run(&m, b"", opts).expect("run");
-    // A BTreeMap serves the environ sorted, like the Go engine's SetEnv.
+    // A BTreeMap serves the environ sorted, so the guest sees a stable order.
     assert_eq!(String::from_utf8_lossy(&out), "A=1\0B=2\0");
 }
 

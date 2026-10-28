@@ -1,4 +1,4 @@
-//! The on-disk side of the caches - the Rust port of `internal/cache`: a
+//! The on-disk side of the caches: a
 //! content-addressed store of one kind of artifact under the fixed cache
 //! directory. Entries are written through a temporary file and a rename so
 //! a crash never leaves a partial entry a later get would serve; a
@@ -217,7 +217,7 @@ pub fn sweep(stores: &[&Store], max_bytes: u64) -> u64 {
 
 /// Removes every subdirectory of the compiled cache other than the current
 /// engine version's, once it has gone unused for STALE_VERSION_AGE - run at
-/// startup, as the Go runtime does.
+/// startup.
 pub fn remove_stale_versions(compiled_dir: &Path, current: &str) {
     let Ok(entries) = std::fs::read_dir(compiled_dir) else {
         return;

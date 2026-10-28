@@ -54,7 +54,7 @@ pub const DEFAULT_MEMORY_LIMIT: u64 = 512 << 20;
 /// wasmtime's own default wasm stack ceiling, kept as ours.
 pub const DEFAULT_STACK_LIMIT: u64 = 512 << 10;
 
-/// An engine failure, formatted exactly as the Go runtime formats it: the
+/// An engine failure, whose message wording is pinned: the
 /// message is the contract (it ends up in an XR condition), not a type.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -397,8 +397,8 @@ impl Engine {
         let stop = Arc::new(AtomicBool::new(false));
         // The epoch only has to advance while a run is in flight; a deadline
         // is relative to the epoch at the moment it is set, so ticks between
-        // runs never count against one. (The Go engine parks the ticker when
-        // idle; a skipped increment every 10ms buys the same and stays simple.)
+        // runs never count against one. (Parking the ticker when idle would
+        // save nothing worth the complexity: an idle tick is a cheap increment.)
         let ticker = {
             let engine = inner.clone();
             let active = Arc::clone(&active);
@@ -540,7 +540,7 @@ impl Engine {
         self.pre(c)
     }
 
-    /// Only the binary format is accepted, as in the Go runtime: a module is
+    /// Only the binary format is accepted: a module is
     /// what a toolchain produced, never text. A wasmtime compiled artifact
     /// (what serialize writes, a .cwasm) is named for what it is rather than
     /// failing as malformed wasm: artifacts are host- and version-specific
@@ -623,8 +623,8 @@ impl Drop for RunningGuard<'_> {
 
 /// Identifies the wasmtime release and host that compiled artifacts are only
 /// valid for - the compiled cache is namespaced by it, so a bump changes the
-/// namespace without anyone remembering to. Distinct from the Go runtime's
-/// namespace on purpose: the two engines' artifacts are never assumed
+/// namespace without anyone remembering to. The "rust-" prefix keeps
+/// the namespace its own, so artifacts of another engine are never assumed
 /// interchangeable, even at the same wasmtime version.
 pub fn version() -> String {
     format!(

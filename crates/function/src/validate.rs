@@ -1,12 +1,12 @@
 //! `function validate`: the runtime's admission over Compositions, offline -
-//! the Rust port of cmd/function/validate.go. For every pipeline step whose
+//! For every pipeline step whose
 //! input is a function-wasm Input it runs exactly what RunFunction runs
 //! before it resolves anything and, with --resolve, goes on to resolve and
 //! fetch each module and read its ABI. One line per step in the runtime's
 //! own words; exit 0 when every step is admitted, 1 when at least one is
-//! refused, 2 when the tool itself failed. Output parity with the Go binary
-//! is enforced by tests/conformance.rs; a check the port does not carry yet
-//! is refused by name, so the differential harness sees an honest gap.
+//! refused, 2 when the tool itself failed. The output is pinned by the
+//! goldens of tests/conformance.rs; a check the runtime does not carry is
+//! refused by name, so a gap is never silent.
 
 use std::io::Read as _;
 use std::path::PathBuf;
@@ -117,7 +117,7 @@ pub struct ValidateArgs {
 }
 
 /// The verdict on one step - what one text line and one JSON object carry.
-/// Field names and omission match the Go stepResult exactly.
+/// Field names and omission are the JSON contract of --output json.
 #[derive(Debug, Default, Serialize)]
 struct StepResult {
     file: String,
@@ -791,8 +791,8 @@ fn decode_input(
 
 /// Walks the raw Input against the known field names, warning about every
 /// field the runtime would silently ignore - keys sorted at each level and
-/// depth-first, the order the Go tool's repeated strict decode reports them
-/// in (its decoder streams a key-sorted re-marshal of the document).
+/// depth-first, the order a repeated strict decode reports them in (a decoder
+/// streaming a key-sorted re-marshal of the document), which the goldens pin.
 fn unknown_fields(
     obj: &serde_json::Map<String, serde_json::Value>,
     path: &str,
@@ -895,7 +895,7 @@ fn describe_admitted(input: &Input, admitted: &admission::Admitted) -> Vec<Strin
     out
 }
 
-/// Renders a size for the text output, as the Go tool's humanBytes does.
+/// Renders a size for the text output (B, KiB or MiB).
 fn human_bytes(n: usize) -> String {
     if n >= 1 << 20 {
         return format!("{:.1} MB", n as f64 / f64::from(1u32 << 20));

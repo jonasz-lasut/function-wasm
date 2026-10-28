@@ -15,8 +15,8 @@
 //! start from; the examples under examples/ solve their own use cases and are
 //! checked by their render jobs.
 //!
-//! A guest whose toolchain is not on PATH is skipped, like the Go tree's
-//! guest tests skip without theirs - unless FUNCTION_WASM_REQUIRE_TOOLCHAINS
+//! A guest whose toolchain is not on PATH is skipped, naming the guest,
+//! unless FUNCTION_WASM_REQUIRE_TOOLCHAINS
 //! is set, as the /e2e workflow's guest-suite job sets it, when a missing
 //! toolchain fails the guest instead: a runner that lost a toolchain would
 //! otherwise shrink the suite and stay green.

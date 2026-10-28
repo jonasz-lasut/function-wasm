@@ -1,5 +1,5 @@
-//! The metrics of the runtime - the same series as the Go runtime's
-//! internal/metrics (names, labels, buckets and help strings), registered
+//! The metrics of the runtime: their names, labels, buckets and help
+//! strings are the contract dashboards and the conformance goldens pin, registered
 //! with prometheus-client, the OpenMetrics-native client: /metrics serves
 //! OpenMetrics 1.0 as its main format straight from the encoder, and the
 //! classic Prometheus text format is derived from it for scrapers that ask.
@@ -46,7 +46,7 @@ static REGISTRY: LazyLock<RwLock<Registry>> = LazyLock::new(|| RwLock::new(Regis
 /// given without its `_total` suffix (the encoder appends it, per
 /// OpenMetrics), and the help's trailing period is stripped because
 /// prometheus-client appends one - so the served text stays byte-identical
-/// to the Go runtime's help strings.
+/// to the help strings as written here.
 pub fn register(name: &str, help: &str, metric: impl Metric) {
     let help = help.strip_suffix('.').unwrap_or(help);
     REGISTRY
@@ -181,9 +181,8 @@ pub static RUN_DURATION: LazyLock<LabeledHistogram> = LazyLock::new(|| {
     )
 });
 
-/// How much of a run was spent inside host imports. Additive to the Go
-/// runtime's series (which had no such split); run_duration minus this is
-/// guest compute.
+/// How much of a run was spent inside host imports. run_duration minus this
+/// is guest compute.
 pub static HOSTCALL_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
     plain_histogram(
         "function_wasm_module_hostcall_duration_seconds",
@@ -374,7 +373,7 @@ mod tests {
         assert!(om.contains("# TYPE function_wasm_module_runs_in_flight gauge"));
         assert!(om.contains("# TYPE function_wasm_module_compile_duration_seconds histogram"));
         assert!(om.contains("function_wasm_module_compile_duration_seconds_bucket{le=\"+Inf\"}"));
-        // The help strings are the Go runtime's, single trailing period
+        // The help strings carry a single trailing period
         // included (prometheus-client appends one; register strips ours).
         assert!(om.contains("bounds them)."), "help text:\n{om}");
         assert!(!om.contains("bounds them).."), "double period:\n{om}");

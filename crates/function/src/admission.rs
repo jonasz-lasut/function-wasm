@@ -1,9 +1,8 @@
-//! Admission of one request's Input against the runtime's ceilings: the Rust
-//! port of `internal/admission.Admit` and `internal/module.Validate` for the
-//! sources this runtime serves. Refusal strings for implemented checks match
-//! the Go runtime verbatim; a feature the port does not carry yet is refused
+//! Admission of one request's Input against the runtime's ceilings, for the
+//! sources this runtime serves. Refusal strings are pinned by the
+//! conformance goldens; a feature the runtime does not carry is refused
 //! with a message naming it - never silently ignored, so nothing runs wider
-//! than the Go runtime would allow.
+//! than the Input states.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -428,7 +427,7 @@ fn run_options(input: &Input, ceilings: &function_wasm_engine::Config) -> Result
     Ok(out)
 }
 
-/// The module source shape check, ported from `internal/module.Validate`:
+/// The module source shape check:
 /// Type is set and exactly one of the object it names (oci, http, path) or
 /// From is set, with no object of another type present.
 pub(crate) fn validate_source(src: &ModuleSource) -> Result<(), String> {

@@ -1,4 +1,4 @@
-//! The module cache - the Rust port of the Go engine's Cache: compiled
+//! The module cache: compiled
 //! modules by content digest from three tiers. Memory holds hot modules
 //! (dropped after an idle TTL, past a max-entries bound, or disabled), the
 //! on-disk store of wasmtime artifacts survives restarts and maps in
