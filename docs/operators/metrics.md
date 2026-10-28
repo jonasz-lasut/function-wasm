@@ -6,41 +6,41 @@ The main exposition format is [OpenMetrics](https://prometheus.io/docs/specs/om/
 1.0 (`application/openmetrics-text; version=1.0.0`), readable by any
 OpenMetrics-capable collector, not only Prometheus; a scraper whose
 `Accept` header asks for the classic Prometheus text format without
-accepting OpenMetrics gets `text/plain; version=0.0.4` instead. The two
-renderings carry identical series - same names, labels and values - so the
-format never changes what a dashboard sees:
+accepting OpenMetrics gets `text/plain; version=0.0.4` instead. Both
+renderings contain identical series (the same names, labels and values), and
+a dashboard sees the same thing in either format:
 
 | metric | labels | meaning |
 |---|---|---|
-| `function_wasm_module_compile_duration_seconds` | | histogram of wasmtime compile time (compiled-cache misses) |
-| `function_wasm_module_fetch_duration_seconds` | `source` = oci, http, path | histogram of fetch + verify time (blob-cache hits and served-file reads included) |
-| `function_wasm_module_requests_total` | `outcome` = ok, refused, error, skipped | requests by outcome: refused = declined by the runtime's checks or the policy layers, before the run (input, policy, grants, limits, resolution, verification) or over its output (the `composeResource` fence; the module ran, so its run is in `run_duration_seconds` too) — each also logged as `Request ended with a fatal result` with the reason, error = the load or the run failed, skipped = the composite resource chose no module and `module.allowEmpty` allowed it, so nothing ran (logged as `No module chosen by the composite resource`) |
-| `function_wasm_module_run_duration_seconds` | `outcome` = ok, error, timeout | histogram of one guest run, instantiate to response (a wait for a run slot is not part of it, and a request that never got one is not counted) |
+| `function_wasm_module_compile_duration_seconds` | | histogram of Wasmtime compile time (compiled-cache misses) |
+| `function_wasm_module_fetch_duration_seconds` | `source` = `oci`, `http`, `path` | histogram of fetch + verify time (blob-cache hits and served-file reads included) |
+| `function_wasm_module_requests_total` | `outcome` = `ok`, `refused`, `error`, `skipped` | requests by outcome: refused = declined by the runtime's checks or the policy layers, before the run (input, policy, grants, limits, resolution, verification) or over its output (the `composeResource` fence; the module ran, so its run is in `run_duration_seconds` too) - each also logged as `Request ended with a fatal result` with the reason, error = the load or the run failed, skipped = the composite resource chose no module and `module.allowEmpty` allowed it, so nothing ran (logged as `No module chosen by the composite resource`) |
+| `function_wasm_module_run_duration_seconds` | `outcome` = `ok`, `error`, `timeout` | histogram of one guest run, instantiate to response (a wait for a run slot isn't part of it, and a request cut short while waiting for one isn't counted) |
 | `function_wasm_module_runs_in_flight` | | gauge of guest runs executing right now; pinned at `--max-concurrent-runs`, the bound is what requests wait on |
-| `function_wasm_module_cache_events_total` | `cache` = compiled (memory), compiled-disk, blob; `event` = hit, miss, stale (compiled-disk only: an artifact wasmtime refused) | cache lookups |
-| `function_wasm_module_cache_bytes` | `cache` = compiled-disk, blob | bytes on disk per store, measured every ten minutes |
-| `function_wasm_module_http_requests_total` | `outcome` = ok, refused, budget, error | HTTP requests modules made through the host (`sandbox.egress`): the server answered; refused by the grant or the egress policy; a per-run budget or the timeout was hit; the request failed. No host label — the audit log line names it |
-| `function_wasm_module_hostcall_duration_seconds` | | histogram of the slice of a run spent inside host imports (the `log` import, HTTP egress over `wasi:http`, and WASI); the rest of `run_duration_seconds` is guest compute. A run that is slow here is waiting on the host - usually an upstream the module's HTTP requests talk to |
-| `function_wasm_module_memory_denials_total` | `reason` = limit, pool | guest memory growths denied - at the run's ceiling (`limits.memory` or `--module-memory-limit`) or because `--max-total-run-memory` could not serve the growth before the run's deadline. The guest sees `memory.grow` fail |
-| `function_wasm_trusted_root_refreshes_total` | `outcome` = updated, unchanged, error | refreshes of the Sigstore trusted root over TUF (`--cosign-trust-instance`): updated = a root put in use (the first one, or one that differs from the last - the verified-digest memo is forgotten with it), unchanged = the same root fetched again, error = the fetch failed and the last good root stays (the log has the reason). Present only with the flag, every outcome at zero from the start |
-| `function_wasm_trusted_root_last_refresh_timestamp_seconds` | | Unix time of the last successful refresh of the trusted root, 0 until the first; `time() - it` is the root's age. Alert on it growing past a few refresh intervals, and on the `error` outcome moving |
+| `function_wasm_module_cache_events_total` | `cache` = `compiled` (memory), `compiled-disk`, `blob`; `event` = `hit`, `miss`, `stale` (compiled-disk only: an artifact Wasmtime refused) | cache lookups |
+| `function_wasm_module_cache_bytes` | `cache` = `compiled-disk`, `blob` | bytes on disk per store, measured every ten minutes |
+| `function_wasm_module_http_requests_total` | `outcome` = `ok`, `refused`, `budget`, `error` | HTTP requests modules made through the host (`sandbox.egress`). `ok` = the server answered. `refused` = refused by the grant or the egress policy. `budget` = a per-run budget or the timeout was hit. `error` = the request failed. No host label: the audit log line states the host |
+| `function_wasm_module_hostcall_duration_seconds` | | histogram of the slice of a run spent inside host imports (the `log` import, HTTP egress over `wasi:http`, and WASI). The rest of `run_duration_seconds` is guest compute. A run that's slow here is waiting on the host, most often an upstream the module's HTTP requests talk to |
+| `function_wasm_module_memory_denials_total` | `reason` = `limit`, `pool` | guest memory growths denied - at the run's ceiling (`limits.memory` or `--module-memory-limit`) or because `--max-total-run-memory` couldn't serve the growth before the run's deadline. The guest sees `memory.grow` fail |
+| `function_wasm_trusted_root_refreshes_total` | `outcome` = `updated`, `unchanged`, `error` | refreshes of the Sigstore trusted root over TUF (`--cosign-trust-instance`). updated = a root put in use (the first one, or one that differs from the last - the verified-digest memo is forgotten with it). unchanged = the same root fetched again. error = the fetch failed and the last good root stays (the log has the reason). Present only with the flag, every outcome at zero from the start |
+| `function_wasm_trusted_root_last_refresh_timestamp_seconds` | | Unix time of the last successful refresh of the trusted root, 0 until the first. `time() - it` is the root's age. Alert on it growing past a few refresh intervals, and on the `error` outcome moving |
 
-No metric carries a module identity: the set of digests a Function serves is
-unbounded. Logs carry the module reference and digest.
+No metric includes a module identity: the set of digests a Function serves is
+unbounded. The logs include the module reference and digest.
 
 ## gRPC server metrics
 
 The transport also serves the gRPC server series the Go runtime got from
-function-sdk-go's grpc-prometheus interceptor, with the same names, labels
+function-sdk-go's `grpc-prometheus` interceptor, with the same names, labels
 and meanings - dashboards and alerts built on them keep working:
 `grpc_server_started_total`, `grpc_server_handled_total` (with a
-`grpc_code` label carrying the gRPC code name, `OK` … `Unauthenticated`),
+`grpc_code` label with the gRPC code name, `OK` … `Unauthenticated`),
 `grpc_server_msg_received_total` and `grpc_server_msg_sent_total`, each
 labelled `grpc_type`/`grpc_service`/`grpc_method`. As under the Go
 runtime - whose interceptor was unary-only - unary calls (`RunFunction`,
 health `Check`) are counted and streaming methods (reflection, health
-`Watch`) exist as permanently zero series; every method the server carries
-is pre-created at zero on startup, so a scrape sees the full set before
-the first request. There is no `grpc_server_handling_seconds`:
+`Watch`) exist as permanently zero series; every one of the server's methods
+is pre-created at zero on startup. A scrape sees the full set before
+the first request. The runtime doesn't serve `grpc_server_handling_seconds`:
 function-sdk-go never enabled the histogram, and
 `function_wasm_module_run_duration_seconds` covers latency.

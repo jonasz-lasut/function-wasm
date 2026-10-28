@@ -11,13 +11,14 @@ make vale                                           # the prose of docs/, README
 
 The workspace tests build every scaffold (what `guestfn init` writes) to
 WebAssembly and run them all through the host when
-their toolchains (go, cargo with the rust scaffold's pinned
-toolchain, zig, npm, python3) are on PATH, and skip the ones that are not.
+their toolchains (`go`, `cargo` with the `rust` scaffold's pinned
+toolchain, `zig`, `npm`, `python3`) are on PATH, and skip the ones that
+aren't.
 [Testing](testing.md) sets out the two tiers and where a new test goes. See
 [AGENTS.md](https://github.com/jonasz-lasut/function-wasm/blob/main/AGENTS.md) for the layout and conventions.
 
-Design documents live under `docs/` as one-pagers, one per feature, each
-headed by its status: implemented (cache, module source schema, trust
+Design documents are under `docs/` as one-pagers, one per feature, each
+headed by its status - implemented (cache, module source schema, trust
 model, resource governance, sandbox, admission and inspection tooling,
 the module manifest, manifest-less sources, the three-layer authorization
 model, the policy engine, governance and performance phases, the use-case

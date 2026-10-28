@@ -1,310 +1,315 @@
-# Guest Language Support
+# Guest language support
 
-* Owner: Jonasz Małecki (@jonasz-lasut)
-* Reviewers: Function WASM Maintainers
-* Status: Implemented, revision 0.7 (Zig and C shipped as proposed and
+* Owner: @jonasz-lasut (Jonasz Małecki)
+* Reviewers: function-wasm maintainers
+* Status: implemented, revision 0.7 (Zig and C delivered as proposed and
   #11 closed on 2026-10-06; the rest of the plan was overtaken by ABI v2,
-  docs/one-pager-abi-v2.md, through which the languages listed below as
-  blocked arrived; the current matrix is docs/guests/other-languages.md)
+  `docs/one-pager-abi-v2.md`, through which the languages listed below as
+  blocked arrived. The current matrix is `docs/guests/other-languages.md`)
 
-Which languages a function-wasm module can be written in today, which could
-come next and at what cost, which are blocked and by what, and what
+Which languages a function-wasm module can be written in today, and which
+could come next and at what cost. Which are blocked and by what, and what
 "supporting a language" means in this repository. Based on a research pass
 on 2026-08-16 (fifteen toolchains evaluated against ABI v1; Zig and C proven
 with probe modules run through `internal/engine`) and on the Extism
 evaluation recorded in AGENTS.md ("Not Extism"): the ABI is host-agnostic
-and small, so breadth comes from templates, not from a different runtime.
+and small, so breadth comes from templates rather than from a different
+runtime.
 
 **Update, 2026-10-07.** Guests are moving to ABI v2 (components targeting
 `wasmfn:function`) and ABI v1 is deprecated from v0.6.0 and removed in 1.0.0
 (#114, #129; the sections below that describe what the v1 host required, and
-`docs/abi.md` they cite, are history: the contract is `docs/abi-v2.md`), so what
-"supporting a language" means moved with them: a language is *supported* when
-its toolchain produces a component implementing the world, and *tested* when
+`docs/abi.md` they cite, are history: the contract is `docs/abi-v2.md`). What
+"supporting a language" means moved with them. A language is *supported* when
+its toolchain produces a component that targets the world, and *tested* when
 a scaffold or example here runs through the guest suite and the render jobs
-(the "Other languages" page, `docs/guests/other-languages.md`, states both sets). AssemblyScript, shipped
-below as a v1 example, was retired after #114's spike: no wit-bindgen backend,
-the project declines the component model, and hand-written canonical-ABI glue
-carries `run` and `log` (17.9 KB) but makes `wasi:http` a hand-maintained
-cost. TinyGo was retired the same day: its own `wasip2` target with
-wit-bindgen-go builds a 1.5 MB component, but that generator is unmaintained
-and TinyGo cannot use componentize-go's bindings, so the two Go flavours could
-not share one path. The rows about both are
-history. C moved to ABI v2 the same day, after #114's C spike: the `c`
+(the "Other languages" page, `docs/guests/other-languages.md`, states both sets). AssemblyScript, listed
+below as a v1 example, was retired after #114's spike: wit-bindgen has no
+AssemblyScript generator and the project declines the component model.
+Hand-written canonical-ABI glue provides `run` and `log` (17.9 KB) but makes
+`wasi:http` a hand-maintained cost. TinyGo was retired the same day: its own
+`wasip2` target with wit-bindgen-go builds a 1.5 MB component, but that
+generator is unmaintained and TinyGo can't use componentize-go's bindings, so
+both Go flavours couldn't share one path. The rows about both are history. C
+moved to ABI v2 the same day, after #114's C spike: the `c`
 scaffold and `hello-c` are components over wit-bindgen's C bindings
-(sync-lifted `run`, egress over `wasi:http@0.2`), still compiled by `zig cc`
-with nanopb for the protobuf, the core module wrapped by `guestfn build`
-(no wasm-tools, no adapter download); cJSON, which only served v1's JSON host
-payloads, is gone, and the module shrank from ~70 KB to ~62 KB. Zig followed
-the same day, after #114's Zig spike: the `zig` scaffold and `hello-zig` are
-components over the same wit-bindgen C bindings (byte for byte the `c`
-scaffold's, one `make gen-bindings` for both), read through translate-c as a
-Zig module and compiled beside the guest's own glue, `src/wasmfn.zig` - the
-`run` export, the typed `log`, a `wasi:http@0.2` client, and the generated
-C's `realloc`/`free`/`abort`/`strlen` served from the guest's bump heap, so
-the core module links no libc and imports no preview1 and `guestfn build`
-wraps it with no adapter; zig-protobuf stays, and the module shrank from
-~95 KB to ~60 KB. Go moved last, the same day, after #114's Go spike, in
-the shape componentize-go proved but without it: the `go` scaffold and
+(sync-lifted `run` and egress over `wasi:http@0.2`), still compiled by
+`zig cc` with nanopb for the Protobuf. The core module is wrapped by
+`guestfn build` (neither `wasm-tools` nor an adapter download). cJSON, which
+only served v1's JSON host payloads, is gone, and the module shrank from
+~70 KB to ~62 KB. Zig followed the same day, after #114's Zig spike: the
+`zig` scaffold and `hello-zig` are components over the same wit-bindgen C
+bindings (byte for byte the `c` scaffold's, with one `make gen-bindings` for
+both). The bindings are read through translate-c as a Zig module and
+compiled beside the guest's own glue, `src/wasmfn.zig` - the `run` export,
+the typed `log`, a `wasi:http@0.2` client, and the generated C's
+`realloc`/`free`/`abort`/`strlen` served from the guest's bump heap. With
+that heap the core module links no libc and imports no preview1, and
+`guestfn build` wraps it with no adapter. zig-protobuf stays, and the module
+shrank from ~95 KB to ~60 KB. Go moved last, the same day, after #114's Go spike,
+the way componentize-go proved but without it: the `go` scaffold and
 `pdb-addon` are components over wit-bindgen's Go bindings (checked in,
 `go.bytecodealliance.org/pkg` their runtime), `run` sync-lifted on stock Go,
 egress over `wasi:http@0.2` behind the same `*http.Client`; `go build` still
 emits a wasip1 reactor, and `guestfn build` embeds the world and wraps it
-with the runtime's own adapter (no componentize-go, no wasm-tools). The
-module's size and compile cost did not move (~74 MB, ~2 s). The Go, C and
-Zig rows below describe their v1 era; no scaffold is left on ABI v1. Odin
+with the runtime's own adapter (neither componentize-go nor `wasm-tools`).
+The module's size and compile cost didn't move (~74 MB, ~2 s). The Go, C and
+Zig rows below describe their v1 era. Every scaffold is now on ABI v2. Odin
 joined on 2026-10-07 as an example only, after #155's spike
 (`examples/hello-odin`, ~71 KB): the `c` flavour's bindings and nanopb codec
 through Odin's foreign interface, a freestanding wasm32 object linked by
 `zig cc` and wrapped by `guestfn build` through the `c` path; the decision
-of that day is no further scaffolds unless an issue asks for one. MoonBit
-joined the same day, an example only too (#155, `hello-moonbit`, no
-scaffold): wit-bindgen's `moonbit` backend over the c scaffold's world,
+of that day is no further scaffolds unless one is requested in an issue.
+MoonBit joined the same day, an example only too (#155, `hello-moonbit`, no
+scaffold): wit-bindgen's `moonbit` generator over the c scaffold's world,
 `protoc-gen-mbt` with the `moonbitlang/protobuf` runtime for the codec,
 `moon build --target wasm` to a 101 KB core module that `guestfn build`
 embeds UTF-16 (MoonBit's string encoding) and wraps with no adapter into a
 107 KB component the engine compiles in ~170 ms; the MoonBit row below
 describes the v1-era survey.
 
-## What the host requires
+## The v1 host contract
 
 `docs/abi.md` and `internal/engine.checkABI` are the contract; a language
 qualifies when its toolchain can produce this and nothing else:
 
-- a **wasip1 core module** (not a component) built as a **reactor** — no
+- a **wasip1 core module** (not a component) built as a **reactor** - no
   `_start`, an optional `_initialize` the host calls first;
 - exports `memory`, `wasmfn_alloc(u32) -> u32`, `wasmfn_run(u32, u32) -> u64`
   (`ptr<<32 | len`);
 - imports only from `wasi_snapshot_preview1`, `wasmfn.log(u32, u32, u32)`
-  and, if used, `wasmfn.http(u32, u32) -> u64` — the latter re-enters the
+  and, if used, `wasmfn.http(u32, u32) -> u64` - the latter re-enters the
   guest's `wasmfn_alloc` while `wasmfn_run` is on the stack, so the
   allocator must be re-entrant;
-- protobuf `RunFunctionRequest` / `RunFunctionResponse` on the wire, i.e. a
-  protobuf codec that works under wasip1 (no reflection surprises — see the
+- Protobuf `RunFunctionRequest` / `RunFunctionResponse` on the wire, i.e. a
+  Protobuf codec that works under wasip1 (no reflection surprises - see the
   TinyGo/vtprotobuf note in AGENTS.md).
 
-`internal/engine` sets no wasm proposal flags today. wasmtime-go v47
-surfaces toggles for SIMD/relaxed SIMD, bulk memory, multi-value,
+`internal/engine` doesn't set any WASM proposal flags today. wasmtime-go v47
+exposes toggles for SIMD/relaxed SIMD, bulk memory, multi-value,
 multi-memory, memory64, tail calls and engine-level GC support
-(`Config.SetWasm*`, `SetGCSupport` — v47.0.0 `config.go`); the GC,
+(`Config.SetWasm*`, `SetGCSupport` - v47.0.0 `config.go`); the GC,
 exceptions and threads proposals themselves are C-API properties the
-binding does not expose (`wasm_gc`, `wasm_exceptions`, `wasm_threads`,
+binding doesn't expose (`wasm_gc`, `wasm_exceptions`, `wasm_threads`,
 documented `false` by default in the bundled `config.h`), so a toolchain
-that emits wasm-gc (Kotlin/Wasm, OCaml, Java) is a per-proposal check —
-possibly a small binding change — not a settled yes. The **wasmtime-go
-binding** *can* load a component but cannot call one, give it host functions
-or register WASIp2 (the C-API and the Rust engine can; the Go wrappers are
-missing — [wasmtime-go#280](https://github.com/bytecodealliance/wasmtime-go/issues/280),
-PRs #290/#291/#292, draft), so component-only toolchains are blocked by the
-binding and the ABI, not by a wasm-proposal flag. See "What gates ABI v2" below.
+that emits WASM GC (Kotlin/Wasm, OCaml, Java) is a per-proposal check -
+possibly a small binding change - not a settled yes. The **wasmtime-go
+binding** *can* load a component but can't call one, nor give it host
+functions or register wasip2. The C-API and the Rust engine can. The Go
+wrappers are missing
+([wasmtime-go#280](https://github.com/bytecodealliance/wasmtime-go/issues/280)
+and PRs #290/#291/#292, draft), so component-only toolchains are blocked by
+the binding and the ABI rather than by a WASM-proposal flag. See "What gates
+ABI v2" below.
 
 ## What "supported" means here
 
-A language is supported when all of this exists, and it is the definition of
-done for every candidate below:
+A language is supported when everything listed here exists, and it's the
+definition of done for every candidate below:
 
-1. `examples/hello-<lang>` — the same greeting function as the other guests,
+1. `examples/hello-<lang>` - the same greeting function as the other guests,
    passing `TestRunFunctionGuests` (`cmd/function/guest_test.go`) with the
    shared expectations: default and configured greeting, a greeting fetched
    through `wasmfn.http` with an egress grant and refused without one, a
    guest-side fatal result on a bad `config`, guest logs through `wasmfn.log`;
    its own native unit tests; `make build`, `make render`, `make render-check`.
-2. `cmd/guestfn/internal/scaffold/templates/<lang>` — the example rendered
+2. `cmd/guestfn/internal/scaffold/templates/<lang>` - the example rendered
    for itself (`TestRenderMatchesExample` keeps them identical), a golden
    under `testdata/<lang>`, `guestfn init --lang <lang>`, `guestfn build`
    detecting the toolchain from the project (or `--lang`), the vendored
    `run_function.proto` refreshed by `vendorproto.go` where the language
    compiles it.
 3. `docs/abi.md` "Examples" and the scaffold table of `docs/guests/other-languages.md` (toolchain, how it
-   talks protobuf, module size); the ABI glue and the `wasmfn.http` helper
-   in the open (~40 and ~100 lines today) — the reference for the next
+   talks Protobuf, module size); the ABI glue and the `wasmfn.http` helper
+   in the open (~40 and ~100 lines today) - the reference for the next
    language.
 4. CI: a lint/test job for the example and a `render (<lang>)` job (guest
-   compiled with its toolchain, served by the runtime built from the tree,
-   rendered by `crossplane render`); Renovate covering the language's
+   compiled with its toolchain, then served by the runtime built from the
+   tree and rendered by `crossplane render`); Renovate covering the language's
    dependency files; the toolchain in the Nix shell once
    `docs/one-pager-nix-devenv.md` lands.
 
-Effort below is graded against the Rust flavour (S/S/S — already built) as
-(a) example guest, (b) scaffold + build detection, (c) CI.
+Effort below is graded against the Rust flavour (S/S/S - already built) with
+a = example guest, b = scaffold + build detection and c = CI.
 
 ## Today
 
-| flavour | how it talks protobuf | module | glue |
+| flavour | how it talks Protobuf | module | glue |
 |---|---|---|---|
 | Go (function-sdk-go + vendored glue) | `request`/`response`/`resource` helpers | ~75 MB (13 MB compressed) | vendored `internal/wasmfn` |
 | TinyGo | protobuf-go types + vtprotobuf codecs, generated from the vendored proto | ~1.8 MB | `abi_wasip1.go` + `http.go`/`http_wasip1.go` |
 | Rust | prost over the vendored proto | ~250 KB | `src/lib.rs` `abi` module + `src/http.rs` |
-| Zig | zig-protobuf's generated codec over the vendored proto (checked in) | ~95 KB | `src/main.zig` (ABI + `runFunction` + the log/http helpers) |
-| C (`zig cc`) | nanopb's generated codec over the vendored proto (checked in; `fallback_type:FT_POINTER` + `PB_ENABLE_MALLOC`, so every dynamic field is heap allocated and `structpb`'s recursion is pointers, no callbacks); cJSON for the host payloads | ~70 KB | `src/wasmfn.{h,c}` (ABI + handle + log/http) + `src/structpb.{h,c}` |
-| AssemblyScript (example only - no scaffold yet) | as-proto's generated codec over the vendored proto (checked in), four files hand-written where the 2023-era generator gets this proto wrong (the `Value` oneof, `optional` presence, packed repeated enums); json-as for the host payloads | ~30 KB | `assembly/{main,abi,host,http,log,structpb}.ts` |
+| Zig | zig-protobuf's generated codec over the vendored proto (checked in) | ~95 KB | `src/main.zig` (ABI + `runFunction` + the log/HTTP helpers) |
+| C (`zig cc`) | nanopb's generated codec over the vendored proto (checked in; `fallback_type:FT_POINTER` + `PB_ENABLE_MALLOC`, so every variable-size field is heap allocated and `structpb`'s recursion is pointers, no callbacks); cJSON for the host payloads | ~70 KB | `src/wasmfn.{h,c}` (ABI + handle + log/HTTP) + `src/structpb.{h,c}` |
+| AssemblyScript (example only - no scaffold yet) | as-proto's generated codec over the vendored proto (checked in), four files hand-written where the 2023-era generator gets this proto wrong (the `Value` `oneof`, `optional` presence, packed repeated enums); `json-as` for the host payloads | ~30 KB | `assembly/{main,abi,host,http,log,structpb}.ts` |
 
 ## Candidates
 
-| language | evidence | module (ballpark) | protobuf | effort a/b/c | verdict |
+| language | evidence | module (ballpark) | Protobuf | effort a/b/c | verdict |
 |---|---|---|---|---|---|
-| **Zig** (`wasm32-wasi`) | **Shipped**: `examples/hello-zig`, ~95 KB, passes `TestRunFunctionGuests` | ~95 KB | `zig-protobuf` v5 (WKTs native; `minimum_zig_version` 0.16.0) | done | **shipped** |
-| **C** (via `zig cc`) | **Shipped**: `examples/hello-c`, ~70 KB, passes `TestRunFunctionGuests`; one zig binary, no wasi-sdk | ~70 KB | nanopb 0.4.9.1 with `fallback_type:FT_POINTER` (no callbacks, no bounds; protobuf-c rejects proto3 `optional`, upb heavy) | done | **shipped** |
-| **AssemblyScript** | **MVP shipped**: `examples/hello-assemblyscript`, ~30 KB - the smallest guest - passes the guest behaviour suite and `crossplane render`; scaffold still open | ~30 KB | `as-proto` 1.3.0 generates the messages, four hand-written files correct it (`Value` oneof encode, `optional` presence, packed `capabilities` decode); the codec spike the M grade predicted | example done; scaffold = S | **example shipped; scaffold to follow** |
-| **Swift** (swift.org WASI SDK) | docs: official toolchain, `-mexec-model=reactor`, `-Xlinker --export=<name>` | low MB (inferred) | swift-protobuf (inferred buildable) | M / M / M | spike; can overtake AssemblyScript |
-| JavaScript (Javy / QuickJS) | *Tested*: shipped `javy build` output is a Command/component shape | ~1.3–1.4 MB if embedded | shifts to the embedding side (prost) | L–XL / L / S | blocked as shipped; unblock = a Rust or C reactor embedding javy-core/QuickJS with our exports |
-| Python (CPython wasip1, componentize-py, py2wasm) | *Tested*: the official wasip1 build is a Command; componentize-py is component-only | 30 MB+ | pure-Python protobuf (inferred) | XL / XL / M | blocked; unblock = embed CPython + a frozen/zipped stdlib in a reactor, and reconcile with the no-filesystem sandbox |
-| C# / .NET | docs: no reactor mode in mainline .NET; componentize-dotnet is Windows-only and component-only | — | — | blocked | wait for upstream |
+| **Zig** (`wasm32-wasi`) | **Delivered**: `examples/hello-zig`, ~95 KB, passes `TestRunFunctionGuests` | ~95 KB | `zig-protobuf` v5 (WKTs native, `minimum_zig_version` 0.16.0) | done | **delivered** |
+| **C** (via `zig cc`) | **Delivered**: `examples/hello-c`, ~70 KB, passes `TestRunFunctionGuests`; one `zig` binary, no wasi-sdk | ~70 KB | nanopb 0.4.9.1 with `fallback_type:FT_POINTER` (without callbacks or bounds; protobuf-c rejects proto3 `optional`, `upb` heavy) | done | **delivered** |
+| **AssemblyScript** | **MVP delivered**: `examples/hello-assemblyscript`, ~30 KB - the smallest guest - passes the guest behaviour suite and `crossplane render`; scaffold still open | ~30 KB | `as-proto` 1.3.0 generates the messages, four hand-written files correct it (`Value` `oneof` encode, `optional` presence, packed `capabilities` decode); the codec spike the M grade predicted | example done; scaffold = S | **example delivered; scaffold to follow** |
+| **Swift** (swift.org WASI SDK) | docs: official toolchain, `-mexec-model=reactor`, `-Xlinker --export=<name>` | low MB (inferred) | `swift-protobuf` (inferred buildable) | M / M / M | spike; can overtake AssemblyScript |
+| JavaScript (Javy / QuickJS) | *Tested*: the released `javy build` output is a Command/component shape | ~1.3-1.4 MB if embedded | shifts to the embedding side (prost) | L-XL / L / S | blocked as released; unblock = a Rust or C reactor embedding `javy-core`/QuickJS with the ABI's exports |
+| Python (CPython wasip1, componentize-py, py2wasm) | *Tested*: the official wasip1 build is a Command; componentize-py is component-only | 30 MB+ | pure-Python Protobuf (inferred) | XL / XL / M | blocked; unblock = embed CPython + a frozen/zipped stdlib in a reactor, and reconcile with the no-filesystem sandbox |
+| C# / .NET | docs: no reactor mode in mainline .NET; componentize-dotnet is Windows-only and component-only | - | - | blocked | wait for upstream |
 | Kotlin/Wasm (`wasm-wasi`) | compiler source + docs: `@WasmExport` experimental, target Beta | MB (inferred) | none verified | L / L / M | not now |
-| Java (TeaVM) | source + docs: WASI lives in a fork that calls itself experimental | — | protobuf-java (risk) | L–XL / L / M | not now |
-| Haskell (GHC wasm backend) | docs: reactor + named exports confirmed | several MB+ | Template-Haskell codegen unverified under GHC-wasm | L–XL / L / L | not now |
-| Ruby (ruby.wasm) | docs: reactor confirmed | — | no pure-Ruby protobuf found | L–XL / L / M | not now |
-| Grain, MoonBit, OCaml (wasm_of_ocaml), Lua | thin docs / component-oriented / WASI runtime PR open / embed the C VM | — | none, none, none, nanopb via C | unscored / M | not now (Lua only if a use case appears) |
+| Java (TeaVM) | source + docs: WASI is in a fork that calls itself experimental | - | `protobuf-java` (risk) | L-XL / L / M | not now |
+| Haskell (GHC's WASM back end) | docs: reactor + named exports confirmed | a few MB+ | Template-Haskell codegen unverified under GHC's WASM back end | L-XL / L / L | not now |
+| Ruby (`ruby.wasm`) | docs: reactor confirmed | - | no pure-Ruby Protobuf found | L-XL / L / M | not now |
+| Grain, MoonBit, OCaml (`wasm_of_ocaml`), Lua | thin docs / component-oriented / WASI runtime PR open / embed the C VM | - | none, none, none, nanopb via C | unscored / M | not now (Lua only if a use case appears) |
 
-The blocked group shares one cause, worth stating precisely because it is
-easy to misattribute. There are **two WASI execution models**: **Preview 1**
-(WASI 0.1, `wasip1`) is a *core module* — functions imported from the
-`wasi_snapshot_preview1` namespace, a linear-memory raw-pointer ABI — and the
+The blocked group shares one cause, stated precisely here because it's
+easy to misattribute. WASI has **two execution models**. **Preview 1**
+(WASI 0.1, `wasip1`) is a *core module* - functions imported from the
+`wasi_snapshot_preview1` namespace, a linear-memory raw-pointer ABI - and the
 **Component Model** (WASI 0.2, and the async 0.3) is a different binary format
 of WIT-typed worlds over the Canonical ABI. ABI v1 is a Preview 1 contract; the
 blocked toolchains emit **components** (`componentize-py`,
 `componentize-dotnet`, a JS→component path) or **Command** modules (the
-official CPython `wasip1` build, `javy build`) — the wrong *shape*, one layer
-below the payload, so the JSON payload mode below does nothing for them.
+official CPython `wasip1` build, `javy build`) - the wrong *kind* of module,
+one layer below the payload, so the JSON payload mode below does nothing for
+them.
 
-## What gates ABI v2 (and what does not)
+## What gates ABI v2 (and what doesn't)
 
-The unlock is a component-shaped **ABI v2**: a WIT world mirroring
-`RunFunctionRequest`/`Response`, `wasi:http` behind the same host policy. What
-gates it is a common source of confusion, so, precisely:
+The unlock is a component-model **ABI v2**: a WIT world mirroring
+`RunFunctionRequest`/`Response`, `wasi:http` behind the same host policy. The
+blocker is a common source of confusion, so, precisely:
 
-- **Not Wasmtime the engine.** Wasmtime *is* the reference component host: the
+- **Not Wasmtime the engine.** Wasmtime is the reference component host: the
   Rust `wasmtime` crate has full component support (`wasmtime::component`,
   `bindgen!` from a WIT world, resources, async, WASI 0.2 via `wasmtime-wasi`,
   and the WASI 0.3 async work). The engine has done this for years.
-- **The wasmtime-go binding** — the whole host-side gap. function-wasm hosts
+- **The wasmtime-go binding** - the whole host-side gap. function-wasm hosts
   through wasmtime-go (CGo over libwasmtime); the bundled C-API already exposes
   the component calls (`wasmtime_component_func_call`,
   `..._linker_instance_add_func`, `..._add_wasip2`, `add_wasi_http`), but the
-  **Go binding does not wrap them yet**. A binding-maturity issue, not an engine
-  or language one. Tracked upstream as
+  **Go binding doesn't wrap them yet**. A binding-maturity issue rather than
+  an engine or language one. Tracked upstream as
   [wasmtime-go#280](https://github.com/bytecodealliance/wasmtime-go/issues/280)
   and delivered by #290 (component calls + values), #291 (host functions +
-  resources) and #292 (synchronous WASIp2 registration), all draft as of
+  resources) and #292 (synchronous wasip2 registration), all draft as of
   2026-08-18. Fallback: a CGo shim against the bundled headers inside
-  `internal/engine` (the one package allowed to import wasmtime) — possible, but
-  it forks the binding surface.
+  `internal/engine` (the one package allowed to import `wasmtime`) - possible, but
+  it forks the binding's API.
 - **Not Go-the-guest-language, for the host.** A host *runs* components by
   lifting/lowering through the C-API; Go never needs a component target to be a
-  component host. Go's component support gates only **Go guests under ABI v2** —
+  component host. Go's component support gates only **Go guests under ABI v2** -
   optional, since Go guests keep ABI v1 and lose nothing. Even there, TinyGo
   (wasip2 + wit-bindgen-go) is ahead of mainline Go, and a mainline Go guest
   could reach v2 by wrapping a `wasip1` core module with the preview1 adapter
   plus bindings tooling.
 
-So ABI v2 is a deliberate design decision gated on the **binding**, not on
-Wasmtime and not (for the host) on Go. `docs/one-pager-sandbox.md` phase 4 names
-the same dependency for `wasi:http`. It is not taken here.
+ABI v2 is a deliberate design decision blocked by the **binding**, not by
+Wasmtime and not (for the host) by Go. `docs/one-pager-sandbox.md` phase 4 names
+the same dependency for `wasi:http`. It's not taken here.
 
 ## Proposal
 
 ### Order
 
-1. **Zig — done** (`examples/hello-zig`, ~95 KB): `zig` is a single binary
+1. **Zig - done** (`examples/hello-zig`, ~95 KB): `zig` is one binary
    in nixpkgs and brew, zig-protobuf v5 handles the well-known types
    (`Struct`/`Value`/`Duration`) natively. Cost accepted: pre-1.0 churn across
-   zig minor versions, the same shape as TinyGo's vtprotobuf workaround.
-2. **C via `zig cc` — done** (`examples/hello-c`, ~70 KB; not wasi-sdk). The
+   Zig minor versions, the same kind of cost as TinyGo's vtprotobuf workaround.
+2. **C via `zig cc` - done** (`examples/hello-c`, ~70 KB - no wasi-sdk). The
    Zig toolchain already present builds C too (`build.zig` compiles the C
    sources for `wasm32-wasi` as a reactor, and fetches nanopb and cJSON as
    plain tarball dependencies), so the wasi-sdk download/`WASI_SDK_PATH`
-   friction never existed — one `zig` binary for both guests, and `guestfn
+   friction never existed - one `zig` binary for both guests, and `guestfn
    build` detects both by the `build.zig`. The codec turned out to be an
-   options file, not a spike: nanopb's `fallback_type:FT_POINTER` (with
+   options file rather than a spike: nanopb's `fallback_type:FT_POINTER` (with
    `PB_ENABLE_MALLOC`, `PB_FIELD_32BIT`) keeps scalars and singular
    submessages inline and puts every string, bytes, repeated field and map on
    the heap, which also breaks `Value`/`Struct`/`ListValue`'s recursion with
    pointers - no `pb_callback_t`, no `max_size` bounds, no decode callbacks.
    `package:"fnv1"` names the types `fnv1_RunFunctionRequest`; the WKTs stay
-   `google_protobuf_Struct` (cross-file references are not mangled). The
+   `google_protobuf_Struct` (cross-file references aren't mangled). The
    codec is checked in and regenerated by `zig build gen-proto`
    (`nanopb_generator`, `pip install nanopb`, the one extra tool, only to
    regenerate). Glue: `wasmfn.{h,c}` (exports, handle, logger, HTTP client
    over cJSON, base64), `structpb.{h,c}` for `Struct`/`Value`. Cost accepted:
-   C's error handling makes the example longer than Zig's, and two C
-   dependencies are fetched by zig at build time (hash-pinned in
+   the error handling of C makes the example longer than Zig's, and two C
+   dependencies are fetched by Zig at build time (hash-pinned in
    `build.zig.zon`).
 3. **AssemblyScript** after a half-day spike (reactor build, `wasmfn.http`
-   re-entrancy, one of the two protobuf generators against the vendored
+   re-entrancy, one of the two Protobuf generators against the vendored
    proto). Best DX of the unverified candidates (`npm install`, no per-OS
    binary; nixpkgs has `assemblyscript`). If the spike fails on a mechanic,
    **Swift** takes the slot after its own spike.
 
 ### The optional JSON payload mode
 
-Every language above except Zig/C/AS/Swift would rather not carry a
-protobuf codec, and JavaScript/Python authors in particular expect JSON. An
-optional second entry point — for example `wasmfn_run_json(u32, u32) -> u64`
-carrying `protojson` of the same messages, chosen by the host from the
-exports present, `checkABI` accepting either — would let a hand-written
-guest skip the codec entirely at the cost of a larger, slower payload
-(protojson of a `RunFunctionRequest` with `structpb` observed state is
-roughly 1.5–3× the protobuf bytes and a `json.Unmarshal` per call). It is
-an ABI v1 *extension* (a new export name, `docs/abi.md` "Compatibility":
-mechanics changes are new names), so it is additive and gates no release —
-a module without the export is unaffected whenever it lands; the
-implementation is S (host: `checkABI` + a `protojson` branch in `run.go`;
-docs; a WAT fixture). Recommendation: reserve the name in `docs/abi.md`
-when the first language that wants it is scheduled (Zig and C do not need
-it), and decide then whether it is worth carrying at all.
+Every language in the preceding table except Zig/C/AS/Swift would rather
+not include a Protobuf codec, and JavaScript/Python authors especially
+expect JSON. An optional second entry point - say
+`wasmfn_run_json(u32, u32) -> u64` with `protojson` of the same messages,
+chosen by the host from the exports present, `checkABI` accepting either -
+would let a hand-written guest skip the codec entirely at the cost of a
+larger, slower payload (protojson of a `RunFunctionRequest` with `structpb`
+observed state is about 1.5-3× the Protobuf bytes and a `json.Unmarshal` per
+call). It's an ABI v1 *extension* (a new export name, `docs/abi.md`
+"Compatibility": mechanics changes are new names), so it's additive and
+gates no release - a module without the export is unaffected whenever it's
+merged; the work is S (host: `checkABI` + a `protojson` branch in `run.go`
+plus docs and a WAT fixture). Recommendation: reserve the name in
+`docs/abi.md` when the first language that wants it gets scheduled (Zig and C
+don't need it), and decide then whether to keep it at all.
 
 ### Phasing and effort
 
 | phase | work | effort |
 |---|---|---|
-| 0 | decide on `wasmfn_run_json` (reserve it in `docs/abi.md`, or reject it) | S, any time — additive |
-| 1 | **done** — `examples/hello-zig` + template + golden + `guestfn build` (zig) + vendorproto + `render (zig)` CI + docs (Renovate/Nix pending #12) | shipped |
-| 2 | **done** — `examples/hello-c` (`zig cc`, no wasi-sdk; nanopb `fallback_type:FT_POINTER`) + template + golden + `guestfn init --lang c`/`build` (shares `build.zig` → zig) + vendorproto + `render (c)` CI + docs | shipped |
+| 0 | decide on `wasmfn_run_json` (reserve it in `docs/abi.md`, or reject it) | S, any time - additive |
+| 1 | **done** - `examples/hello-zig` + template + golden + `guestfn build` (Zig) + `vendorproto` + `render (zig)` CI + docs (Renovate/Nix pending #12) | delivered |
+| 2 | **done** - `examples/hello-c` (`zig cc`, no wasi-sdk; nanopb `fallback_type:FT_POINTER`) + template + golden + `guestfn init --lang c`/`build` (shares `build.zig` → Zig) + `vendorproto` + `render (c)` CI + docs | delivered |
 | 3 | AssemblyScript spike → template if green; else Swift spike | M (+ S/S if adopted) |
-| later | JSON payload mode when a language needs it; JS via an embedded QuickJS reactor only on demand (L–XL); ABI v2 when wasmtime-go and Go allow | — |
+| later | JSON payload mode when a language needs it; JS via an embedded QuickJS reactor only on demand (L-XL); ABI v2 when wasmtime-go and Go allow | - |
 
-Each phase is one PR shape: example + template + goldens + CI + docs, the
-way `hello-tinygo` and `hello-rust` landed. Nothing here gates `v0.1.0`:
-every step adds a flavour or an export name and changes nothing a published
-module or Composition relies on.
+Each phase is one PR with the same contents: example + template + goldens +
+CI + docs, the way `hello-tinygo` and `hello-rust` landed. `v0.1.0` doesn't
+wait on any of this: every step adds a flavour or an export name and doesn't
+change anything a published module or Composition relies on.
 
 ## Non-goals
 
-- Switching runtimes for language breadth (Extism/wazero — AGENTS.md "Not
+- Switching runtimes for language breadth (Extism/wazero - AGENTS.md "Not
   Extism"): the ABI ran unmodified under wazero, so breadth was never a
   runtime property.
-- A shared multi-language SDK repository or a "wasmfn for language X" crate
+- A shared multi-language SDK repository or a "`wasmfn` for language X" crate
   before a language exists in the examples; the glue stays in the open in
   each example until there is a second consumer.
-- Supporting a language whose toolchain cannot produce a reactor with named
-  exports (today: C#/.NET) or only produces components (Javy, componentize-py,
-  MoonBit's documented path) — until ABI v2.
+- Supporting a language whose toolchain can't produce a reactor with named
+  exports (C#/.NET today) or only produces components (Javy, componentize-py,
+  MoonBit's documented path) - until ABI v2.
 - Guaranteeing behavioural parity beyond `TestRunFunctionGuests`: the
   greeting function is the contract, not every SDK feature.
 
 ## Open questions
 
 Rev 0.7 (2026-10-28): all answered or overtaken. 1: #112's one use case
-per language (Go, Rust, TypeScript, Python, C#) stood in for demand. 2:
+per language (Go, Rust, TypeScript, Python, C#) was taken as the demand. 2:
 accepted, Zig 0.16 is the pin. 3: decided against (the ABI v2 one-pager,
 rev 0.3). 4: yes, the ABI v2 one-pager. 5: moot, AssemblyScript was
 retired and the Swift spike dropped when #11 closed. 6 was already moot.
 
 1. Is there a specific voiced demand (a user asking for Python, JavaScript
-   or C#)? It would reorder the list even though the effort is higher —
-   Python is likely the most-requested "why can't I just write…" language
-   in the Crossplane audience.
-2. Appetite for owning Zig's pre-1.0 churn — the technical case is the
+   or C#)? It would reorder the list even though the effort is higher -
+   Python is likely the language Crossplane users request most often.
+2. Appetite for owning Zig's pre-1.0 churn - the technical case is the
    strongest, the maintenance case the weakest of the two proven candidates.
 3. Carry an optional JSON payload mode (`wasmfn_run_json`) at all, or keep
-   ABI v1 protobuf-only for good?
+   ABI v1 Protobuf-only permanently?
 4. Is ABI v2 (component world) ever in scope? "Yes, eventually" turns the
-   blocked verdicts into "pending a decision"; "no" makes them final. Its
+   blocked verdicts into "pending a decision" and "no" makes them final. Its
    host-side dependency is concrete and tracked: wasmtime-go component calls +
    host functions ([#280](https://github.com/bytecodealliance/wasmtime-go/issues/280),
    PRs #290/#291/#292), not anything Wasmtime or Go-the-guest-language lacks
    (see "What gates ABI v2").
-5. Timebox the AssemblyScript and Swift spikes before any scaffold work
-   (recommended: half a day each), or fold the spike into the first PR?
-6. ~~How should wasi-sdk be distributed to contributors and CI?~~ Moot: C
-   builds with `zig cc`, there is no wasi-sdk to distribute.
+5. Should the AssemblyScript and Swift spikes get a timebox before any
+   scaffold work (recommended: half a day each), or be combined with the
+   first PR?
+6. ~~How should wasi-sdk be distributed to contributors and CI?~~ Moot: the C
+   guest builds with `zig cc`, so there's no wasi-sdk to distribute.
