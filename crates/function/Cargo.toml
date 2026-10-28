@@ -41,7 +41,10 @@ serde_json.workspace = true
 pem = "4"
 # Signs Sigstore bundles in cosign::testutil (feature testutil) only.
 p256 = { version = "0.14", features = ["ecdsa", "pem"], optional = true }
-serde_yaml = "0.9"
+# serde-saphyr: YAML in pure Rust (the saphyr parser), maintained; its scalar
+# resolution and error wording differ from libyaml's, which the manifest page
+# and the Unparsable golden state.
+serde-saphyr = "2"
 sha2 = "0.11"
 tar = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

@@ -350,9 +350,8 @@ fn print_result(output: &str, r: &StepResult) -> Result<(), String> {
 }
 
 /// Reads every YAML or JSON document of a file (- is stdin) as an
-/// unstructured object; empty documents are skipped. The error strings
-/// mirror the Go tool's (its YAML layer wraps go-yaml, whose parser messages
-/// libyaml-descended parsers share).
+/// unstructured object; empty documents are skipped. A parse failure names
+/// the file, the line and the column, in the parser's own words.
 fn read_documents(file: &str) -> Result<Vec<serde_json::Value>, String> {
     let raw = if file == "-" {
         let mut buf = Vec::new();
@@ -368,36 +367,19 @@ fn read_documents(file: &str) -> Result<Vec<serde_json::Value>, String> {
             )
         })?
     };
-    let mut docs = Vec::new();
-    for de in serde_yaml::Deserializer::from_slice(&raw) {
-        let doc = serde_json::Value::deserialize(de).map_err(|e| parse_error(file, &e))?;
-        if doc.is_null() {
-            continue;
-        }
-        docs.push(doc);
-    }
-    Ok(docs)
+    let docs: Vec<serde_json::Value> =
+        serde_saphyr::from_slice_multiple(&raw).map_err(|e| parse_error(file, &e))?;
+    Ok(docs.into_iter().filter(|doc| !doc.is_null()).collect())
 }
 
-use serde::Deserialize as _;
-
-/// Renders a YAML parse failure the way the Go tool does: its YAML layer
-/// reports "error converting YAML to JSON: yaml: line N: <message>", and the
-/// message wording is libyaml's, which serde_yaml shares.
-fn parse_error(file: &str, e: &serde_yaml::Error) -> String {
-    let mut msg = e.to_string();
-    // go-yaml prints libyaml's zero-based line; serde_yaml's location is
-    // one-based.
-    let line = e.location().map(|l| l.line().saturating_sub(1));
-    if let Some(i) = msg.find(" at line ") {
-        msg.truncate(i);
-    }
-    match line {
-        Some(line) => {
-            format!("cannot parse {file}: error converting YAML to JSON: yaml: line {line}: {msg}")
-        }
-        None => format!("cannot parse {file}: error converting YAML to JSON: yaml: {msg}"),
-    }
+/// One line for a YAML parse failure: the parser's first line, which
+/// carries the location and the message (`line 3 column 11: unclosed
+/// bracket '['`), without the source excerpt the parser prints under it.
+fn parse_error(file: &str, e: &serde_saphyr::Error) -> String {
+    let text = e.to_string();
+    let first = text.lines().next().unwrap_or_default().trim();
+    let msg = first.strip_prefix("error: ").unwrap_or(first);
+    format!("cannot parse {file}: {msg}")
 }
 
 /// Returns the function-wasm Inputs of the documents: every pipeline step of

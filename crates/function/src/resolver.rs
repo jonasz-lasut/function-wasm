@@ -510,7 +510,7 @@ impl Resolver {
 /// carries. JSON is valid YAML, so an already-JSON manifest passes through.
 fn manifest_json(raw: &[u8]) -> Result<Vec<u8>, String> {
     let value: serde_json::Value =
-        serde_yaml::from_slice(raw).map_err(|e| format!("manifest is not valid YAML: {e}"))?;
+        serde_saphyr::from_slice(raw).map_err(|e| format!("manifest is not valid YAML: {e}"))?;
     serde_json::to_vec(&value).map_err(|e| format!("manifest is not valid YAML: {e}"))
 }
 

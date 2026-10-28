@@ -53,7 +53,7 @@ impl Profile {
 
     /// The runtime args the profile's config gives the container.
     pub fn args(self) -> Result<Vec<String>> {
-        let drc: serde_json::Value = serde_yaml::from_str(self.drc_yaml())?;
+        let drc: serde_json::Value = serde_saphyr::from_str(self.drc_yaml())?;
         let containers =
             drc["spec"]["deploymentTemplate"]["spec"]["template"]["spec"]["containers"]
                 .as_array()

@@ -191,7 +191,7 @@ struct ExampleStep {
 /// deprecated one, as the runtime accepts).
 fn example_step(path: &Path) -> Result<Option<ExampleStep>, String> {
     let raw = std::fs::read(path).map_err(|e| e.to_string())?;
-    let doc: serde_json::Value = serde_yaml::from_slice(&raw).map_err(|e| e.to_string())?;
+    let doc: serde_json::Value = serde_saphyr::from_slice(&raw).map_err(|e| e.to_string())?;
     let steps = doc
         .pointer("/spec/pipeline")
         .and_then(|p| p.as_array())
