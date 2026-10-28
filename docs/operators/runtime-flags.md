@@ -78,9 +78,26 @@ The SDK's flags `--insecure`, `--debug`, `--tls-certs-dir`, `--address` and `--m
 
 ## Cache storage
 
-The caches live under `/tmp/function-wasm-cache`, which isn't configurable. Back it with a volume through the `DeploymentRuntimeConfig` to keep the caches across pod restarts, and mount an `emptyDir` there if the pod's root filesystem is read-only.
+The caches live under `/tmp/function-wasm-cache`, which isn't configurable. Mount an `emptyDir` there if the pod's root filesystem is read-only, or a volume to keep the caches across pod restarts:
 
-A volume shared between pods is safe. Entries are content-addressed and written atomically. The runtime removes artifacts compiled by another Wasmtime version only after a day without writes, so during a rolling upgrade the old and new pods don't rebuild each other's artifacts.
+```yaml
+spec:
+  deploymentTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            volumeMounts:
+            - name: cache
+              mountPath: /tmp/function-wasm-cache
+          volumes:
+          - name: cache
+            persistentVolumeClaim:
+              claimName: function-wasm-cache
+```
+
+Only the runtime may write the directory. The compiled tier is native code the runtime loads without checking it again, and a writer there runs code in the runtime ([trust model](trust-model.md#the-cache-directory)): give the volume to this Function's pods alone, never a host path or a volume another workload can write. Those pods may share it. Entries are content-addressed and written atomically, and the runtime removes artifacts compiled by another Wasmtime version only after a day without writes, so during a rolling upgrade the old and new pods don't rebuild each other's artifacts.
 
 ## Opening the sandbox
 

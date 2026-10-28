@@ -2,11 +2,14 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 2.3 (rewritten in the present tense over the Rust workspace; warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
+* Status: implemented, revision 2.4 (the compiled tier's trust boundary stated, with the cache key record proposing a keyed check; rewritten in the present tense over the Rust workspace; warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
 
 function-wasm keeps its caches on disk under one fixed directory, every entry
 addressed by a content digest, plus a bounded in-memory tier for compiled
-modules. Fetched modules are always written to disk and never held in memory.
+modules. The directory is the runtime's alone. The compiled tier is native
+code the runtime loads without re-verification, and a writer there runs code
+in the runtime ([the cache key record](one-pager-cache-key.md) proposes a
+keyed check). Fetched modules are always written to disk and never held in memory.
 Compiled modules are persisted as Wasmtime artifacts, mapped from disk when
 needed and held in memory while they're used. An entry never has to be
 invalidated: its name is its content. The flags are safety limits (how many
@@ -22,7 +25,9 @@ not how.
 │   └── sha256-<hex>                    verified against its name on every read
 ├── compiled/                         Wasmtime artifacts
 │   └── <engine::version()>/            e.g. rust-v<wasmtime version>-linux-aarch64
-│       └── sha256-<hex>                the artifact for the module that digest pins
+│       └── sha256-<hex>                the artifact for the module that digest pins:
+│                                       native code, loaded without re-verification,
+│                                       so only the runtime may write this directory
 ├── manifests/                        module manifests, by digest
 │   └── sha256-<hex>
 └── tuf/<instance>/                   with --cosign-trust-instance: the verified TUF

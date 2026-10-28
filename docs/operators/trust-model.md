@@ -63,6 +63,19 @@ with its own Docker config. Mount a Docker config through a
 `DeploymentRuntimeConfig` and set `DOCKER_CONFIG`. Its credentials apply
 only to their registry host.
 
+## The cache directory
+
+The caches under `/tmp/function-wasm-cache` belong to the runtime. The
+compiled tier holds Wasmtime artifacts, native code the runtime loads without
+checking it again. Whoever can write that directory runs code in the
+runtime: the checks before a load look at the module a file is named after,
+never at the file. Back it with an `emptyDir` or
+a volume that only this Function's pods mount. A host path, or a volume
+another workload can write, hands that workload the runtime
+([cache storage](runtime-flags.md#cache-storage)).
+A keyed check of the artifacts is proposed in the
+[cache key design record](../one-pager-cache-key.md).
+
 ## Egress
 
 A module granted egress can forward its whole request to the hosts its

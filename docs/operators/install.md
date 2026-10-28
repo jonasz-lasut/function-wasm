@@ -34,6 +34,7 @@ If it stays unhealthy, read the pod's logs and the Function's conditions (`kubec
 A fresh install runs every module in the default sandbox, which gives a module no network, filesystem or environment beyond the request ([trust model](trust-model.md)).
 
 - Set flags, such as limits and caches, through a `DeploymentRuntimeConfig`: see [runtime flags](runtime-flags.md).
+- Keep the caches across restarts on a volume that only this Function's pods mount: see [cache storage](runtime-flags.md#cache-storage).
 - Add readiness and liveness probes and pre-load modules: see [readiness and warm-up](readiness.md).
 - Require signed modules: see [signatures](signatures.md).
 - Allow a module more than the default sandbox, such as egress or a private `/tmp`: see the [grant policy](grant-policy.md).
