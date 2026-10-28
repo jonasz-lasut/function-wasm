@@ -3,8 +3,8 @@
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
 * Status: implemented, revision 0.7 (Zig and C delivered as proposed and
-  #11 closed on 2026-10-06; the rest of the plan was overtaken by ABI v2,
-  `docs/one-pager-abi-v2.md`, through which the languages listed below as
+  #11 closed on 2026-10-06; ABI v2 (`docs/one-pager-abi-v2.md`) overtook the
+  rest of the plan, and through it the languages listed below as
   blocked arrived. The current matrix is `docs/guests/other-languages.md`)
 
 Which languages a function-wasm module can be written in today, and which
@@ -34,14 +34,14 @@ both Go flavours couldn't share one path. The rows about both are history. C
 moved to ABI v2 the same day, after #114's C spike: the `c`
 scaffold and `hello-c` are components over wit-bindgen's C bindings
 (sync-lifted `run` and egress over `wasi:http@0.2`), still compiled by
-`zig cc` with nanopb for the Protobuf. The core module is wrapped by
-`guestfn build` (neither `wasm-tools` nor an adapter download). cJSON, which
+`zig cc` with nanopb for the Protobuf. `guestfn build` wraps the core module
+(neither `wasm-tools` nor an adapter download). cJSON, which
 only served v1's JSON host payloads, is gone, and the module shrank from
 ~70 KB to ~62 KB. Zig followed the same day, after #114's Zig spike: the
 `zig` scaffold and `hello-zig` are components over the same wit-bindgen C
 bindings (byte for byte the `c` scaffold's, with one `make gen-bindings` for
-both). The bindings are read through translate-c as a Zig module and
-compiled beside the guest's own glue, `src/wasmfn.zig` - the `run` export,
+both). Zig reads the bindings through translate-c as a module and
+compiles them beside the guest's own glue, `src/wasmfn.zig` - the `run` export,
 the typed `log`, a `wasi:http@0.2` client, and the generated C's
 `realloc`/`free`/`abort`/`strlen` served from the guest's bump heap. With
 that heap the core module links no libc and imports no preview1, and
@@ -231,8 +231,8 @@ the same dependency for `wasi:http`. It's not taken here.
    (`nanopb_generator`, `pip install nanopb`, the one extra tool, only to
    regenerate). Glue: `wasmfn.{h,c}` (exports, handle, logger, HTTP client
    over cJSON, base64), `structpb.{h,c}` for `Struct`/`Value`. Cost accepted:
-   the error handling of C makes the example longer than Zig's, and two C
-   dependencies are fetched by Zig at build time (hash-pinned in
+   the error handling of C makes the example longer than Zig's, and Zig fetches two C
+   dependencies at build time (hash-pinned in
    `build.zig.zon`).
 3. **AssemblyScript** after a half-day spike (reactor build, `wasmfn.http`
    re-entrancy, one of the two Protobuf generators against the vendored

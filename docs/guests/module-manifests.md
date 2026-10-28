@@ -48,8 +48,8 @@ with `composeResource` rules judged over its actual response after the
 run ([the output fence](../operators/cedar-policy.md#the-output-fence));
 the runtime never reads `composes`, so a declaration can neither make an
 output pass nor refuse a run early. It feeds the tooling: `function
-validate --resolve` warns where a declared kind and change would be
-refused by the step's `compositionPolicy` or the operator policy (`the
+validate --resolve` warns where the step's `compositionPolicy` or the operator
+policy would refuse a declared kind and change (`the
 module declares it composes policy/PodDisruptionBudget (add), which the
 compositionPolicy does not permit (composeResource)`), `guestfn inspect`
 shows it in the manifest summary, and `guestfn scaffold composition`

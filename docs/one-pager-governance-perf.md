@@ -15,7 +15,7 @@ optional Input field or a new flag; none changes an existing one, and every
 ceiling keeps the rule that the operator sets it and a Composition may only
 lower it. `v0.1.0` doesn't depend on any of this.
 
-Phases that were drafted and dropped: fuel-based instruction counting
+Phases the project dropped after drafting them: fuel-based instruction counting
 (not portable to wazero), registry mirror / OCI layout / `function
 precompile` (path mode covers air-gapped environments), and a raw-bytes
 gRPC codec (maintenance cost outweighs the savings for typical XR sizes).
@@ -56,11 +56,11 @@ the set of digests in use is the memory tier's size, not a metric label),
 consulted in `Client.do` after the per-run `maxRequests` check; over the
 limit the guest reads `sandbox.egress: the module's request rate exceeds
 the egress policy's rateLimit` - `outcome=budget`, never a trap - and
-retries next reconcile. Set by the operator flags, like the other budgets, and a Composition can't raise it. Idle entries are swept every ten minutes.
+retries next reconcile. Set by the operator flags, like the other budgets, and a Composition can't raise it. A sweep drops idle entries every ten minutes.
 Deferred: a per-host bucket (protects a third party across modules - needs
 a bounded key set first), a Composition-lowerable egress rate limit.
 
-Response caching was considered and dropped: the invalidation semantics
+The project considered response caching and dropped it: the invalidation semantics
 (TTL, Cache-Control, key correctness across headers) add complexity out of
 proportion to the benefit when modules already run in milliseconds.
 
@@ -135,7 +135,7 @@ labels. `v0.1.0` doesn't depend on any of this.
   the sentence "modules never share responses" conditional.
 - **Rate-limit unit: per module digest or per host?** Recommendation: per
   module first (the digest is already the audit's unit and the key set is
-  the memory tier's), and per host once a bounded key set is designed.
+  the memory tier's), and per host once the project designs a bounded key set.
 - ~~**Opt-in `input` metric label from `metadata.name`?**~~ Dropped: an
   Input is a Composition-embedded fragment, so its `metadata.name` is unset
   in practice (no example sets it) and, when set, is neither unique nor

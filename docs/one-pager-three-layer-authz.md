@@ -61,7 +61,7 @@ sandbox.
 
 **Manifest layer**: **an absent manifest requests nothing: the default sandbox.**
 `path`/`http` and manifest-less OCI sources don't request anything. A fallback
-inline `request` is designed in its own one-pager
+inline `request` has its design in its own one-pager
 (docs/one-pager-manifest-less-sources.md).
 
 **Composition layer** (`compositionPolicy`): two regimes, by capability. It
@@ -94,9 +94,9 @@ exactly what `sandbox` and the allowlists do today:
   with no rule scoping the action narrows nothing, and a runtime with no
   policy file doesn't either: a module's output was never gated before the
   fence existed, and a minor may only widen. Once scoped, Cedar's usual
-  rule; a `forbid` alone permits nothing. The composition layer is
-  evaluated first and whole, then the operator's. `modify` is judged on the
-  entire resource (body, connection details, ready flag), compared by value;
+  rule; a `forbid` alone permits nothing. The runtime evaluates
+  the composition layer first and whole, then the operator's. The fence judges
+  `modify` on the entire resource (body, connection details, ready flag), compared by value;
   a `context.fields` set that lets a policy permit the ready flag alone is a
   known, additive extension no use case has asked for yet.
 
@@ -128,12 +128,12 @@ from S):
   `credentialData`, the withheld-pull-credential and NUL guards unchanged), and
   `spendCredential(db)` must permit it in **both** Cedar layers. The credential
   VALUE still arrives at the pipeline step. The module never authors it. The
-  bulk-import-every-key `envFrom` shape is dropped - a binding specifies exactly
+  design drops the bulk-import-every-key `envFrom` shape - a binding specifies exactly
   the keys it needs, which was the safer half anyway.
 
 Both `env.valueFrom.credential` and `envFrom.credential` then disappear from
 the Input, and their one useful behaviour (inject a named credential key as
-a named env var) is kept as a manifest binding that Cedar judges. That closes
+a named env var) lives on as a manifest binding that Cedar judges. That closes
 the duplication question and the gap that a module can't request env for
 itself, in one move.
 
@@ -143,8 +143,8 @@ A pipeline step's credentials arrive in every `RunFunctionRequest`. Before
 revision 1.1 the runtime forwarded every one of them but the pull credential,
 as Crossplane hands them to a native function (and as the Go runtime did), so
 `spendCredential` judged only an env binding - a convenience - while the module
-could read the same key from its request. Now the request is edited, at the
-wire level, to contain only the credentials granted to the module:
+could read the same key from its request. Now the runtime edits the request, at the
+wire level, so it contains only the credentials granted to the module:
 
 - the credential each admitted `requires.env` binding reads, whole;
 - each credential the manifest requires whole, `requires.credentials:
@@ -167,9 +167,9 @@ Both the operator and composition policies compile against the **same** schema
 already in `internal/authz`: actions `pullModule`, `spendCredential`,
 `grantEgress`, `usePrivateTmp`, `setEnv`, `requireSignature`, `dialAddress`,
 and entities `Repository`, `HostPattern`, `Capability`, `Credential`. The
-principal is `Request { namespace, xrKind, composition }`. The composition
-policy is compiled from the Input's `compositionPolicy` text and **cached by
-content hash** (it's per-Composition, not per-request). A malformed
+principal is `Request { namespace, xrKind, composition }`. The runtime
+compiles the composition policy from the Input's `compositionPolicy` text and
+**caches it by content hash** (it's per-Composition, not per-request). A malformed
 `compositionPolicy` is a fatal result at admission, in the runtime's words, the
 same as a malformed operator policy is a startup or `function validate` error.
 

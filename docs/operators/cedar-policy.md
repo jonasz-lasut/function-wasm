@@ -26,8 +26,8 @@ only, never from the composite resource, is in the
 
 ## The principal
 
-Each decision is made for the principal `Request::"self"`, the caller of
-the step, with three string attributes:
+The runtime decides each request for the principal `Request::"self"`, the
+caller of the step, with three string attributes:
 
 | attribute | value |
 |---|---|
@@ -41,7 +41,7 @@ safe because both layers only narrow: a rule that can't match grants
 nothing. `function validate` builds the principal from `--xr`, and uses the
 zero principal without it.
 
-`requireSignature` and `trustSigner` are evaluated with a placeholder
+`requireSignature` and `trustSigner` see a placeholder
 principal (`Module::"module"`) that has no attributes: a required
 signature and a signer's trust are caller-independent, and a rule for
 either that conditions on `principal` never matches.
@@ -83,7 +83,7 @@ one `permit` matches and no `forbid` does. A document that governs one
 capability refuses every other capability a module requires
 unless it permits that too. With no `--sandbox-policy-file` nothing is
 grantable, and a module that requires anything is refused with a sentence
-that mentions the flag. The file is read once, at startup; a change needs a
+that mentions the flag. The runtime reads the file once, at startup; a change needs a
 restart.
 
 ### The composition layer
@@ -109,7 +109,7 @@ The same evaluation, in two regimes:
   it: a matching `permit` and no matching `forbid`. A rule whose action is
   unconstrained (`permit (principal, action, resource);`) scopes nothing.
 
-The composition layer is evaluated first and whole, so the author closest
+The runtime evaluates the composition layer first and whole, so the author closest
 to the fix reads their own layer's refusal even where the operator would
 also deny. A `compositionPolicy` that's not valid Cedar is refused at
 admission, before anything is resolved.
@@ -158,7 +158,7 @@ permit (principal, action == Action::"pullModule",
 Permits an XR-chosen module at `ghcr.io/example/greeter` and at
 `ghcr.io/example` itself. Refuses `ghcr.io/example-evil/greeter`,
 `ghcr.io/examplesuffix/greeter` and `evil.example.net/ghcr.io/example`: the
-hierarchy is built at path boundaries, never by string prefix. A
+runtime builds the hierarchy at path boundaries, never by string prefix. A
 `principal.namespace` condition narrows it per tenant like any other rule.
 
 ### `spendCredential`
@@ -271,7 +271,7 @@ release workflow running on a version tag, authenticated by GitHub Actions.
 `context.identity` is the certificate's subject alternative name as Fulcio
 wrote it (`https://github.com/<owner>/<repo>/.github/workflows/<file>@<ref>`
 for a GitHub Actions run, an email for a human signer) and `context.issuer`
-its OIDC issuer. `like` takes `*` as a wildcard. The signature is verified
+its OIDC issuer. `like` takes `*` as a wildcard. The runtime verifies the signature
 first, against the trusted root (`--cosign-trusted-root`, or the one
 `--cosign-trust-instance` fetches); the rule only determines whether a
 verified signer is trusted for the repository, so a rule with no `when`
@@ -294,14 +294,14 @@ when { context.ip.isInRange(ip("10.96.0.0/12")) };
 
 Compiles at load into three blocked prefixes (`10.0.0.0/8`,
 `127.0.0.0/8` and `::1/128`: `isLoopback()` is both loopback ranges) and
-one allowed prefix. At dial time the block list is judged in that order: an
-operator `forbid` first, then the `permit` holes and then the default block
+one allowed prefix. At dial time the runtime judges an address against the block list in that
+order: an operator `forbid` first, then the `permit` holes and then the default block
 list. The `permit` here never takes effect, because the `forbid` covers
 `10.96.0.0/12` and a `forbid` wins; to open an in-cluster service range
 inside `10.0.0.0/8`, drop the `forbid` (the default block list already
 refuses `10.0.0.0/8`) and keep the `permit`. A `||` is the union of its
 tests, a bare address literal is a `/32` or `/128`, and a `dialAddress`
-rule with no `when` applies to every address. The guest is told only
+rule with no `when` applies to every address. The runtime tells the guest only
 `sandbox.egress: <host> resolves to an address the egress policy blocks`;
 the resolved address and the prefix that blocked it go to the runtime's
 audit line. The default block list and the budgets are on the
@@ -386,8 +386,8 @@ invalid: cannot compile the compositionPolicy as Cedar: <Cedar's error>`.
 
 ## Load-time errors
 
-The operator policy is compiled when the runtime starts and when `function
-validate` runs. A document that can't be compiled stops both: the runtime
+The runtime compiles the operator policy when it starts, and `function
+validate` does when it runs. A document that can't be compiled stops both: the runtime
 prints the error and exits 1, `function validate` prints it prefixed
 `function validate: ` and exits 2.
 
@@ -395,8 +395,8 @@ prints the error and exits 1, `function validate` prints it prefixed
 - `cannot compile the operator policy <path>: <Cedar's parse error>`
 - `operator policy: dialAddress rule "<id>": <reason>`, where `<id>` is the
   rule's id as Cedar numbers the file (`policy0` for the first rule, `policy1`
-  for the second; rules are
-  checked in id order so the first error reported is always the same) and
+  for the second; the runtime checks rules
+  in id order so the first error reported is always the same) and
   the reason one of:
   - `must scope the action as == Action::"dialAddress", not an "in" set`
   - `must not constrain the principal or resource: the dial has neither identity`
@@ -441,9 +441,9 @@ The step's `compositionPolicy` is compiled and applied as it would be in
 the cluster; the text output marks a step that has one with
 `compositionPolicy` beside `OK`, and lists on a `credentials:` line the step
 credentials the module's request would include. Without `--xr` the principal
-is the zero principal, which matches no per-tenant condition, and a
-`module.from` source is reported as the composite resource's choice with
-its fence checked only for the policy's presence. The exit code is 0 when
+is the zero principal, which matches no per-tenant condition, and
+`function validate` reports a `module.from` source as the composite
+resource's choice, with its fence checked only for the policy's presence. The exit code is 0 when
 every step is admitted and 1 when at least one is refused. It's 2 when the
 tool itself failed. A module that requires egress on a run without `--cosign-key` gets
 the warning `the module requires egress but is not signature-verified:

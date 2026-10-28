@@ -4,8 +4,8 @@ To restrict a Function to modules your organisation signed, sign them with
 cosign 3, `cosign sign --key cosign.key <ref>`, and start the runtime with
 `--cosign-key cosign.pub` (a `DeploymentRuntimeConfig` mounts the key and
 sets the flag or `COSIGN_KEY`). Every OCI module is then verified once per
-manifest digest per process before it's run - before any cache is
-consulted, so an artifact left on a persisted volume by a runtime without
+manifest digest per process before it's run - before it consults any
+cache, so an artifact left on a persisted volume by a runtime without
 the key isn't served by one with it - and unsigned sources are refused.
 
 cosign 3 stores a signature as a Sigstore bundle: a DSSE envelope around an
@@ -24,7 +24,7 @@ aren't consulted.
 
 cosign 2's legacy signatures (the `sha256-<hex>.sig` tag, which cosign 3
 still writes with `--new-bundle-format=false`) aren't read: a module
-signed only that way is refused as unsigned, so re-sign it with cosign 3.
+signed only that way counts as unsigned and is refused, so re-sign it with cosign 3.
 
 ## Keyless signatures
 
@@ -47,8 +47,8 @@ Verification is offline and rests on the signing time, not the clock.
 Every RFC 3161 timestamp in the bundle must verify with a timestamp
 authority of the root, and the Rekor entry's signed entry timestamp with a
 Rekor key. The certificate must chain to a Fulcio authority and be valid
-at each of those times. The entry's inclusion proof and signed checkpoint
-are verified, and then the signature itself. A bundle with no verifiable
+at each of those times. The runtime then verifies the entry's inclusion proof and signed
+checkpoint, and then the signature itself. A bundle with no verifiable
 signing time is refused, so a signing key taken from a CI run after its
 certificate's ten minutes signs nothing the runtime accepts.
 
@@ -78,9 +78,9 @@ countersignature. A keyless signature by any other signer is refused with
 a keyless bundle met by a runtime without the flag with `keyless signature
 cannot be verified: the runtime has neither --cosign-trusted-root nor
 --cosign-trust-instance`.
-`--cosign-key` and a trusted root combine. A bundle with a key hint is
-checked against the keys and one with a certificate against the root, and
-a module is signed when one of its bundles verifies.
+`--cosign-key` and a trusted root combine. The runtime checks a bundle
+with a key hint against the keys and one with a certificate against the
+root, and a module is signed when one of its bundles verifies.
 
 ### Fetching the trusted root over TUF
 
@@ -95,8 +95,8 @@ that `cosign initialize` rewrites). `--cosign-trust-instance public-good`
 instead and refreshes it while serving. The flags exclude each other.
 The TUF root embedded in the runtime's sigstore-trust-root crate
 bootstraps the walk: root, timestamp, snapshot and targets, each signed
-and expiring, and `trusted_root.json` is read by the length and hashes the
-verified metadata pins. The verified metadata and the root are cached
+and expiring, and the runtime reads `trusted_root.json` by the length and hashes the
+verified metadata pins. It caches the verified metadata and the root
 under `/tmp/function-wasm-cache/tuf/<instance>` (outside the
 `--max-cache-size` sweep). A volume under the cache root preserves it
 across restarts.
@@ -110,7 +110,7 @@ every keyless signature is refused with `keyless signature cannot be
 verified: the trusted root of public-good has not been fetched yet (the
 last attempt failed: …)` until a refresh succeeds, retried once a minute
 until then. Key-signed and unsigned modules are unaffected, and so are
-readiness and liveness. While serving, the root is refreshed every
+readiness and liveness. While serving, the runtime refreshes the root every
 `--cosign-tuf-refresh` (`COSIGN_TUF_REFRESH`, default `1h`, at least
 `1m`, the duration syntax of `--module-timeout`). A changed root replaces
 the one in use and forgets the verified-digest memo, so a module whose

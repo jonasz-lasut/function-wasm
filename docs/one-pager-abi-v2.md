@@ -22,7 +22,7 @@ wasmtime-go v47 can load a component but can't call one. It can't define
 host functions on the component linker or register wasip2/`wasi:http`
 either: the wrappers are missing
 ([#280](https://github.com/bytecodealliance/wasmtime-go/issues/280), and
-draft PRs #290/#291/#292 by one contributor are unmerged). The Rust
+one contributor's draft PRs #290/#291/#292 are still open). The Rust
 `wasmtime` crate is the reference component host: `component::bindgen!`
 over a WIT world, host functions, resources, `wasmtime-wasi` (WASI 0.2),
 `wasmtime-wasi-http` with an overridable `send_request`, and the WASI 0.3
@@ -54,7 +54,7 @@ A WIT world (working name `wasmfn:function@2.0.0`), targeted at WASI 0.3:
 - **export** `run: async func(request: list<u8>) -> result<list<u8>, string>` -
   Protobuf `RunFunctionRequest`/`RunFunctionResponse` bytes, exactly v1's
   wire format. By design it's not a typed WIT mirror of the messages: WIT
-  has no recursive types, so `Struct`/`Value` can't be expressed, and
+  has no recursive types, so it can't express `Struct`/`Value`, and
   payload evolution stays Protobuf's job (`docs/abi.md` "Compatibility").
   The component model removes v1's mechanics - `wasmfn_alloc`,
   `ptr<<32|len`, the re-entrant allocator: the canonical ABI owns memory
@@ -79,7 +79,7 @@ A WIT world (working name `wasmfn:function@2.0.0`), targeted at WASI 0.3:
 What v2 unlocks is the blocked row of the language-support matrix, arriving
 as each toolchain reaches 0.3 - JS first (jco is 0.3-ready today), Rust on
 nightly now and on stable when `wasm32-wasip3` reaches tier 2, Python when
-componentize-py's 0.3 work is merged, C#/.NET eventually. TinyGo (wasip2
+componentize-py merges its 0.3 work, C#/.NET eventually. TinyGo (wasip2
 only today) and mainline Go (nothing beyond wasip1 until golang/go#77141,
 realistically 1-2+ years) stay on v1 - which settles the retirement
 question: **v1 is served indefinitely, by the same runtime**. Wasmtime runs
@@ -91,19 +91,19 @@ deprecated in v0.6.0 and removed in 1.0.0. The runtime refuses a core
 module at load.)
 
 Target version, decided (status checked 2026-08-25): **WASI 0.3 from the
-start, accepting unstable Rust for early guests**. WASI 0.3.0 was released
+start, accepting unstable Rust for early guests**. WASI 0.3.0 came out
 2026-06-11 ([the WASI 0.3 release](https://wasi.dev/releases/wasi-p3));
 host-side, readiness is free - Wasmtime has had 0.3 with component-model
 async enabled by default since v46
 ([Bytecode Alliance](https://bytecodealliance.org/articles/WASI-0.3)), and
-the v47 line this repo already builds against has it. The alternative -
-define the world against 0.2 and lift it later - was rejected because the
+the v47 line this repo already builds against has it. This one-pager rejects the
+alternative, defining the world against 0.2 and lifting it later, because the
 lift isn't free: `wasi:http@0.2` and `@0.3` are different interfaces, so
 "v2 on 0.2, revisited at 0.3" means cutting two v2 worlds and doing the
 streams/budget design twice. One world, defined once against the ABI with
 native async and `stream<u8>` bodies, justifies the near-term toolchain
 cost - Rust guests build on nightly with `-Zbuild-std` until
-`wasm32-wasip3`'s tier-2 promotion is merged (FCP-approved, blocked on Rust
+`wasm32-wasip3`'s tier-2 promotion merges (FCP-approved, blocked on Rust
 and wasi-libc aligning on LLVM 23:
 [compiler-team#1001](https://github.com/rust-lang/compiler-team/issues/1001),
 [`rust#147205`](https://github.com/rust-lang/rust/pull/147205);
@@ -165,7 +165,7 @@ goldens (AGENTS.md, "Conformance goldens").
 | 4 | swap: the Rust binary is released as the function and the Go host retires, then 1.0 is cut on it | one runtime, v1+v2 |
 
 Phase 0 before phase 1, on purpose: the novel, contract-shaping work is
-v2's design, and it should be validated while it's still cheap to change -
+v2's design, and the project should check it while it's still cheap to change -
 the only part of this move the pre-1.0 window matters for. The
 parity port (1-2) is large but specification-driven, and contains no
 design work.
@@ -203,8 +203,8 @@ design work.
   target is tier 3, and wit-bindgen's async features are new, so churn is
   likely. Mitigated by v1 carrying production and phase 0's guests being
   rebuilt on toolchain bumps rather than promised stability while the world
-  was a draft; since the freeze (2026-10-07, #77) Wasmtime's 0.3 disclaimer
-  is accepted explicitly: a WASI 0.3 move is re-vendored and taken on
+  was a draft; since the freeze (2026-10-07, #77) this one-pager accepts
+  Wasmtime's 0.3 disclaimer explicitly: a WASI 0.3 move is re-vendored and taken on
   `2.0.0` in place until the world is published.
 
 ## Non-goals
@@ -239,8 +239,8 @@ design work.
    `wasmfn_run_json` debate (language-support one-pager) where it matters
    most. Rev 0.2: deferred (Jonasz, 2026-08-26) until the jco JS guest
    exists and its codec pain is measurable. Rev 0.3: **decided against**
-   (Jonasz, 2026-08-26) - the pain didn't materialize. The TypeScript guest
-   was built comfortably on protobuf-es (typed js+dts codec and clean
+   (Jonasz, 2026-08-26) - the pain didn't materialize. The TypeScript guest came
+   together comfortably on protobuf-es (typed js+dts codec and clean
    bundling) and the Python guest on the official Protobuf package's
    pure-Python fallback, while a second export would double what
    conformance has to cover. Reversible before the world freezes at 2.0.0

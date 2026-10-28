@@ -10,8 +10,8 @@
 Every example guest used to be the same hello function. That proved
 the ABI works across languages, but showed a platform team nothing about why
 they would put a WebAssembly module into a Composition. This document records
-which real use cases the examples solve instead, why those, how the examples
-are tested, and how they're published.
+which real use cases the examples solve instead, why those, how the project
+tests the examples, and how it publishes them.
 
 ## What function-wasm adds
 
@@ -29,8 +29,8 @@ remains distinct to function-wasm:
    XR fills it in. function-pythonic is the only other function with per-XR
    code, and it runs that code with `exec()`.
 2. **Untrusted code runs sandboxed by default.** A module starts with neither
-   network nor files nor environment. Each capability is requested in its
-   manifest and must be permitted by both Cedar layers. function-python,
+   network nor files nor environment. The manifest requests each capability,
+   and both Cedar layers must permit it. function-python,
    function-shell and function-kcl run user code with the pod's network and
    environment.
 3. **Network access is requested, granted and audited.** A module sends its
@@ -69,16 +69,16 @@ Design choices to keep:
 
 - **A failed external read is a fatal result, never an empty answer.**
   Crossplane applies nothing from a fatal pipeline, so `cloudflare-origin`'s
-  rules from the last reconcile stay in place while Cloudflare's list can't be
-  read (an empty answer would have deleted them).
+  rules from the last reconcile stay in place while the module can't read
+  Cloudflare's list (an empty answer would have deleted them).
 - **Tenancy comes from the namespace, never from the `spec`.** `team-tags` keys
   the shared Secret by the XR's namespace, which cluster RBAC sets. Keying by a
   `spec` field would let an XR in team A's namespace spend team B's token.
 - **A module sees only the credentials its manifest names.** `team-tags`
   declares `requires.credentials: [cmdb]`, and the runtime forwards that
   credential only where both policy layers permit `spendCredential`; the pull
-  credential and every other step credential are edited out of the request
-  before the run
+  credential and every other step credential, which the runtime edits out of
+  the request before the run
   ([#122](https://github.com/jonasz-lasut/function-wasm/issues/122)). The
   tokens' boundary is then egress, which the same two layers fence.
 
@@ -134,18 +134,18 @@ render job.
   --check` and the OCI scenario `test/e2e/oci/run.sh` were retired with the
   Kubernetes-native end-to-end suite (`crates/e2e`,
   [testing](project/testing.md), #185), which drives a committed test module
-  of its own through Crossplane in a kind cluster: the runtime behaviour the
-  examples relied on (signatures, `module.from`, egress, credentials, env, the
-  private `/tmp`, requirements, fatals, limits) is proved there, and an
-  example's own logic by its unit tests. `make render` stays as each
+  of its own through Crossplane in a kind cluster. That suite proves the runtime
+  behaviour the examples relied on (signatures, `module.from`, egress,
+  credentials, env, the private `/tmp`, requirements, fatals, limits), and an
+  example's unit tests prove its own logic. `make render` stays as each
   example's development loop (`examples/render.sh`: `function validate` over
   every `example/xr*.yaml`, the operator policy in `example/policy.cedar`,
   the fixture server for `example/fixtures/`, `crossplane render`).
 
 ## Publishing
 
-The examples that work as published are released as CNCF WASM OCI artifacts
-with their module manifests, by `publish-pkg.yml`'s `publish-examples` job:
+The `publish-examples` job of `publish-pkg.yml` releases the examples that work
+as published as CNCF WASM OCI artifacts, with their module manifests:
 
 - **Names:** `ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, beside the WIT
   world at `wasmfn/function`. A namespace per kind of artifact is the

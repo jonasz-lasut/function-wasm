@@ -17,7 +17,7 @@ In short, Cedar is a **complement that can own the declarative admission
 plane**, not a replacement for the sandbox. Its value is real only if
 the goal is operator-authored policy; as an internal refactor it's a large
 lever for a small problem, and the security-critical mechanism doesn't move to
-it. This document maps exactly what can and can't move, so the decision is made
+it. This document maps exactly what can and can't move. The decision then rests
 on the boundary rather than on the appeal of a policy language.
 
 ## The dividing line - authorization decisions vs. mechanism
@@ -82,9 +82,9 @@ syntax:
 This is a hard constraint, and it answers the question of whether to embed
 Cedar in the module manifest:
 
-- **Not in the module manifest.** The manifest (`wasmfn.yaml`, the
-  `application/vnd.wasmfn.manifest.v1+json` OCI layer) is authored by the module
-  author and is stored inside the artifact. The architecture's invariant
+- **Not in the module manifest.** The module author writes the
+  manifest (`wasmfn.yaml`, the `application/vnd.wasmfn.manifest.v1+json` OCI
+  layer) and publishes it inside the artifact. The architecture's invariant
   (`docs/one-pager-module-manifest.md`) is that a manifest is a **request,
   never a grant**: `checkManifest` runs after admission and can only narrow.
   Cedar policy is a `permit`/`forbid` grant language. A module that could
@@ -93,10 +93,10 @@ Cedar in the module manifest:
   manifest keeps declaring typed requirements (`Requires.Egress`,
   `Config.Schema`, `MinRuntime`); at most those become the entities/context the
   operator's policy evaluates.
-- **Not in the Composition.** The Composition's `sandbox` block is authored by
-  the Composition author (more trusted than the module, less than the operator)
-  and stays a **request** that the operator's policy decides on. The Composition
-  doesn't author `permit` either.
+- **Not in the Composition.** The Composition author writes the `sandbox`
+  block (more trusted than the module, less than the operator) and it stays a
+  **request** that the operator's policy decides on; the Composition doesn't
+  author `permit` either.
 - **On the operator boundary.** The `permit`/`forbid` document lives with the
   runtime - a flag pointing at a file, or a ConfigMap - authored and audited by
   the operator, the same party who runs the Deployment and mounts the policy today. Grants and
@@ -131,7 +131,7 @@ hot path:
    (`resource in context.allowedRepositories`) over a boundary-correct
    repository entity hierarchy - a location's ancestors are its path-boundary
    prefixes, both slash forms - behind the module package's existing refusal
-   strings. The allow list is passed in the request context, never in the
+   strings. The runtime passes the allow list in the request context, never in the
    policy text, so a Composition-authored entry can't inject policy. The
    credential check remains exact set membership (no boundary subtlety Cedar
    would improve).
@@ -178,9 +178,9 @@ current behaviour is identical.
   PolicySets, AND-combined**, so one document can only tighten, never widen
   another. Originally the built-in fences (the Composition's allow lists in
   context, injection-safe) beside the operator document; since the
-  three-layer model (docs/one-pager-three-layer-authz.md) the fences are
-  subsumed by the Input's `compositionPolicy`, the composition author's own
-  PolicySet over the same schema.
+  three-layer model (docs/one-pager-three-layer-authz.md) the Input's
+  `compositionPolicy`, the composition author's own PolicySet over the same
+  schema, subsumes the fences.
 
 Cedar answers only "permit or forbid?"; the imperative steps on either side
 (normalize, resolve, enforce) stay Go.
@@ -190,7 +190,7 @@ Cedar answers only "permit or forbid?"; the imperative steps on either side
 ![Grant policy - Cedar is the only enabler, evaluated default-deny](policy-engine-grant-policy.svg)
 
 Capability enablement (`usePrivateTmp`/`setEnv`/`grantEgress`), the ceiling intersection
-(`sandbox.Ceiling.Grant`, `egress.Egress.Grant`) and limits are combined into
+(`sandbox.Ceiling.Grant`, `egress.Egress.Grant`) and limits combine into
 one two-party model: the Composition's `sandbox`/`limits` block becomes the
 authorization *request*, the operator's policy decides. This is the one decision
 where Cedar is *better* and more than a different syntax - per-tenant and
@@ -241,7 +241,7 @@ is in Cedar anyway, with the grant policy
 (`internal/authz/credential_fence.cedar`, a `spendCredential` request from
 `module.admit`), co-locating the two-condition rule and reusing the
 boundary-correct `Repository` hierarchy; the credential half remains exact set
-membership, and both allow lists are passed in the request context, never in
+membership, and the runtime passes both allow lists in the request context, never in
 the policy text, so a Composition-authored entry can't inject policy.
 
 ### SSRF block and allow rules - hybrid, Cedar-authored / Go-evaluated

@@ -12,7 +12,7 @@ while they're used and always persisted. An entry never has to be
 invalidated: its name is its content. The flags are safety limits - how
 many modules stay resident, how many compile at once - not cache tuning.
 The one addition of revision 2.2, `--warm-modules`, decides *when* the
-caches are filled (before readiness), not how.
+runtime fills the caches (before readiness), not how.
 
 ## Layout
 
@@ -45,13 +45,13 @@ never touches the network and no reference is ever resolved at request time:
   (`repo[:tag]@sha256:…`, printed by `guestfn push`; a tag alone isn't
   accepted). The manifest pins the module by stating its layer's digest. The
   registry client verifies the manifest against the reference and the layer
-  against the manifest, and the layer is verified again before it's stored.
+  against the manifest, and it verifies the layer again before storing it.
   The compiled artifact is keyed by the manifest digest; the blob store keeps
   the **layer** under its own digest, as delivered - a raw WASM layer's digest
   is the module's, a tar layer is stored as tar and extracted on every read -
   so every blob is verifiable against its name.
 - An HTTP source is keyed by `module.http.digest`, the digest of the module
-  bytes. The download is verified against it before it's stored or compiled.
+  bytes. The runtime verifies the download against it before storing or compiling it.
 
 A cache entry is then exactly the content its name promises, and a
 module fetched from two sources shares its blob when the bytes are the same.
@@ -61,8 +61,8 @@ The compiled store is namespaced by `engine.Version()` -
 serialized artifact is only loadable by the Wasmtime that produced it on
 the same host type (Wasmtime also embeds its exact version and the CPU
 features it targeted, and refuses anything else: such an artifact counts as
-`stale` in the metrics and is recompiled). At startup other version directories under `compiled/`
-are removed once nothing has written them for `cache.StaleVersionAge` (a
+`stale` in the metrics and is recompiled). At startup the runtime removes other version directories under `compiled/`
+once nothing has written them for `cache.StaleVersionAge` (a
 day). The running binary couldn't load them. During a rolling upgrade,
 though, pods of both versions share the volume, and deleting each other's
 artifacts on start would recompile everything twice. Loading is defensive
@@ -111,7 +111,7 @@ RunFunction
 - **Compiled artifacts on disk.** Written after every compile, mapped on
   every memory miss with `NewModuleDeserializeFile`: the code remains
   file-backed (~90 MB resident for a 75 MB Go guest, shared with the page
-  cache and between processes) instead of being copied into the Go heap
+  cache and between processes) instead of copying it into the Go heap
   (145 MB per load). Restarts and rolling upgrades of the pod cost that map
   (6-8 ms) instead of a compile; a Wasmtime upgrade costs one compile per
   module and, a day later, drops the old directory.
@@ -122,7 +122,7 @@ RunFunction
   learn the layer digest) and no download. Served files (`module.path`)
   aren't copied - they're on disk already.
 
-Raw module bytes are held in memory only during the compile call itself.
+The runtime holds raw module bytes in memory only during the compile call itself.
 Warm-up (next) is the same path entered at startup instead of at a request.
 
 ### Warm-up
@@ -143,7 +143,7 @@ and with `--enable-memory-cache=false` the artifact on disk is what warm-up
 is for. Ordering:
 
 1. the engine and both caches open (a failure here still refuses to start);
-2. the health service is registered as *Not Serving* and the gRPC server
+2. the runtime registers the health service as *Not Serving* and the gRPC server
    starts listening - the port is open, a probe reads Not Serving rather
    than a refused connection, and a request that arrives early is served
    cold or joins the warm load already in flight for its digest;
@@ -175,7 +175,7 @@ under `/tmp/function-wasm-cache` remains the way to make that time short.
 - Corrupt blob (digest mismatch on read): removed, treated as a miss.
 - Corrupt or foreign artifact (Wasmtime refuses it): treated as a miss and
   overwritten.
-- Signature policy (`--cosign-key`) is checked before any tier is consulted,
+- The runtime checks the signature policy (`--cosign-key`) before it consults any tier,
   once per digest per process: an artifact a keyless runtime left on a
   shared or persisted volume is never served by a keyed one.
 - Digest stated in the Input (or by the manifest it pins) differs from

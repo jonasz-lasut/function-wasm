@@ -6,7 +6,7 @@
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. Written after the 2026-08-16 review,
-which found two ways the previous model leaked. Both are closed here.
+which found two ways the previous model leaked. This revision closes both.
 Revision 1.1 added the Composition-owned `policy` that fenced XR-chosen
 modules - the Input schema is the module-source-schema one-pager's. Revision
 1.2 records the sandbox's grants - filesystem and environment, and what
@@ -46,8 +46,8 @@ credential but the pull credential. Everything below is implemented.
   (`module.from`), choose which module runs by writing a field of their XR.
   They're trusted with less: they can pick code - within the
   `compositionPolicy`'s `pullModule` permits - not widen what it may do or
-  spend what it may not: `compositionPolicy` and `limits` are read from
-  the Input only.
+  spend what it may not: the runtime reads `compositionPolicy` and `limits`
+  from the Input only.
 - A **module author** publishes signed or unsigned artifacts, declaring in
   the manifest what the module can't run without (`requires`), the step
   credentials it reads among them; their code runs in the sandbox with
@@ -62,14 +62,15 @@ XR field: the manifest digest of an OCI reference (`repo[:tag]@sha256:…`; a
 tag alone is refused - the manifest states its layer's digest and the
 registry client verifies both) or `http.digest`. Served files (`path`) are
 unpinned by design: the operator put them on the pod. The caches key on
-these digests and every fetch is verified before it's stored or compiled,
+these digests and the runtime verifies every fetch before it stores or
+compiles it,
 so nothing that runs can change without the Composition (or the XR field
 it delegated to) changing.
 
 With `--cosign-key`, only OCI modules carrying a key-based cosign signature
 run, and `http`/`path` sources are refused. Verification is a precondition
-of *running*, checked once per digest per process before any cache tier is
-consulted: an artifact a runtime without a key (or with a since-rotated key)
+of *running*, checked once per digest per process before the runtime looks in
+any cache tier. An artifact a runtime without a key (or with a since-rotated key)
 left on a shared or persisted volume is never served by a keyed one.
 
 The signature is cosign 3's: a Sigstore bundle (v0.3) holding a DSSE
@@ -79,11 +80,12 @@ the registry's referrers API, or through the referrers tag schema's
 `sha256-<hex>` index where the API answers 404 (GHCR, `registry:3`), over
 its own registry client with the pull's credentials. Since the listings
 aren't pinned, a referrer counts only if its subject is the pinned digest,
-and the bundle is fetched bounded and verified against its digest. A module is
+and the runtime fetches the bundle with a size bound and verifies it against
+its digest. A module is
 signed when an envelope signature over the DSSE pre-authentication encoding
 verifies with a configured key and the statement it signs is a cosign
 signature (`predicateType` `https://sigstore.dev/cosign/sign/v1`) whose
-subject is the manifest digest; the statement is read only after the
+subject is the manifest digest; the runtime reads the statement only after the
 signature verifies. Other attestations, such as SLSA provenance, never
 count, whichever key signed them. For a key-based bundle the configured
 keys are the trust root: its verification material (key hint and Rekor
@@ -93,7 +95,7 @@ cosign 2's legacy signature, a simple-signing payload under the
 `sha256-<hex>.sig` tag, isn't read: a module signed only that way is
 unsigned to this runtime and must be re-signed with cosign 3.
 
-Keyless (Fulcio/Rekor) signatures (#116) are verified through
+The runtime verifies keyless (Fulcio/Rekor) signatures (#116) through
 sigstore-verify, the Sigstore organization's second Rust library, against
 the Sigstore trusted root `--cosign-trusted-root` names. The signing time
 comes from the bundle's RFC 3161 timestamps and its Rekor entry's signed
@@ -114,7 +116,7 @@ instance (`--cosign-trust-instance public-good|staging|github`) and
 refreshed while serving: the TUF root embedded in the sigstore-trust-root
 crate is the trust anchor, the walk (root, timestamp, snapshot, targets,
 each signed and expiring) pins `trusted_root.json` by length and hashes, the
-verified metadata is cached under the module cache root, and a pod that
+runtime caches the verified metadata under the module cache root, and a pod that
 can't fetch starts from that cache or, with none, serves while refusing
 keyless signatures by name until a retry succeeds - fail-closed per
 module, never a crash loop that takes key-signed and unsigned modules down
@@ -221,8 +223,8 @@ permit. Then it gets a private `/tmp` created for the request and removed
 after it, and exactly the environment variables its bindings resolve from
 step credentials, never the runtime's own environment. The private `/tmp`
 is the only directory a module ever gets: host directories aren't mountable
-by design, so no operator path is readable by a module. The policy layers are
-read from the Input and the operator's file only, so an XR author can't
+by design, so no operator path is readable by a module. The runtime reads the
+policy layers from the Input and the operator's file only, so an XR author can't
 widen them.
 
 Everything it produces leaves in the response, which the host forwards
@@ -247,12 +249,12 @@ another XR's request.
 
 ## Supply chain of the runtime itself
 
-The image is built from `golang:<go.mod version>` on a digest-pinned
+The image builds from `golang:<go.mod version>` on a digest-pinned
 Chainguard `glibc-dynamic` base (chosen over distroless/cc-debian13 for
-scanning clean, with Renovate bumping the digest). It runs as `nonroot` and
-is signed and attested by `supplychain.yml`. `grype-scan.yml` scans the
+scanning clean, with Renovate bumping the digest). It runs as `nonroot`, and
+`supplychain.yml` signs and attests it. `grype-scan.yml` scans the
 latest release weekly, and wasmtime-go bumps arrive as their own Renovate
-PRs so the sandbox's own security fixes are judged alone.
+PRs so a review sees the sandbox's own security fixes alone.
 
 ## Threats considered
 
@@ -262,9 +264,9 @@ PRs so the sandbox's own security fixes are judged alone.
 | registry or CDN serves other bytes | manifest verified against the reference, layer against the manifest, module against the layer digest - twice (registry client, host) |
 | tampered cache volume | blobs verified against their name on every read; artifacts validated by Wasmtime; signature checked before any tier |
 | XR author aims a credential at their host | refused unless a `compositionPolicy` `spendCredential` permit names the credential and a `pullModule` permit admits the host (the preceding section) |
-| XR author widens the policy, limits or sandbox through the XR | impossible: `compositionPolicy` and `limits` are top-level Input fields, only `module.from` is read from the XR, and the sandbox is the manifest's ask under both Cedar layers |
+| XR author widens the policy, limits or sandbox through the XR | impossible: `compositionPolicy` and `limits` are top-level Input fields, the runtime reads only `module.from` from the XR, and the sandbox is the manifest's ask under both Cedar layers |
 | XR author picks unsigned code | `--cosign-key` refuses it |
-| module reads or exfiltrates a step credential | a module sees only the step credentials its manifest names and both Cedar layers permit (`spendCredential`); every other one, the pull credential always, is edited out of its request before it runs. No network by default. Where both Cedar layers permit egress (`grantEgress`) a module reaches only the hosts, methods and paths its own manifest's `requires.egress.http` rules declare, over a default block list covering loopback, link-local, private and cluster ranges (`dialAddress` adds more) - every resolved address is judged, the checked address is dialled, and every request leaves an audit line with the module digest; `--cosign-key` is strongly recommended wherever egress is granted |
+| module reads or exfiltrates a step credential | a module sees only the step credentials its manifest names and both Cedar layers permit (`spendCredential`); the runtime edits every other one, the pull credential always, out of its request before the module runs. No network by default. Where both Cedar layers permit egress (`grantEgress`) a module reaches only the hosts, methods and paths its own manifest's `requires.egress.http` rules declare, over a default block list covering loopback, link-local, private and cluster ranges (`dialAddress` adds more) - every resolved address is judged, the checked address is dialled, and every request leaves an audit line with the module digest; `--cosign-key` is strongly recommended wherever egress is granted |
 | module attacks the host | Wasmtime sandbox; guest-controlled offsets are bounds-checked and sliced without overflow; host panics are recovered |
 | module reads or writes host files | never: host directories aren't mountable into a module (no flag offers it). A module is granted at most its private `/tmp`: a fresh directory per request that gets removed afterward and is bounded by the filesystem behind `$TMPDIR`, with `..` escapes refused by Wasmtime inside the pre-open (`EPERM`) |
 | module reads the runtime's environment | never: WASI environ is empty, or exactly the manifest's `requires.env` bindings resolved from step credentials the request already included |

@@ -5,7 +5,7 @@ toolchain - the host adds about 60 µs. A historical measurement
 (2026-08-16, linux/arm64, the ABI v1 guests of the time: a
 `function-sdk-go` Go guest, a raw-proto Go guest using only the vendored
 glue, TinyGo, Rust), kept as the approximate scale per toolchain: the
-TinyGo flavour has since been retired and the other guests are ABI v2
+TinyGo flavour is gone and the other guests are ABI v2
 components (the Go module's size and compile cost didn't move; the Rust
 scaffold is now ~240 KB):
 

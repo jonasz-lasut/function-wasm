@@ -27,8 +27,8 @@ rather than a test.
 The suite is in `crates/e2e` (package `function-wasm-e2e`), shaped like
 Linkerd's `policy-test`, with a namespace per test, typed helpers over
 kube-rs, waits with timeouts and `assert_eq!` on what the cluster contains.
-The cluster is provisioned before the tests, never from inside one. The
-crate is empty without its `cluster` feature, so `cargo test --workspace`
+`make e2e.up` provisions the cluster before the tests, never from inside
+one. The crate is empty without its `cluster` feature, so `cargo test --workspace`
 builds none of it.
 
 ### The cluster

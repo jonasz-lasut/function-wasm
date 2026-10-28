@@ -1,9 +1,9 @@
 # A request, step by step
 
-1. The Input is decoded, and what the Composition asks of the runtime is
-   settled: the `compositionPolicy` is compiled (content-hash cached;
-   malformed Cedar is a fatal result), `limits` are checked against the
-   runtime's ceilings. A `module.from` source is then read from the
+1. The runtime decodes the Input and works out what the Composition asks of
+   it: it compiles the `compositionPolicy` (content-hash cached;
+   malformed Cedar is a fatal result) and checks `limits` against its
+   ceilings. A `module.from` source is then read from the
    observed composite resource (`type: OCI` with `from: status.module`
    expects `status.module` to be `{ref, credentials}`; a typo or a value
    of the wrong type is a fatal result that identifies the field) and
@@ -13,7 +13,7 @@
    doesn't perform I/O: the **digest** that pins the module comes from the
    Input - the manifest digest of an OCI reference, `http.digest` for a
    URL - or from hashing a served file when it changes.
-2. The digest is looked up in the caches - compiled modules in memory (kept
+2. The runtime looks the digest up in the caches - compiled modules in memory (kept
    ten minutes after their last use), then Wasmtime artifacts on disk, then
    fetched modules on disk under `/tmp/function-wasm-cache`. Only a module
    never seen by this node is fetched (verified against its digest, written

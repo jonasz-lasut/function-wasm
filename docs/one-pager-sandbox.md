@@ -6,8 +6,8 @@
 
 How the sandbox grants a module *some* filesystem, network or environment
 access without giving up what makes it safe to run other people's modules.
-The Input's `sandbox` types were added in revision 0.3 (validated for shape by
-`internal/sandbox`). Revision 0.4 implemented the filesystem (phase 1) and
+Revision 0.3 added the Input's `sandbox` types (`internal/sandbox` validated
+them for shape). Revision 0.4 implemented the filesystem (phase 1) and
 environment (phase 3) grants, and phase 2 - HTTP
 egress through the host (the `wasmfn.http` import,
 `wasmfn.HTTPClient()`, `internal/egress`). Revision 1.0 is the merged result, every phase but the
@@ -22,7 +22,7 @@ gone. Revision 1.5 adds the optional operator Cedar grant policy
 condition, evaluated default-deny. Revision 1.7 drops the `--enable-sandbox-*` flags
 (Jonasz, 2026-08-19): the Cedar policy is now the one authority that enables a
 sandbox capability (`usePrivateTmp`, `setEnv`, `grantEgress`), so with no policy
-file every sandbox grant is refused and a runtime offers only the default
+file the runtime refuses every sandbox grant and offers only the default
 sandbox - which is all most modules need (policy-engine one-pager).
 Revision 1.8 moves the ask out of the Input entirely (the three-layer-authz
 one-pager): the `sandbox` block is gone from `input/v1beta1`; a module
@@ -140,8 +140,8 @@ policy (--sandbox-policy-file) does not permit`.
 `privateTmp` is an `os.MkdirTemp` under the runtime's `os.TempDir()` -
 `$TMPDIR`, `/tmp` in the image - created before the store, pre-opened
 read/write at `/tmp` with `WasiConfig.PreopenDir(dir, "/tmp", DIR_READ|
-DIR_WRITE, FILE_READ|FILE_WRITE)`, and removed after the store is closed on
-every path out of `Run` (success, trap, exit, deadline, host error; a
+DIR_WRITE, FILE_READ|FILE_WRITE)`, and the host removes it after it closes the
+store on every path out of `Run` (success, trap, exit, deadline, host error; a
 removal failure is logged, never a result). It's the only directory a
 guest is ever given: host directories aren't mountable by design, so no
 operator-declared path can be read by a module and no message ever mentions
@@ -190,15 +190,15 @@ before a `wasip3` target lands), `wasi:http` can replace the import for
 those guests, with the same host policy in front of it. Raw sockets stay
 out: they move TLS and address policy into the guest, where the host can't
 see them.
-Extism's built-in `http_request` was evaluated as a replacement for this
-import (2026-08-16, probes against `extism/go-sdk` v1.7.1). Its
+The evaluation on 2026-08-16 (probes against `extism/go-sdk` v1.7.1) tested
+Extism's built-in `http_request` as a replacement for this import. Its
 `allowed_hosts` is a hostname glob checked once before the request, on a
 hard-coded `http.DefaultClient`. It ignores the method, the path and the
-resolved addresses (a name resolving to loopback was dialled).
-Redirects to other hosts are followed, `HTTP_PROXY` is honoured and a
-refusal fails the guest call. The host function can't be replaced without
-forking the SDK. It doesn't meet the preceding requirements. The decision
-to keep this import is recorded in AGENTS.md ("Not Extism").
+resolved addresses (it dials a name that resolves to loopback).
+It follows redirects to other hosts, honours `HTTP_PROXY` and fails the
+guest call on a refusal. You can't replace the host function without
+forking the SDK. It doesn't meet the preceding requirements. AGENTS.md
+records the decision to keep this import ("Not Extism").
 
 **Environment - `SetEnv` from the admitted bindings (implemented).** The
 manifest's `requires.env` bindings (`{name, fromCredential: {name, key}}`)

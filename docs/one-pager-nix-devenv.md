@@ -5,11 +5,11 @@
 * Status: withdrawn
 
 > **Withdrawn** (Jonasz, 2026-10-28): the proposal was never built, and
-> #12 was closed on 2026-10-06. Its premise is the Go era: a CGo runtime,
+> #12 closed on 2026-10-06. Its premise is the Go era: a CGo runtime,
 > TinyGo, wasi-sdk and three toolchain versions floating in CI. The
-> runtime is Rust now, every guest toolchain the e2e workflow installs is
-> pinned (Zig by version and checksum), and the Development page is no
-> longer an installer list. The text below is kept as the record of what
+> runtime is Rust now and the e2e workflow pins every guest toolchain it
+> installs (Zig by version and checksum). The Development page is no
+> longer an installer list. The text below stays as the record of what
 > was considered.
 
 A proposal to declare this repository's toolchain in a Nix flake - first as

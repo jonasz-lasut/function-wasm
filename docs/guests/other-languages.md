@@ -18,9 +18,9 @@ Python, C#, Odin and MoonBit - every scaffold and example here, since
 last of them (Go, 2026-10-07) off ABI v1 and
 [#155](https://github.com/jonasz-lasut/function-wasm/issues/155) added
 MoonBit as an example. A
-supported language that's not tested is expected to work, and a
-guest that runs here is what moves it into the tested set. A language with
-no component path isn't supported: AssemblyScript was retired for that
+supported language that's not tested should work, and a
+guest that runs here moves it into the tested set. A language with
+no component path isn't supported: the project retired AssemblyScript for that
 reason (#114, 2026-10-07).
 
 The [ABI v2](../abi-v2.md) world is one export, one import and Protobuf
@@ -87,8 +87,8 @@ Odin side defines the bindings' `exports_function_run` through Odin's
 foreign interface and declares nanopb's generated structs again with their
 wasm32 layout held by `#assert`s. It uses the host's HTTP egress through
 the `c` glue's `wasi:http@0.2` client, and its allocator is wasi-libc's
-heap, the module's one heap, so what Odin allocates may be handed to the
-canonical ABI and freed there. `core:fmt` is left out on purpose: its
+heap, the module's one heap, so the canonical ABI can take what Odin allocates and
+free it there. The guest leaves out `core:fmt` on purpose: its
 reflection tables would make the module 198 KB. Odin's runtime defines
 `bzero` on every WASM target with a return value where libc's has none.
 `wasm-ld` reports that as a signature mismatch. The example links through
@@ -198,5 +198,5 @@ surveyed the same day, have their examples earlier on this page):
 
 AssemblyScript (its project marks the Component Model as harmful), Java
 (TeaVM dropped WASI, GraalVM targets browser WasmGC), Dart, OCaml, Grain,
-Elixir, Julia, Perl, R and Crystal are ruled out for now, each because it
+Elixir, Julia, Perl, R and Crystal don't qualify for now, each because it
 lacks a WASI-hosted reactor path.

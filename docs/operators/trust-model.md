@@ -17,16 +17,16 @@ at the wire level. The credential that pulled it (`module.oci.credentials`)
 is the host's and is never forwarded to the guest, whatever its manifest
 asks. A native function, like the Go runtime before this one, receives
 every step credential. With `module.from` the **composite resource's
-author** picks the module - use it where XR authors are trusted to, fence
+author** picks the module - use it where you trust XR authors to, fence
 what they can pick with the `compositionPolicy`'s `pullModule` permits
 (required for `OCI` and `HTTP` sources: without them the XR author would
 point the runtime at any host and read what its answer says), and restrict
 it to signed code with `--cosign-key`. A source read from the XR may
 specify a step credential only where a `spendCredential` permit matches it
 and only for a repository a `pullModule` permit admits. Otherwise the XR
-author would pick the registry host the secret is sent to, and a registry
-that sends back a `Basic` challenge receives it. Without such a permit an
-XR-chosen module is pulled with the runtime's own Docker config (mount one
+author would pick the registry host that receives the secret, and a registry
+that sends back a `Basic` challenge receives it. Without such a permit the
+runtime pulls an XR-chosen module with its own Docker config (mount one
 through a `DeploymentRuntimeConfig` and set `DOCKER_CONFIG`: its
 credentials are bound to their registry host) or anonymously.
 `compositionPolicy` and `limits` are read from the Input only, so an XR

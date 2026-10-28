@@ -8,11 +8,11 @@
 > will be in this form. The local loop is `guestfn build` plus `crossplane
 > render` against `go run ./cmd/function --insecure --module-dir=.` (what
 > `examples/render.sh` and `make -C examples/<guest> render` do), and
-> `function validate` for the admission part; a `function run` replay
-> command, request capture, per-run stderr files, panic headers on results,
-> a per-run summary line, log budgets, `--debug` builds and `guestfn dev`
-> were judged more machinery than the loop needs. The text below is kept as
-> the record of what was considered.
+> `function validate` for the admission part; the project judged a `function run`
+> replay command, request capture, per-run stderr files, panic headers on
+> results, a per-run summary line, log budgets, `--debug` builds and
+> `guestfn dev` more machinery than the loop needs. The text below stays as
+> the record of what the project considered.
 
 How a module author runs a module without a cluster, how a request that
 failed in a cluster is replayed on a laptop, and what one run tells the
@@ -21,8 +21,8 @@ through the real engine - `internal/engine`, `internal/sandbox`,
 `internal/egress`, the pod's own code, no emulator; `guestfn dev` watches,
 rebuilds and re-runs; `--capture-requests` writes requests the runtime saw,
 credentials redacted, for `function run --request`; every run ends in one
-structured summary line; a guest's stderr is captured per run and
-attributed, its panic header is appended to the fatal result; traps have
+structured summary line; the runtime captures a guest's stderr per run
+and attributes it, and appends its panic header to the fatal result; traps have
 names when the module was built with `guestfn build --debug`. v0.1.0
 doesn't depend on any of this.
 
@@ -36,7 +36,7 @@ from; nothing feeds the runtime a request directly, and nothing takes the
 request that failed in a cluster to a laptop. When a Go guest panics the XR
 condition says `module … failed: wasmfn_run failed: trap: unreachable code
 reached (a Go guest prints the panic to stderr)`; the stack is in the pod's
-log - stderr is inherited - interleaved with every other run's output and
+log - the pod's log inherits stderr - interleaved with every other run's output and
 attributed to nothing. The log has `Running function` and, on failure,
 `Request ended with a fatal result`, without per-phase timings, a memory
 figure or an egress count. `guestfn build` strips (`-s -w`, TinyGo
@@ -161,7 +161,7 @@ logged as `Guest stderr` with `module`, `digest`, `tag`, `bytes`,
 a chatty guest doesn't promote itself. On a fatal outcome the **panic
 header** - the first line starting with `panic:` (Go, TinyGo) or `thread
 '…' panicked at` plus the line after it (Rust), else the first non-empty
-line, at most 256 bytes - is appended to the fatal result: `module oci …
+line, at most 256 bytes - goes onto the fatal result: `module oci …
 failed: wasmfn_run failed: trap: unreachable code reached; guest stderr:
 panic: runtime error: index out of range [3] with length 2`, replacing
 today's "(a Go guest prints the panic to stderr)" hint, so `crossplane

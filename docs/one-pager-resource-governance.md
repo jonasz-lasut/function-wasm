@@ -8,14 +8,14 @@ One runtime serves many Compositions, many teams and many modules. This
 document is the model of what a module may consume, what bounds the runtime
 as a whole, and how an operator sizes and probes it - the limits that keep
 one team's module from taking every other team's reconcile down with it.
-Revision 1.1 adds the per-Composition `limits` (the Input fields are
-defined in the module-source-schema one-pager). Revision 1.2 adds the bound
+Revision 1.1 adds the per-Composition `limits` (the module-source-schema
+one-pager defines the Input fields). Revision 1.2 adds the bound
 on concurrent runs (`--max-concurrent-runs`), the one setting 1.1 left to
 the caller. It also states what bounds the sandbox's private `/tmp` and
 adds the per-run HTTP egress budgets (sandbox one-pager, revision 1.0).
 Revision 1.3 makes the run deadline
-meter guest compute: time a run is blocked in `wasmfn.http` is credited
-back to its epoch deadline, so a slow upstream no longer spends
+meter guest compute: the runtime credits the time a run spends blocked in
+`wasmfn.http` back to its epoch deadline, so a slow upstream no longer spends
 `limits.timeout`. The request's own gRPC deadline stays the hard wall-clock
 cap; without one the credit is still bounded, because every egress request
 is itself cut at the run's deadline - a run can stretch to at most about
@@ -82,7 +82,7 @@ raise a ceiling.
 Compiled modules are reference-counted (`engine.Module.Release`): a
 module dropped from the tier (by TTL or LRU, or because the tier is off)
 frees Wasmtime's code memory the moment its last run returns rather than
-at some later garbage collection of a Go wrapper. Artifacts are mapped from their
+at some later garbage collection of a Go wrapper. The runtime maps artifacts from their
 files, so a resident Go module costs ~90 MB of file-backed, reclaimable
 memory rather than 145 MB of heap.
 
@@ -106,8 +106,8 @@ instances or a large worker count sharing one runtime, a memory-tight pod
 where `runs × --module-memory-limit` must not be reachable. It fails
 closed: a waiter is bounded by its own request deadline, so the queue can
 never grow past what the callers themselves are still waiting on. A
-request that gives up has run nothing. The slot is taken after the module
-is loaded (a wait for a compile slot is the cache's, separate) and around
+request that gives up has run nothing. Each run takes its slot after the module
+has loaded (a wait for a compile slot is the cache's, separate) and around
 exactly one run, instantiate to response, which keeps the run-duration
 histogram measuring runs rather than queues.
 `function_wasm_module_runs_in_flight` pinned at the bound is the sign the
@@ -151,8 +151,8 @@ costs) is a cache optimisation that the cache one-pager covers.
 ## Failure containment
 
 A run that traps, exits, times out or exhausts its memory is a fatal result;
-a host-side panic on the request path is recovered into a fatal result with
-the stack logged; a load that fails isn't cached and the next request
+the runtime recovers a host-side panic on the request path into a fatal result
+with the stack logged; a load that fails isn't cached and the next request
 retries. A load that panics doesn't leave anything wedged. The process
 itself is never the unit of failure for one request - that's the property
 every bound in this document protects.

@@ -5,8 +5,8 @@
 * Status: implemented, revision 1.0
 
 The runtime is the only gate a Composition's Input ever passes - Crossplane
-never installs a function's Input CRD - and until now that gate was reached
-only by reconciling. This document adds the same checks as tools: `function
+never installs a function's Input CRD - and until now you could only reach that
+gate by reconciling. This document adds the same checks as tools: `function
 validate` runs the runtime's own admission over a Composition against an
 operator's flags and policy; `guestfn build`, `guestfn push` and `guestfn
 inspect` read a module's ABI, exports and imports with the runtime's own
@@ -22,14 +22,14 @@ Every rule of the Input - at the time `module.Validate`,
 `module.ValidatePolicy`, `sandbox.Validate`, `sandbox.Ceiling.Grant`,
 `egress.Grant`, `runOptions` -
 ran inside `RunFunction`, and nowhere else. A Composition author learned
-that a step was refused, in the runtime's words, from an XR condition
-after a reconcile; an operator who tightened
+from an XR condition after a reconcile, in the runtime's words, that the
+runtime had refused a step; an operator who tightened
 the egress policy learned which Compositions broke from the same
 place, one XR at a time; `crossplane beta validate` can check the Input's
 *shape* against `package/input/` but can't check the operator's
 ceilings. A wrong module - an export missing, an import outside
-`wasi_snapshot_preview1`/`wasmfn`, a `wasmfn_run` with the wrong type - is
-found by `engine.checkABI` after `wasmtime.NewModule` returns: for a 75 MB
+`wasi_snapshot_preview1`/`wasmfn`, a `wasmfn_run` with the wrong type - only
+`engine.checkABI` finds it, after `wasmtime.NewModule` returns: for a 75 MB
 Go guest that's 23-28 CPU-seconds, ~1 GB of peak memory and the compile
 slot (`--max-concurrent-compiles`, default 1) spent before the refusal, and
 every request for that digest spends it again (a failed load isn't
@@ -66,7 +66,7 @@ function validate composition.yaml [more.yaml… | -] \
   [--output text|json]
 ```
 
-Input documents are found in each file: every `pipeline[].input` of kind
+`validate` finds the Input documents in each file: every `pipeline[].input` of kind
 `Input` in `wasm.fn.crossplane.io/v1` of a `Composition`, or a bare
 `Input` document. Multi-document YAML and `-` for stdin are accepted. For
 each step the
@@ -210,7 +210,7 @@ push` and `oras push` produce, remain the recommended form.
 
 `validate` is read-only and doesn't need a credential: it reads YAML, and
 with `--resolve` pulls with the local Docker config as `guestfn push` pushes
-with it. Untrusted module bytes are decoded by Wasmtime alone - `Inspect`
+with it. Only Wasmtime decodes untrusted module bytes - `Inspect`
 compiles them, exactly as a load would, so `validate --resolve` and
 `guestfn inspect` cost a compile (bounded by `--max-module-size` as a fetch
 is), with no new parser. `guestfn push` refusing a non-ABI module
@@ -229,8 +229,8 @@ module under a name a reader might guess.
 
 ## Decisions
 
-- **Wasmtime, not a pure-Go reader** (Jonasz, 2026-08-17). A pure-Go
-  reader of the binary format was built and rejected in review: it would
+- **Wasmtime, not a pure-Go reader** (Jonasz, 2026-08-17). The maintainers built a pure-Go
+  reader of the binary format and rejected it in review: it would
   have made `guestfn` pure Go and given the runtime a pre-compile reject
   costing milliseconds instead of a compile, at the price of a second
   WebAssembly decoder in the tree - one that could disagree with Wasmtime,

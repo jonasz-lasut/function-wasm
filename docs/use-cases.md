@@ -60,8 +60,8 @@ private `/tmp` for the request, environment variables bound to step
 credentials (host directories aren't mountable, by design), the step
 credentials it reads from its request, and **HTTP egress through the host**
 to call the APIs it lists, with the host resolving, filtering, budgeting and
-auditing every request - see [HTTP egress](operators/http-egress.md). Each
-capability is granted only when the Input's `compositionPolicy` and the
+auditing every request - see [HTTP egress](operators/http-egress.md). The
+runtime grants each capability only when the Input's `compositionPolicy` and the
 operator's Cedar `--sandbox-policy-file` both permit it; a step credential a
 module wasn't granted is edited out of the request it receives.
 

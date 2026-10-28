@@ -6,9 +6,9 @@ ABI v2 is the guest contract of function-wasm: a guest is a WebAssembly
 Protobuf: `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out,
 so payload evolution stays Protobuf's job; the canonical ABI owns memory
 movement, so a guest has no allocator export and no pointer packing of
-its own. It's the only ABI the runtime serves: ABI v1 (a wasip1 core
-module exporting `wasmfn_run`, with JSON host imports) was deprecated in
-v0.6.0 and removed in 1.0.0 (#114, #129); the runtime refuses a core
+its own. It's the only ABI the runtime serves: function-wasm deprecated ABI v1 (a wasip1 core
+module exporting `wasmfn_run`, with JSON host imports) in v0.6.0 and
+removed it in 1.0.0 (#114, #129); the runtime refuses a core
 module at load (below).
 
 ## Versioning
@@ -29,8 +29,8 @@ version moves on its own, by what a change asks of guests:
 - Payload evolution stays Protobuf's: a new field of `RunFunctionRequest`
   or `RunFunctionResponse` moves no world version.
 
-The world includes no WASI imports. The WASI 0.2 and 0.3 interfaces a guest
-imports beside it are vendored under its `wit/deps/` from the
+The world includes no WASI imports. A guest vendors the WASI 0.2 and 0.3 interfaces it
+imports beside it under its `wit/deps/`, from the
 wasmtime-wasi-http release the runtime builds on, and each runtime release
 states the WASI versions its Wasmtime serves. A guest built against an
 older vendored set keeps running as long as the runtime's Wasmtime serves
@@ -41,7 +41,7 @@ moves the 0.3 interfaces (one may come with Rust 1.100) is re-vendored and
 taken on `2.0.0` in place, the guests rebuilt, because nothing fetched by
 that version exists yet to break.
 
-A new world version is published by the release that brings it, signed and
+The release that brings a new world version publishes it, signed and
 attested (Getting the world). `2.0.0` itself is published once the `rust`
 scaffold builds on stable Rust - `wasm32-wasip3` reaches it with Rust
 1.100.0; until then `publish-wit` skips the world while the scaffold's
@@ -143,15 +143,15 @@ world function {
   and equally through `wasi:http@0.2`'s `outgoing-handler` (what
   componentize-js's `fetch()` reaches for) - both generations are served by
   one host bridge over the runtime's egress policy: under the three-layer
-  grant a send is backed by the policy client or refused, and the
+  grant the policy client either performs each send or refuses it, and the
   SSRF block list, budgets, rate limit, audit line and `http_requests_total`
   metric apply to every request. Bodies are complete on both sides: the
   response budget acts on whole responses. A failure the host reports - the
   grant refusal, a blocked address, a budget, a transport error - reaches the
   guest as the `internal-error` code whose payload is the refusal string
   (the wording is contract, held by the conformance goldens; no other
-  `error-code` variant includes a reason). Time the guest spends awaiting a
-  send is credited back to its compute deadline.
+  `error-code` variant includes a reason). The host credits the time the guest spends awaiting a
+  send back to its compute deadline.
 
 ## Errors
 
@@ -171,7 +171,7 @@ The three-layer capability decision, `limits`, the epoch deadline
 (`limits.timeout` metering guest compute, the request's gRPC deadline the
 hard cap), and the memory ceiling apply to every run. A component doesn't
 export a top-level memory, so nothing is reserved from
-`--max-total-run-memory` before the run: its whole footprint (the initial
-memory included) is charged as the guest's memories are claimed, and a
+`--max-total-run-memory` before the run: the host charges its whole footprint (the initial
+memory included) as the guest claims its memories, and a
 growth the pool can't serve fails inside the run (`memory.grow` returns
 `-1`) rather than before it.

@@ -12,6 +12,6 @@ spec:
 Also mirrored to `xpkg.upbound.io/jonasz-lasut/function-wasm`.
 
 The function supports the three Crossplane minor releases Crossplane itself
-maintains, today 2.4, 2.3 and 2.2: every release is run through the
-end-to-end suite on each of them before it's published ([the release
-matrix](../project/testing.md#the-release-matrix)).
+maintains, today 2.4, 2.3 and 2.2: the release workflow runs every release
+through the end-to-end suite on each of them before publishing it ([the
+release matrix](../project/testing.md#the-release-matrix)).

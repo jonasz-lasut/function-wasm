@@ -23,8 +23,8 @@ composition.yaml: Composition/hello pipeline[1] labeler: refused: module oci ghc
 ```
 
 A step whose `compositionPolicy` scopes `composeResource` shows
-`composeResource` among the OK line's details: the module's output is
-fenced, which only a run can judge. With `--resolve`, a kind the module's
+`composeResource` among the OK line's details: the policy fences the
+module's output, which only a run can judge. With `--resolve`, a kind the module's
 manifest declares it `composes` that the policy layers would refuse is a
 warning under the step: the author learns before the first reconcile.
 

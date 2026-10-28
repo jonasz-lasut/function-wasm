@@ -68,29 +68,29 @@ module:
 - The referenced file is a `wasmfn.yaml` (the same YAML `guestfn build` writes and
   `guestfn push` embeds). The resolver normalizes it to the JSON an OCI manifest
   layer already contains, so `internal/manifest.Parse` and the manifests store
-  are unchanged: `manifestURL` is verified against `manifestDigest` and bounded
-  to `manifest.MaxSize`; `manifestPath` is read under `--module-dir` with the
-  same confinement as the module file.
+  are unchanged: the resolver verifies `manifestURL` against `manifestDigest`,
+  bounds it to `manifest.MaxSize`, and reads `manifestPath` under `--module-dir`
+  with the same confinement as the module file.
 - It reaches the runtime through the same `module.Ref.Manifest` seam an OCI
   manifest layer does, so `admission.AdmitRequires`, `checkManifestGrants` and
-  `function validate --resolve` don't change - a referenced manifest is decided
-  by the three layers exactly like an embedded one, and can only refuse a run
+  `function validate --resolve` don't change - a referenced manifest meets
+  the same three layers as an embedded one, and it can only refuse a run
   earlier, never make one possible.
 - The manifest caches key on the **manifest's own identity**
   (`module.Ref.ManifestKey`), not the module digest: a manifest-less source
   specifies its manifest apart from the module, so the same module file may run
   with one manifest, another, or none. An `http` manifest keys by
-  `manifestDigest` (content-addressed, cached); a `path` manifest is read **fresh
-  every request** (its file may be edited between renders) and not cached. The
+  `manifestDigest` (content-addressed, cached); the runtime reads a `path` manifest
+  **fresh every request** (you may edit its file between renders) and doesn't
+  cache it. The
   local-dev loop reflects an edit immediately.
 
 ### The `from` fence
 
-When the composite resource chooses an `http` source (`module.from`), its
-`manifestURL` is fenced like the module URL: the manifest's own normalized
-location must be permitted by a `compositionPolicy` `pullModule` rule, or its
-author could point the runtime at any host to `GET`. A static `manifestPath`
-(Path) has no host, so the fence doesn't apply to it. `manifestPath` itself comes
+When the composite resource chooses an `http` source (`module.from`), a
+`compositionPolicy` `pullModule` rule must permit the manifest's own normalized
+location, as it must the module URL, or its author could point the runtime at
+any host to `GET`. A static `manifestPath` (Path) has no host, so the fence doesn't apply to it. `manifestPath` itself comes
 from the Input only, and `module.from` can't set it: an XR author chooses the
 module file, not what its manifest requests.
 

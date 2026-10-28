@@ -6,8 +6,8 @@ every 1.x release. Stable for the whole line:
 
 - the Input, `wasm.fn.crossplane.io/v1`: its field names, types and
   semantics, and what becomes of a field the runtime doesn't know (the
-  runtime ignores it and `function validate` warns naming it; the removed
-  `policy` and `sandbox` fields are refused by name);
+  runtime ignores it and `function validate` warns naming it; the runtime
+  refuses the removed `policy` and `sandbox` fields by name);
 - the runtime flags, what each means and its default;
 - the wording of refusals and fatal results, as the conformance goldens pin
   it (`crates/function/testdata/conformance/`; a golden changes only by a

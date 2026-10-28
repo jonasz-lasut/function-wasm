@@ -34,10 +34,10 @@ A module that needs egress in a Composition that grants none fails inside
 the guest - `wasmfn: sandbox.egress: HTTP egress is not granted to this
 module` wrapped in a `*url.Error` for a Go guest, whatever a Rust or TinyGo
 helper makes of it, or a nil dereference in a careless one - after the
-request was resolved, loaded, instantiated and half-run. A wrong `config` is
-caught only where the guest checks: `wasmfn.GetConfig` decodes JSON, so a
-wrong type is a guest-side fatal result and an unknown key is ignored
-without a warning; a Rust guest with `serde` behaves the same, a
+request was resolved, loaded, instantiated and half-run. Only the guest's
+own check catches a wrong `config`: `wasmfn.GetConfig` decodes JSON, so a
+wrong type is a guest-side fatal result and an unknown key passes with no
+warning; a Rust guest with `serde` behaves the same, a
 hand-rolled one differently. A registry doesn't say what a module needs; a
 Composition author copies the `sandbox` block from a README, if there is
 one. The runtime can't detect a module's need for a field in
@@ -102,7 +102,7 @@ with like; `requires.env` binds variable names to step-credential keys and
 `requires.credentials` names the step credentials the module reads whole
 from its request - the values still arrive at the pipeline step, never in
 the manifest, and the request the module receives contains only the
-credentials these two name (every other one is edited out of it).
+credentials these two name (the runtime edits every other one out of it).
 `oras push fn.wasm:application/wasm wasmfn.json:application/vnd.wasmfn.manifest.v1+json`
 produces the same artifact.
 
@@ -139,8 +139,8 @@ compositionPolicy does not permit`), `… requires a private /tmp
 (requires.filesystem.privateTmp), which the operator policy
 (--sandbox-policy-file) does not permit for this request`, `…
 requires runtime v0.3.0 or newer, this is v0.2.1` and `config does not match
-the module's schema: /greeting: got number, want string`. The composition
-layer is checked first, whole: the author closest to the fix reads their
+the module's schema: /greeting: got number, want string`. The runtime checks the
+composition layer first, whole: the author closest to the fix reads their
 own layer's refusal even where the operator would also deny. Only
 narrowing: a manifest can make a run fail earlier; it can't make a run
 possible.
@@ -255,8 +255,8 @@ counted on. These checks never read the composite resource.
   binds a variable to a step-credential key, allowed only where `setEnv`
   and `spendCredential` permit it in both Cedar layers, and the value still
   arrives at the pipeline step, never in the manifest.
-- **Home of the manifest**: the artifact, source of truth; the standard OCI
-  annotations are derived from it for registry UIs, never read by the
+- **Home of the manifest**: the artifact, source of truth; `guestfn push` derives the
+  standard OCI annotations from it for registry UIs, never read by the
   runtime.
 - **Writer**: `guestfn` only, from `wasmfn.yaml`; a guest's own glue never
   writes it.

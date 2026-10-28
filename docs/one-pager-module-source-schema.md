@@ -7,8 +7,8 @@
 The structure of the Input before `v0.1.0` freezes it - a discriminated
 `module` instead of six sibling fields, with top-level siblings owned by
 the Composition. The 2026-08-16 architecture review raised it. Revision 1.0
-is what was released, revision 1.1 recorded the `sandbox` grants that were
-added, and revision 2.0 records the three-layer authorization change
+is the released structure, revision 1.1 recorded the added `sandbox`
+grants, and revision 2.0 records the three-layer authorization change
 (docs/one-pager-three-layer-authz.md): `policy` and `sandbox` left the
 Input, replaced by `compositionPolicy` (raw Cedar) and the module
 manifest's `requires`. Revision 2.1 adds a manifest by reference for
@@ -56,11 +56,11 @@ layers (manifest ∧ `compositionPolicy` ∧ the operator's
 
 ## Today
 
-The preceding structure is implemented in `input/v1beta1/input.go`, enforced by
+`input/v1beta1/input.go` defines the preceding structure.
 `internal/module.Validate`/`FromComposite`, `internal/module/policy.go`
-(the composition-layer fence), `internal/admission` (`runOptions`,
-`CompileCompositionPolicy`), and described by the generated CRD under
-`package/input/`.
+(the composition-layer fence) and `internal/admission` (`runOptions`,
+`CompileCompositionPolicy`) enforce it, and the generated CRD under
+`package/input/` describes it.
 
 - `module.type` is required (`OCI`, `HTTP`, `Path`). Exactly one of the
   typed object it names (`oci`, `http`, `path`) or `from` is set, and no
@@ -70,8 +70,9 @@ The preceding structure is implemented in `input/v1beta1/input.go`, enforced by
   `self.type == 'OCI' ? (has(self.oci) != has(self.from)) : !has(self.oci)`
   and its two siblings. Crossplane itself never installs a function's Input
   CRD (an Input is a fragment of a Composition rather than an object), which
-  makes the runtime the only gate that always runs, and every marker on the
-  types is mirrored in `Validate`/`ValidateFrom`/the admission checks.
+  makes the runtime the only gate that always runs, and
+  `Validate`/`ValidateFrom`/the admission checks mirror every marker on the
+  types.
 - `module.from` names a field of the observed composite resource under
   `spec.` or `status.` (pattern-checked), read on every request and decoded
   (unknown fields refused) into the object `type` names - an
@@ -112,7 +113,7 @@ The preceding structure is implemented in `input/v1beta1/input.go`, enforced by
   `requires` (`filesystem.privateTmp`, `egress.http[] {host | hostPattern,
   methods, pathPrefix}`, `env[] {name, fromCredential}`), shape-checked by
   `internal/egress.ValidateRules` and `internal/sandbox.ValidateBindings`,
-  and each `requires` entry is decided by `admission.AdmitRequires` under the
+  and `admission.AdmitRequires` decides each `requires` entry under the
   `compositionPolicy` and the operator's `--sandbox-policy-file`
   (`usePrivateTmp`, `setEnv` ∧ `spendCredential`, `grantEgress` - also the
   host allowlist, with the CIDR rules `dialAddress`). Host directories
@@ -207,8 +208,8 @@ unreleased, and the change landed before `v0.1.0`. An Input in the old
 form fails decoding (`ociFrom` and friends are unknown fields) or
 validation (`module.type is required`); the fix is `type: OCI|HTTP|Path`
 plus the matching object, or `type` + `from` for the former `*From`
-fields. The three-layer change is breaking. An Input with the removed
-`policy` or `sandbox` field is refused by `function validate` naming the
+fields. The three-layer change is breaking. `function validate`
+refuses an Input with the removed `policy` or `sandbox` field and names the
 replacement (`the Input's policy field was removed: …`, `the Input's
 sandbox field was removed: …`) - allowlists become `compositionPolicy`
 Cedar, sandbox grants become the module manifest's `requires`.

@@ -3,14 +3,14 @@
 A module can be granted HTTP and HTTPS requests **through the host**. It
 never opens a socket (the sandbox links none): it asks the runtime. The
 runtime resolves the name and refuses addresses on its block list, then
-handles TLS with its own roots. Host, method and path are checked against
+handles TLS with its own roots. It checks host, method and path against
 the rules the manifest declared and the policy layers granted, with
-redirects followed within them. Budgets set by the operator are enforced
-and every request is counted and logged before the response is handed
+redirects followed within them. It enforces the budgets the operator sets,
+and it counts and logs every request before it hands the response
 back. The parties decide in this order:
 
-1. **The operator** turns the capability on. Egress is enabled, and its host
-   allowlist and SSRF CIDR rules are authored, in the Cedar `--sandbox-policy-file`
+1. **The operator** turns the capability on. The operator enables egress, and
+   writes its host allowlist and SSRF CIDR rules, in the Cedar `--sandbox-policy-file`
    (see [operator grant policy](grant-policy.md)); the per-run budgets are
    fixed defaults, and the one tunable budget - the rate limit - is a pair of
    flags:
@@ -65,8 +65,8 @@ back. The parties decide in this order:
    host dials the address it checked, so a name can't rebind between the check
    and the connection. A `dialAddress` `forbid` adds to it, a `permit` punches a
    hole in it, and a `forbid` wins; to reach a loopback service in a local test
-   both `127.0.0.0/8` and `::1/128` need a permit, since every resolved address
-   is judged. `HTTP_PROXY` isn't honoured: the host must see the destination
+   both `127.0.0.0/8` and `::1/128` need a permit, since the host judges every resolved
+   address. `HTTP_PROXY` isn't honoured: the host must see the destination
    address to judge it. A refused guest is told only that the policy refused.
    The resolved address and the block-list entry appear in the runtime's audit
    line only.

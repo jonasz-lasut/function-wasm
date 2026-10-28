@@ -13,11 +13,12 @@
 > module manifest `requires.env` credential binding
 > (`{name, fromCredential: {name, key}}`), resolved from the request's step
 > credentials by `sandbox.Materialize` and admitted only when both Cedar
-> layers permit it (`setEnv` ∧ `spendCredential`). The bulk-import `envFrom`
-> shape was dropped. Request-delivered *files* remain unbuilt. The rest of this
-> document is kept as the historical record of the decision on the `env`
-> field's structure - its invariants (values only from the request, the
-> pull credential withheld, nothing logged) survive in the binding model.
+> layers permit it (`setEnv` ∧ `spendCredential`). The three-layer model
+> dropped the bulk-import `envFrom` shape. Request-delivered *files* remain
+> unbuilt. The rest of this document stays as the historical record of the
+> decision on the `env` field's structure - its invariants (values only from
+> the request, the pull credential withheld, nothing logged) survive in the
+> binding model.
 
 Most modules that talk to a cloud API through `wasmfn.HTTPClient()` do so
 through an SDK, and SDKs find their credentials where they always
@@ -49,8 +50,8 @@ an `os.MkdirTemp` under `$TMPDIR` (`privateTmp`, pre-opened read/write at
 credentials arrive in `RunFunctionRequest.credentials` (name →
 `CredentialData{data: map<string, bytes>}`); `cmd/function/fn.go` reads the
 pull credential with `request.GetCredentials` and withholds it from the
-forwarded request (`withoutCredential`), every other credential is
-forwarded whole. `internal/testwasm` has raw-WASI fixtures (`Environ`,
+forwarded request (`withoutCredential`), and forwards every other
+credential whole. `internal/testwasm` has raw-WASI fixtures (`Environ`,
 `ReadFile`) that hand the guest's environ or a file back as a `Result`.
 
 ## Goals, non-goals, invariants
@@ -166,7 +167,7 @@ if the map must stay.
 **Migration (option A).** An Input with the map form fails to decode into
 the list; rather than a JSON type error, `RunFunction` checks the raw
 `structpb` Input first (`sandbox.env` is an object → fatal): `sandbox.env
-is a map ({KEY: value}); it is a list of {name, value | valueFrom} entries —
+is a map ({KEY: value}); it is a list of {name, value | valueFrom} entries -
 write {name: LOG_LEVEL, value: debug}`. README Input reference, AGENTS,
 `docs/abi.md`'s Sandbox row, the sandbox and trust-model one-pagers and the
 `internal/sandbox`/`cmd/function` tests change with it; `configureSandbox`
