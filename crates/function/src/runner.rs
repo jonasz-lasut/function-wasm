@@ -59,10 +59,14 @@ impl WasmFunction {
     /// Turns a refusal or failure into the request's fatal result and makes
     /// it visible on the runtime side too: one log line with the reason, so
     /// an operator of a shared runtime can see what is being refused without
-    /// reading every XR's conditions.
+    /// reading every XR's conditions. The response is built here, on the
+    /// fatal path alone: response::to clones the request's desired state
+    /// and context, a copy a request that runs to completion never needs
+    /// (the guest's own bytes go back), and one that grows with the
+    /// composite.
     fn fatal(
         &self,
-        mut rsp: RunFunctionResponse,
+        req: &RunFunctionRequest,
         outcome: &str,
         reason: String,
     ) -> RunFunctionResponse {
@@ -70,6 +74,7 @@ impl WasmFunction {
         function_wasm_engine::metrics::REQUESTS
             .with_label_values(&[outcome])
             .inc();
+        let mut rsp = response::to(req, self.ttl);
         response::fatal(&mut rsp, reason);
         rsp
     }
@@ -121,13 +126,12 @@ impl WasmFunction {
             .map_err(|e| Status::internal(format!("cannot decode the request: {e}")))?;
         let tag = req.meta.as_ref().map(|m| m.tag.clone()).unwrap_or_default();
         tracing::info!(tag, "Running function");
-        let rsp = response::to(&req, self.ttl);
 
         let input: Input = match request::get_input(&req) {
             Ok(input) => input,
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    rsp,
+                    &req,
                     OUTCOME_REFUSED,
                     format!("cannot get function input from *v1.RunFunctionRequest: {e}"),
                 )));
@@ -143,7 +147,7 @@ impl WasmFunction {
         // module is read or compiled: nothing will run if it is refused.
         let admitted = match admission::admit(&input, &self.engine.config()) {
             Ok(admitted) => admitted,
-            Err(e) => return Ok(raw_rsp(self.fatal(rsp, OUTCOME_REFUSED, e))),
+            Err(e) => return Ok(raw_rsp(self.fatal(&req, OUTCOME_REFUSED, e))),
         };
         // A module.from source names a field of the composite resource; the
         // compositionPolicy fences what it may pick (from.rs, default-deny).
@@ -168,7 +172,7 @@ impl WasmFunction {
             Ok(None) => return Ok(self.skip(&raw, &input.module.from, tag)),
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    rsp,
+                    &req,
                     OUTCOME_REFUSED,
                     format!("cannot resolve module: {e}"),
                 )));
@@ -185,7 +189,7 @@ impl WasmFunction {
         );
         if signature_required && source.r#type != "OCI" {
             return Ok(raw_rsp(self.fatal(
-                rsp,
+                &req,
                 OUTCOME_REFUSED,
                 format!(
                     "cannot resolve module: {}",
@@ -209,8 +213,7 @@ impl WasmFunction {
                     |function_sdk_rust::proto::v1::credentials::Source::CredentialData(d)| &d.data,
                 )
             }) else {
-                return Ok(raw_rsp(self.fatal(
-                    rsp,
+                return Ok(raw_rsp(self.fatal(&req,
                     OUTCOME_REFUSED,
                     format!("cannot get credentials {name:?} for module.oci: the request carries no such credential"),
                 )));
@@ -222,7 +225,7 @@ impl WasmFunction {
                 Ok(a) => Some(a),
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        rsp,
+                        &req,
                         OUTCOME_REFUSED,
                         format!("cannot use credentials {name:?} for module.oci: {e}"),
                     )));
@@ -242,14 +245,14 @@ impl WasmFunction {
                 Ok(Ok(resolved)) => resolved,
                 Ok(Err(e)) => {
                     return Ok(raw_rsp(self.fatal(
-                        rsp,
+                        &req,
                         OUTCOME_REFUSED,
                         format!("cannot resolve module: {e}"),
                     )));
                 }
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        rsp,
+                        &req,
                         OUTCOME_ERROR,
                         format!("internal error while running the module: {e}"),
                     )));
@@ -261,8 +264,7 @@ impl WasmFunction {
         // the key), once per digest per process.
         if signature_required {
             let Some(verifier) = self.verifier.clone() else {
-                return Ok(raw_rsp(self.fatal(
-                    rsp,
+                return Ok(raw_rsp(self.fatal(&req,
                     OUTCOME_REFUSED,
                     format!(
                         "cannot verify module {}: the operator policy requires a cosign signature, but the runtime has neither --cosign-key nor --cosign-trusted-root to verify it",
@@ -288,14 +290,14 @@ impl WasmFunction {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     return Ok(raw_rsp(self.fatal(
-                        rsp,
+                        &req,
                         OUTCOME_REFUSED,
                         format!("cannot verify module {}: {e}", resolved.description),
                     )));
                 }
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        rsp,
+                        &req,
                         OUTCOME_ERROR,
                         format!("internal error while running the module: {e}"),
                     )));
@@ -315,7 +317,7 @@ impl WasmFunction {
                 Ok(module) => module,
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        rsp,
+                        &req,
                         OUTCOME_ERROR,
                         format!("cannot load module {}: {e}", resolved.description),
                     )));
@@ -334,7 +336,7 @@ impl WasmFunction {
                 Ok(Ok(bytes)) => bytes,
                 Ok(Err(e)) => {
                     return Ok(raw_rsp(self.fatal(
-                        rsp,
+                        &req,
                         OUTCOME_REFUSED,
                         format!(
                             "cannot read the manifest of module {}: {e}",
@@ -344,7 +346,7 @@ impl WasmFunction {
                 }
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        rsp,
+                        &req,
                         OUTCOME_ERROR,
                         format!("internal error while running the module: {e}"),
                     )));
@@ -358,7 +360,7 @@ impl WasmFunction {
                 Ok(m) => Some(m),
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        rsp,
+                        &req,
                         OUTCOME_REFUSED,
                         format!(
                             "module {} has an invalid manifest: {e}",
@@ -379,7 +381,7 @@ impl WasmFunction {
             Ok(caps) => caps,
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    rsp,
+                    &req,
                     OUTCOME_REFUSED,
                     format!("module {} {e}", resolved.description),
                 )));
@@ -393,7 +395,7 @@ impl WasmFunction {
             )
         {
             return Ok(raw_rsp(self.fatal(
-                rsp,
+                &req,
                 OUTCOME_REFUSED,
                 format!("module {} {e}", resolved.description),
             )));
@@ -417,7 +419,7 @@ impl WasmFunction {
             Ok(env) => env,
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    rsp,
+                    &req,
                     OUTCOME_REFUSED,
                     format!("module {}: {e}", resolved.description),
                 )));
@@ -448,8 +450,7 @@ impl WasmFunction {
             match crate::protowire::retain_credentials(&raw, forward) {
                 Some(bytes) => bytes,
                 None => {
-                    return Ok(raw_rsp(self.fatal(
-                        rsp,
+                    return Ok(raw_rsp(self.fatal(&req,
                         OUTCOME_ERROR,
                         "internal error while running the module: cannot withhold the step credentials it was not granted: the request does not parse as protobuf".to_string(),
                     )));
@@ -501,7 +502,7 @@ impl WasmFunction {
                 // A panic in the run is this request's fatal result, never
                 // the process's end.
                 return Ok(raw_rsp(self.fatal(
-                    rsp,
+                    &req,
                     OUTCOME_ERROR,
                     format!("internal error while running the module: {e}"),
                 )));
@@ -511,7 +512,7 @@ impl WasmFunction {
             Ok(out) => out,
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    rsp,
+                    &req,
                     OUTCOME_ERROR,
                     format!("module {} failed: {e}", resolved.description),
                 )));
@@ -521,7 +522,7 @@ impl WasmFunction {
             Ok(got) => got,
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    rsp,
+                    &req,
                     OUTCOME_ERROR,
                     format!(
                         "module {} failed: cannot decode response: {e}",
@@ -562,7 +563,7 @@ impl WasmFunction {
             });
             if let Err(e) = judged {
                 return Ok(raw_rsp(self.fatal(
-                    rsp,
+                    &req,
                     OUTCOME_REFUSED,
                     format!("module {} {e}", resolved.description),
                 )));
