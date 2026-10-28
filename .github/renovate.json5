@@ -377,7 +377,6 @@
       matchManagers: ['custom.regex'],
       matchDepNames: [
         'errata-ai/vale',
-        'errata-ai/alex',
         'errata-ai/Google',
         'errata-ai/Microsoft',
         'errata-ai/proselint',

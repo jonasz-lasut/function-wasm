@@ -1,8 +1,0 @@
-# The house punctuation rule: a short dash (-) or a colon, never an em dash.
-# Google.EmDash only governs the spaces around one.
-extends: existence
-message: "Use a short dash (-) or a colon instead of an em dash."
-level: error
-nonword: true
-tokens:
-  - '—'
