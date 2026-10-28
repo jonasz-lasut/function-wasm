@@ -2,7 +2,11 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.5
+* Status: Implemented, revision 0.6 (phases 0-4 delivered: the Rust host
+  since v0.3.0, phase 0 closed with #65, the world frozen at
+  `wasmfn:function@2.0.0` on 2026-10-07, ABI v1 removed in 1.0.0; what
+  remains is #106, publishing the world, which waits on the rust
+  scaffold's stable toolchain)
 
 The decision `docs/one-pager-language-support.md` left open ("Is ABI v2 ever
 in scope?", open question 4): yes. ABI v2 - a component-model guest contract -
@@ -143,6 +147,12 @@ async `run`, which keeps WAT fixtures simple and pre-wasip3 toolchains
 usable (the example guests still commit to real async: the Rust p3 guest
 awaits `wasi:http/client.send`).
 
+Rev 0.6 status (2026-10-28): every phase is delivered. Phase 0 closed with
+#65 on 2026-08-26, the world froze at `2.0.0` on 2026-10-07 (#77), every
+scaffold moved to v2 the same day (#114) and 1.0.0 removed ABI v1 (#129).
+The Go tree is gone; its validate fixtures live on as the conformance
+goldens (AGENTS.md, "Conformance goldens").
+
 | phase | work | proves |
 |---|---|---|
 | 0 | v2 spike: engine crate (wasmtime), the WIT world, `wasi:http@0.3` over a ported egress admit, one nightly-Rust wasip3 guest + one jco JS guest through the greeting contract | the ABI v2 design, pre-1.0, while the Go host serves production |
@@ -212,6 +222,8 @@ design.
   world. A guest that imports no WASI at all - pure compute over `run`,
   most composition functions - barely touches the difference.
 - Retiring ABI v1: it outlives v2's launch by years (mainline Go guests).
+  (Superseded, rev 0.4: Go reached v2 through `guestfn build`'s embed and
+  wrap, and 1.0.0 removed v1.)
 - Changing any guest-facing v1 semantics during the port.
 
 ## Open questions
@@ -230,6 +242,10 @@ design.
 2. Repository layout during the transition: a cargo workspace beside the Go
    modules in this repo (shared fixtures, one CI), or a sibling repo?
    Recommendation: same repo - phases 1-2 lean on the Go tree's testdata
-   daily.
+   daily. Rev 0.6: **answered** - the same repo, a cargo workspace beside
+   the Go modules until the port had passed their fixtures; the Go tree
+   was then removed and the harness became the conformance goldens.
 3. Does guestfn keep scaffolding v1 flavours (Go/TinyGo/Zig/C) indefinitely,
-   or do the v1 templates freeze at the swap?
+   or do the v1 templates freeze at the swap? Rev 0.6: **moot** - every
+   scaffold moved to v2 on 2026-10-07 (#114; TinyGo and AssemblyScript
+   retired) and 1.0.0 removed ABI v1, so no v1 template is left.

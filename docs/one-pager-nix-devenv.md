@@ -2,7 +2,15 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.1
+* Status: Withdrawn
+
+> **Withdrawn** (Jonasz, 2026-10-28): nothing in it was built, and #12
+> was closed on 2026-10-06. Its premise is the Go era: a CGo runtime,
+> TinyGo, wasi-sdk and three toolchain versions floating in CI. The
+> runtime is Rust now, every guest toolchain the e2e workflow installs is
+> pinned (Zig by version and checksum), and the Development page is no
+> longer an installer list. The text below is kept as the record of what
+> was considered.
 
 A proposal to declare this repository's toolchain in a Nix flake — first as
 an opt-in development shell that CI also runs, later (if it earns it) as the

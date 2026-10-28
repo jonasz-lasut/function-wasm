@@ -2,7 +2,10 @@
 
 * Owner: Jonasz Małecki (@jonasz-lasut)
 * Reviewers: Function WASM Maintainers
-* Status: Draft, revision 0.6
+* Status: Implemented, revision 0.7 (Zig and C shipped as proposed and
+  #11 closed on 2026-10-06; the rest of the plan was overtaken by ABI v2,
+  docs/one-pager-abi-v2.md, through which the languages listed below as
+  blocked arrived; the current matrix is docs/guests/other-languages.md)
 
 Which languages a function-wasm module can be written in today, which could
 come next and at what cost, which are blocked and by what, and what
@@ -280,6 +283,12 @@ module or Composition relies on.
   greeting function is the contract, not every SDK feature.
 
 ## Open questions
+
+Rev 0.7 (2026-10-28): all answered or overtaken. 1: #112's one use case
+per language (Go, Rust, TypeScript, Python, C#) stood in for demand. 2:
+accepted, Zig 0.16 is the pin. 3: decided against (the ABI v2 one-pager,
+rev 0.3). 4: yes, the ABI v2 one-pager. 5: moot, AssemblyScript was
+retired and the Swift spike dropped when #11 closed. 6 was already moot.
 
 1. Is there a specific voiced demand (a user asking for Python, JavaScript
    or C#)? It would reorder the list even though the effort is higher —
