@@ -1,5 +1,5 @@
-//! Cedar policy decisions - the Rust port of `internal/authz`, on
-//! cedar-policy (the reference implementation cedar-go ports). It owns the
+//! Cedar policy decisions, on
+//! cedar-policy (Cedar's reference implementation). It owns the
 //! two policy layers of the three-layer capability decision, compiled
 //! against one shared schema and AND-combined by the callers so neither can
 //! widen the other: the operator's grant policy (--sandbox-policy-file,
@@ -496,7 +496,7 @@ pub struct IpRules {
     pub allowed: Vec<IpPrefix>,
 }
 
-/// A masked CIDR prefix, the stdlib-only equivalent of Go's netip.Prefix.
+/// A masked CIDR prefix, the stdlib-only form of an address and a length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IpPrefix {
     pub addr: IpAddr,
@@ -596,8 +596,8 @@ fn policy_scopes_action(pol: &Policy, id: &str) -> bool {
 
 /// Whether pol is an Action::"dialAddress" rule and, if so, the prefixes its
 /// condition names. A policy for another action is Ok(None); a dialAddress
-/// policy with an unrecognized shape is an error, with the Go compiler's
-/// exact wording.
+/// policy with an unrecognized shape is an error, whose wording the
+/// conformance goldens pin.
 fn compile_dial_rule(pol: &Policy) -> Result<Option<Vec<IpPrefix>>, String> {
     let v = pol
         .to_json()

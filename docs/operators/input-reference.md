@@ -53,7 +53,7 @@ The fields are:
 | `module.allowEmpty` | boolean | Optional, with `module.from` only. See [Skipping a step](#skipping-a-step) |
 | `compositionPolicy` | string | the composition author's Cedar layer. See [The composition policy](#the-composition-policy) |
 | `limits.timeout` | duration | compute budget of one run, e.g. `5s`. See [Limits](#limits) |
-| `limits.memory` | quantity | memory a run may use, each linear memory and each table against it, e.g. `128Mi`. See [Limits](#limits) |
+| `limits.memory` | quantity | memory a run may use, its linear memories and tables together, e.g. `128Mi`. See [Limits](#limits) |
 | `limits.concurrency` | int32 | at most N runs of this step at once. See [Limits](#limits) |
 | `config` | object | opaque, passed to the module untouched inside the request input. Non-secret module configuration belongs here: the module's environment comes only from its manifest's `requires.env` credential bindings |
 

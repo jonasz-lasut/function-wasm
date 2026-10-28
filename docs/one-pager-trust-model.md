@@ -277,8 +277,8 @@ sandbox's own security fixes alone.
 
 ## Alternatives
 
-**Forward every step credential.** The Go runtime, like a native function,
-forwarded every step credential but the pull credential. That made
+**Forward every step credential.** The runtime's first versions, like a
+native function, forwarded every step credential but the pull credential. That made
 `spendCredential` gate a convenience: a module denied an env binding still
 read the key from its request. The runtime forwards only what the module was
 granted.

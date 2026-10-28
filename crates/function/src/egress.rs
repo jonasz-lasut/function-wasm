@@ -1,5 +1,4 @@
-//! HTTP egress through the host - the Rust port of `internal/egress`'s
-//! ceiling, grant and per-run client: what answers a guest's wasi:http
+//! HTTP egress through the host: the ceiling, grant and per-run client, what answers a guest's wasi:http
 //! sends. The guest never opens a socket: the host resolves the name,
 //! judges every resolved address against the block list (the operator's
 //! Cedar dialAddress rules compiled in), dials only addresses it checked,
@@ -7,8 +6,8 @@
 //! on the first request and every redirect hop, enforces the fixed per-run
 //! budgets and the process-wide rate limit, and writes one audit line per
 //! request. A refusal is an in-band error the guest reads, never a trap.
-//! Refusal strings match the Go runtime's; transport-level error text is
-//! the library's own (noted in rust/README.md).
+//! Refusal strings are pinned by the conformance goldens; transport-level
+//! error text is the library's own.
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
@@ -60,7 +59,7 @@ pub struct Egress {
     explicit: Vec<IpPrefix>,
     budget: Budget,
     rate_limits: Option<RateLimiters>,
-    /// The one HTTP client of the ceiling, like the Go transport: its
+    /// The one HTTP client of the ceiling: its
     /// resolver judges every address, it follows no redirect itself (each
     /// hop is the client's own checked request), and it speaks no proxy -
     /// the host must see the destination address to judge it.
@@ -454,7 +453,7 @@ impl Client {
                 if is_reserved_header(k) {
                     continue;
                 }
-                // As in Go's net/http, Authorization and Cookie survive a
+                // Authorization and Cookie survive a
                 // redirect to the same host and are dropped elsewhere.
                 if hops > 0
                     && is_sensitive_header(k)
@@ -689,8 +688,8 @@ fn redirect_location(rsp: &reqwest::blocking::Response) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Response headers, canonicalised as Go's net/http does (Content-Type), so
-/// a guest sees the same names from both runtimes.
+/// Response headers, canonicalised to the usual capitalisation
+/// (Content-Type), so a guest sees the same names whatever the server sent.
 fn canonical_headers(h: &reqwest::header::HeaderMap) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (k, v) in h {

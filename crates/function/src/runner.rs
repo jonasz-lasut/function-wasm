@@ -2,8 +2,7 @@
 //! module named by each request's Input and returns its response verbatim.
 //! Everything that stops the module from running to completion is reported
 //! as a fatal result, never a gRPC error - one request must never take the
-//! process down. The flow and its messages are the Rust port of
-//! cmd/function/fn.go for Path sources.
+//! process down.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,7 +23,7 @@ use crate::input::Input;
 use crate::resolver::Resolver;
 use crate::sandboxenv;
 
-/// Request outcomes, as the Go runtime's metrics label them: refused is the
+/// Request outcomes, as the requests_total metric labels them: refused is the
 /// runtime declining before running the module (or, since the output fence,
 /// a policy layer refusing what the module composed), error is the load or
 /// the run failing. Skipped is this runtime's own: the composite resource
@@ -575,7 +574,7 @@ impl WasmFunction {
                 )));
             }
         }
-        // A guest that skipped the response meta (a non-Go guest, typically)
+        // A guest that skipped the response meta (typically a guest not built on an SDK)
         // still gets a well-formed reply - appended to its own bytes, which
         // otherwise travel back exactly as produced.
         function_wasm_engine::metrics::REQUESTS

@@ -1,6 +1,5 @@
 //! Engine tests over WAT fixtures: components implementing the
-//! wasmfn:function world, in the spirit of the old Go tree's
-//! internal/testwasm - a component that returns fixed response bytes,
+//! wasmfn:function world: a component that returns fixed response bytes,
 //! components that misbehave in one way each, the world typecheck refusals,
 //! and the sandbox reached through WASI 0.2's own interfaces.
 //!
@@ -107,7 +106,7 @@ fn a_run_observes_the_hostcall_split() {
 #[test]
 fn the_stack_limit_bounds_recursion() {
     // 4000 frames fit in the default 512 KiB stack and overflow an 8 KiB
-    // one; the trap carries the Go runtime's wording.
+    // one; the trap carries the runtime's own wording.
     let wat = format!(
         r#"(component
   (core module $m
@@ -367,7 +366,7 @@ fn env_reaches_the_guest_sorted() {
         ..Default::default()
     };
     let out = e.run(&m, b"", opts).expect("run");
-    // A BTreeMap serves the environ sorted, like the Go engine's SetEnv.
+    // A BTreeMap serves the environ sorted, so the guest sees a stable order.
     assert_eq!(String::from_utf8_lossy(&out), "A=1\0B=2\0");
 }
 
@@ -682,11 +681,11 @@ fn a_shared_memory_is_refused_at_compile() {
 )"#,
     )
     .expect("wat");
-    // The runtime keeps the first line of wasmtime's error, which is the
-    // parse failure; the cause (threads support is not enabled) is in the
-    // chain the runtime does not print.
+    // The refusal states wasmtime's cause, so the author learns which
+    // proposal the module uses.
     let err = e.compile(&wasm).expect_err("shared memory").to_string();
     assert!(err.starts_with("cannot compile module: "), "{err}");
+    assert!(err.contains("threads"), "{err}");
 }
 
 #[test]
@@ -755,4 +754,36 @@ fn a_tail_call_is_refused_at_compile() {
     .expect("wat");
     let err = e.compile(&wasm).expect_err("tail call").to_string();
     assert!(err.starts_with("cannot compile module: "), "{err}");
+}
+
+#[test]
+fn the_ceiling_is_per_run_across_regions() {
+    // Eight pages of ceiling. The prelude's four-page memory is charged at
+    // instantiation; a table of 40,000 elements (320 KB on a 64-bit host)
+    // fits the ceiling on its own but not beside the memory, so a ceiling
+    // checked per region would admit it and the per-run one denies it.
+    let e = Engine::new(Config {
+        memory_limit: 8 << 16,
+        ..Config::default()
+    })
+    .expect("engine");
+    let m = compile(&e, &function_wasm_engine::testing::grow_table_guest(40_000));
+    let out = e.run(&m, b"", RunOptions::default()).expect("run");
+    assert_eq!(
+        out.len(),
+        0,
+        "a growth past the run's total should be denied"
+    );
+    // Under a sixteen-page ceiling the same run fits.
+    let roomy = Engine::new(Config {
+        memory_limit: 16 << 16,
+        ..Config::default()
+    })
+    .expect("engine");
+    let m = compile(
+        &roomy,
+        &function_wasm_engine::testing::grow_table_guest(40_000),
+    );
+    let out = roomy.run(&m, b"", RunOptions::default()).expect("run");
+    assert_eq!(out.len(), 1, "the growth should succeed with room for both");
 }

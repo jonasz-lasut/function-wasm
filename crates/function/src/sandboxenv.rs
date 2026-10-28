@@ -1,9 +1,8 @@
-//! Environment bindings and step credentials - the Rust port of
-//! `internal/sandbox`'s binding.go and materialize.go: the shape a manifest's
+//! Environment bindings and step credentials: the shape a manifest's
 //! requires.env carries, its validation, and the resolution of admitted
 //! bindings against the request's step credentials; and the step credentials
 //! a manifest requires whole (requires.credentials), held against the same
-//! request. Refusal strings match the Go runtime where it had the check.
+//! request. Refusal strings are pinned by the conformance goldens.
 
 use std::collections::{BTreeMap, HashMap};
 

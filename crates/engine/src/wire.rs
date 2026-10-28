@@ -3,8 +3,8 @@
 //! the HttpRequester that performs them - the runtime's egress policy
 //! client - and nothing else, so the engine that serves the import and the
 //! policy that answers it share the types without the engine depending on
-//! the policy. Field names and omission match the Go runtime's
-//! `internal/egress/wire`, whose refusal strings are contract.
+//! the policy. Field names and omission rules are fixed
+//! here, and the refusal strings that cross it are contract.
 
 use std::collections::BTreeMap;
 use std::time::Instant;

@@ -1,4 +1,4 @@
-//! The module cache - the Rust port of the Go engine's Cache: compiled
+//! The module cache: compiled
 //! modules by content digest from three tiers. Memory holds hot modules
 //! (dropped after an idle TTL, past a max-entries bound, or disabled), the
 //! on-disk store of wasmtime artifacts survives restarts and maps in
@@ -114,28 +114,38 @@ impl ModuleCache {
         F: FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
     {
         // The artifact on disk: mapped, not compiled. A stale or foreign
-        // artifact is a miss - wasmtime refuses it and the module recompiles.
+        // artifact is a miss - the store refuses one whose MAC isn't this
+        // process's, wasmtime refuses one it can't load - and the module
+        // recompiles.
         use function_wasm_engine::metrics::{self, CACHE_EVENTS};
         if let Some(disk) = &self.disk {
-            if let Some(path) = disk.path(digest) {
-                let engine = Arc::clone(&self.engine);
-                let loaded =
-                    tokio::task::spawn_blocking(move || engine.deserialize_file(&path)).await;
-                if let Ok(Ok(m)) = loaded {
+            match disk.path(digest) {
+                crate::store::Lookup::Hit(path) => {
+                    let engine = Arc::clone(&self.engine);
+                    let loaded =
+                        tokio::task::spawn_blocking(move || engine.deserialize_file(&path)).await;
+                    if let Ok(Ok(m)) = loaded {
+                        CACHE_EVENTS
+                            .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_HIT])
+                            .inc();
+                        return Ok(m);
+                    }
+                    // The artifact was there but wasmtime refused it: a miss
+                    // that cost a read.
                     CACHE_EVENTS
-                        .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_HIT])
+                        .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_STALE])
                         .inc();
-                    return Ok(m);
                 }
-                // The artifact was there but wasmtime refused it: a miss
-                // that cost a read.
-                CACHE_EVENTS
-                    .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_STALE])
-                    .inc();
-            } else {
-                CACHE_EVENTS
-                    .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_MISS])
-                    .inc();
+                crate::store::Lookup::Stale => {
+                    CACHE_EVENTS
+                        .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_STALE])
+                        .inc();
+                }
+                crate::store::Lookup::Miss => {
+                    CACHE_EVENTS
+                        .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_MISS])
+                        .inc();
+                }
             }
         }
         // Fetch and compile, at most max_concurrent_compiles at a time;
@@ -262,6 +272,73 @@ mod tests {
             })
             .await
             .expect("load from artifact");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_planted_artifact_is_refused_by_a_keyed_store() {
+        // The 1.0 audit's F-2 reproduction, made permanent: an artifact
+        // placed under a digest by something other than this process is a
+        // stale miss and a compile, and the compile's artifact then serves
+        // a second cache under the same key without a fetch.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let engine = engine();
+        let planted = engine
+            .serialize(
+                &engine
+                    .compile(&crate::testing::guests::tiny_component())
+                    .expect("compile"),
+            )
+            .expect("serialize");
+        std::fs::write(dir.path().join("sha256-m"), &planted).expect("plant");
+        let key = [9u8; 32];
+        let keyed = || {
+            Arc::new(
+                Store::open_dir(dir.path(), false)
+                    .expect("store")
+                    .with_key(key),
+            )
+        };
+        let cache = ModuleCache::new(
+            Arc::clone(&engine),
+            CacheOptions {
+                disk: Some(keyed()),
+                ..Default::default()
+            },
+        );
+        let fetched = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&fetched);
+        let wasm = crate::testing::guests::tiny_component();
+        cache
+            .get("sha256:m", move || {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(wasm)
+            })
+            .await
+            .expect("load");
+        assert!(
+            fetched.load(std::sync::atomic::Ordering::SeqCst),
+            "the planted artifact must not be served: the module is fetched and compiled"
+        );
+        let stale = function_wasm_engine::metrics::sample(
+            "function_wasm_module_cache_events_total",
+            &[("cache", "compiled-disk"), ("event", "stale")],
+        )
+        .unwrap_or(0.0);
+        assert!(stale >= 1.0, "the refusal should be counted as stale");
+
+        let second = ModuleCache::new(
+            engine,
+            CacheOptions {
+                disk: Some(keyed()),
+                ..Default::default()
+            },
+        );
+        second
+            .get("sha256:m", || {
+                panic!("the artifact this key wrote should be served")
+            })
+            .await
+            .expect("load from the keyed artifact");
     }
 
     #[tokio::test(flavor = "multi_thread")]

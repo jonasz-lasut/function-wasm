@@ -111,7 +111,7 @@ impl Variant {
     /// The manifest layer: the YAML validated the way guestfn build does,
     /// encoded the way guestfn push publishes it.
     pub fn manifest_json(&self) -> Result<Vec<u8>> {
-        let mut value: serde_json::Value = serde_yaml::from_str(self.manifest)
+        let mut value: serde_json::Value = serde_saphyr::from_str(self.manifest)
             .with_context(|| format!("{}: manifest yaml", self.name))?;
         if let Some(suffix) = self.version_suffix {
             let version = value["version"].as_str().unwrap_or("0.1.0").to_string();

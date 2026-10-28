@@ -15,12 +15,7 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # there is one, fails on its own.
 yanked = "warn"
 # Each entry: { id = "RUSTSEC-YYYY-NNNN", reason = "why it does not apply" }.
-ignore = [
-    # serde_yaml 0.9, which the runtime and guestfn read manifests and
-    # Compositions with, is unmaintained along with its unsafe-libyaml; the
-    # move to a maintained YAML crate is tracked for 1.0.0.
-    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml comes with serde_yaml 0.9; replacing the YAML crate is a separate change" },
-]
+ignore = []
 
 [licenses]
 version = 2

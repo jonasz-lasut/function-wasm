@@ -1,12 +1,12 @@
 //! `function validate`: the runtime's admission over Compositions, offline -
-//! the Rust port of cmd/function/validate.go. For every pipeline step whose
+//! For every pipeline step whose
 //! input is a function-wasm Input it runs exactly what RunFunction runs
 //! before it resolves anything and, with --resolve, goes on to resolve and
 //! fetch each module and read its ABI. One line per step in the runtime's
 //! own words; exit 0 when every step is admitted, 1 when at least one is
-//! refused, 2 when the tool itself failed. Output parity with the Go binary
-//! is enforced by tests/conformance.rs; a check the port does not carry yet
-//! is refused by name, so the differential harness sees an honest gap.
+//! refused, 2 when the tool itself failed. The output is pinned by the
+//! goldens of tests/conformance.rs; a check the runtime does not carry is
+//! refused by name, so a gap is never silent.
 
 use std::io::Read as _;
 use std::path::PathBuf;
@@ -117,7 +117,7 @@ pub struct ValidateArgs {
 }
 
 /// The verdict on one step - what one text line and one JSON object carry.
-/// Field names and omission match the Go stepResult exactly.
+/// Field names and omission are the JSON contract of --output json.
 #[derive(Debug, Default, Serialize)]
 struct StepResult {
     file: String,
@@ -350,9 +350,8 @@ fn print_result(output: &str, r: &StepResult) -> Result<(), String> {
 }
 
 /// Reads every YAML or JSON document of a file (- is stdin) as an
-/// unstructured object; empty documents are skipped. The error strings
-/// mirror the Go tool's (its YAML layer wraps go-yaml, whose parser messages
-/// libyaml-descended parsers share).
+/// unstructured object; empty documents are skipped. A parse failure names
+/// the file, the line and the column, in the parser's own words.
 fn read_documents(file: &str) -> Result<Vec<serde_json::Value>, String> {
     let raw = if file == "-" {
         let mut buf = Vec::new();
@@ -368,36 +367,19 @@ fn read_documents(file: &str) -> Result<Vec<serde_json::Value>, String> {
             )
         })?
     };
-    let mut docs = Vec::new();
-    for de in serde_yaml::Deserializer::from_slice(&raw) {
-        let doc = serde_json::Value::deserialize(de).map_err(|e| parse_error(file, &e))?;
-        if doc.is_null() {
-            continue;
-        }
-        docs.push(doc);
-    }
-    Ok(docs)
+    let docs: Vec<serde_json::Value> =
+        serde_saphyr::from_slice_multiple(&raw).map_err(|e| parse_error(file, &e))?;
+    Ok(docs.into_iter().filter(|doc| !doc.is_null()).collect())
 }
 
-use serde::Deserialize as _;
-
-/// Renders a YAML parse failure the way the Go tool does: its YAML layer
-/// reports "error converting YAML to JSON: yaml: line N: <message>", and the
-/// message wording is libyaml's, which serde_yaml shares.
-fn parse_error(file: &str, e: &serde_yaml::Error) -> String {
-    let mut msg = e.to_string();
-    // go-yaml prints libyaml's zero-based line; serde_yaml's location is
-    // one-based.
-    let line = e.location().map(|l| l.line().saturating_sub(1));
-    if let Some(i) = msg.find(" at line ") {
-        msg.truncate(i);
-    }
-    match line {
-        Some(line) => {
-            format!("cannot parse {file}: error converting YAML to JSON: yaml: line {line}: {msg}")
-        }
-        None => format!("cannot parse {file}: error converting YAML to JSON: yaml: {msg}"),
-    }
+/// One line for a YAML parse failure: the parser's first line, which
+/// carries the location and the message (`line 3 column 11: unclosed
+/// bracket '['`), without the source excerpt the parser prints under it.
+fn parse_error(file: &str, e: &serde_saphyr::Error) -> String {
+    let text = e.to_string();
+    let first = text.lines().next().unwrap_or_default().trim();
+    let msg = first.strip_prefix("error: ").unwrap_or(first);
+    format!("cannot parse {file}: {msg}")
 }
 
 /// Returns the function-wasm Inputs of the documents: every pipeline step of
@@ -809,8 +791,8 @@ fn decode_input(
 
 /// Walks the raw Input against the known field names, warning about every
 /// field the runtime would silently ignore - keys sorted at each level and
-/// depth-first, the order the Go tool's repeated strict decode reports them
-/// in (its decoder streams a key-sorted re-marshal of the document).
+/// depth-first, the order a repeated strict decode reports them in (a decoder
+/// streaming a key-sorted re-marshal of the document), which the goldens pin.
 fn unknown_fields(
     obj: &serde_json::Map<String, serde_json::Value>,
     path: &str,
@@ -913,7 +895,7 @@ fn describe_admitted(input: &Input, admitted: &admission::Admitted) -> Vec<Strin
     out
 }
 
-/// Renders a size for the text output, as the Go tool's humanBytes does.
+/// Renders a size for the text output (B, KiB or MiB).
 fn human_bytes(n: usize) -> String {
     if n >= 1 << 20 {
         return format!("{:.1} MB", n as f64 / f64::from(1u32 << 20));

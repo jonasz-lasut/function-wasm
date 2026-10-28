@@ -1,9 +1,9 @@
-//! The gRPC server metrics of the Go runtime, re-created over the raw-codec
+//! The gRPC server metrics, served over the raw-codec
 //! transport: `grpc_server_started_total`, `grpc_server_handled_total`,
 //! `grpc_server_msg_received_total` and `grpc_server_msg_sent_total`, with
 //! the names, labels and help strings of function-sdk-go's grpc-prometheus
-//! interceptor, so dashboards and alerts built on the Go runtime keep
-//! working. Like that interceptor - which was unary-only - streaming
+//! interceptor, so dashboards and alerts built on them keep
+//! working. Like that interceptor - which is unary-only - streaming
 //! methods (reflection, health Watch) are not counted, and like its
 //! InitializeMetrics, every method the server carries starts as a zero
 //! series. No handling-time histogram: function-sdk-go never enabled one,
@@ -51,8 +51,8 @@ static MSG_SENT: LazyLock<LabeledCounter> = LazyLock::new(|| {
 });
 
 /// The gRPC status code names, indexed by their wire value - the strings
-/// google.golang.org/grpc/codes renders, which is what the Go runtime's
-/// grpc_code label carried.
+/// google.golang.org/grpc/codes renders, which is what the grpc_code label
+/// carries.
 const CODES: [&str; 17] = [
     "OK",
     "Canceled",
@@ -77,8 +77,8 @@ fn code_str(n: u32) -> &'static str {
     CODES.get(n as usize).copied().unwrap_or("Unknown")
 }
 
-/// The unary methods the server carries - the only calls the Go
-/// interceptor counted (it installed no stream interceptor).
+/// The unary methods the server carries - the only calls counted, as
+/// function-sdk-go's interceptor installs no stream interceptor.
 fn unary_method(path: &str) -> Option<(&'static str, &'static str)> {
     match path {
         "/apiextensions.fn.proto.v1.FunctionRunnerService/RunFunction" => {
@@ -90,10 +90,10 @@ fn unary_method(path: &str) -> Option<(&'static str, &'static str)> {
 }
 
 /// Pre-creates every series the server can emit at zero, the way
-/// grpc-prometheus's InitializeMetrics did for the Go runtime: a scrape
+/// grpc-prometheus's InitializeMetrics does: a scrape
 /// sees each method of each registered service from the first request on,
-/// streaming methods included (present and forever zero, exactly as under
-/// the Go runtime's unary-only interceptor).
+/// streaming methods included (present and forever zero, as the unary-only
+/// interceptor leaves them).
 pub fn initialize() {
     let methods: [(&str, &str, &str); 5] = [
         ("unary", RUN_FUNCTION_SERVICE, "RunFunction"),
@@ -124,7 +124,7 @@ pub fn initialize() {
 /// One unary call's bookkeeping: started and msg_received on creation,
 /// handled (and msg_sent on OK) exactly once when the status is known. A
 /// reporter dropped before any status - the caller went away mid-call - is
-/// a Canceled, which is what the Go interceptor reported for a canceled
+/// a Canceled, which is what grpc-prometheus reports for a canceled
 /// context.
 struct Reporter {
     service: &'static str,
@@ -179,8 +179,7 @@ fn status_in(map: &http::HeaderMap) -> Option<u32> {
 }
 
 /// The tower layer serve() wraps the whole router in, so the health service
-/// is counted exactly as the Go runtime's server-wide interceptor counted
-/// it, not only the routes this crate owns.
+/// is counted like every other unary call, not only the routes this crate owns.
 #[derive(Clone, Copy, Default)]
 pub struct MetricsLayer;
 
@@ -317,8 +316,8 @@ mod tests {
             unary_method("/grpc.health.v1.Health/Check"),
             Some((HEALTH_SERVICE, "Check"))
         );
-        // Streaming methods stay uncounted, as under the Go runtime's
-        // unary-only interceptor.
+        // Streaming methods stay uncounted, as under a unary-only
+        // interceptor.
         assert_eq!(unary_method("/grpc.health.v1.Health/Watch"), None);
         assert_eq!(
             unary_method("/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"),

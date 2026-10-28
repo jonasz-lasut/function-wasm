@@ -13,7 +13,7 @@ These flags set the ceilings that a step's `limits` can't exceed ([Input referen
 | `--module-dir` | `MODULE_DIR` | unset | yes | directory served for `path` sources; unset refuses them |
 | `--max-module-size` | | `128 MB` | yes | largest module accepted |
 | `--module-timeout` | | `30s` | yes | wall-clock budget of one run, and the ceiling for `limits.timeout` |
-| `--module-memory-limit` | | `512 MB` | yes | memory one run may use, applied to each linear memory and each table (a host pointer per element) the guest grows; also the ceiling for `limits.memory` |
+| `--module-memory-limit` | | `512 MB` | yes | memory one run may use: its linear memories and tables (a host pointer per element) together, the initial memory included; also the ceiling for `limits.memory` |
 | `--module-stack-limit` | `MODULE_STACK_LIMIT` | `512 KB` | no | call stack one run may use. Past it the run fails with `trap: call stack exhausted`. No Input field narrows it |
 | `--ttl` | | `60s` | no | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
@@ -79,7 +79,7 @@ The SDK's flags `--insecure`, `--debug`, `--tls-certs-dir`, `--address` and `--m
 
 ## Cache storage
 
-The caches live under `/tmp/function-wasm-cache`, which isn't configurable. Mount an `emptyDir` there if the pod's root filesystem is read-only, or a volume to keep the caches across pod restarts:
+The caches live under `/tmp/function-wasm-cache`, which isn't configurable. Mount an `emptyDir` there if the pod's root filesystem is read-only, or a volume to keep the fetched modules and manifests across pod restarts:
 
 ```yaml
 spec:
@@ -98,7 +98,7 @@ spec:
               claimName: function-wasm-cache
 ```
 
-Only the runtime may write the directory. The compiled tier is native code the runtime loads without checking it again, and a writer there runs code in the runtime ([trust model](trust-model.md#the-cache-directory)): give the volume to this Function's pods alone, never a host path or a volume another workload can write. Those pods may share it. Entries are content-addressed and written atomically, and the runtime removes artifacts compiled by another Wasmtime version only after a day without writes, so during a rolling upgrade the old and new pods don't rebuild each other's artifacts.
+A volume keeps the fetched modules and the manifests, which the runtime verifies against their digest on every read. It doesn't keep the compiled code. Each process signs the artifacts it writes under a key drawn at startup and refuses every other ([trust model](trust-model.md#the-cache-directory)). A restarted pod compiles its modules again. Pods must not share a volume, because each would refuse and overwrite the other's artifacts. Give each pod its own volume, with the runtime as its only writer. The runtime removes the compiled directories of other Wasmtime versions after a day without writes.
 
 ## Opening the sandbox
 

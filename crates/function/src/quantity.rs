@@ -1,7 +1,7 @@
 //! A Kubernetes resource.Quantity subset: enough to parse the Input's
 //! limits.memory ("128Mi", "1Gi", plain bytes) and to print a byte count the
-//! way Go's BinarySI canonical form does, so the refusal strings match the
-//! Go runtime's.
+//! way Kubernetes' BinarySI canonical form does, so the refusal strings
+//! read as Kubernetes quantities do.
 
 const BINARY: &[(&str, u32)] = &[
     ("Ki", 10),
@@ -22,7 +22,7 @@ const DECIMAL: &[(&str, u64)] = &[
 
 /// Parses a quantity into bytes, rounding a fractional value up like
 /// Quantity.Value does. Negative values parse (to be refused as non-positive
-/// by the caller, with the same message the Go runtime uses).
+/// by the caller, with the message the conformance goldens pin).
 pub fn parse(s: &str) -> Result<i128, String> {
     let err = || format!("cannot parse quantity {s:?}");
     let (negative, rest) = match s.strip_prefix('-') {
@@ -70,7 +70,7 @@ pub fn parse(s: &str) -> Result<i128, String> {
     Ok(if negative { -value } else { value })
 }
 
-/// Formats bytes as Go's BinarySI canonical form: the largest binary suffix
+/// Formats bytes as Kubernetes' BinarySI canonical form: the largest binary suffix
 /// that divides evenly, else plain bytes.
 pub fn format_binary_si(bytes: u64) -> String {
     for (suffix, shift) in BINARY.iter().rev() {

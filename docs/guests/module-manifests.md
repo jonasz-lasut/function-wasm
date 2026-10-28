@@ -45,6 +45,13 @@ The fields:
   are egress rules (`egress.http`), `filesystem.privateTmp`, `env` credential
   bindings and the step `credentials` the module reads whole from its
   request.
+The runtime reads the manifest with a YAML 1.2 parser written in Rust.
+Unquoted `yes`, `no`, `on` and `off` are booleans, an unquoted `0755` or
+`1_000` parses as `755` and `1000`, a merge key (`<<: *anchor`) merges, and
+`.inf` and `.nan` are refused. Quote a value
+that must stay a string. `function validate` reads a Composition file the
+same way.
+
 - `config.schema`: a JSON Schema (draft 2020-12) for the Input's `config`.
   It must be self-contained: a `$ref` to a URL or a file is refused at load,
   and `pattern` takes the `regex` crate's syntax, which has no look-around

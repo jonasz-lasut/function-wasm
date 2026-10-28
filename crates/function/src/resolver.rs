@@ -1,9 +1,8 @@
-//! Module sources resolved to content digests - the Rust port of
-//! `internal/module`'s resolvePath and resolveHTTP: a Path source is a file
+//! Module sources resolved to content digests: a Path source is a file
 //! under --module-dir, an HTTP source a URL whose download is verified
 //! against the Input's stated digest (digests are stated, never
 //! discovered), with fetched blobs kept in the content-addressed store.
-//! Refusal strings match the Go runtime.
+//! Refusal strings are pinned by the conformance goldens.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -429,7 +428,7 @@ impl Resolver {
                 "{field} {rel:?} must be relative to the module directory"
             ));
         }
-        // A lexical check like Go's filepath.Rel: normal components only.
+        // A lexical check: normal components only.
         let escapes = {
             let mut depth: i64 = 0;
             let mut escaped = false;
@@ -510,13 +509,13 @@ impl Resolver {
 /// carries. JSON is valid YAML, so an already-JSON manifest passes through.
 fn manifest_json(raw: &[u8]) -> Result<Vec<u8>, String> {
     let value: serde_json::Value =
-        serde_yaml::from_slice(raw).map_err(|e| format!("manifest is not valid YAML: {e}"))?;
+        serde_saphyr::from_slice(raw).map_err(|e| format!("manifest is not valid YAML: {e}"))?;
     serde_json::to_vec(&value).map_err(|e| format!("manifest is not valid YAML: {e}"))
 }
 
-/// Renders an I/O failure the way Go's os package wraps it ("open <path>:
-/// no such file or directory"): these strings reach refusal messages the Go
-/// runtime pins, so the Rust runtime prints the same words.
+/// Renders an I/O failure as "<op> <path>: <detail>" ("open <path>: no such
+/// file or directory", "permission denied"): these strings reach refusal
+/// messages the conformance goldens pin.
 pub(crate) fn go_io_error(op: &str, path: &Path, e: &std::io::Error) -> String {
     let detail = match e.kind() {
         std::io::ErrorKind::NotFound => "no such file or directory".to_string(),

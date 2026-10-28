@@ -19,7 +19,11 @@ cedar-policy = "4"
 clap = { version = "4", features = ["derive", "env"] }
 function-sdk-rust = "0.4.0"
 function-wasm-engine = { path = "../engine" }
+# getrandom draws the compiled store's per-process key, hmac signs each
+# artifact under it (store.rs).
+getrandom = "0.3"
 hex = "0.4"
+hmac = "0.13"
 http = "1"
 http-body = "1"
 # default-features off: the crate's defaults resolve a $ref over http and the
@@ -37,7 +41,10 @@ serde_json.workspace = true
 pem = "4"
 # Signs Sigstore bundles in cosign::testutil (feature testutil) only.
 p256 = { version = "0.14", features = ["ecdsa", "pem"], optional = true }
-serde_yaml = "0.9"
+# serde-saphyr: YAML in pure Rust (the saphyr parser), maintained; its scalar
+# resolution and error wording differ from libyaml's, which the manifest page
+# and the Unparsable golden state.
+serde-saphyr = "2"
 sha2 = "0.11"
 tar = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

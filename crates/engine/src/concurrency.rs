@@ -1,5 +1,4 @@
-//! Run governance - the Rust port of the Go engine's fair.go, mempool.go
-//! and concurrency.go: the global run bound served round-robin by module
+//! Run governance: the global run bound served round-robin by module
 //! key, the aggregate run-memory pool, and the per-step slot bound. Waits
 //! are blocking and bounded by the run's own deadline.
 
@@ -290,8 +289,7 @@ impl StepSlots {
     }
 }
 
-/// Bytes with binary-SI suffixes, as the Go engine's formatBytes renders
-/// them in wait refusals.
+/// Bytes with binary-SI suffixes, as wait refusals render them.
 pub(crate) fn format_bytes(b: u64) -> String {
     if b >= 1 << 30 && b.is_multiple_of(1 << 30) {
         return format!("{}Gi", b >> 30);

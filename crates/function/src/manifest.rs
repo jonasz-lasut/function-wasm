@@ -1,10 +1,10 @@
-//! The module manifest - the Rust port of `internal/manifest`: what a module
+//! The module manifest: what a module
 //! declares about itself (the capabilities it cannot run without, the JSON
 //! Schema of its config, its ABI and the oldest runtime it works on). A
 //! manifest is a request, never a grant: it can make a run fail earlier and
-//! say why, it cannot make a run possible. Refusal strings match the Go
-//! runtime except where a message embeds a library's own wording (the JSON
-//! decoder, the schema validator), noted in rust/README.md.
+//! say why, it cannot make a run possible. Refusal strings are pinned by the
+//! conformance goldens, except where a message embeds a library's own wording
+//! (the JSON decoder, the schema validator).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -142,8 +142,7 @@ pub struct Grants {
 
 /// The runtime's own release version, stamped at build time
 /// (FUNCTION_WASM_VERSION, set by the release pipeline); empty for a
-/// development build, which passes every minRuntime rule - the Go runtime's
-/// debug.ReadBuildInfo behaviour.
+/// development build, which passes every minRuntime rule.
 /// The manifest file a guest project carries.
 pub const FILE_NAME: &str = "wasmfn.yaml";
 
@@ -163,7 +162,7 @@ impl Manifest {
     pub fn load(path: &std::path::Path) -> Result<Manifest, String> {
         let raw =
             std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let value: serde_json::Value = serde_yaml::from_slice(&raw)
+        let value: serde_json::Value = serde_saphyr::from_slice(&raw)
             .map_err(|e| format!("{} is not valid YAML: {e}", path.display()))?;
         if let Some(map) = value.as_object() {
             const KNOWN: [&str; 9] = [

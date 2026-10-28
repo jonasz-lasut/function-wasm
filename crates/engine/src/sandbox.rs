@@ -61,7 +61,7 @@ pub(crate) fn configure(
         wasi.preopened_dir(dir, PRIVATE_TMP_GUEST_PATH, FsPerms::ReadWrite)
             .map_err(|e| Error(format!("cannot pre-open the private /tmp: {e}")))?;
     }
-    // A BTreeMap iterates sorted by key, like the Go engine's sorted SetEnv.
+    // A BTreeMap iterates sorted by key, so the guest sees a stable order.
     for (k, v) in &opts.env {
         wasi.env(k, v);
     }

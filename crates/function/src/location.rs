@@ -1,8 +1,8 @@
 //! Normalized module locations - what the compositionPolicy's pullModule
-//! permits are matched against. The Rust port of `internal/module`'s
-//! ociLocation and httpLocation, with go-containerregistry's reference
-//! normalization (default registry, docker.io aliasing, the library/
-//! prefix) reproduced so a policy means the same on both runtimes.
+//! permits are matched against. OCI references follow the reference
+//! normalization of the common container tooling (default registry,
+//! docker.io aliasing, the library/ prefix), so a policy names a repository
+//! the way `docker pull` and `crane` do.
 
 /// A parsed, normalized OCI digest reference.
 #[derive(Debug, Clone)]
@@ -24,8 +24,8 @@ impl OciReference {
 }
 
 /// Parses an OCI reference pinned to its manifest digest, normalized the
-/// way go-containerregistry normalizes it (default registry, docker.io
-/// aliasing, the library/ prefix).
+/// way container tooling does (default registry, docker.io aliasing, the
+/// library/ prefix).
 pub fn parse_oci_reference(r: &str) -> Result<OciReference, String> {
     let location = oci_location(r)?;
     let (registry, repository) = location.split_once('/').expect("a location has a registry");
@@ -73,7 +73,7 @@ impl AnyReference {
 }
 
 /// Parses any OCI reference - name[:tag][@sha256:...] - normalized the way
-/// go-containerregistry normalizes it.
+/// container tooling does.
 pub fn parse_any_reference(r: &str) -> Result<AnyReference, String> {
     let bad = || format!("cannot parse reference {r:?}");
     let (name, digest) = match r.rsplit_once('@') {
@@ -123,7 +123,7 @@ pub fn oci_location(r: &str) -> Result<String, String> {
     }
     // The registry is the first path component when it can only be one (it
     // carries a "." or ":", or is "localhost"); otherwise Docker Hub is
-    // implied, as go-containerregistry defaults.
+    // implied, as container tooling defaults.
     let (registry, rest) = match name.split_once('/') {
         Some((first, rest))
             if first.contains('.') || first.contains(':') || first == "localhost" =>
@@ -227,7 +227,7 @@ pub fn http_location(field: &str, raw: &str) -> Result<String, String> {
     Ok(format!("{scheme}://{}{path}", authority.to_lowercase()))
 }
 
-/// Whether p is its own cleaned form (Go's path.Clean, a trailing slash
+/// Whether p is its own cleaned form (see path_clean, a trailing slash
 /// preserved) - the same normalization the egress path rules require.
 pub fn normalized_path(p: &str) -> bool {
     if p.is_empty() {
@@ -240,7 +240,7 @@ pub fn normalized_path(p: &str) -> bool {
     cleaned == p
 }
 
-/// Go's path.Clean: a purely lexical normalization - duplicate slashes and
+/// A purely lexical path normalization - duplicate slashes and
 /// "." elided, ".." resolved against the preceding element (or kept at the
 /// start of a relative path, or dropped at a rooted one's root).
 fn path_clean(p: &str) -> String {

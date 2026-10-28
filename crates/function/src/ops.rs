@@ -1,5 +1,4 @@
-//! Operational endpoints and warm-up - the Rust port of the Go runtime's
-//! health listener and cmd/function/warm.go. The plain-HTTP health server
+//! Operational endpoints and warm-up. The plain-HTTP health server
 //! answers /livez always and /readyz once the caches are open and
 //! --warm-modules are loaded (kubelet's gRPC probe cannot speak the
 //! function port's mTLS); warm-up loads every entry through the request
@@ -29,8 +28,8 @@ impl Readiness {
     }
 }
 
-/// Serves metrics on address at /metrics - the port function-sdk-go serves
-/// on :8080 for the Go runtime. OpenMetrics 1.0 is the main exposition
+/// Serves metrics on address at /metrics - on :8080 by default, the port
+/// function-sdk-go serves them on. OpenMetrics 1.0 is the main exposition
 /// format, served unless the scraper's Accept header asks for the classic
 /// Prometheus text format and does not accept OpenMetrics; the two carry
 /// identical series either way.
@@ -93,7 +92,7 @@ fn wants_classic_text(request_head: &str) -> bool {
 }
 
 pub async fn serve_health(address: &str, readiness: Readiness) -> Result<(), std::io::Error> {
-    // The Go flag's ":8081" shorthand means every interface.
+    // The ":8081" shorthand means every interface.
     let address = if address.starts_with(':') {
         format!("0.0.0.0{address}")
     } else {

@@ -1,11 +1,13 @@
-//! Go-style durations. The runtime's refusal strings quote durations the way
-//! Go's time.Duration prints them ("30s", "1m30s", "1h0m0s", "500ms"), and
-//! flags and the Input's limits.timeout are written that way ("5s", "1m30s"),
-//! so the Rust runtime formats and parses the same syntax.
+//! Durations in the compact unit syntax. The runtime's refusal strings quote
+//! durations as "30s", "1m30s", "1h0m0s", "500ms" (the largest unit first,
+//! zero-valued inner units kept), and flags and the Input's limits.timeout
+//! are written that way ("5s", "1m30s"), so the runtime formats and parses
+//! one syntax.
 
 use std::time::Duration;
 
-/// Formats d as Go's time.Duration.String does.
+/// Formats d as "1h0m0s", "1m30s", "500ms": the largest unit first,
+/// zero-valued inner units kept, as the flags and the limits print them.
 pub fn format(d: Duration) -> String {
     let ns = d.as_nanos();
     if ns == 0 {
@@ -46,7 +48,7 @@ fn frac(ns: u128, unit: u128) -> String {
     format!("{whole}.{f}")
 }
 
-/// Parses Go's duration syntax: a sequence of decimal numbers with unit
+/// Parses the duration syntax: a sequence of decimal numbers with unit
 /// suffixes ("300ms", "1.5h", "2h45m"); units are ns, us (µs), ms, s, m, h.
 pub fn parse(s: &str) -> Result<Duration, String> {
     let err = || format!("invalid duration {s:?}");

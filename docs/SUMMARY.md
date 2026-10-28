@@ -41,7 +41,7 @@
 - [Use-case examples](one-pager-use-case-examples.md)
 - [Design records](project/design-records.md)
   - [ABI v2 and the Rust host (Implemented, revision 0.7)](one-pager-abi-v2.md)
-  - [Compiled-artifact cache key (Draft)](one-pager-cache-key.md)
+  - [Compiled-artifact cache key (Implemented, revision 1.0)](one-pager-cache-key.md)
   - [Module and compiled artifacts cache (Implemented, revision 2.3)](one-pager-cache.md)
   - [Module manifest (Implemented, revision 1.4)](one-pager-module-manifest.md)
   - [Module source schema (Implemented, revision 2.3)](one-pager-module-source-schema.md)

@@ -1,6 +1,5 @@
-//! The OCI module source - the Rust port of `internal/module`'s oci.go and
-//! auth.go over a hand-rolled distribution client (the Rust ecosystem has
-//! no go-containerregistry equal): the reference pins the manifest, the
+//! The OCI module source over a hand-rolled distribution client (the Rust
+//! ecosystem has no equal of a full container-registry library): the reference pins the manifest, the
 //! manifest pins its layer, and the layer is the module. Resolution touches
 //! no registry; the manifest is fetched inside fetch and verified against
 //! the pinned digest, layers are verified against theirs through the blob
@@ -95,7 +94,7 @@ impl RegistryClient {
     pub fn new(reference: &OciReference, auth: Option<Auth>) -> RegistryClient {
         // Docker Hub's API host differs from its policy-location name, and a
         // local registry (tests, kind clusters) speaks plain HTTP - the same
-        // carve-outs go-containerregistry makes.
+        // carve-outs container tooling makes.
         let host = if reference.registry == "index.docker.io" {
             "registry-1.docker.io"
         } else {

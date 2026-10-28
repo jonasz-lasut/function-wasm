@@ -54,7 +54,7 @@ pub const DEFAULT_MEMORY_LIMIT: u64 = 512 << 20;
 /// wasmtime's own default wasm stack ceiling, kept as ours.
 pub const DEFAULT_STACK_LIMIT: u64 = 512 << 10;
 
-/// An engine failure, formatted exactly as the Go runtime formats it: the
+/// An engine failure, whose message wording is pinned: the
 /// message is the contract (it ends up in an XR condition), not a type.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -159,14 +159,14 @@ impl Drop for PoolHold {
 }
 
 /// The per-run memory limiter: enforces the run's ceiling (limits.memory or
-/// the engine's memory_limit) per growable region - each linear memory and
-/// each table, whose elements cost a host pointer apiece - and reserves
-/// every growth - the initial memory included, since a component reserves
-/// nothing before it is instantiated - from the shared pool incrementally,
-/// so a run's pool footprint is what its guest actually claimed, not the
-/// worst-case ceiling. A growth the pool cannot serve before the run's
-/// deadline is denied: the guest sees memory.grow or table.grow fail,
-/// exactly as it does at the ceiling.
+/// the engine's memory_limit) over the sum of the run's growable regions -
+/// every linear memory and every table, whose elements cost a host pointer
+/// apiece - and reserves every growth - the initial memory included, since
+/// a component reserves nothing before it is instantiated - from the
+/// shared pool incrementally, so a run's pool footprint is what its guest
+/// actually claimed, not the worst-case ceiling. A growth the pool cannot
+/// serve before the run's deadline is denied: the guest sees memory.grow or
+/// table.grow fail, exactly as it does at the ceiling.
 pub(crate) struct RunLimiter {
     limit: usize,
     hold: Option<PoolHold>,
@@ -186,14 +186,16 @@ impl RunLimiter {
         }
     }
 
-    /// Charges a growth of `delta` bytes to a region that would then hold
-    /// `desired` bytes: denied past the ceiling, counted under `limit`, and
-    /// denied when the pool cannot serve the delta before the run's
-    /// deadline, counted under `pool`; `region` names the region in the log
-    /// line. Memories and tables go through here alike, so the pool sees
-    /// their sum.
-    fn charge(&mut self, delta: u64, desired: usize, region: &str) -> bool {
-        if desired > self.limit {
+    /// Charges a growth of `delta` bytes: denied when the run's regions
+    /// would then hold more than the ceiling together, counted under
+    /// `limit`, and denied when the pool cannot serve the delta before the
+    /// run's deadline, counted under `pool`; `region` names the region in
+    /// the log line. Memories and tables go through here alike, so the
+    /// ceiling and the pool both see their sum - which is what
+    /// --module-memory-limit's row promises ("memory one run may use"),
+    /// where a per-region check let a run hold the ceiling once per region.
+    fn charge(&mut self, delta: u64, region: &str) -> bool {
+        if self.charged + delta > self.limit as u64 {
             metrics::MEMORY_DENIALS.with_label_values(&["limit"]).inc();
             return false;
         }
@@ -220,7 +222,7 @@ impl wasmtime::ResourceLimiter for RunLimiter {
         desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        Ok(self.charge((desired - current) as u64, desired, "memory"))
+        Ok(self.charge((desired - current) as u64, "memory"))
     }
 
     fn table_growing(
@@ -234,7 +236,7 @@ impl wasmtime::ResourceLimiter for RunLimiter {
         // charge here a guest's table.grow loop allocated host memory the
         // ceiling and the pool never saw (the 1.0 audit's F-1).
         let elem = std::mem::size_of::<usize>();
-        Ok(self.charge(((desired - current) * elem) as u64, desired * elem, "table"))
+        Ok(self.charge(((desired - current) * elem) as u64, "table"))
     }
 }
 
@@ -395,8 +397,8 @@ impl Engine {
         let stop = Arc::new(AtomicBool::new(false));
         // The epoch only has to advance while a run is in flight; a deadline
         // is relative to the epoch at the moment it is set, so ticks between
-        // runs never count against one. (The Go engine parks the ticker when
-        // idle; a skipped increment every 10ms buys the same and stays simple.)
+        // runs never count against one. (Parking the ticker when idle would
+        // save nothing worth the complexity: an idle tick is a cheap increment.)
         let ticker = {
             let engine = inner.clone();
             let active = Arc::clone(&active);
@@ -538,7 +540,7 @@ impl Engine {
         self.pre(c)
     }
 
-    /// Only the binary format is accepted, as in the Go runtime: a module is
+    /// Only the binary format is accepted: a module is
     /// what a toolchain produced, never text. A wasmtime compiled artifact
     /// (what serialize writes, a .cwasm) is named for what it is rather than
     /// failing as malformed wasm: artifacts are host- and version-specific
@@ -555,9 +557,13 @@ impl Engine {
             return Err(Error(CORE_MODULE_REFUSAL.to_string()));
         }
         wasmtime::component::Component::from_binary(&self.inner, wasm).map_err(|e| {
+            // The alternate form joins the cause chain on one line, so a
+            // module that uses a refused proposal says which (threads
+            // support is not enabled) rather than only that it failed to
+            // parse; first_line still drops wasmtime's multi-line detail.
             Error(format!(
                 "cannot compile module: {}",
-                first_line(&e.to_string())
+                first_line(&format!("{e:#}"))
             ))
         })
     }
@@ -617,8 +623,8 @@ impl Drop for RunningGuard<'_> {
 
 /// Identifies the wasmtime release and host that compiled artifacts are only
 /// valid for - the compiled cache is namespaced by it, so a bump changes the
-/// namespace without anyone remembering to. Distinct from the Go runtime's
-/// namespace on purpose: the two engines' artifacts are never assumed
+/// namespace without anyone remembering to. The "rust-" prefix keeps
+/// the namespace its own, so artifacts of another engine are never assumed
 /// interchangeable, even at the same wasmtime version.
 pub fn version() -> String {
     format!(

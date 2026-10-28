@@ -21,7 +21,7 @@ compile's input, `--max-concurrent-compiles` how many run at once (each
 about 1 GB at peak for a large Go module, per Measurements) and
 `--module-compile-timeout` how long one may take. The request's own deadline
 doesn't cut a compile short, so leave `--max-concurrent-compiles` times that
-peak in the pod's memory limit. A volume under `/tmp/function-wasm-cache` that survives restarts turns that compile into a load of the stored artifact. `--warm-modules` moves either ahead of readiness, as [readiness](readiness.md) describes.
+peak in the pod's memory limit. Every process compiles its modules again, with or without a volume. A volume under `/tmp/function-wasm-cache` keeps the fetched modules, and a restart pulls nothing. The compiled code is signed per process ([cache storage](runtime-flags.md#cache-storage)). `--warm-modules` moves the compile ahead of readiness, as [readiness](readiness.md) describes.
 
 ## Disk
 

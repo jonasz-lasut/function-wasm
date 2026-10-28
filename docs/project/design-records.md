@@ -9,7 +9,7 @@ status below is each document's own, at the time of writing.
 | design record | status |
 |---|---|
 | [ABI v2 and the Rust host](../one-pager-abi-v2.md) | Implemented, revision 0.7 |
-| [Compiled-artifact cache key](../one-pager-cache-key.md) | Draft |
+| [Compiled-artifact cache key](../one-pager-cache-key.md) | Implemented, revision 1.0 |
 | [Module and compiled artifacts cache](../one-pager-cache.md) | Implemented, revision 2.3 |
 | [Module manifest](../one-pager-module-manifest.md) | Implemented, revision 1.4 |
 | [Module source schema](../one-pager-module-source-schema.md) | Implemented, revision 2.3 |

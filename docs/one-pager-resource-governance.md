@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.6 (a cold load bounded by `--module-compile-timeout`, the 1.0 audit's F-4; table growth charged to the ceiling and the pool like memory growth, the 1.0 audit's F-1; rewritten in the present tense over the Rust workspace; merges in the governance-perf record, revision 0.2: the egress rate limit and the fair run slots are part of the model, and its dropped fuel phase is under Alternatives)
+* Status: implemented, revision 1.7 (the per-run ceiling is checked over every region together, not per region; a cold load bounded by `--module-compile-timeout`, the 1.0 audit's F-4; table growth charged to the ceiling and the pool like memory growth, the 1.0 audit's F-1; rewritten in the present tense over the Rust workspace; merges in the governance-perf record, revision 0.2: the egress rate limit and the fair run slots are part of the model, and its dropped fuel phase is under Alternatives)
 
 One runtime serves many Compositions, many teams and many modules. This
 document is the model of what a module may consume, what bounds the runtime as
@@ -36,7 +36,7 @@ for memory, restart with an empty cache and begin again.
 | dimension | bound | flag or Input field | default | at the bound |
 |---|---|---|---|---|
 | one run, wall clock | epoch deadline, or the request's gRPC deadline when that's sooner | `--module-timeout`; `limits.timeout` narrows it | 30 s | the run is interrupted and the fatal result states the module and the budget |
-| one run, guest memory | Wasmtime store limiter on each linear memory and each table, a host pointer per element | `--module-memory-limit`; `limits.memory` narrows it | 512 MB | `memory.grow` or `table.grow` fails and the guest decides; counted in `memory_denials_total{reason="limit"}` |
+| one run, guest memory | Wasmtime store limiter over the run's linear memories and tables together, a host pointer per table element | `--module-memory-limit`; `limits.memory` narrows it | 512 MB | `memory.grow` or `table.grow` fails and the guest decides; counted in `memory_denials_total{reason="limit"}` |
 | one run, call stack | Wasmtime's stack ceiling, engine-wide | `--module-stack-limit` | 512 KB | the guest traps: a fatal result |
 | resident compiled modules | LRU over the memory tier, on top of its 10-minute idle TTL | `--max-cached-modules` | 0 (TTL only) | the least recently used module is dropped |
 | the memory tier itself | off maps the artifact per request and releases it | `--enable-memory-cache` | true | nothing stays resident |
