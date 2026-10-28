@@ -9,8 +9,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-/// One request a guest makes. The base64 body travels as the string it
-/// arrives as; whoever performs the request decodes it.
+/// One request a guest makes.
 #[derive(Debug, Default)]
 pub struct Request {
     /// Method of the request; empty means GET.
@@ -20,8 +19,8 @@ pub struct Request {
     /// Headers to send. Host, Content-Length and hop-by-hop headers are the
     /// host's to set and are dropped.
     pub headers: BTreeMap<String, Vec<String>>,
-    /// Body bytes, base64.
-    pub body: String,
+    /// Body bytes.
+    pub body: Vec<u8>,
 }
 
 /// The answer the guest gets. A request that was not performed - refused by
@@ -32,8 +31,8 @@ pub struct Request {
 pub struct Response {
     pub status: i32,
     pub headers: BTreeMap<String, Vec<String>>,
-    /// Body bytes, base64.
-    pub body: String,
+    /// Body bytes.
+    pub body: Vec<u8>,
     pub error: String,
 }
 

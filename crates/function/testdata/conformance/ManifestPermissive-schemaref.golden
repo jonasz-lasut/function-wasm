@@ -1,0 +1,6 @@
+exit 1
+--- stdout
+<DIR>/schemaref.yaml: Composition/schemaref pipeline[0] schemaref: refused: module module file fn.wasm has an invalid manifest: config.schema: Resource 'http://127.0.0.1:1/schema.json' is not present in a registry and retrieving it failed: $ref http://127.0.0.1:1/schema.json is external; config.schema must be self-contained
+  module: sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, 255 B, ABI v2
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+--- stderr

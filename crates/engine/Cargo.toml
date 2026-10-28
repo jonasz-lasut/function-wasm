@@ -8,7 +8,6 @@ description = "The wasmtime engine of function-wasm: compiles and runs guest com
 publish = false
 
 [dependencies]
-base64 = "0.23"
 bytes = "1"
 http = "1"
 http-body-util = "0.1"
@@ -18,7 +17,35 @@ serde_json.workspace = true
 tempfile = "3"
 thiserror = "2"
 tracing.workspace = true
-wasmtime = { version = "50.0.0", features = ["call-hook"] }
+# wasmtime's default features less cache (the runtime keeps its own
+# compiled-artifact cache and never sets Config::cache, and the feature pulls
+# zstd into the binary), threads and the gc set (the proposals the engine
+# refuses, compiled out where the crate lets them be; see the Config in
+# lib.rs). A wasmtime bump that adds a default feature is checked by hand
+# against this list.
+wasmtime = { version = "50.0.0", default-features = false, features = [
+    "addr2line",
+    "anyhow",
+    "async",
+    "backtrace",
+    "call-hook",
+    "compile-time-builtins",
+    "component-model",
+    "component-model-async",
+    "coredump",
+    "cranelift",
+    "debug",
+    "debug-builtins",
+    "demangle",
+    "parallel-compilation",
+    "pooling-allocator",
+    "profiling",
+    "runtime",
+    "stack-switching",
+    "std",
+    "wat",
+    "wit-parser",
+] }
 # p1 stays off: the runtime serves components only (WASI 0.2 and 0.3), so
 # the preview1 host and its wiggle dependency are not built.
 wasmtime-wasi = { version = "50.0.0", default-features = false, features = ["p2", "p3"] }

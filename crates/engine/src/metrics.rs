@@ -31,6 +31,8 @@ pub const EVENT_MISS: &str = "miss";
 /// A compiled-disk lookup that found an artifact wasmtime refused (another
 /// version, a corrupt file) - a miss that cost a read.
 pub const EVENT_STALE: &str = "stale";
+/// A cold load cut short by --module-compile-timeout.
+pub const EVENT_TIMEOUT: &str = "timeout";
 
 pub const OUTCOME_OK: &str = "ok";
 pub const OUTCOME_ERROR: &str = "error";
@@ -205,7 +207,7 @@ pub static RUNS_IN_FLIGHT: LazyLock<PlainGauge> = LazyLock::new(|| {
 pub static CACHE_EVENTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
         "function_wasm_module_cache_events",
-        "Cache lookups by cache (compiled = in-memory modules, compiled-disk = wasmtime artifacts on disk, blob = fetched modules on disk) and event (hit, miss, stale).",
+        "Cache lookups by cache (compiled = in-memory modules, compiled-disk = wasmtime artifacts on disk, blob = fetched modules on disk) and event (hit, miss, stale, timeout: a cold load cut short by --module-compile-timeout).",
         &["cache", "event"],
     )
 });
@@ -223,7 +225,7 @@ pub static HTTP_REQUESTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
 pub static MEMORY_DENIALS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
         "function_wasm_module_memory_denials",
-        "Guest memory growths denied, by reason (limit = the run's memory ceiling, pool = --max-total-run-memory exhausted before the run's deadline). The guest sees memory.grow fail.",
+        "Guest memory and table growths denied, by reason (limit = the run's memory ceiling, pool = --max-total-run-memory exhausted before the run's deadline). The guest sees memory.grow or table.grow fail.",
         &["reason"],
     )
 });

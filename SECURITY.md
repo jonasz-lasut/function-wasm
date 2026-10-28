@@ -22,10 +22,12 @@ patched on request.
 The `function` binary, its image, the workspace `Cargo.lock` it's built
 from, and the Crossplane package that embeds the image: the code that runs
 in your cluster. The maintainers fix a vulnerability here as a patch release
-of the latest release line. The `grype-scan.yml` workflow scans the image of
-the latest release every week and reports what it finds to GitHub code
-scanning, and Renovate opens a pull request when an advisory affects one of
-the workspace's crates.
+of the latest release line. Every pull request runs `cargo deny` over the
+workspace's dependency graph (`deny.toml`), so a published advisory against
+a pinned crate fails the merge, and the same check runs every week against
+`main`. The `grype-scan.yml` workflow scans the image of the latest release
+every week and reports what it finds to GitHub code scanning, and Renovate
+opens a pull request when an advisory affects one of the workspace's crates.
 
 ## Scaffolded projects
 

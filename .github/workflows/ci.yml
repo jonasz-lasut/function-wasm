@@ -36,6 +36,23 @@ jobs:
           paths_ignore: '["**.md", "**.json", "**.svg"]'
           do_not_skip: '["workflow_dispatch", "schedule", "push"]'
 
+  # cargo-deny over Cargo.lock, with deny.toml as the policy: an advisory
+  # against a pinned crate fails the pull request instead of waiting for
+  # Renovate's alert or the weekly image scan (grype-scan.yml runs the same
+  # advisories check weekly against main).
+  deny:
+    runs-on: ubuntu-26.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check Advisories, Bans, Licenses and Sources
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories bans licenses sources
+
   lint:
     runs-on: ubuntu-26.04
     needs: detect-noop

@@ -3,7 +3,9 @@
 This page is for operators building dashboards and alerts on the runtime. It
 lists every series served on `--metrics-address` and the formats it speaks.
 The endpoint is `:8080/metrics` by default, and an empty value disables it.
-Probes are on [Readiness and warm-up](readiness.md).
+It's plain HTTP with no authentication: admit it from the scraper's namespace
+only ([the side ports](install.md#the-side-ports)). Probes are on
+[Readiness and warm-up](readiness.md).
 
 | metric | labels | meaning |
 |---|---|---|
@@ -13,10 +15,10 @@ Probes are on [Readiness and warm-up](readiness.md).
 | `function_wasm_module_hostcall_duration_seconds` | | histogram of the time a run spent inside host imports (the `log` import, HTTP egress over `wasi:http`, and WASI); the rest of `run_duration_seconds` is guest compute |
 | `function_wasm_module_compile_duration_seconds` | | histogram of Wasmtime compile time on compiled-cache misses |
 | `function_wasm_module_fetch_duration_seconds` | `source` = `oci`, `http`, `path` | histogram of fetch and verify time, blob-cache hits and served-file reads included |
-| `function_wasm_module_cache_events_total` | `cache` = `compiled` (memory), `compiled-disk`, `blob`; `event` = `hit`, `miss`, `stale` | cache lookups; `stale` is an artifact on disk that Wasmtime refused, and appears for `compiled-disk` only |
+| `function_wasm_module_cache_events_total` | `cache` = `compiled` (memory), `compiled-disk`, `blob`; `event` = `hit`, `miss`, `stale`, `timeout` | cache lookups; `timeout` is a cold load cut short by `--module-compile-timeout`; `stale` is an artifact on disk that Wasmtime refused, and appears for `compiled-disk` only |
 | `function_wasm_module_cache_bytes` | `cache` = `compiled-disk`, `blob` | bytes on disk per store, measured every ten minutes |
 | `function_wasm_module_http_requests_total` | `outcome` = `ok`, `refused`, `budget`, `error` | HTTP requests modules made through the host (`requires.egress.http`) |
-| `function_wasm_module_memory_denials_total` | `reason` = `limit`, `pool` | guest memory growths denied; the guest sees `memory.grow` fail |
+| `function_wasm_module_memory_denials_total` | `reason` = `limit`, `pool` | guest memory and table growths denied; the guest sees `memory.grow` or `table.grow` fail |
 | `function_wasm_trusted_root_refreshes_total` | `outcome` = `updated`, `unchanged`, `error` | refreshes of the Sigstore trusted root |
 | `function_wasm_trusted_root_last_refresh_timestamp_seconds` | | Unix time of the last successful refresh of the trusted root, 0 until the first; `time()` minus this value is the root's age |
 

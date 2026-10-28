@@ -159,18 +159,19 @@ impl Drop for PoolHold {
 }
 
 /// The per-run memory limiter: enforces the run's ceiling (limits.memory or
-/// the engine's memory_limit) per memory, and reserves every growth - the
-/// initial memory included, since a component reserves nothing before it
-/// is instantiated - from the shared pool incrementally, so a run's pool
-/// footprint is what its guest actually claimed, not the worst-case
-/// ceiling. A growth the pool cannot serve before the run's deadline is
-/// denied: the guest sees memory.grow fail, exactly as it does at the
-/// ceiling.
+/// the engine's memory_limit) per growable region - each linear memory and
+/// each table, whose elements cost a host pointer apiece - and reserves
+/// every growth - the initial memory included, since a component reserves
+/// nothing before it is instantiated - from the shared pool incrementally,
+/// so a run's pool footprint is what its guest actually claimed, not the
+/// worst-case ceiling. A growth the pool cannot serve before the run's
+/// deadline is denied: the guest sees memory.grow or table.grow fail,
+/// exactly as it does at the ceiling.
 pub(crate) struct RunLimiter {
     limit: usize,
     hold: Option<PoolHold>,
-    /// Total bytes the store's memories have claimed (the sum of grow
-    /// deltas, initial sizes included).
+    /// Total bytes the store's memories and tables have claimed (the sum of
+    /// grow deltas, initial sizes included).
     charged: u64,
     deadline: Instant,
 }
@@ -184,6 +185,32 @@ impl RunLimiter {
             deadline,
         }
     }
+
+    /// Charges a growth of `delta` bytes to a region that would then hold
+    /// `desired` bytes: denied past the ceiling, counted under `limit`, and
+    /// denied when the pool cannot serve the delta before the run's
+    /// deadline, counted under `pool`; `region` names the region in the log
+    /// line. Memories and tables go through here alike, so the pool sees
+    /// their sum.
+    fn charge(&mut self, delta: u64, desired: usize, region: &str) -> bool {
+        if desired > self.limit {
+            metrics::MEMORY_DENIALS.with_label_values(&["limit"]).inc();
+            return false;
+        }
+        self.charged += delta;
+        if let Some(hold) = &mut self.hold
+            && self.charged > hold.n
+        {
+            let need = self.charged - hold.n;
+            if let Err(e) = hold.grow(need, self.deadline) {
+                self.charged -= delta;
+                metrics::MEMORY_DENIALS.with_label_values(&["pool"]).inc();
+                tracing::info!(error = %e, "Denied a {region} growth");
+                return false;
+            }
+        }
+        true
+    }
 }
 
 impl wasmtime::ResourceLimiter for RunLimiter {
@@ -193,35 +220,21 @@ impl wasmtime::ResourceLimiter for RunLimiter {
         desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        if desired > self.limit {
-            metrics::MEMORY_DENIALS.with_label_values(&["limit"]).inc();
-            return Ok(false);
-        }
-        let delta = (desired - current) as u64;
-        self.charged += delta;
-        if let Some(hold) = &mut self.hold
-            && self.charged > hold.n
-        {
-            let need = self.charged - hold.n;
-            if let Err(e) = hold.grow(need, self.deadline) {
-                self.charged -= delta;
-                metrics::MEMORY_DENIALS.with_label_values(&["pool"]).inc();
-                tracing::info!(error = %e, "Denied a memory growth");
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(self.charge((desired - current) as u64, desired, "memory"))
     }
 
     fn table_growing(
         &mut self,
-        _current: usize,
-        _desired: usize,
+        current: usize,
+        desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        // Tables were never bounded (StoreLimits bounded memory_size only);
-        // parity kept.
-        Ok(true)
+        // Wasmtime keeps a host pointer per table element, so a table's
+        // bytes are its element count times the pointer size; without a
+        // charge here a guest's table.grow loop allocated host memory the
+        // ceiling and the pool never saw (the 1.0 audit's F-1).
+        let elem = std::mem::size_of::<usize>();
+        Ok(self.charge(((desired - current) * elem) as u64, desired * elem, "table"))
     }
 }
 
@@ -350,6 +363,22 @@ impl Engine {
         // unwinder produces wasm traps and backtraces without it.
         wc.native_unwind_info(false);
         wc.max_wasm_stack(config.stack_limit as usize);
+        // The proposal set is a one-way door for the 1.x contract: a
+        // proposal refused later refuses guests that compiled before, and
+        // one enabled later is a minor. The engine accepts WebAssembly 2.0
+        // plus extended const (componentize-py's output needs it) and
+        // relaxed SIMD with its deterministic semantics, so a module
+        // computes the same result on every host. Every other WebAssembly
+        // 3.0 proposal is refused at compile: threads and the GC set
+        // (GC, function references, exceptions) are compiled out, the
+        // crate features being off in Cargo.toml, and tail calls,
+        // multi-memory and memory64 are off here. None of the nine guests
+        // the project builds uses any of them (measured with wasm-tools on
+        // 2026-10-28, the 1.0 audit's F-8).
+        wc.relaxed_simd_deterministic(true);
+        wc.wasm_tail_call(false);
+        wc.wasm_multi_memory(false);
+        wc.wasm_memory64(false);
         // Explicit in both directions: the decision is the runtime's --debug,
         // never the WASMTIME_BACKTRACE_DETAILS environment wasmtime would
         // otherwise read.

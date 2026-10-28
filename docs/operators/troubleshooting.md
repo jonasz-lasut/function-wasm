@@ -21,6 +21,7 @@ This page is for the operator of a function-wasm pod and for the module author w
 - **`module.allowEmpty is set but module.from is not`**: `allowEmpty` applies only to a field the composite resource may leave unset. Remove it, or switch the step to `module.from`.
 - **`apiVersion wasm.fn.crossplane.io/v1beta1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: wasm.fn.crossplane.io/v1 (the same fields)`**: a warning from `function validate` and `guestfn build`, and a log line per request. Change the `apiVersion` line.
 - **`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`**, or the same for `limits.timeout` and `--module-timeout`: lower the limit or raise the flag.
+- **`module oci … has an invalid manifest: config.schema: Resource '…' is not present in a registry and retrieving it failed: $ref … is external; config.schema must be self-contained`**: the module's `config.schema` references a URL or a file. The runtime never fetches a reference. The author inlines the referenced schema. A `#/$defs/…` reference inside the schema is fine.
 - **`module oci … config does not match the module's schema: /greeting: got number, want string`**: the Input's `config` fails the module's `config.schema`.
 
 ## Policy grants
@@ -67,6 +68,7 @@ Egress is explained on the [HTTP egress](http-egress.md) page.
 
 - **`cannot create cache directory /tmp/function-wasm-cache: …`** at startup: the pod's filesystem is read-only there. Mount an `emptyDir` at that path through a `DeploymentRuntimeConfig`.
 - **`module … failed: waiting for a run slot: deadline exceeded`**, or the step-slot and run-memory forms: the request's deadline passed while it waited for a bound, so nothing ran. Raise the bound, shorten runs, or watch `function_wasm_module_runs_in_flight` (see [Metrics](metrics.md)).
+- **`cannot load module … : compile exceeded --module-compile-timeout 5m0s`**: a cold load (fetch and compile) ran past the bound. The compile finishes on its own and stores its artifact, so the next request for that digest is served; a module that hits the bound every time is too large to compile under it, so raise the bound or lower `--max-module-size`.
 - **The first request is slow, later ones are fast**: expected, because the compile happens once per module digest. The compiled artifact under `/tmp/function-wasm-cache/compiled` also speeds up the next process when that path is on a volume. See the cache section of [Runtime flags](runtime-flags.md).
 - **`Cannot warm module`** at startup: a `--warm-modules` entry didn't load, and the log line gives the entry and the reason. The pod serves anyway and loads that module on its first request.
 - **The readiness probe fails for a while after start**: the pod is warming `--warm-modules`. See [Readiness](readiness.md).

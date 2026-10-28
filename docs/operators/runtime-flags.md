@@ -13,7 +13,7 @@ These flags set the ceilings that a step's `limits` can't exceed ([Input referen
 | `--module-dir` | `MODULE_DIR` | unset | yes | directory served for `path` sources; unset refuses them |
 | `--max-module-size` | | `128 MB` | yes | largest module accepted |
 | `--module-timeout` | | `30s` | yes | wall-clock budget of one run, and the ceiling for `limits.timeout` |
-| `--module-memory-limit` | | `512 MB` | yes | linear memory one run may use, and the ceiling for `limits.memory` |
+| `--module-memory-limit` | | `512 MB` | yes | memory one run may use, applied to each linear memory and each table (a host pointer per element) the guest grows; also the ceiling for `limits.memory` |
 | `--module-stack-limit` | `MODULE_STACK_LIMIT` | `512 KB` | no | call stack one run may use. Past it the run fails with `trap: call stack exhausted`. No Input field narrows it |
 | `--ttl` | | `60s` | no | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
@@ -24,10 +24,11 @@ By default nothing is bounded: concurrency is the caller's, set by Crossplane's 
 | flag | env | default | `validate` | purpose |
 |---|---|---|---|---|
 | `--max-concurrent-runs` | `MAX_CONCURRENT_RUNS` | `0` (unbounded) | no | module runs executing at once; a request that can't get a slot before its deadline is a fatal result (`waiting for a run slot: deadline exceeded`) and never ran |
-| `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | no | total linear-memory budget in MB across running modules; see below |
+| `--max-total-run-memory` | `MAX_TOTAL_RUN_MEMORY` | `0` (unbounded) | no | total memory budget in MB across running modules, linear memories and tables together; see below |
 | `--max-concurrent-compiles` | `MAX_CONCURRENT_COMPILES` | `1` | no | modules compiled at once; a compile is heavy on CPU and memory, so further first requests wait their turn |
+| `--module-compile-timeout` | `MODULE_COMPILE_TIMEOUT` | `0s` (unbounded) | no | wall-clock bound on a cold load, the fetch and compile of a module that isn't cached yet. Past it the request fails with `cannot load module …: compile exceeded --module-compile-timeout <duration>`; the compile runs to its end, keeps its compile slot until then and stores its artifact for the next request. The syntax of `--module-timeout` |
 
-A component reserves nothing up front. The runtime charges each growth, the initial memory included, to the `--max-total-run-memory` pool as the guest claims it, and a run waits under its deadline while the pool is full. A growth the pool can't serve before the deadline fails inside the guest as a failed `memory.grow`, counted in `function_wasm_module_memory_denials_total`. See [Sizing](sizing.md) for what these bounds cost.
+A component reserves nothing up front. The runtime charges each memory or table growth, the initial memory included, to the `--max-total-run-memory` pool as the guest claims it, and a run waits under its deadline while the pool is full. A growth the pool can't serve before the deadline fails inside the guest as a failed `memory.grow`, counted in `function_wasm_module_memory_denials_total`. See [Sizing](sizing.md) for what these bounds cost.
 
 ## Caches
 
@@ -78,9 +79,26 @@ The SDK's flags `--insecure`, `--debug`, `--tls-certs-dir`, `--address` and `--m
 
 ## Cache storage
 
-The caches live under `/tmp/function-wasm-cache`, which isn't configurable. Back it with a volume through the `DeploymentRuntimeConfig` to keep the caches across pod restarts, and mount an `emptyDir` there if the pod's root filesystem is read-only.
+The caches live under `/tmp/function-wasm-cache`, which isn't configurable. Mount an `emptyDir` there if the pod's root filesystem is read-only, or a volume to keep the caches across pod restarts:
 
-A volume shared between pods is safe. Entries are content-addressed and written atomically. The runtime removes artifacts compiled by another Wasmtime version only after a day without writes, so during a rolling upgrade the old and new pods don't rebuild each other's artifacts.
+```yaml
+spec:
+  deploymentTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            volumeMounts:
+            - name: cache
+              mountPath: /tmp/function-wasm-cache
+          volumes:
+          - name: cache
+            persistentVolumeClaim:
+              claimName: function-wasm-cache
+```
+
+Only the runtime may write the directory. The compiled tier is native code the runtime loads without checking it again, and a writer there runs code in the runtime ([trust model](trust-model.md#the-cache-directory)): give the volume to this Function's pods alone, never a host path or a volume another workload can write. Those pods may share it. Entries are content-addressed and written atomically, and the runtime removes artifacts compiled by another Wasmtime version only after a day without writes, so during a rolling upgrade the old and new pods don't rebuild each other's artifacts.
 
 ## Opening the sandbox
 

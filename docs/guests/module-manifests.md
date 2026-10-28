@@ -45,8 +45,10 @@ The fields:
   are egress rules (`egress.http`), `filesystem.privateTmp`, `env` credential
   bindings and the step `credentials` the module reads whole from its
   request.
-- `config.schema`: a JSON Schema for the Input's `config`. Non-secret
-  configuration belongs in `config`, not in env.
+- `config.schema`: a JSON Schema (draft 2020-12) for the Input's `config`.
+  It must be self-contained: a `$ref` to a URL or a file is refused at load,
+  and `pattern` takes the `regex` crate's syntax, which has no look-around
+  and no back-references. Non-secret configuration belongs in `config`, not in env.
 - `minRuntime`: the oldest runtime that serves the module.
 - `composes`: what the module writes, advisory
   ([below](#the-composes-declaration)).
@@ -80,11 +82,13 @@ module oci ghcr.io/example/greeter@sha256:… requires egress GET to host "api.e
 ```
 
 A runtime older than the manifest's `minRuntime` and a `config` that doesn't
-match the schema fail the same way:
+match the schema fail the same way, and a schema that reaches outside itself
+is refused when the manifest is read:
 
 ```text
 … requires runtime v0.3.0 or newer, this is v0.2.1
 … config does not match the module's schema: /greeting: got number, want string
+… has an invalid manifest: config.schema: Resource 'http://example.com/schema.json' is not present in a registry and retrieving it failed: $ref http://example.com/schema.json is external; config.schema must be self-contained
 ```
 
 `guestfn push` prints the `requires:` block under the `module:` block. A

@@ -32,6 +32,12 @@ permit ([Cedar policy](cedar-policy.md)):
   Non-secret configuration goes in `config`.
 - HTTP requests through the host ([HTTP egress](http-egress.md)).
 
+What a module writes to the desired state can be fenced per kind with
+`composeResource`. What it reads can't: through the response's
+`requirements` it can ask Crossplane for any resource the Function's RBAC
+permits, as a native function can. Scope that RBAC to what the modules
+should see ([the output fence](cedar-policy.md#the-output-fence)).
+
 ## Modules chosen by an XR author
 
 With `module.from`, the XR author picks the module. Use it only where you
@@ -62,6 +68,32 @@ Without such a permit, the runtime pulls an XR-chosen module anonymously or
 with its own Docker config. Mount a Docker config through a
 `DeploymentRuntimeConfig` and set `DOCKER_CONFIG`. Its credentials apply
 only to their registry host.
+
+The credential protects the pull, never the cache. The runtime caches a
+module's bytes by content digest and serves them, without a fetch, to any
+Composition on the runtime that states the digest, from an `OCI`, `HTTP` or
+`Path` source alike. A private module remains private only while no
+Composition another tenant can read quotes its digest. The runtime checks
+the credential and the signature at the first load of a digest in a process,
+for the module's bytes and its manifest alike, and a warm request doesn't
+contact the registry. A credential withdrawn later stops a cached module at
+its next cold load: a restart, an idle eviction past the ten-minute TTL with the
+disk entry swept, or a key rotation under `requireSignature`. To stop a
+module now, forbid it: the `pullModule` fence for a `module.from` source, or
+`requireSignature` on its repository with the signature revoked.
+
+## The cache directory
+
+The caches under `/tmp/function-wasm-cache` belong to the runtime. The
+compiled tier holds Wasmtime artifacts, native code the runtime loads without
+checking it again. Whoever can write that directory runs code in the
+runtime: the checks before a load look at the module a file is named after,
+never at the file. Back it with an `emptyDir` or
+a volume that only this Function's pods mount. A host path, or a volume
+another workload can write, hands that workload the runtime
+([cache storage](runtime-flags.md#cache-storage)).
+A keyed check of the artifacts is proposed in the
+[cache key design record](../one-pager-cache-key.md).
 
 ## Egress
 

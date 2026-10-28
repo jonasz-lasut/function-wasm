@@ -16,7 +16,12 @@ Budget a pod's memory as the sum of three terms:
 
 ## Cold start
 
-A cold start compiles every module once. A volume under `/tmp/function-wasm-cache` that survives restarts turns that compile into a load of the stored artifact. `--warm-modules` moves either ahead of readiness, as [readiness](readiness.md) describes.
+A cold start compiles every module once. `--max-module-size` bounds a
+compile's input, `--max-concurrent-compiles` how many run at once (each
+about 1 GB at peak for a large Go module, per Measurements) and
+`--module-compile-timeout` how long one may take. The request's own deadline
+doesn't cut a compile short, so leave `--max-concurrent-compiles` times that
+peak in the pod's memory limit. A volume under `/tmp/function-wasm-cache` that survives restarts turns that compile into a load of the stored artifact. `--warm-modules` moves either ahead of readiness, as [readiness](readiness.md) describes.
 
 ## Disk
 

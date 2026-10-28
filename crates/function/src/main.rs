@@ -112,6 +112,12 @@ struct ServeArgs {
     #[arg(long, default_value_t = 1, env = "MAX_CONCURRENT_COMPILES")]
     max_concurrent_compiles: usize,
 
+    /// Wall-clock bound on a cold load (the fetch and compile of a module
+    /// not yet cached); past it the request fails with a fatal result while
+    /// the compile finishes and stores its artifact. 0s leaves it unbounded.
+    #[arg(long, default_value = "0s", env = "MODULE_COMPILE_TIMEOUT", value_parser = duration::parse)]
+    module_compile_timeout: Duration,
+
     /// Sustained egress requests per minute per module digest. 0 leaves
     /// egress unrated.
     #[arg(
@@ -336,14 +342,16 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     let compiled = open(compiled_parent.join(&version), false);
     let compiled_store = Arc::clone(&compiled);
     let _modules = open(cache_dir.join(store::MODULES_DIR), true);
-    let _manifests = open(cache_dir.join(store::MANIFESTS_DIR), false);
+    // The resolver's manifest cache writes this store, keyed by the
+    // manifest's own digest and verified on read like the modules store,
+    // never trusted by name (the 1.0 audit's F-5).
+    let manifests = open(cache_dir.join(store::MANIFESTS_DIR), true);
     let blobs = Arc::clone(&_modules);
 
-    let resolver = Arc::new(resolver::Resolver::new(
-        args.module_dir,
-        args.max_module_size << 20,
-        Some(blobs),
-    ));
+    let resolver = Arc::new(
+        resolver::Resolver::new(args.module_dir, args.max_module_size << 20, Some(blobs))
+            .with_manifest_store(Arc::clone(&manifests)),
+    );
     let module_cache = Arc::new(cache::ModuleCache::new(
         Arc::clone(&engine),
         cache::CacheOptions {
@@ -351,6 +359,8 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             no_memory: !args.enable_memory_cache,
             max_entries: args.max_cached_modules,
             max_concurrent_compiles: args.max_concurrent_compiles,
+            compile_timeout: (!args.module_compile_timeout.is_zero())
+                .then_some(args.module_compile_timeout),
             ..Default::default()
         },
     ));
@@ -374,7 +384,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         let stores = [
             Arc::clone(&_modules),
             Arc::clone(&compiled_store),
-            Arc::clone(&_manifests),
+            Arc::clone(&manifests),
         ];
         let max_cache_bytes = args.max_cache_size << 20;
         let sweep_stores = move || {

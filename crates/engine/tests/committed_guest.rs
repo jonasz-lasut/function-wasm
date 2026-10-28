@@ -75,11 +75,10 @@ impl HttpRequester for Slow {
 }
 
 fn ok_body(req: &Request) -> Response {
-    use base64::Engine as _;
     assert_eq!(req.method, "GET");
     Response {
         status: 200,
-        body: base64::engine::general_purpose::STANDARD.encode(format!("answered {}", req.url)),
+        body: format!("answered {}", req.url).into_bytes(),
         ..Default::default()
     }
 }
