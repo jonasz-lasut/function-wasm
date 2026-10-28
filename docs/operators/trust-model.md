@@ -69,6 +69,16 @@ with its own Docker config. Mount a Docker config through a
 `DeploymentRuntimeConfig` and set `DOCKER_CONFIG`. Its credentials apply
 only to their registry host.
 
+The credential protects the pull, never the cache. The runtime caches a
+module's bytes by content digest and serves them, without a fetch, to any
+Composition on the runtime that states the digest, from an `OCI`, `HTTP` or
+`Path` source alike. A private module remains private only while no
+Composition another tenant can read quotes its digest. The runtime reads an
+`OCI` source's manifest from the registry on every request with the step's
+credential, and a withdrawn credential refuses that Composition's next
+request. A static source that states a cached digest doesn't contact the
+registry.
+
 ## The cache directory
 
 The caches under `/tmp/function-wasm-cache` belong to the runtime. The

@@ -1182,6 +1182,78 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_cached_digest_is_served_to_any_source_stating_it() {
+        // The cache posture the trust model states (the 1.0 audit's F-5):
+        // the cache is keyed by content digest alone, so a module one
+        // Composition pulled with the registry's credential is served to a
+        // later static source stating that digest without a fetch. A
+        // digest quoted in a Composition is therefore no secret.
+        let wasm = wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat");
+        let mut registry = crate::testing::registry::Registry::new().basic();
+        let digest = registry.module(&wasm, None, "private");
+        let addr = registry.serve();
+        let f = function(None);
+
+        let data = std::collections::HashMap::from([
+            (
+                "username".to_string(),
+                crate::oci::testregistry::BASIC_USER.as_bytes().to_vec(),
+            ),
+            (
+                "password".to_string(),
+                crate::oci::testregistry::BASIC_PASSWORD.as_bytes().to_vec(),
+            ),
+        ]);
+        let req = RunFunctionRequest {
+            meta: Some(RequestMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            input: Some(resource::json_to_struct(
+                input(serde_json::json!({
+                    "type": "OCI",
+                    "oci": {"ref": format!("{addr}/example/private@{digest}"), "credentials": "registry"},
+                }))
+                .as_object()
+                .expect("object"),
+            )),
+            credentials: std::collections::HashMap::from([(
+                "registry".to_string(),
+                Credentials {
+                    source: Some(credentials::Source::CredentialData(CredentialData { data })),
+                },
+            )]),
+            ..Default::default()
+        };
+        let out = f
+            .handle_raw(req.encode_to_vec(), None)
+            .await
+            .expect("handled");
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        assert!(
+            rsp.results.is_empty(),
+            "the pull should run: {:?}",
+            rsp.results
+        );
+
+        // An HTTP source stating the digest, with no credential and a URL
+        // nothing serves: the cache answers before any fetch.
+        let rsp = run(
+            &f,
+            input(serde_json::json!({
+                "type": "HTTP",
+                "http": {"url": "http://127.0.0.1:1/never-fetched.wasm", "digest": digest},
+            })),
+        )
+        .await;
+        assert!(
+            rsp.results.is_empty(),
+            "the cached digest should be served without a fetch: {:?}",
+            rsp.results
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn the_pull_credential_is_never_forwarded() {
         let wasm = wat::parse_str(WRAP_WAT).expect("wat");
         let f = granting_function(None);

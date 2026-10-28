@@ -44,7 +44,7 @@ The fields are:
 | `module.oci.ref` | string | OCI artifact reference pinned to its manifest digest, `registry/repo@sha256:…`, as `guestfn push` prints it. See [OCI references](#oci-references) |
 | `module.oci.credentials` | string | name of the pipeline-step credential used to pull. See [Pull credentials](#pull-credentials) |
 | `module.http.url` | string | the HTTP or HTTPS URL the module is downloaded from |
-| `module.http.digest` | string | Required. `sha256:<hex>` of the module, which the runtime verifies the download against |
+| `module.http.digest` | string | Required. `sha256:<hex>` of the module, which the runtime verifies the download against. A digest the runtime already caches is served without a download |
 | `module.http.manifestURL` | string | Optional. A `wasmfn.yaml` served beside the module. Set with `module.http.manifestDigest`. Without it an HTTP source has no manifest and gets only the default sandbox. For a `module.from` `http` source, `compositionPolicy` `pullModule` fences it like the module URL |
 | `module.http.manifestDigest` | string | `sha256:<hex>` of the manifest, verified against it. Required with `module.http.manifestURL`, refused without it |
 | `module.path` | string | a file relative to the runtime's `--module-dir`. Refused unless that flag is set. A `Path` source has no digest |

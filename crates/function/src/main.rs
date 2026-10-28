@@ -342,7 +342,11 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     let compiled = open(compiled_parent.join(&version), false);
     let compiled_store = Arc::clone(&compiled);
     let _modules = open(cache_dir.join(store::MODULES_DIR), true);
-    let _manifests = open(cache_dir.join(store::MANIFESTS_DIR), false);
+    // Nothing writes the manifests store yet (an OCI source's manifest is
+    // read from the registry per request); when something does, it is
+    // verify-on-read like the modules store, keyed by the manifest's own
+    // digest, never trusted by name (the 1.0 audit's F-5).
+    let _manifests = open(cache_dir.join(store::MANIFESTS_DIR), true);
     let blobs = Arc::clone(&_modules);
 
     let resolver = Arc::new(resolver::Resolver::new(
