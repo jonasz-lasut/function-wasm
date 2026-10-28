@@ -6,6 +6,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features
 (cd examples/pdb-addon && go test ./...)            # the Go example and its vendored internal/wasmfn glue
 make -C examples/pdb-addon render                   # the development loop: function validate, the runtime served, crossplane render
 make e2e                                            # the end-to-end suite in a kind cluster (testing.md)
+make vale                                           # the prose of docs/, README.md and SECURITY.md under Vale (.vale.ini; any alert fails, as in CI)
 ```
 
 The workspace tests build every scaffold (what `guestfn init` writes) to

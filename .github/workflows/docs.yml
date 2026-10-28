@@ -15,8 +15,9 @@
 # The documentation site: the mdBook under docs/ (book.toml at the root,
 # docs/SUMMARY.md the table of contents), published to GitHub Pages at
 # https://jonasz-lasut.github.io/function-wasm/. A pull request that touches
-# the book or the README builds it and checks every internal link and anchor
-# of the rendered site; a push to main builds and deploys it.
+# the book or the README builds it, checks every internal link and anchor
+# of the rendered site and lints the prose with Vale; a push to main builds
+# and deploys it.
 name: Docs
 
 on:
@@ -28,6 +29,9 @@ on:
       - 'book.toml'
       - 'README.md'
       - 'SECURITY.md'
+      - '.vale.ini'
+      - '.vale/**'
+      - 'Makefile'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
@@ -35,6 +39,9 @@ on:
       - 'book.toml'
       - 'README.md'
       - 'SECURITY.md'
+      - '.vale.ini'
+      - '.vale/**'
+      - 'Makefile'
       - '.github/workflows/docs.yml'
   workflow_dispatch: {}
 
@@ -92,6 +99,23 @@ jobs:
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: book
+
+  # The prose: Vale over the book, the README and SECURITY.md through the
+  # Makefile's target, so CI runs the binary and the style packages a
+  # contributor's `make vale` runs (.vale.ini pins the packages, the
+  # Makefile the binary). The checkout brings the crossplane build
+  # submodule the Makefile includes.
+  prose:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+
+      - name: Lint the Prose
+        run: make vale
 
   deploy:
     if: github.event_name != 'pull_request'
