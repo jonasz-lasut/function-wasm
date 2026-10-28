@@ -2,29 +2,23 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 2.2
+* Status: implemented, revision 2.3 (rewritten in the present tense over the Rust workspace; the Input is `wasm.fn.crossplane.io/v1`)
 
-The structure of the Input before `v0.1.0` freezes it - a discriminated
-`module` instead of six sibling fields, with top-level siblings owned by
-the Composition. The 2026-08-16 architecture review raised it. Revision 1.0
-is the released structure, revision 1.1 recorded the added `sandbox`
-grants, and revision 2.0 records the three-layer authorization change
-(docs/one-pager-three-layer-authz.md): `policy` and `sandbox` left the
-Input, replaced by `compositionPolicy` (raw Cedar) and the module
-manifest's `requires`. Revision 2.1 adds a manifest by reference for
-manifest-less sources (`http.manifestURL`/`manifestDigest` and
-`manifestPath`, in docs/one-pager-manifest-less-sources.md). Revision 2.2
-adds `module.allowEmpty` (issue #82): a `from` field the composite
-resource leaves unset makes the step a no-op instead of a fatal result.
-This document is the authoritative structure and lists every Input field.
-The trust-model one-pager describes what the `compositionPolicy` fence
-means, and the resource-governance one-pager `limits`. The sandbox
-one-pager describes the capabilities a manifest may request.
+The Input is what a Composition step hands the runtime. A discriminated
+`module` says what runs, and the fields the Composition author controls sit
+beside it at the top level. The 2026-08-16 architecture review
+raised it. The user-facing field reference is
+[the Input reference](operators/input-reference.md); this record keeps why the
+Input is structured this way and what `compositionPolicy` and `limits` decide. The
+[trust model](one-pager-trust-model.md) describes what the `compositionPolicy`
+fence means, [resource governance](one-pager-resource-governance.md)
+`limits`, and the [sandbox](one-pager-sandbox.md) the capabilities a manifest
+may request.
 
 ## The Input, in one place
 
 ```yaml
-apiVersion: wasm.fn.crossplane.io/v1beta1
+apiVersion: wasm.fn.crossplane.io/v1
 kind: Input
 module:                                   # what runs - required
   type: OCI                               # OCI | HTTP | Path - always the Composition's choice
@@ -46,128 +40,80 @@ config:                                   # opaque, forwarded to the module
 ```
 
 `module` is required; `compositionPolicy`, `limits` and `config` are
-optional. Everything but `module` (and within it, the object `from` names)
-is read from the Input only - never through `module.from`: an XR author may
-choose the module but may not widen its permissions, grants or budget.
-The Input has no `sandbox` subtree: what a module may do beyond the default
-sandbox is its manifest's `requires`, decided by the three AND-combined
-layers (manifest ∧ `compositionPolicy` ∧ the operator's
-`--sandbox-policy-file`).
+optional. A `v1beta1` document with the same fields is accepted through 1.x
+and removed in 2.0.0 (`input::V1BETA1_DEPRECATION`, see
+[Compatibility](contract/compatibility.md)).
 
-## Today
-
-`input/v1beta1/input.go` defines the preceding structure.
-`internal/module.Validate`/`FromComposite`, `internal/module/policy.go`
-(the composition-layer fence) and `internal/admission` (`runOptions`,
-`CompileCompositionPolicy`) enforce it, and the generated CRD under
-`package/input/` describes it.
-
-- `module.type` is required (`OCI`, `HTTP`, `Path`). Exactly one of the
-  typed object it names (`oci`, `http`, `path`) or `from` is set, and no
-  object of another type may be present. The runtime checks it on every
-  request; three CEL rules on the `module` object say the same for tooling
-  that reads the schema (`crossplane resource validate`, IDEs) -
-  `self.type == 'OCI' ? (has(self.oci) != has(self.from)) : !has(self.oci)`
-  and its two siblings. Crossplane itself never installs a function's Input
-  CRD (an Input is a fragment of a Composition rather than an object), which
-  makes the runtime the only gate that always runs, and
-  `Validate`/`ValidateFrom`/the admission checks mirror every marker on the
-  types.
-- `module.from` names a field of the observed composite resource under
-  `spec.` or `status.` (pattern-checked), read on every request and decoded
-  (unknown fields refused) into the object `type` names - an
-  `{ref, credentials}` object for `OCI`, `{url, digest}` for `HTTP`, a
-  string for `Path` - then validated like a static source. An error identifies
-  the field: `module.from: status.module of the composite resource is not a
-  {ref, credentials} object: …`. A field the composite resource hasn't set
-  is an error naming it (`cannot read status.module from the composite
-  resource: module: no such field`) - unless `module.allowEmpty: true`, in
-  which case the step doesn't run a module and returns the request's desired
-  state and context unchanged (the SDK's `response.To` shape, built at the
-  wire level from the caller's own bytes), logged and counted as
-  `requests_total{outcome="skipped"}`. `allowEmpty` is read from the Input
-  only and refused without `from`: the Composition author chooses whether a
-  step may be left empty, the composite resource only whether that step is.
-  A field that's set is read, fenced and run exactly as without it. This is
-  the reserved hook of the first use case (`docs/use-cases.md`) before any
-  tenant fills it in, and a smoke test of a deployed runtime that doesn't
-  need a module built.
-- `compositionPolicy` is raw Cedar over the same schema as the operator's
-  policy, compiled at admission (content-hash cached; malformed Cedar is a
-  fatal result). For an XR-chosen source it's a required fence,
-  default-deny: the XR's `oci.ref` (or `http.url`), normalized, must be
-  permitted by a `pullModule` rule over the boundary-correct `Repository`
-  hierarchy; a named credential needs a `spendCredential` permit
-  (`context.repository` contains the ref's location, so both halves
-  co-locate). For sandbox actions it only narrows, and only when it scopes
-  the action. A static source skips the fence: the Composition
-  named it and is trusted with it.
-- `limits.timeout` (a duration string, e.g. `5s`) and `limits.memory` (a
-  quantity, e.g. `128Mi`) must each be at most the runtime's ceiling
-  (`--module-timeout`, `--module-memory-limit`); asking for more is a fatal
-  result that quotes both (`limits.memory 1Gi exceeds the runtime's
-  --module-memory-limit of 512Mi`), asking for less narrows that run's
-  epoch deadline and store limiter (`engine.RunOptions`, capped by the
-  engine's `Config` whatever the caller passes).
-- The sandbox isn't an Input subtree: a module's manifest contains
-  `requires` (`filesystem.privateTmp`, `egress.http[] {host | hostPattern,
-  methods, pathPrefix}`, `env[] {name, fromCredential}`), shape-checked by
-  `internal/egress.ValidateRules` and `internal/sandbox.ValidateBindings`,
-  and `admission.AdmitRequires` decides each `requires` entry under the
-  `compositionPolicy` and the operator's `--sandbox-policy-file`
-  (`usePrivateTmp`, `setEnv` ∧ `spendCredential`, `grantEgress` - also the
-  host allowlist, with the CIDR rules `dialAddress`). Host directories
-  aren't mountable, by design. The behaviour is the sandbox one-pager's.
-- A manifest-less source may point to that manifest **by reference**
-  (docs/one-pager-manifest-less-sources.md): `module.http.manifestURL` with
-  `module.http.manifestDigest` (both set together, the manifest pinned like
-  the module) names a `wasmfn.yaml` served beside the module.
-  `module.manifestPath` (only with `type: Path`) names one under
-  `--module-dir`. The runtime loads it as the request layer through the same
-  `module.Ref.Manifest` seam an OCI manifest layer uses, so the three-layer
-  decision is identical. For a `module.from` `http` source the `manifestURL` is
-  fenced by `pullModule` like the module URL; `manifestPath` is read from the
-  Input only.
-- `guestfn push` prints the module block in this form (`type: OCI` +
-  `oci.ref`); the scaffold templates and examples use `type: Path` for local
-  rendering.
+Everything but `module` (and within it, the object `from` names) is read from
+the Input only, never through `module.from`: an XR author may choose the
+module but may not widen its permissions, grants or budget. The Input has no
+`sandbox` subtree. A module requests anything beyond the default sandbox in
+its manifest's `requires`. The runtime grants a capability only when the
+manifest, the `compositionPolicy` and the operator's `--sandbox-policy-file`
+all permit it ([three-layer authorization](one-pager-three-layer-authz.md)).
+`function validate` refuses an Input with the removed `policy`
+or `sandbox` field and names the replacement (`the Input's policy field was
+removed: …`, `the Input's sandbox field was removed: …`).
 
 ## Why this structure
 
-The previous Input had six optional fields under `module` (`oci`, `http`,
-`path`, `ociFrom`, `httpFrom`, `pathFrom`), an "exactly one" invariant, and
-every source kind present twice - statically and as a `*From` pointer.
-Rules that depend on *where* a source came from (an XR-chosen source may
-not name credentials; a repository allowlist applies to XR-chosen sources
-only) lived in code and prose, not in the schema. Adding a source kind added
-two fields, and a policy field had no natural home.
+A source is chosen in one of two places: the Composition author writes it
+into the Input, or an XR author names it in a field of the composite resource.
+Rules that depend on where a source came from (an XR-chosen source may reference a
+credential only where the Composition permits it, and only inside an allowed
+registry) belong in the structure of the schema. A `type` discriminator
+next to a typed object is the Crossplane idiom, and `from` is an orthogonal
+switch on it:
 
-The Crossplane idiom - a `type` discriminator next to a typed object - with
-`from` as an orthogonal switch fixes those problems:
+- `module.type` says what kind of source the step runs. The Composition author
+  always chooses the kind, an XR author only the instance.
+- Exactly one of the typed object (`oci`, `http`, `path`) or `from` is set,
+  and no object of another type may be present. The runtime checks it on
+  every request. Three CEL rules on the `module` object say the same for
+  tooling that reads the schema (`crossplane resource validate`, IDEs), such
+  as `self.type == 'OCI' ? (has(self.oci) != has(self.from)) : !has(self.oci)`
+  and its two siblings. Crossplane never installs a function's Input CRD (an
+  Input is a fragment of a Composition), so the runtime is the
+  only gate that always runs: `admission::admit` and `from::from_composite`
+  apply every rule the CRD under `package/input/` states.
+- The Composition-owned rules are top-level siblings of `module`, never read
+  from the XR. The CRD's CEL requires a non-empty `compositionPolicy` when
+  `module.from` names an OCI or HTTP source.
+- `limits` is the other top-level sibling.
+- An object read through `from` may reference a
+  credential only where the `compositionPolicy` permits `spendCredential`,
+  and only for a ref a `pullModule` permit admits. The XR can't bypass that rule,
+  because the policy never comes from the XR.
 
-- `module.type` says what kind of source this step runs; the Composition
-  author always chooses the kind, an XR author only the instance.
-- Exactly one of the typed object or `from` is set, and it must match
-  `type` - three CEL rules, all expressible.
-- The Composition-owned rules are top-level siblings of `module`, never
-  read from the XR. Originally `policy` (the allowlists) and `sandbox`;
-  since the three-layer change the sibling is `compositionPolicy`, and the
-  CRD's CEL requires it when `module.from` names an OCI or HTTP source.
-- `limits` is the other top-level sibling - the resource-governance
-  proposal (`timeout`, `memory`, each at most the runtime's ceiling).
-- The runtime's `FromComposite` reads the XR field into the object
-  `module.type` names; the credentials rule is "an object read through
-  `from` may reference a credential only where the `compositionPolicy` permits
-  `spendCredential`, and only for a ref a `pullModule` permit admits" -
-  one rule, stated once, and structurally impossible to bypass from the XR.
+## `module.from` and `allowEmpty`
 
-## `compositionPolicy` - what an XR-chosen module may be and spend
+`module.from` names a field of the observed composite resource under `spec.`
+or `status.` (pattern-checked), read on every request. `from_composite`
+decodes it, refusing unknown fields, into the object `type` names (an
+`{ref, credentials}` object for `OCI`, `{url, digest}` for `HTTP`, a string
+for `Path`) and then validates it like a static source. An error quotes the
+field: `module.from: status.module of the composite resource is not a
+{ref, credentials} object: …`. A field the composite resource hasn't set is
+an error naming it (`module.from: cannot read status.module from the
+composite resource: module: no such field`).
 
-Refusing credentials on XR-chosen modules is safe but blunt: a platform
-team that wants tenants to pick modules *from the platform's private
-registry* would otherwise have to mount a Docker config into the runtime.
-`compositionPolicy` - read from the Input only, never through
-`module.from` - fences what an XR-chosen module may be and spend:
+`module.allowEmpty: true` changes that case. The step doesn't run a module and
+returns the request's desired state and context unchanged, built at the wire
+level from the caller's own bytes and counted as
+`requests_total{outcome="skipped"}`. A field that's set is read, fenced and
+run exactly as without it. `allowEmpty` is read from the Input only and
+refused without `from`: the Composition author chooses whether a step may be
+left empty, the composite resource only whether that step is (issue #82). It
+serves the reserved hook of the first use case ([use cases](use-cases.md))
+before any tenant fills it in, and a smoke test of a deployed runtime that
+doesn't need a module built.
+
+## `compositionPolicy` and what an XR-chosen module may be and spend
+
+Refusing credentials on XR-chosen modules would be safe but blunt: a platform
+team that wants tenants to pick modules from the platform's private registry
+would have to mount a Docker config into the runtime. `compositionPolicy`
+fences what an XR-chosen module may be and spend instead:
 
 ```yaml
 module:
@@ -180,46 +126,62 @@ compositionPolicy: |
   when { context.repository in Repository::"ghcr.io/example-org" };
 ```
 
-The XR keeps choosing the artifact; the Composition keeps choosing where
-from and with what. The same field serves signature-free deployments that
-still need to fence tenants to a registry. The `Repository` hierarchy is
-boundary-correct: `Repository::"ghcr.io/example-org"` admits
-`ghcr.io/example-org/mod` but never the sibling namespace
-`ghcr.io/example-org-other/…` (a trailing slash is optional and doesn't
-change the boundary).
+It's raw Cedar over the same schema as the operator's policy, compiled at
+admission (content-hash cached). Malformed Cedar is a fatal result. For an
+XR-chosen source it's a required, default-deny fence. The XR's `oci.ref` (or
+`http.url`), normalized, must be permitted by a `pullModule` rule over the
+`Repository` hierarchy. A named credential also needs a `spendCredential`
+permit, whose `context.repository` contains the ref's location so both halves
+co-locate. For sandbox actions it only narrows, and only where it scopes the
+action. A static source skips the fence: the Composition named it and is
+trusted with it. The XR keeps choosing the artifact; the Composition keeps
+choosing where from and with what. The same field serves signature-free
+deployments that still need to fence tenants to a registry.
 
-## `limits` - per-composition budgets
+The `Repository` hierarchy is boundary-correct: `Repository::"ghcr.io/example-org"`
+admits `ghcr.io/example-org/mod` but never the sibling namespace
+`ghcr.io/example-org-other/…`. A trailing slash is optional and doesn't
+change the boundary.
 
-The ceilings are global - a trusted internal policy module and a tenant's
-labelling module get the same 30 s / 512 MB. The sandbox one-pager's
-principle applies (the operator sets the ceiling, the Composition requests
-less), and so the Input has a top-level `limits`, read from the Input only
-(never through `module.from`: an XR author must not widen a budget),
-validated against the flags at request time and applied to that run's
-store. Raising a limit past the ceiling remains operator-only. A
-Composition author who sets them with little headroom gets fatal results
-the operator didn't cause. The benefit is a shared runtime where the
-loudest module can't spend the whole ceiling.
+A manifest-less source can reference its manifest instead: `module.http.manifestURL`
+together with `manifestDigest`, or `module.manifestPath` with `type: Path`
+([module manifests](guests/module-manifests.md)). The runtime loads it as it
+loads an OCI manifest layer, so the three-layer decision is identical. For a `module.from` `http` source the `manifestURL` is fenced by
+`pullModule` like the module URL. The Input alone supplies `manifestPath`.
 
-## Migration
+## `limits` and per-composition budgets
 
-None was needed for the discriminated structure: the API is `v1beta1` and
-unreleased, and the change landed before `v0.1.0`. An Input in the old
-form fails decoding (`ociFrom` and friends are unknown fields) or
-validation (`module.type is required`); the fix is `type: OCI|HTTP|Path`
-plus the matching object, or `type` + `from` for the former `*From`
-fields. The three-layer change is breaking. `function validate`
-refuses an Input with the removed `policy` or `sandbox` field and names the
-replacement (`the Input's policy field was removed: …`, `the Input's
-sandbox field was removed: …`) - allowlists become `compositionPolicy`
-Cedar, sandbox grants become the module manifest's `requires`.
+The ceilings are global (`--module-timeout`, `--module-memory-limit`), so a
+trusted internal module and a tenant's labelling module would get the same
+budget. The operator sets the ceiling and the Composition requests less, so
+the Input has a top-level `limits`, read from the Input only (an XR author
+must not widen a budget). `admission::admit` checks each value against its
+flag at request time. Asking for more is a fatal result that quotes both
+(`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`);
+asking for less narrows that run's epoch deadline and memory limiter in the
+engine's `RunOptions`. Raising a limit past the ceiling remains operator-only.
+A Composition author who sets limits with little headroom gets fatal results
+the operator didn't cause. The benefit is a shared runtime where the loudest
+module can't spend the whole ceiling.
 
-## Alternatives considered
+## Alternatives
 
-| option | verdict |
-|---|---|
-| keep the six fields, add a CEL rule that exactly one is set | works; policy fields would still have no home and each new kind adds two fields |
-| `source: {kind, oci, http, path}` nested one level down | same as the chosen structure with an extra level; nothing gained |
-| `type` + typed object, `from` inside the typed object (`oci: {from: status.module}`) | reads well for one kind, but `path: {from: …}` turns a string into an object and the credentials rule needs "if from is set" inside each object |
-| `policy` and `limits` under `module` | ties Composition-owned policy to the thing an XR may choose; as top-level siblings they're visibly not part of what `from` reads |
-| drop `*From` sources altogether | removes the whole class of XR-author decisions; loses the per-tenant use case `docs/use-cases.md` leads with |
+Optional fields under `module` (`oci`, `http`, `path` and a `*From`
+pointer for each) with a CEL rule that exactly one is set would work. It
+presents every source kind twice. Each new kind adds two fields, and the
+policy fields would still have no home.
+
+`source: {kind, oci, http, path}` nested one level down is the chosen
+structure with an extra level and gains nothing.
+
+Putting `from` inside the typed object (`oci: {from: status.module}`) reads
+well for one kind, but `path: {from: …}` turns a string into an object, and
+the credentials rule then needs an "if from is set" check inside each object.
+
+`policy` and `limits` under `module` would tie Composition-owned policy to the
+thing an XR may choose. As top-level siblings they're visibly not part of
+what `from` reads.
+
+Dropping `from` sources altogether removes the whole class of XR-author
+decisions, but loses the per-tenant case that [the use cases](use-cases.md) lead
+with.

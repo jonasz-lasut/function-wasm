@@ -94,7 +94,6 @@ function-go-templating.
 make test             # the function's unit tests, natively
 make build            # fn.wasm, a component (makes the venv first)
 make render           # serve it with function-wasm and crossplane render example/xr.yaml
-make render-check     # the render test, example/xprin.yaml (needs xprin)
 ```
 
 A local render needs no CMDB and no AWS account. `example/` holds:
@@ -116,10 +115,8 @@ A local render needs no CMDB and no AWS account. `example/` holds:
 - `policy.cedar`: the operator policy the runtime runs under, granting the
   credential `cmdb` and the fixture host and permitting loopback, which the
   egress block list refuses by default.
-- `crds/`: provider-upjet-aws's namespaced S3 `Bucket` CRD, vendored, so
-  the render test validates the composed bucket against the provider's own
-  schema.
-- `xprin.yaml`: the render test, one case per XR.
+- `crds/`: provider-upjet-aws's namespaced S3 `Bucket` CRD, vendored, to
+  validate the composed bucket against the provider's own schema.
 
 ## In a cluster
 

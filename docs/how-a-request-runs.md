@@ -1,56 +1,75 @@
 # A request, step by step
 
-1. The runtime decodes the Input and works out what the Composition asks of
-   it: it compiles the `compositionPolicy` (content-hash cached;
-   malformed Cedar is a fatal result) and checks `limits` against its
-   ceilings. A `module.from` source is then read from the
-   observed composite resource (`type: OCI` with `from: status.module`
-   expects `status.module` to be `{ref, credentials}`; a typo or a value
-   of the wrong type is a fatal result that identifies the field) and
-   fenced by the
-   `compositionPolicy` (`pullModule` for its repository, `spendCredential`
-   for a named credential - default-deny for XR-chosen sources). Resolving
-   doesn't perform I/O: the **digest** that pins the module comes from the
-   Input - the manifest digest of an OCI reference, `http.digest` for a
-   URL - or from hashing a served file when it changes.
-2. The runtime looks the digest up in the caches - compiled modules in memory (kept
-   ten minutes after their last use), then Wasmtime artifacts on disk, then
-   fetched modules on disk under `/tmp/function-wasm-cache`. Only a module
-   never seen by this node is fetched (verified against its digest, written
-   to disk) and compiled - about two seconds for a 75 MB Go module; a
-   component that fails the world's typecheck, or a core module (ABI v1,
-   removed in 1.0.0), is refused here - and its artifact written to disk.
-   Restarts and registry outages don't need the network. Details in
-   [docs/one-pager-cache.md](one-pager-cache.md). The module's
-   [manifest](guests/module-manifests.md), if its artifact contains one, is then the
-   module's ask: each `requires` capability must be permitted by the
-   Input's `compositionPolicy` and the operator's `--sandbox-policy-file`
-   (AND-combined - a manifest can only make a run fail earlier), and a
-   `config` outside the module's schema is a fatal result before anything
-   runs.
-3. Each request gets a fresh instance (about ten milliseconds) and the
-   caller's request bytes, less every step credential the three layers
-   didn't grant (the pull credential always among them): WASI without
-   network access, with only the filesystem and environment the three
-   layers granted - a private `/tmp` created for this request and removed
-   after it, exactly the environment variables its manifest binds to step
-   credentials; HTTP requests, if granted, go through the host
-   ([HTTP egress](operators/http-egress.md)); guest logs flow into the runtime's logger
-   with the module reference attached; stdout and stderr are the pod's, so a
-   Go panic's stack shows up in `kubectl logs`.
-4. The response is returned as the module produced it, once the output
-   fence has had its say where a policy layer scopes `composeResource`:
-   every change the module made to the desired state must be permitted,
-   or the step ends in a fatal result that identifies the kind, the name,
-   the change and the layer ([Cedar policy reference](operators/cedar-policy.md#the-output-fence)).
-   A trap, timeout
-   (`limits.timeout` or `--module-timeout` - guest compute, with time spent
-   waiting on the host's HTTP answers credited back - or the request
-   deadline if sooner), memory limit (`limits.memory` or
-   `--module-memory-limit`) or an unusable module is a fatal result that
-   identifies the module - never a crashed function pod. A request that,
-   with `--max-concurrent-runs` set, reaches its deadline while waiting
-   for a run slot (`waiting for a run
-   slot: context deadline exceeded`) is a fatal result too: it never ran.
+This page is for someone evaluating function-wasm. It follows one Crossplane
+request through the runtime, so you can see what's checked before a module
+runs, what the module can do and how a failure ends. It assumes you know
+[what function-wasm is](introduction.md). Each step links to the page with the
+detail.
 
-The full host/guest contract is in [`docs/abi-v2.md`](abi-v2.md).
+A module gets a capability only when three layers agree. The module's
+[manifest](guests/module-manifests.md) has to request it, and the
+Composition's `compositionPolicy` and the operator's policy, the Cedar file
+named by `--sandbox-policy-file`, both have to permit it. The
+[design record](one-pager-three-layer-authz.md) has the reasoning.
+
+## 1. Admission
+
+The runtime decodes the Input, compiles the `compositionPolicy` and checks
+`limits` against its ceilings. Malformed Cedar, or a `timeout` or `memory`
+limit over its ceiling, is a fatal result. A `concurrency` limit over its
+ceiling is capped, with no error. A step that takes its module from the composite
+resource (`module.from`) is fenced by the `compositionPolicy`: `pullModule`
+for the repository, `spendCredential` for a credential. The fields are in the
+[Input reference](operators/input-reference.md).
+
+An OCI or HTTP source is pinned by digest and a `path` source is hashed by
+content, so resolving a module never waits on a registry.
+
+## 2. Loading
+
+Where the operator requires a signature, the runtime verifies it first, once
+per manifest digest per process and before any cache
+([signatures](operators/signatures.md)).
+
+The runtime then looks the digest up in the compiled modules in memory (kept
+ten minutes after last use), the Wasmtime artifacts on disk and the fetched
+modules on disk. Only a module this pod has never seen is fetched, checked
+against its digest and compiled. A component that fails the world's typecheck
+is refused here, and so is a core module, the ABI v1 shape removed in 1.0.0.
+The stores are described under
+[cache storage](operators/runtime-flags.md#cache-storage). The
+[cache design record](one-pager-cache.md) has the reasoning.
+
+The runtime then checks the manifest, if the module has one, against the other
+two layers. A `requires` entry that isn't permitted, or a `config` outside the
+module's schema, is a fatal result before anything runs.
+
+## 3. Running
+
+Each request runs in a fresh instance. The module receives the caller's
+request bytes, less every step credential it wasn't granted. It gets WASI
+without network access. The filesystem is a private `/tmp` removed after the
+request, and the environment variables are those its manifest binds to step
+credentials, if the three layers granted them.
+
+Granted HTTP requests go through the host ([HTTP egress](operators/http-egress.md)).
+Guest logs go to the runtime's logger with the module reference attached, and
+stdout and stderr go to the pod's log.
+
+## 4. Response
+
+The runtime returns the response as the module produced it. Where a policy
+layer scopes `composeResource`, every change to the desired state must first
+be permitted. A refused change is a fatal result that specifies the kind, the
+name, the change and the layer
+([Cedar policy reference](operators/cedar-policy.md#the-output-fence)).
+
+A trap, a timeout, the memory limit or an unusable module is also a fatal
+result, and the function pod keeps running. The timeout counts guest compute
+only: time waiting for the host's HTTP answers is credited back. A request
+whose deadline passes while it waits for a run slot gets
+`waiting for a run slot: deadline exceeded` and never runs.
+[Troubleshooting](operators/troubleshooting.md) lists the results and their
+causes.
+
+The full host and guest contract is in [ABI v2](abi-v2.md).

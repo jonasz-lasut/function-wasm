@@ -1,9 +1,16 @@
 # Input reference
 
-`apiVersion: wasm.fn.crossplane.io/v1`, `kind: Input`. A step that still
-says `wasm.fn.crossplane.io/v1beta1` (the same fields) is accepted
-throughout 1.x: `function validate` prints a warning under it and the
-runtime logs one line per request naming `v1`, and 2.0.0 removes it
+This page is for composition authors writing a function-wasm step and for
+operators who need to predict what the runtime admits. It lists every field
+of the step's Input and what the runtime enforces for each. Crossplane never
+installs the Input's CRD, so the runtime is the only enforcement: it checks
+every rule on every request, and `function validate` applies the same checks
+offline. The CRD under `package/input/` is for tooling and IDEs only.
+
+The Input is `apiVersion: wasm.fn.crossplane.io/v1`, `kind: Input`. A step
+that still says `wasm.fn.crossplane.io/v1beta1` (the same fields) is accepted
+throughout 1.x: `function validate` prints a warning under it, the runtime
+logs one line per request naming `v1`, and 2.0.0 removes it
 ([Compatibility](../contract/compatibility.md)).
 
 ```yaml
@@ -25,67 +32,49 @@ config: {...}                  # optional; opaque, forwarded to the module
 
 Everything but the source is read from the Input: `compositionPolicy` and
 `limits` are the Composition's, never the composite resource's. The Input
-has no `sandbox` block. A module declares the capabilities it can't run
-without in its manifest (`requires` - see
-[Module manifests](../guests/module-manifests.md)), and each is granted
-only when the Input's `compositionPolicy` and the
-operator's Cedar `--sandbox-policy-file` both permit it
-([docs/one-pager-three-layer-authz.md](../one-pager-three-layer-authz.md)).
-The same two layers may fence what the module composes
-(`composeResource`, judged over the response after the run; a layer with
-no such rule narrows nothing): see the
-[Cedar policy reference](cedar-policy.md#the-output-fence).
+has no `sandbox` block. Capabilities come from the module's manifest and
+two Cedar layers, described under [Capabilities](#capabilities).
+
+The fields are:
 
 | field | type | description |
 |---|---|---|
-| `module` | object | **required** - where the module comes from |
-| `module.type` | string | **required** - `OCI`, `HTTP` or `Path`. Exactly one of the object it names (`oci`, `http`, `path`) or `module.from` is set, and no object of another type may be present. The runtime checks it on every request - the Input's CRD (with the same rules as CEL) is never installed by Crossplane. A function input is part of a Composition rather than an object. Its schema only serves tooling that validates against it (`crossplane resource validate` with the package's `input/` directory) and IDEs |
-| `module.oci.ref` | string | OCI artifact reference **pinned to its manifest digest**, `registry/repo@sha256:…`, as `guestfn push` prints it. The manifest digest pins the module (the manifest states its layer's digest, and the runtime verifies both on fetch) and addresses the caches. A tag alone isn't accepted (tags can be moved; the runtime doesn't resolve anything at request time); `registry/repo:tag@sha256:…` is fine - the digest is what's fetched, the tag is human-readable context and may even no longer exist. The module is the `application/wasm` (or `vnd.wasm` content) layer, or the only layer; a tar layer (a `FROM scratch` image) must hold it at exactly `/fn.wasm` |
-| `module.oci.credentials` | string | name of a pipeline-step credential (a Secret with `.dockerconfigjson`, or `username` and `password` keys) used to pull, and it never reaches the module. Without it the runtime tries its Docker config (`DOCKER_CONFIG`), then anonymous access. An object read through `module.from` may specify one only where the `compositionPolicy` permits `spendCredential` for it on the ref's repository |
-| `module.http.url` | string | download the module over HTTP or HTTPS |
-| `module.http.digest` | string | **required** - `sha256:<hex>` of the module; the runtime verifies the download against it |
-| `module.http.manifestURL` | string | *optional* - a `wasmfn.yaml` served beside the module, its request layer (the three-layer model's manifest for a source without an OCI layer). Set with `module.http.manifestDigest`. Without it an HTTP source has no manifest and gets only the default sandbox. For a `module.from` `http` source it's fenced by `compositionPolicy` `pullModule` like the module URL |
-| `module.http.manifestDigest` | string | `sha256:<hex>` of the manifest, verified against it; **required with** `module.http.manifestURL`, refused without it |
-| `module.path` | string | a file relative to the runtime's `--module-dir`; refused unless that flag is set - local rendering and volume-mounted modules; has no digest |
-| `module.manifestPath` | string | *optional*, `type: Path` only - a `wasmfn.yaml` under `--module-dir`, the request layer for a Path module, so a local or volume-mounted module can declare the capabilities it needs. Read from the Input only (never through `module.from`) and re-read each request. A local edit takes effect without a restart |
-| `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, holding the source `module.type` names - an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a string for `Path` - e.g. `status.module`; read on every request and decoded under strict rules (a typo or a wrong structure is a fatal result that states the field), so each XR can choose its module. `compositionPolicy` (`pullModule`, default-deny) fences what it may choose. A field the XR leaves unset is a fatal result naming it, unless `module.allowEmpty` says otherwise |
-| `module.allowEmpty` | boolean | *optional*, with `module.from` only - `true` lets the composite resource leave the field unset (absent, or `null`). The step then runs nothing and returns the request's desired state and context unchanged - a no-op the pipeline continues past rather than a fatal result. This is the reserved hook a platform team puts in place before any tenant fills it in, and the smoke test of a runtime with no module published yet. A field that's set is read, fenced and run exactly as without it. Read from the Input only, so an XR may leave a step empty only where the Composition allows it, and refused without `module.from`. A skipped step is logged and counted as `requests_total{outcome="skipped"}` |
-| `compositionPolicy` | string | the composition author's own Cedar policy layer, over the same schema as the operator's `--sandbox-policy-file` (actions `pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv`; a `Request` principal with `namespace` and `xrKind`; `Repository`, `HostPattern`, `Capability` and `Credential` entities). AND-combined with the module's manifest and the operator's policy, so it can only narrow. A sandbox action it scopes no rule for isn't narrowed (the operator and the manifest decide alone). A module chosen through `module.from` is refused unless a `pullModule` permit matches its normalized location, matched over a boundary-correct `Repository` hierarchy (`Repository::"ghcr.io/example-org"` admits `ghcr.io/example-org/mod` but never the sibling namespace `ghcr.io/example-org-other/...`), and may spend a step credential only where a `spendCredential` permit matches (`context.repository` is the ref's location). **Required whenever `module.from` names an `OCI` or `HTTP` source**: an unfenced XR author could point the runtime at any host and read what its answer says. Read from the Input only, and malformed Cedar is a fatal result at admission. The schema both layers share and how each decides are in the [Cedar policy reference](cedar-policy.md) |
-| `limits.timeout` | duration | compute budget of one run, e.g. `5s`; at most `--module-timeout`, else a fatal result that states both (`limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`). The runtime credits back the time the run spends waiting on the host's HTTP answers (`wasi:http`), so a slow upstream doesn't spend the budget; the request's own gRPC deadline is the hard wall-clock cap and still applies if shorter |
-| `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`; at most `--module-memory-limit`, else a fatal result that states both (`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`) |
-| `limits.concurrency` | int32 | at most N runs of this step at once, across all requests, keyed by the module's content digest. A further request waits under its own context; when the deadline passes first, it's a fatal result that didn't consume anything and isn't counted as a run. A value over `--max-concurrent-runs` is capped without an error. No ceiling flag: this only narrows |
-| `config` | object | opaque, passed to the module untouched inside the request input, and a Go guest reads it with `wasmfn.GetConfig`. Non-secret module configuration belongs here - the module's environment comes only from its manifest's `requires.env` credential bindings |
+| `module` | object | Required. Where the module comes from |
+| `module.type` | string | Required. `OCI`, `HTTP` or `Path`. Exactly one of the object it names (`oci`, `http`, `path`) or `module.from` is set, and no object of another type may be present |
+| `module.oci.ref` | string | OCI artifact reference pinned to its manifest digest, `registry/repo@sha256:…`, as `guestfn push` prints it. See [OCI references](#oci-references) |
+| `module.oci.credentials` | string | name of the pipeline-step credential used to pull. See [Pull credentials](#pull-credentials) |
+| `module.http.url` | string | the HTTP or HTTPS URL the module is downloaded from |
+| `module.http.digest` | string | Required. `sha256:<hex>` of the module, which the runtime verifies the download against |
+| `module.http.manifestURL` | string | Optional. A `wasmfn.yaml` served beside the module. Set with `module.http.manifestDigest`. Without it an HTTP source has no manifest and gets only the default sandbox. For a `module.from` `http` source, `compositionPolicy` `pullModule` fences it like the module URL |
+| `module.http.manifestDigest` | string | `sha256:<hex>` of the manifest, verified against it. Required with `module.http.manifestURL`, refused without it |
+| `module.path` | string | a file relative to the runtime's `--module-dir`. Refused unless that flag is set. A `Path` source has no digest |
+| `module.manifestPath` | string | Optional, `type: Path` only. A `wasmfn.yaml` under `--module-dir`, the manifest of a local or volume-mounted module. Never set through `module.from`, and re-read on each request. A local edit takes effect without a restart |
+| `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, that holds the source. See [Modules chosen by the XR](#modules-chosen-by-the-xr) |
+| `module.allowEmpty` | boolean | Optional, with `module.from` only. See [Skipping a step](#skipping-a-step) |
+| `compositionPolicy` | string | the composition author's Cedar layer. See [The composition policy](#the-composition-policy) |
+| `limits.timeout` | duration | compute budget of one run, e.g. `5s`. See [Limits](#limits) |
+| `limits.memory` | quantity | linear memory a run may use, e.g. `128Mi`. See [Limits](#limits) |
+| `limits.concurrency` | int32 | at most N runs of this step at once. See [Limits](#limits) |
+| `config` | object | opaque, passed to the module untouched inside the request input. Non-secret module configuration belongs here: the module's environment comes only from its manifest's `requires.env` credential bindings |
 
-What a module gets of the sandbox, and which step credentials it sees,
-isn't an Input field: its manifest's `requires` (egress rules,
-`filesystem.privateTmp`, `env` credential bindings, `credentials` read from
-the request) is the request, and each requested capability is granted only
-when the `compositionPolicy` and the operator's `--sandbox-policy-file`
-both permit it - see [Module manifests](../guests/module-manifests.md) and
-[HTTP egress](http-egress.md).
+## OCI references
 
-Letting each composite resource choose its module - the Composition states
-the type and the XR field, the field contains the source, the
-`compositionPolicy` says what it may contain:
+`module.oci.ref` must include a manifest digest. A tag alone is refused, and
+the runtime doesn't resolve tags at request time. With
+`registry/repo:tag@sha256:…` only the digest is fetched. The manifest states
+its layer's digest, and the runtime verifies both on fetch.
 
-```yaml
-    input:
-      apiVersion: wasm.fn.crossplane.io/v1
-      kind: Input
-      module:
-        type: OCI
-        from: spec.module           # spec.module: {ref: ghcr.io/example-org/greeter@sha256:…}
-      compositionPolicy: |
-        permit (principal, action == Action::"pullModule",
-                resource in Repository::"ghcr.io/example-org");
-```
+The runtime takes the first layer whose media type is `application/wasm`,
+`application/vnd.wasm.content.layer.v1+wasm` or
+`application/vnd.module.wasm.content.layer.v1+wasm`. Failing that, it takes
+the only layer that isn't the manifest layer. A tar layer (a `FROM scratch`
+image) must hold the module at exactly `/fn.wasm`.
 
-Add `allowEmpty: true` under `module` to let a composite resource leave
-the field unset: the step then runs nothing and returns the desired state
-unchanged, so a Composition can reserve a hook before any module exists to
-fill it. Without it, an unset field is a fatal result naming it.
+## Pull credentials
 
-You declare a step's credentials on the pipeline step:
+`module.oci.credentials` names a pipeline-step credential: a Secret with
+`.dockerconfigjson`, or with `username` and `password` keys. It's declared
+on the step:
 
 ```yaml
 - step: greet
@@ -107,23 +96,53 @@ You declare a step's credentials on the pipeline step:
         credentials: registry
 ```
 
-The pull credential is never forwarded to the module. Of the step's other
-credentials, the request the module receives contains only those its
-manifest names - the credential a `requires.env` binding reads, or one it
-reads whole from the request (`requires.credentials`, below) - and both
-policy layers permit (`spendCredential`); the runtime edits every other one
-out of the request before the module runs, so a module with no manifest,
-or one that doesn't require a credential, sees none. A credential the manifest
-requires that the step doesn't declare is a fatal result before the run,
-like an env binding's (`… requires.credentials[0]: the request carries no
-credential "cmdb"; declare it on the pipeline step`). The Go runtime
-forwarded every step credential but the pull credential, so a module that
-read one it didn't declare must now declare it.
+Without `credentials`, the runtime tries its Docker config (`DOCKER_CONFIG`),
+then anonymous access. The module never receives the pull credential, and a
+manifest that names it as an env binding source or a required credential is
+refused.
 
-An XR-chosen module may spend the pull credential only if the
-`compositionPolicy` permits it (`spendCredential`) and only for a
-repository a `pullModule` permit admits (the pull check runs first, and
-`context.repository` is the ref's location):
+## Modules chosen by the XR
+
+With `module.from`, each composite resource chooses its module. The
+Composition states the type and the XR field, and the field contains the source:
+an object `{ref, credentials}` for `OCI`, `{url, digest}` for `HTTP`, a
+string for `Path`. The runtime reads it on every request and rejects unknown fields. A typo or a wrong structure is a fatal result that states the
+field. An unset field is a fatal result naming it, unless `module.allowEmpty`
+says otherwise.
+
+```yaml
+    input:
+      apiVersion: wasm.fn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        from: spec.module           # spec.module: {ref: ghcr.io/example-org/greeter@sha256:…}
+      compositionPolicy: |
+        permit (principal, action == Action::"pullModule",
+                resource in Repository::"ghcr.io/example-org");
+```
+
+A source chosen this way is fenced by the `compositionPolicy`, which is
+required for `OCI` and `HTTP` sources. See
+[The composition policy](#the-composition-policy).
+
+### Skipping a step
+
+`module.allowEmpty: true` lets the composite resource leave the field unset
+(absent, or `null`). The step then runs nothing and returns the request's
+desired state and context unchanged. The pipeline continues. A set field
+is handled as any static source is. The Input alone decides this, so an XR
+can leave a step empty only where the Composition allows it, and
+`allowEmpty` without `module.from` is refused. The runtime logs a skipped
+step and counts it as `requests_total{outcome="skipped"}`.
+
+### Spending the pull credential
+
+An XR-chosen module may specify a pull credential only where the
+`compositionPolicy` permits `spendCredential` for it, and only for a
+repository that a `pullModule` permit admits. The pull check runs first. The
+`spendCredential` rule tests `context has repository`, because the context
+carries `repository` only for this pull credential:
 
 ```yaml
     module:
@@ -132,11 +151,28 @@ repository a `pullModule` permit admits (the pull check runs first, and
     compositionPolicy: |
       permit (principal, action == Action::"pullModule",
               resource in Repository::"ghcr.io/example-org");
-      permit (principal, action == Action::"spendCredential", resource == Credential::"registry")
-      when { context.repository in Repository::"ghcr.io/example-org" };
+      permit (principal, action == Action::"spendCredential",
+              resource == Credential::"registry")
+      when { context has repository &&
+             context.repository in Repository::"ghcr.io/example-org" };
 ```
 
-A step may request less than the runtime allows, never more:
+## The composition policy
+
+`compositionPolicy` is Cedar text. Malformed Cedar is a fatal result at admission. It's required whenever
+`module.from` names an `OCI` or `HTTP` source: without it the XR author could
+point the runtime at any host.
+
+For a `module.from` source, a `pullModule` permit must match the module's
+normalized location, and a step credential may be spent only where a
+`spendCredential` permit matches. For sandbox actions the layer can only
+narrow what the manifest and the operator grant. The actions, entities,
+evaluation rules and refusal sentences are in the
+[Cedar policy reference](cedar-policy.md).
+
+## Limits
+
+`limits` can only narrow what the runtime allows, never widen it.
 
 ```yaml
     limits:
@@ -144,34 +180,46 @@ A step may request less than the runtime allows, never more:
       memory: 128Mi      # ≤ --module-memory-limit
 ```
 
-Opening the sandbox: the module's manifest asks and both policy layers
-(the Input's `compositionPolicy` and the operator's Cedar
-`--sandbox-policy-file`) must permit, and the module then gets exactly its
-request. A module that
-scratches in `/tmp`, reads `$DATABASE_URL` and picks a key of the step
-credential `cmdb` out of its request declares, in its `wasmfn.yaml`:
+- `limits.timeout` is at most `--module-timeout`, otherwise a fatal result
+  states both: `limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`.
+  Time spent waiting on the host's HTTP answers is credited back (see
+  [HTTP egress](http-egress.md)), and the request's own gRPC deadline still
+  caps the run if shorter.
+- `limits.memory` is at most `--module-memory-limit`, otherwise a fatal result
+  states both: `limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`.
+- `limits.concurrency` caps runs of this step at once, across all requests,
+  keyed by the module's content digest. A further request waits under its own
+  deadline. If the deadline passes first, the result is fatal and isn't
+  counted as a run. A value over `--max-concurrent-runs` is capped to it
+  without an error.
 
-```yaml
-requires:
-  filesystem: {privateTmp: true}
-  env:
-  - name: DATABASE_URL
-    fromCredential:
-      name: db                               # step credential "db", key "url"
-      key: url
-  credentials: [cmdb]                        # step credential "cmdb", whole, in the request
-```
+## Capabilities
 
-The private `/tmp` is granted where both Cedar layers permit
-`usePrivateTmp`; an env binding needs `setEnv` and `spendCredential` in
-both, and a credential read from the request `spendCredential` in both
-(the composition layer sees no `context.repository` for either). Its
-request then contains `db` and `cmdb`, whole, and no other step credential.
-A required capability either layer doesn't permit (or each of them on a
-runtime with no `--sandbox-policy-file`) is a fatal result before the
-module runs. Non-secret configuration (`LOG_LEVEL: debug`) isn't env - put
-it in `config`, which the guest reads with `wasmfn.GetConfig`. The pull
-credential (`module.oci.credentials`) is refused as a binding source and as
-a required credential: the module must never see the secret that fetched
-it. Host directories are never mountable into a module, whatever the
-policy.
+A module declares the capabilities it can't run without in its manifest, as
+`requires` ([Module manifests](../guests/module-manifests.md)). The runtime
+grants each one only when the Input's `compositionPolicy` and the operator's
+`--sandbox-policy-file` both permit it
+([three-layer authorization](../one-pager-three-layer-authz.md)). The same
+two layers may fence what the module composes with `composeResource`: see the
+[output fence](cedar-policy.md#the-output-fence). Egress is covered on
+[HTTP egress](http-egress.md).
+
+### Step credentials
+
+Of the step's credentials, the request a module receives contains only those
+its manifest names and both policy layers permit with `spendCredential`: the
+credential a `requires.env` binding reads, or one it reads whole with
+`requires.credentials`. The runtime edits every other credential out before
+the module runs, so a module with no manifest sees none.
+
+A required credential that the step doesn't declare is a fatal result before
+the run: `… requires.credentials[0]: the request carries no
+credential "cmdb"; declare it on the pipeline step`.
+
+### Private `/tmp` and environment
+
+The private `/tmp` needs `usePrivateTmp` permitted in both Cedar layers. An
+env binding needs `setEnv` and `spendCredential` in both. A required
+capability that either layer doesn't permit, or any on a runtime with no
+`--sandbox-policy-file`, is a fatal result before the module runs. The
+manifest syntax is on [Module manifests](../guests/module-manifests.md).

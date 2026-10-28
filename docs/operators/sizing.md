@@ -1,33 +1,42 @@
 # Sizing
 
-What a request and a module cost depends almost entirely on the guest's
-toolchain - the host adds about 60 µs. A historical measurement
-(2026-08-16, linux/arm64, the ABI v1 guests of the time: a
-`function-sdk-go` Go guest, a raw-proto Go guest using only the vendored
-glue, TinyGo, Rust), kept as the approximate scale per toolchain: the
-TinyGo flavour is gone and the other guests are ABI v2
-components (the Go module's size and compile cost didn't move; the Rust
-scaffold is now ~240 KB):
+This page is for operators choosing CPU, memory and disk for a function-wasm pod. It gives the formulas first and the measurements they rest on after. Those are the module sizes and costs, by guest toolchain, that the formulas take as inputs.
 
-| | Go (~75 MB) | Go, raw proto (~20 MB) | TinyGo (~1.4 MB, retired) | Rust (~150 KB) |
-|---|---|---|---|---|
-| one request (CPU) | 8-11 ms, 91 % of it the Go runtime's own init | 1.2 ms | 0.4 ms | 0.05 ms |
-| first compile of a module | 23-28 CPU-seconds, ~1 GB peak | 6 CPU-s | 1 CPU-s | 0.1 CPU-s |
-| resident in memory | ~90 MB, file-backed | ~40 MB | 3.5 MB | 0.7 MB |
-| per in-flight run | 11-16 MB | 4-8 MB | < 1 MB | < 1 MB |
-| on disk per module version | ~230 MB (module + artifact) | ~60 MB | 5 MB | 0.9 MB |
-| load from a warm volume | 6-8 ms | 2 ms | 0.2 ms | 0.05 ms |
+What a request and a module cost depends on the guest's toolchain, and the Measurements section gives the per-toolchain figures the formulas use.
 
-Rules of thumb: memory ≈ resident modules + `--max-concurrent-compiles` ×
-1 GB + concurrent runs × 16 MB (`--max-concurrent-runs` caps that last term when
-the caller's concurrency isn't the number you want to size for); a cold
-start compiles every module once, so ten Go modules on two cores take about
-two minutes and a warm volume under `/tmp/function-wasm-cache` turns that
-into a second, `--warm-modules` moves either ahead of readiness; disk grows
-by one module + artifact per digest ever served unless `--max-cache-size`
-bounds it. Requests scale linearly with cores - nothing in the run path is
-serialised unless `--max-concurrent-runs` says so. Large observed state
-costs on every request regardless of the guest (about 20 ms per MB of
-composite resource, four Protobuf passes). The full model of bounds and
-budgets is
-[docs/one-pager-resource-governance.md](../one-pager-resource-governance.md).
+## Memory
+
+Budget a pod's memory as the sum of three terms:
+
+- the resident compiled modules;
+- `--max-concurrent-compiles` times the peak memory of compiling your largest module (about 1 GB for a large Go module, far less for Rust, per Measurements);
+- concurrent runs times the per-run figure (about 16 MB for a large Go module, per Measurements).
+
+`--max-concurrent-runs` caps the third term, which is useful when the callers' concurrency isn't the number you want to size for.
+
+## Cold start
+
+A cold start compiles every module once. A volume under `/tmp/function-wasm-cache` that survives restarts turns that compile into a load of the stored artifact. `--warm-modules` moves either ahead of readiness, as [readiness](readiness.md) describes.
+
+## Disk
+
+Disk grows by one module and one compiled artifact per digest ever served, until `--max-cache-size` bounds it.
+
+## Throughput
+
+Runs execute in parallel up to `--max-concurrent-runs` and a step's `limits.concurrency`. The `--max-total-run-memory` pool bounds how many can hold their memory at once, as [runtime flags](runtime-flags.md) describes. A large observed state costs on every request whatever the guest is.
+
+## Measurements
+
+The figures below were measured on 2026-08-16 on linux/arm64, on the Go host with ABI v1 guests, and weren't re-measured on the Rust host, so treat them as a rough scale.
+
+| | Go (~75 MB) | Go, raw proto (~20 MB) | Rust (~240 KB) |
+|---|---|---|---|
+| one request (CPU) | 8-11 ms | 1.2 ms | 0.05 ms |
+| first compile of a module | 23-28 CPU-seconds, ~1 GB peak | 6 CPU-s | 0.1 CPU-s |
+| resident in memory | ~90 MB, file-backed | ~40 MB | 0.7 MB |
+| per in-flight run | 11-16 MB | 4-8 MB | < 1 MB |
+| on disk per module version | ~230 MB (module + artifact) | ~60 MB | 0.9 MB |
+| load from a warm volume | 6-8 ms | 2 ms | 0.05 ms |
+
+"Go" is the go scaffold and "Go, raw proto" a Go guest that uses only the scaffold's own code, without `function-sdk-go`. The full model of bounds and budgets is in [the resource governance one-pager](../one-pager-resource-governance.md).

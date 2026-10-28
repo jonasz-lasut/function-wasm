@@ -1,89 +1,69 @@
 # Use cases
 
-function-wasm is the right tool when the *logic* of a pipeline step should be
-replaceable without rebuilding, publishing and installing a Function package.
-It's also the right tool when the person who maintains that logic isn't the
-person who maintains the Composition.
+This page is for platform engineers and composition authors deciding whether
+function-wasm fits a pipeline step. It lists what the runtime suits, where its
+limits are and the examples that show it. It assumes you know Crossplane
+compositions. [The introduction](introduction.md) covers what function-wasm is.
 
-- **A customization hook at the end of a pipeline.** The platform team publishes
-  the Composition and reserves its last step for a module the consuming team
-  provides - chosen per Composition, or per composite resource with
-  `module.from: spec.hooks.module` (with `allowEmpty: true` the step does
-  nothing until a team fills the field in). The team adjusts labels,
-  annotations, sizing or values, adds a sidecar resource, or reshapes the
-  desired state to its conventions, in the language it prefers, without a
-  change request against the Composition. The platform team keeps the
-  guardrails: digest pinning,
-  a `compositionPolicy` (Cedar) fencing which registries the team may pick
-  from, `--cosign-key` so only modules signed with the organisation's key
-  run, and the resource caps of the sandbox (`limits` per step, the
-  runtime's flags as ceilings).
-- **Audit and compliance trails.** A module that runs last sees the complete
-  observed and desired state. It can log a structured record of every
-  reconcile - who requested what, which resources are about to change and how
-  - through the runtime's logger (`wasmfn.NewLogger`, straight into the pod
-  log and whatever forwards it), emit results that become events on the XR, or
-  compose an audit resource next to the workload. Nothing else in the
-  pipeline changes.
-- **Policy gates.** Check the desired composed resources against
-  organisational rules - naming, mandatory tags, allowed regions, cost
-  guardrails - and return a fatal result with a precise message to stop the
-  reconcile, or a warning that leaves a trace and doesn't stop it. Per-tenant
-  policy is a per-tenant module, and the pipeline remains one.
-- **Per-tenant, per-environment or per-region behaviour.** One Composition,
-  and a module picked from the XR (`module.from`, a field under `spec.` or
-  `status.` holding the source) or from a per-environment Composition - the
-  same step running different logic for dev and prod, or for `eu` and `us`.
-- **Fast iteration and safe rollback.** Write the function, `guestfn build`,
-  render locally against the runtime, `guestfn push`, reference the digest.
-  Rolling forward or back is a digest change in the Composition; nothing is
-  reinstalled and every other Composition on the same runtime is untouched.
-- **Many small functions, one runtime.** Each team maintains its modules,
-  possibly in a language of its choice (Go, Rust, Python, see the
-  [size table](guests/other-languages.md)); the cluster runs one function-wasm, which
-  compiles each module once per digest and caches it.
+function-wasm suits a step whose *logic* should change without building,
+publishing and installing a Function package. It also suits a step whose
+logic someone other than the Composition's author maintains.
+
+- **A customization hook at the end of a pipeline.** The platform team
+  publishes the Composition and reserves its last step for the module each
+  composite resource names in `module.from`; with `allowEmpty: true` the step
+  does nothing until the field is set. That team changes labels, sizing or
+  sidecars in its own language, without a change request against the
+  Composition. The platform team keeps the guardrails: the digest pin and
+  the `compositionPolicy` fence on repositories in the
+  [Input](operators/input-reference.md), and the operator's
+  [signature check](operators/signatures.md).
+- **Policy gates.** A module that runs last sees the complete observed and
+  desired state. It can check the composed resources against organisational
+  rules such as naming, mandatory tags or allowed regions. A fatal result
+  stops the reconcile, and a warning leaves a trace without stopping it.
+- **Fast iteration and rollback.** Write the function, `guestfn build`, render
+  locally, `guestfn push` and reference the digest in the Composition. Rolling
+  forward or back is a digest change in that Composition; nothing is
+  reinstalled.
+- **Many small functions, one runtime.** Each team maintains its own modules,
+  in any of the [supported languages](guests/other-languages.md). The cluster
+  runs one function-wasm, which compiles each module once per digest and caches
+  it.
 - **Restricted networks.** Modules can come from an internal registry, an
-  internal HTTP server (`http`) or a volume mounted into the runtime
-  (`path`), and the on-disk caches keep fetched modules and compiled code
-  across restarts, so a registry outage doesn't stop reconciling.
+  internal HTTP server (`http`) or a volume mounted into the runtime (`path`).
+  The runtime keeps fetched modules and compiled code on disk, so with a
+  volume at `/tmp/function-wasm-cache` a module it has already fetched keeps
+  running across restarts while the registry is down, unless a signature is
+  required: the runtime verifies that over the registry once per process. A
+  module it has never fetched can't be loaded.
 
-What it's not for: anything that needs to reach out of the sandbox at run
-time beyond what its manifest declares and the policy layers permit. By
-default a module doesn't get network, filesystem or environment access;
-cluster state comes in through the request (observed state, required
-resources), and the module returns desired state. The sandbox opens
-selectively, per capability
-([docs/one-pager-three-layer-authz.md](one-pager-three-layer-authz.md),
-[docs/one-pager-sandbox.md](one-pager-sandbox.md)): a module declares in
-its manifest (`requires`) what it can't run without. The capabilities are a
-private `/tmp` for the request, environment variables bound to step
-credentials (host directories aren't mountable, by design), the step
-credentials it reads from its request, and **HTTP egress through the host**
-to call the APIs it lists, with the host resolving, filtering, budgeting and
-auditing every request - see [HTTP egress](operators/http-egress.md). The
-runtime grants each capability only when the Input's `compositionPolicy` and the
-operator's Cedar `--sandbox-policy-file` both permit it; a step credential a
-module wasn't granted is edited out of the request it receives.
+## Limits
 
-function-wasm doesn't support Crossplane Operations in 1.0 (decided
-2026-10-07). The package declares only the `composition` capability
-(`package/crossplane.yaml`), so Crossplane refuses the function in an
-Operation pipeline rather than running it with a request it wasn't
-written for. Support would first need a definition of what `module.from`
-and `allowEmpty` mean for a request with no composite resource, and of how
-operator grants scoped to an XR principal (`namespace`, `xrKind`) apply
-when there is none. The sandbox works the same whatever kind of pipeline
-calls it, so the limit is one of scope.
+By default a module doesn't get network, filesystem or environment access; cluster
+state comes in through the request and the module returns desired state. A
+module can request more in its manifest, and the runtime grants it only when
+the Composition's policy and the operator's policy both permit it. See
+[HTTP egress](operators/http-egress.md) and the
+[trust model](operators/trust-model.md).
+
+function-wasm doesn't support Crossplane Operations: its package declares
+only the `composition` capability.
 
 ## Worked examples
 
-Each guest language under [`examples/`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples) solves one of these, built,
-rendered and asserted on every `/e2e` run
-([docs/one-pager-use-case-examples.md](one-pager-use-case-examples.md) has
-why these, how they're tested and published). Each release publishes the ones
-that work as published (`cloudflare-origin`, `policy-gate`, `pdb-addon`) at
-`ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, signed and attested, with their
-digest-pinned references in the release's `function-wasm-examples-<release>.yaml`:
+Each example under
+[`examples/`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples)
+is a guest in one language that solves one of these cases. Every `/e2e` run
+builds, tests and lints them, but nothing in CI asserts what an example
+composes. The [use-case examples design record](one-pager-use-case-examples.md)
+explains why these were chosen and how they're published.
+
+A release publishes `cloudflare-origin`, `policy-gate` and `pdb-addon` to
+`ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, signed and attested, when the
+version in the example's `wasmfn.yaml` isn't in the registry yet. The
+digest-pinned references are in the release's
+`function-wasm-examples-<release>.yaml`.
 
 - [`examples/cloudflare-origin`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/cloudflare-origin) (Rust): only
   Cloudflare may connect to an origin. The module composes the origin's AWS
@@ -98,7 +78,7 @@ digest-pinned references in the release's `function-wasm-examples-<release>.yaml
   one digest-pinned module the platform team rolls out on its own.
 - [`examples/pdb-addon`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/pdb-addon) (Go): a customization hook at
   the end of a pipeline. A `WebApp` Composition reserves its last step for
-  the add-on each WebApp names in `spec.addOn` (`module.from`, skipped while
+  the add-on each `WebApp` names in `spec.addOn` (`module.from`, skipped while
   unset), fenced to one repository by the `compositionPolicy`; this add-on
   gives every Deployment the platform composed a PodDisruptionBudget, in the
   default sandbox, with no capability at all.
@@ -108,10 +88,8 @@ digest-pinned references in the release's `function-wasm-examples-<release>.yaml
   of the team the composite resource's namespace belongs to, with that
   team's token from a step credential holding every team's, and stamps
   `team`, `owner` and `cost-center` tags on every composed managed
-  resource. The module receives that credential only because its manifest
-  requires it and both policy layers permit it, and the tokens can go only
-  where egress is granted: the one request its manifest declares, which the
-  `compositionPolicy` and the operator's policy both fence.
+  resource. The module receives that credential only where its manifest
+  requires it and both policy layers permit it.
 - [`examples/dashboard-bundle`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/dashboard-bundle) (C#): dashboards
   as code, delivered as a bundle. A composite resource pins a team's zip of
   Grafana dashboards by sha256; the module fetches it through the host's

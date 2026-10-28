@@ -18,6 +18,7 @@ CIDR
 CIDRs
 CLI
 Cloudflare
+CNCF Wasm
 compile
 componentize-dotnet
 componentize-js
