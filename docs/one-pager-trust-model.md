@@ -216,7 +216,7 @@ that both Cedar layers permit. It runs in a fresh Wasmtime store with WASI
 0.3 and 0.2 and no sockets. It has two ways out: the typed `log` import, and
 `wasi:http`, which the host performs only within an egress grant its manifest
 requires and both Cedar layers permit (`grantEgress`) and refuses otherwise.
-A wall-clock deadline and a linear-memory cap bound the run, and stdout and
+A wall-clock deadline and a memory cap over linear memories and tables bound the run, and stdout and
 stderr go to the pod's log.
 
 The guest has no pre-opened directories and no environment unless its

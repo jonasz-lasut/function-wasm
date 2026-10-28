@@ -595,3 +595,72 @@ fn inspection() {
     let bad = e.inspect(b"(component)".as_ref());
     assert!(bad.is_err(), "text is not a module source");
 }
+
+#[test]
+fn the_memory_limit_denies_table_growth() {
+    // Eight pages of ceiling; a table of 100,000 elements costs a host
+    // pointer each, 800 KB on a 64-bit host, which is past it.
+    let e = Engine::new(Config {
+        memory_limit: 8 << 16,
+        ..Config::default()
+    })
+    .expect("engine");
+    let m = compile(
+        &e,
+        &function_wasm_engine::testing::grow_table_guest(100_000),
+    );
+    let out = e.run(&m, b"", RunOptions::default()).expect("run");
+    assert_eq!(
+        out.len(),
+        0,
+        "table growth past the ceiling should be denied"
+    );
+    let denied = function_wasm_engine::metrics::sample(
+        "function_wasm_module_memory_denials_total",
+        &[("reason", "limit")],
+    )
+    .unwrap_or(0.0);
+    assert!(denied >= 1.0, "the denial should be counted");
+}
+
+#[test]
+fn the_pool_denies_table_growth_it_cannot_serve() {
+    // The shape of the_pool_denies_growth_it_cannot_serve: the blocker holds
+    // four pages of the eight-page pool, the grower's initial four fit, and
+    // one table element more needs bytes the pool cannot serve before the
+    // short deadline.
+    let e = std::sync::Arc::new(
+        Engine::new(Config {
+            memory_limit: 8 << 16,
+            max_total_run_memory: 8 << 16,
+            ..Config::default()
+        })
+        .expect("engine"),
+    );
+    let blocker = compile(&e, &spinning_guest(300_000_000));
+    let grower = compile(&e, &function_wasm_engine::testing::grow_table_guest(1));
+
+    let eb = std::sync::Arc::clone(&e);
+    let blocking = std::thread::spawn(move || {
+        eb.run(&blocker, b"", RunOptions::default())
+            .expect("blocker run");
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    let opts = RunOptions {
+        timeout: Some(Duration::from_millis(100)),
+        ..Default::default()
+    };
+    let out = e.run(&grower, b"", opts).expect("grower run");
+    assert_eq!(
+        out.len(),
+        0,
+        "table growth the pool cannot serve should be denied"
+    );
+    blocking.join().expect("join");
+    let denied = function_wasm_engine::metrics::sample(
+        "function_wasm_module_memory_denials_total",
+        &[("reason", "pool")],
+    )
+    .unwrap_or(0.0);
+    assert!(denied >= 1.0, "the denial should be counted");
+}

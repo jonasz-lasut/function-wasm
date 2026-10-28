@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.4 (rewritten in the present tense over the Rust workspace; merges in the governance-perf record, revision 0.2: the egress rate limit and the fair run slots are part of the model, and its dropped fuel phase is under Alternatives)
+* Status: implemented, revision 1.5 (table growth charged to the ceiling and the pool like memory growth, the 1.0 audit's F-1; rewritten in the present tense over the Rust workspace; merges in the governance-perf record, revision 0.2: the egress rate limit and the fair run slots are part of the model, and its dropped fuel phase is under Alternatives)
 
 One runtime serves many Compositions, many teams and many modules. This
 document is the model of what a module may consume, what bounds the runtime as
@@ -36,7 +36,7 @@ for memory, restart with an empty cache and begin again.
 | dimension | bound | flag or Input field | default | at the bound |
 |---|---|---|---|---|
 | one run, wall clock | epoch deadline, or the request's gRPC deadline when that's sooner | `--module-timeout`; `limits.timeout` narrows it | 30 s | the run is interrupted and the fatal result states the module and the budget |
-| one run, guest memory | Wasmtime store limiter on linear memory | `--module-memory-limit`; `limits.memory` narrows it | 512 MB | `memory.grow` fails and the guest decides; counted in `memory_denials_total{reason="limit"}` |
+| one run, guest memory | Wasmtime store limiter on each linear memory and each table, a host pointer per element | `--module-memory-limit`; `limits.memory` narrows it | 512 MB | `memory.grow` or `table.grow` fails and the guest decides; counted in `memory_denials_total{reason="limit"}` |
 | one run, call stack | Wasmtime's stack ceiling, engine-wide | `--module-stack-limit` | 512 KB | the guest traps: a fatal result |
 | resident compiled modules | LRU over the memory tier, on top of its 10-minute idle TTL | `--max-cached-modules` | 0 (TTL only) | the least recently used module is dropped |
 | the memory tier itself | off maps the artifact per request and releases it | `--enable-memory-cache` | true | nothing stays resident |
@@ -106,14 +106,16 @@ the queue is the bottleneck.
 
 ### Run memory pool
 
-`--max-total-run-memory` bounds the total linear memory of all running guests.
+`--max-total-run-memory` bounds the total memory of all running guests, their
+linear memories and tables together.
 A component has no top-level memory to reserve ahead of the run. Each run
 charges the pool as its guest grows, the initial memory included, and releases
 everything when its store drops. The pool reflects what runs use, and a small
 guest doesn't wait on a worst-case ceiling it never claims. A growth the pool
 can't serve before the run's deadline is denied. The guest sees `memory.grow`
-fail, as at the per-run ceiling, the runtime logs `Denied a memory growth` and
-the denial counts in `memory_denials_total{reason="pool"}`. The runtime refuses
+or `table.grow` fail, as at the per-run ceiling, the runtime logs `Denied a
+memory growth` or `Denied a table growth` and the denial counts in
+`memory_denials_total{reason="pool"}`. The runtime refuses
 at startup a pool smaller than `--module-memory-limit`, since no full-limit run
 could ever fit.
 

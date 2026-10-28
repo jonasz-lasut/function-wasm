@@ -16,7 +16,7 @@ Probes are on [Readiness and warm-up](readiness.md).
 | `function_wasm_module_cache_events_total` | `cache` = `compiled` (memory), `compiled-disk`, `blob`; `event` = `hit`, `miss`, `stale` | cache lookups; `stale` is an artifact on disk that Wasmtime refused, and appears for `compiled-disk` only |
 | `function_wasm_module_cache_bytes` | `cache` = `compiled-disk`, `blob` | bytes on disk per store, measured every ten minutes |
 | `function_wasm_module_http_requests_total` | `outcome` = `ok`, `refused`, `budget`, `error` | HTTP requests modules made through the host (`requires.egress.http`) |
-| `function_wasm_module_memory_denials_total` | `reason` = `limit`, `pool` | guest memory growths denied; the guest sees `memory.grow` fail |
+| `function_wasm_module_memory_denials_total` | `reason` = `limit`, `pool` | guest memory and table growths denied; the guest sees `memory.grow` or `table.grow` fail |
 | `function_wasm_trusted_root_refreshes_total` | `outcome` = `updated`, `unchanged`, `error` | refreshes of the Sigstore trusted root |
 | `function_wasm_trusted_root_last_refresh_timestamp_seconds` | | Unix time of the last successful refresh of the trusted root, 0 until the first; `time()` minus this value is the root's age |
 

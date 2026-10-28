@@ -223,7 +223,7 @@ pub static HTTP_REQUESTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
 pub static MEMORY_DENIALS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
         "function_wasm_module_memory_denials",
-        "Guest memory growths denied, by reason (limit = the run's memory ceiling, pool = --max-total-run-memory exhausted before the run's deadline). The guest sees memory.grow fail.",
+        "Guest memory and table growths denied, by reason (limit = the run's memory ceiling, pool = --max-total-run-memory exhausted before the run's deadline). The guest sees memory.grow or table.grow fail.",
         &["reason"],
     )
 });

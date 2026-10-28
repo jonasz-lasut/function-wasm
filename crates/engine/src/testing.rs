@@ -143,6 +143,28 @@ pub fn grow_guest(pages: u32) -> String {
     ))
 }
 
+/// A guest that grows a funcref table by the given number of elements and
+/// reports the outcome as grow_guest does: empty means the grow was denied
+/// (table.grow returned -1), one byte means it succeeded.
+pub fn grow_table_guest(elements: u32) -> String {
+    format!(
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (table 0 funcref)
+    (func (export "run") (param i32 i32) (result i32)
+      (i32.store8 (i32.const 64) (i32.const 0))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72)
+        (i32.ne (table.grow (ref.null func) (i32.const {elements})) (i32.const -1)))
+      (i32.const 64)))
+  (core instance $i (instantiate $m))
+  {lift}
+)"#,
+        lift = lift_run("i", "i"),
+    )
+}
+
 /// A guest that spins for the given nanoseconds on the monotonic clock
 /// (`wasi:clocks/monotonic-clock`), holding its memory meanwhile.
 pub fn spinning_guest(nanos: u64) -> String {
