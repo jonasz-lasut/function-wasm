@@ -110,10 +110,7 @@ impl RegistryClient {
             "https"
         };
         RegistryClient {
-            http: reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(5 * 60))
-                .build()
-                .expect("the registry client's configuration is static"),
+            http: http_client(),
             base: format!("{scheme}://{host}"),
             repository: reference.repository.clone(),
             auth,
@@ -414,6 +411,25 @@ impl RegistryClient {
         };
         Ok((!token.is_empty()).then_some(token))
     }
+}
+
+/// The HTTP client behind every RegistryClient, one for the process: a
+/// blocking reqwest client owns a thread and a connection pool, so sharing
+/// it starts the thread once and lets a load's manifest, blob and referrer
+/// requests reuse one connection and TLS session instead of each paying a
+/// handshake. The client's configuration is static (a five-minute request
+/// timeout); what differs per registry is the URL and the credential,
+/// which travel on the request.
+fn http_client() -> reqwest::blocking::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(5 * 60))
+                .build()
+                .expect("the registry client's configuration is static")
+        })
+        .clone()
 }
 
 /// The referrers tag schema's tag for a manifest digest: sha256-<hex>.

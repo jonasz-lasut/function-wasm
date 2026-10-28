@@ -328,28 +328,34 @@ impl WasmFunction {
         // The module's ask - its manifest's requires - is decided by the
         // three layers: the manifest requests, the compositionPolicy and the
         // operator policy permit. A module without one gets the default
-        // sandbox.
-        let manifest_bytes = {
-            let resolver = Arc::clone(&self.resolver);
-            let target = resolved.clone();
-            match tokio::task::spawn_blocking(move || resolver.manifest(&target)).await {
-                Ok(Ok(bytes)) => bytes,
-                Ok(Err(e)) => {
-                    return Ok(raw_rsp(self.fatal(
-                        &req,
-                        OUTCOME_REFUSED,
-                        format!(
-                            "cannot read the manifest of module {}: {e}",
-                            resolved.description
-                        ),
-                    )));
-                }
-                Err(e) => {
-                    return Ok(raw_rsp(self.fatal(
-                        &req,
-                        OUTCOME_ERROR,
-                        format!("internal error while running the module: {e}"),
-                    )));
+        // sandbox. The manifest is read off the executor only when reading
+        // it is I/O: a source without one, or one already read (the
+        // resolver remembers a manifest by the digest that pins it), is
+        // answered in place.
+        let manifest_bytes = match self.resolver.cached_manifest(&resolved) {
+            Some(bytes) => bytes,
+            None => {
+                let resolver = Arc::clone(&self.resolver);
+                let target = resolved.clone();
+                match tokio::task::spawn_blocking(move || resolver.manifest(&target)).await {
+                    Ok(Ok(bytes)) => bytes,
+                    Ok(Err(e)) => {
+                        return Ok(raw_rsp(self.fatal(
+                            &req,
+                            OUTCOME_REFUSED,
+                            format!(
+                                "cannot read the manifest of module {}: {e}",
+                                resolved.description
+                            ),
+                        )));
+                    }
+                    Err(e) => {
+                        return Ok(raw_rsp(self.fatal(
+                            &req,
+                            OUTCOME_ERROR,
+                            format!("internal error while running the module: {e}"),
+                        )));
+                    }
                 }
             }
         };
@@ -1234,6 +1240,49 @@ mod tests {
         assert!(
             rsp.results.is_empty(),
             "the pull should run: {:?}",
+            rsp.results
+        );
+
+        // The same OCI source with the credential withdrawn (a wrong
+        // password): the module, its manifest and the signature verdict are
+        // the first load's, so the registry isn't asked and the module runs.
+        // A revocation reaches a cached module at its next cold load.
+        let wrong = std::collections::HashMap::from([
+            (
+                "username".to_string(),
+                crate::oci::testregistry::BASIC_USER.as_bytes().to_vec(),
+            ),
+            ("password".to_string(), b"withdrawn".to_vec()),
+        ]);
+        let req = RunFunctionRequest {
+            meta: Some(RequestMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            input: Some(resource::json_to_struct(
+                input(serde_json::json!({
+                    "type": "OCI",
+                    "oci": {"ref": format!("{addr}/example/private@{digest}"), "credentials": "registry"},
+                }))
+                .as_object()
+                .expect("object"),
+            )),
+            credentials: std::collections::HashMap::from([(
+                "registry".to_string(),
+                Credentials {
+                    source: Some(credentials::Source::CredentialData(CredentialData { data: wrong })),
+                },
+            )]),
+            ..Default::default()
+        };
+        let out = f
+            .handle_raw(req.encode_to_vec(), None)
+            .await
+            .expect("handled");
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        assert!(
+            rsp.results.is_empty(),
+            "a withdrawn credential should not stop a cached module: {:?}",
             rsp.results
         );
 

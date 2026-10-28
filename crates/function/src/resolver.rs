@@ -79,7 +79,26 @@ pub struct Resolver {
     blobs: Option<Arc<Store>>,
     files: Mutex<HashMap<PathBuf, FileStamp>>,
     http: std::sync::OnceLock<reqwest::blocking::Client>,
+    /// The on-disk tier of the manifest cache: raw manifest bytes keyed by
+    /// their own digest (the manifest layer's digest for an OCI source, the
+    /// stated manifestDigest for an HTTP one) and verified on read, never
+    /// trusted by name - a planted file under a pinning digest would
+    /// otherwise be a manifest the runtime believed (the 1.0 audit's F-5).
+    /// None (tests, validate) keeps the memory tier alone.
+    manifests: Option<Arc<Store>>,
+    /// Raw manifest bytes by the digest that pins them (the artifact's
+    /// manifest digest for an OCI source, the stated manifestDigest for an
+    /// HTTP one) and by their own digest: the content behind a digest never
+    /// changes, so a manifest read once is the manifest, and a warm request
+    /// costs no registry round trip. A source with no manifest is remembered
+    /// as empty bytes, for the same reason. A wasmfn.yaml under --module-dir
+    /// is never cached: it is read fresh each request, by design.
+    cached_manifests: Mutex<HashMap<String, Vec<u8>>>,
 }
+
+/// Most manifests the memory tier holds before it starts over; each is at
+/// most manifest::MAX_SIZE, so the tier is bounded to a few megabytes.
+const MAX_CACHED_MANIFESTS: usize = 4096;
 
 impl Resolver {
     pub fn new(dir: Option<PathBuf>, max_size: u64, blobs: Option<Arc<Store>>) -> Self {
@@ -89,7 +108,74 @@ impl Resolver {
             blobs,
             files: Mutex::new(HashMap::new()),
             http: std::sync::OnceLock::new(),
+            manifests: None,
+            cached_manifests: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Keeps fetched manifests in store too, so a restart on a warm disk
+    /// cache reads no registry for them either.
+    pub fn with_manifest_store(mut self, store: Arc<Store>) -> Self {
+        self.manifests = Some(store);
+        self
+    }
+
+    /// The module's manifest when answering costs no I/O: a source that
+    /// names none, or one whose manifest the memory tier holds. None means
+    /// manifest must be called, off the async executor.
+    pub fn cached_manifest(&self, resolved: &Resolved) -> Option<Vec<u8>> {
+        match &resolved.manifest {
+            ManifestSource::None => Some(Vec::new()),
+            ManifestSource::PathFile { .. } => None,
+            ManifestSource::Http { digest, .. } => self
+                .remembered(digest)
+                .and_then(|raw| manifest_json(&raw).ok()),
+            ManifestSource::OciLayer { reference, .. } => self.remembered(&reference.digest),
+        }
+    }
+
+    fn remembered(&self, key: &str) -> Option<Vec<u8>> {
+        self.cached_manifests
+            .lock()
+            .expect("poisoned")
+            .get(key)
+            .cloned()
+    }
+
+    fn remember(&self, key: &str, manifest: &[u8]) {
+        let mut cached = self.cached_manifests.lock().expect("poisoned");
+        if cached.len() >= MAX_CACHED_MANIFESTS {
+            cached.clear();
+        }
+        cached.insert(key.to_string(), manifest.to_vec());
+    }
+
+    /// The raw manifest whose own digest is `digest`: the memory tier, the
+    /// disk tier (verified against the digest on read), then fetch, whose
+    /// bytes are kept in both. A failed fetch is kept nowhere, so the next
+    /// request tries again.
+    fn manifest_by_digest(
+        &self,
+        digest: &str,
+        fetch: impl FnOnce() -> Result<Vec<u8>, String>,
+    ) -> Result<Vec<u8>, String> {
+        if let Some(m) = self.remembered(digest) {
+            return Ok(m);
+        }
+        if let Some(store) = &self.manifests
+            && let Some(m) = store.get(digest)
+        {
+            self.remember(digest, &m);
+            return Ok(m);
+        }
+        let m = fetch()?;
+        if let Some(store) = &self.manifests {
+            // Best effort, as for blobs: a full store costs the next
+            // process one fetch.
+            let _ = store.put(digest, &m);
+        }
+        self.remember(digest, &m);
+        Ok(m)
     }
 
     /// Resolves a concrete source - one whose from was materialised.
@@ -237,24 +323,42 @@ impl Resolver {
                 manifest_json(&b)
             }
             ManifestSource::Http { url, digest } => {
-                let raw = self.verified("manifest", digest, || {
-                    self.http_get(url, "manifest", crate::manifest::MAX_SIZE as u64)
+                // The stated manifestDigest is the raw bytes' own digest, so
+                // it keys both tiers directly.
+                let raw = self.manifest_by_digest(digest, || {
+                    self.verified("manifest", digest, || {
+                        self.http_get(url, "manifest", crate::manifest::MAX_SIZE as u64)
+                    })
                 })?;
                 manifest_json(&raw)
             }
             ManifestSource::OciLayer { reference, auth } => {
+                // The pinning digest is the artifact's, not the layer's, so
+                // it keys the memory tier alone; the disk tier is keyed by
+                // the layer's own digest, learned from the artifact's
+                // manifest. A process that lost the memo pays one manifest
+                // GET per digest, with the credential, and no blob GET when
+                // the disk tier has the layer.
+                if let Some(m) = self.remembered(&reference.digest) {
+                    return Ok(m);
+                }
                 let client = RegistryClient::new(reference, auth.clone());
                 let m = client.manifest(reference)?;
                 let Some(layer) = crate::oci::manifest_layer(&m) else {
+                    self.remember(&reference.digest, &[]);
                     return Ok(Vec::new());
                 };
-                self.verified("manifest layer", &layer.digest, || {
-                    client.blob(
-                        &layer.digest,
-                        crate::manifest::MAX_SIZE as u64,
-                        "manifest layer",
-                    )
-                })
+                let bytes = self.manifest_by_digest(&layer.digest, || {
+                    self.verified("manifest layer", &layer.digest, || {
+                        client.blob(
+                            &layer.digest,
+                            crate::manifest::MAX_SIZE as u64,
+                            "manifest layer",
+                        )
+                    })
+                })?;
+                self.remember(&reference.digest, &bytes);
+                Ok(bytes)
             }
         }
     }
@@ -464,6 +568,51 @@ mod tests {
                 .expect("resolve")
                 .digest,
             resolved.digest
+        );
+    }
+
+    #[test]
+    fn caches_an_oci_manifest_by_its_layer_digest() {
+        // The 1.0 audit's F-5 rule for the manifests store: verify-on-read,
+        // keyed by the manifest's own digest, never by the artifact's.
+        let wasm = b"not really wasm";
+        let module_manifest = br#"{"abi":2}"#;
+        let (pinning, addr) =
+            crate::oci::testregistry::wasm_artifact(wasm, Some(module_manifest), false);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(Store::open_dir(dir.path(), true).expect("store"));
+        let r = Resolver::new(None, 1 << 20, None).with_manifest_store(Arc::clone(&store));
+        let src = ModuleSource {
+            r#type: "OCI".to_string(),
+            oci: Some(crate::input::OciSource {
+                r#ref: format!("{addr}/example/greeter@{pinning}"),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let resolved = r.resolve(&src, None).expect("resolve");
+        assert!(
+            r.cached_manifest(&resolved).is_none(),
+            "a cold manifest is I/O"
+        );
+        assert_eq!(r.manifest(&resolved).expect("manifest"), module_manifest);
+        let layer = crate::oci::testregistry::digest_of(module_manifest);
+        assert_eq!(store.get(&layer).as_deref(), Some(&module_manifest[..]));
+        assert!(
+            store.get(&pinning).is_none(),
+            "nothing is stored under the pinning digest"
+        );
+        assert_eq!(
+            r.cached_manifest(&resolved).as_deref(),
+            Some(&module_manifest[..]),
+            "a warm manifest costs no I/O"
+        );
+        // A fresh resolver over the same store learns the layer digest from
+        // the artifact's manifest and takes the layer from disk.
+        let again = Resolver::new(None, 1 << 20, None).with_manifest_store(store);
+        assert_eq!(
+            again.manifest(&resolved).expect("manifest"),
+            module_manifest
         );
     }
 

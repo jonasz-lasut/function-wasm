@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 2.5 (the cache posture of the 1.0 audit's F-5, a credential checked at a pull and never at a hit, with a manifests tier verify-on-read by the layer's digest; the compiled tier's trust boundary stated, with the cache key record proposing a keyed check; rewritten in the present tense over the Rust workspace; warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
+* Status: implemented, revision 2.6 (revision 2.6 puts the manifests tier to use, the performance audit's perf-02 under the F-5 rule. the cache posture of the 1.0 audit's F-5, a credential checked at a pull and never at a hit, with a manifests tier verify-on-read by the layer's digest; the compiled tier's trust boundary stated, with the cache key record proposing a keyed check; rewritten in the present tense over the Rust workspace; warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
 
 function-wasm keeps its caches on disk under one fixed directory, every entry
 addressed by a content digest, plus a bounded in-memory tier for compiled
@@ -28,9 +28,9 @@ not how.
 │       └── sha256-<hex>                the artifact for the module that digest pins:
 │                                       native code, loaded without re-verification,
 │                                       so only the runtime may write this directory
-├── manifests/                        module manifests, by their own digest, verified on
-│   └── sha256-<hex>                    read (nothing writes it yet: an OCI source's manifest
-│                                       is read from the registry on every request)
+├── manifests/                        module manifests by their own digest (the manifest
+│   └── sha256-<hex>                    layer's for an OCI source, manifestDigest for an HTTP
+│                                       one), verified against the name on every read
 └── tuf/<instance>/                   with --cosign-trust-instance: the verified TUF
                                       metadata and trusted root of that Sigstore instance,
                                       outside the LRU sweep (which walks the stores above)
@@ -75,12 +75,15 @@ key is also everything a hit checks. A module one Composition pulled with a
 registry credential is served without a fetch to any later request that
 states its digest, whatever the source type. The runtime checks the
 credential at the pull and never at a hit, and a digest quoted in a
-Composition is no secret. The signature verdict is kept per digest per
-process the same way. An OCI source's manifest is the exception today: the
-resolver reads it from the registry on every request with the step's
-credential. When the manifests store takes it over, it follows the rule of
-every disk tier but the compiled one: verified on read against the manifest
-layer's own digest, never trusted by name.
+Composition is no secret. The signature verdict and the module's manifest
+are kept per digest per process the same way. The resolver remembers a
+manifest by the digest that pins it, and a warm request doesn't contact the
+registry. The raw bytes also go to the `manifests/` store under their own
+digest, verified on read like every disk tier but the compiled one. A
+process that lost the memory tier reads the artifact's manifest once per
+digest, with the credential, to learn the layer's digest, and takes the
+layer from disk. A `wasmfn.yaml` under `--module-dir` is never cached: it's
+the development loop.
 
 The compiled store is namespaced by `engine::version()`
 (`crates/engine/src/lib.rs`): the Wasmtime crate version `build.rs` reads

@@ -73,11 +73,14 @@ The credential protects the pull, never the cache. The runtime caches a
 module's bytes by content digest and serves them, without a fetch, to any
 Composition on the runtime that states the digest, from an `OCI`, `HTTP` or
 `Path` source alike. A private module remains private only while no
-Composition another tenant can read quotes its digest. The runtime reads an
-`OCI` source's manifest from the registry on every request with the step's
-credential, and a withdrawn credential refuses that Composition's next
-request. A static source that states a cached digest doesn't contact the
-registry.
+Composition another tenant can read quotes its digest. The runtime checks
+the credential and the signature at the first load of a digest in a process,
+for the module's bytes and its manifest alike, and a warm request doesn't
+contact the registry. A credential withdrawn later stops a cached module at
+its next cold load: a restart, an idle eviction past the ten-minute TTL with the
+disk entry swept, or a key rotation under `requireSignature`. To stop a
+module now, forbid it: the `pullModule` fence for a `module.from` source, or
+`requireSignature` on its repository with the signature revoked.
 
 ## The cache directory
 

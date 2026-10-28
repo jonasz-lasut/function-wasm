@@ -47,8 +47,11 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       GET → layer digest; blob store on disk → source, verified against the  │
 │       blob digest; a tar layer yields /fn.wasm exactly) + engine.compile     │
 │       (checkABI after wasmtime decodes it — the one ABI check) + serialize   │
-│  6. resolver.manifest(resolved) → the module's manifest (an OCI layer, or a  │
-│       wasmfn.yaml a path/http source names by reference, else none);         │
+│  6. resolver.cached_manifest / manifest(resolved) → the module's manifest   │
+│       (an OCI layer, or a wasmfn.yaml a path/http source names by reference, │
+│       else none), remembered in memory by the digest that pins it - a warm   │
+│       request contacts no registry - and kept in the manifests store under  │
+│       its own digest, verify-on-read; a Path wasmfn.yaml is read fresh;      │
 │       admission::admit_requires(requires, ceilings, compositionPolicy,       │
 │       principal) - the three-layer AND: the manifest requests, the           │
 │       composition layer permits (scoped default-permit), the operator layer  │
@@ -557,7 +560,7 @@ A guest's returned error becomes a fatal result on a fresh response, a panic in 
 
 ### Caches
 
-Three on-disk stores under `/tmp/function-wasm-cache` (fixed; `store.rs`): `modules/<digest>` — every fetched blob, verified on read, never held in memory; `compiled/<engine::version()>/<digest>` — wasmtime artifacts (`version()` = the wasmtime crate version from Cargo.lock + OS/arch, distinct from the Go runtime's namespace on purpose; other version dirs reaped at startup once a day old); `manifests/<digest>`; beside them `tuf/<instance>/`, the verified TUF metadata and trusted root of `--cosign-trust-instance` (`trustroot.rs`), outside the sweep. In memory: compiled modules only, idle TTL 10 min, LRU-bounded by `--max-cached-modules`, single-flight loads with `--max-concurrent-compiles` slots, or nothing with `--enable-memory-cache=false`. Keys are digests stated in the Input; `--max-cache-size` LRU-sweeps the disk stores to nine tenths at startup and every ten minutes. Full design: `docs/one-pager-cache.md`.
+Three on-disk stores under `/tmp/function-wasm-cache` (fixed; `store.rs`): `modules/<digest>` — every fetched blob, verified on read, never held in memory; `compiled/<engine::version()>/<digest>` — wasmtime artifacts (`version()` = the wasmtime crate version from Cargo.lock + OS/arch, distinct from the Go runtime's namespace on purpose; other version dirs reaped at startup once a day old); `manifests/<manifest digest>` — raw module manifests under their own digest (the layer's for OCI, `manifestDigest` for HTTP), verified on read, with the pinning-digest memo in memory (`resolver.rs`); beside them `tuf/<instance>/`, the verified TUF metadata and trusted root of `--cosign-trust-instance` (`trustroot.rs`), outside the sweep. In memory: compiled modules only, idle TTL 10 min, LRU-bounded by `--max-cached-modules`, single-flight loads with `--max-concurrent-compiles` slots, or nothing with `--enable-memory-cache=false`. Keys are digests stated in the Input; `--max-cache-size` LRU-sweeps the disk stores to nine tenths at startup and every ten minutes. Full design: `docs/one-pager-cache.md`.
 
 ### Readiness, warm-up and the run bound
 
