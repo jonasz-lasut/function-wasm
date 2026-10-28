@@ -365,12 +365,12 @@ impl Engine {
         wc.max_wasm_stack(config.stack_limit as usize);
         // The proposal set is a one-way door for the 1.x contract: a
         // proposal refused later refuses guests that compiled before.
-        // Threads (shared memories and atomics) are off, since no component
-        // toolchain emits them without a wasi-threads host, which this
-        // runtime has none of; relaxed SIMD runs with its deterministic
-        // semantics, so a module computes the same result on every host
-        // (the 1.0 audit's F-8).
-        wc.wasm_threads(false);
+        // Threads (shared memories and atomics) are compiled out, the crate
+        // feature being off in Cargo.toml, since no component toolchain
+        // emits them without a wasi-threads host, which this runtime has
+        // none of; relaxed SIMD runs with its deterministic semantics, so a
+        // module computes the same result on every host (the 1.0 audit's
+        // F-8).
         wc.relaxed_simd_deterministic(true);
         // Explicit in both directions: the decision is the runtime's --debug,
         // never the WASMTIME_BACKTRACE_DETAILS environment wasmtime would
