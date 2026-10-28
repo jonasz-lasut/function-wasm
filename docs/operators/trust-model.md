@@ -32,6 +32,12 @@ permit ([Cedar policy](cedar-policy.md)):
   Non-secret configuration goes in `config`.
 - HTTP requests through the host ([HTTP egress](http-egress.md)).
 
+What a module writes to the desired state can be fenced per kind with
+`composeResource`. What it reads can't: through the response's
+`requirements` it can ask Crossplane for any resource the Function's RBAC
+permits, as a native function can. Scope that RBAC to what the modules
+should see ([the output fence](cedar-policy.md#the-output-fence)).
+
 ## Modules chosen by an XR author
 
 With `module.from`, the XR author picks the module. Use it only where you

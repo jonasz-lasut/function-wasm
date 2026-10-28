@@ -198,6 +198,13 @@ result that states the module, the kind, the name, the change and the layer, and
 none of the module's output is applied. The runtime doesn't judge a response that
 already contains a fatal result.
 
+The fence judges the desired state and nothing else. A module can ask
+Crossplane for any resource the Function's RBAC lets Crossplane read, through
+the response's `requirements`. It can also write `context` and `conditions`.
+The fence sees none of these. Scope the Function's RBAC to what its modules
+should see. A fence over the requirements, a `requireResource` action judged the
+same way, is proposed for 1.0.0.
+
 ## Worked examples
 
 One rule per action. The refusal each produces is in
