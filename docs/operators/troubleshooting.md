@@ -21,6 +21,7 @@ This page is for the operator of a function-wasm pod and for the module author w
 - **`module.allowEmpty is set but module.from is not`**: `allowEmpty` applies only to a field the composite resource may leave unset. Remove it, or switch the step to `module.from`.
 - **`apiVersion wasm.fn.crossplane.io/v1beta1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: wasm.fn.crossplane.io/v1 (the same fields)`**: a warning from `function validate` and `guestfn build`, and a log line per request. Change the `apiVersion` line.
 - **`limits.memory 1Gi exceeds the runtime's --module-memory-limit of 512Mi`**, or the same for `limits.timeout` and `--module-timeout`: lower the limit or raise the flag.
+- **`module oci … has an invalid manifest: config.schema: Resource '…' is not present in a registry and retrieving it failed: $ref … is external; config.schema must be self-contained`**: the module's `config.schema` references a URL or a file. The runtime never fetches a reference. The author inlines the referenced schema. A `#/$defs/…` reference inside the schema is fine.
 - **`module oci … config does not match the module's schema: /greeting: got number, want string`**: the Input's `config` fails the module's `config.schema`.
 
 ## Policy grants

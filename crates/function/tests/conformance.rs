@@ -462,6 +462,12 @@ fn validate_resolve_manifest_matches_the_goldens() {
         ("abiv1", "abi: 1\nname: greeter\nversion: 0.1.0\n"),
         // An ABI this runtime does not implement at all.
         ("abiunknown", "abi: 3\nname: greeter\nversion: 0.1.0\n"),
+        // A config.schema reaching outside itself: refused at load, never
+        // fetched (the port 1 URL would fail, which is not the point).
+        (
+            "schemaref",
+            "abi: 2\nname: greeter\nversion: 0.1.0\nconfig:\n  schema:\n    $ref: http://127.0.0.1:1/schema.json\n",
+        ),
     ];
     let mut compositions = Vec::new();
     for (name, manifest) in manifests {

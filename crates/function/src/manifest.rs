@@ -123,7 +123,9 @@ pub struct Filesystem {
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
     /// A JSON Schema (draft 2020-12) the Input's config must satisfy,
-    /// inline: no $ref to a URL is followed.
+    /// self-contained: a $ref outside the schema (a URL, a file) is refused
+    /// at load, and `pattern` is the regex crate's syntax, so a schema from
+    /// a module author costs the runtime no network, file or backtracking.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<Value>,
 }
@@ -283,9 +285,15 @@ impl Manifest {
     }
 
     fn compile_schema(&self, schema: &Value) -> Result<jsonschema::Validator, String> {
+        // Every $ref the schema itself does not hold goes through the
+        // retriever, which refuses it with the runtime's own sentence; the
+        // regex engine is the linear-time one, so a schema's pattern cannot
+        // backtrack the runtime off its deadline (both the 1.0 audit's F-3).
         jsonschema::options()
             .with_draft(jsonschema::Draft::Draft202012)
             .should_validate_formats(true)
+            .with_retriever(NoExternalRefs)
+            .with_pattern_options(jsonschema::PatternOptions::regex())
             .build(schema)
             .map_err(|e| format!("config.schema: {e}"))
     }
@@ -450,6 +458,20 @@ impl Manifest {
             ));
         }
         Ok(())
+    }
+}
+
+/// The retriever a config.schema is compiled with: a reference the schema
+/// does not resolve within itself is refused, whatever its scheme, so a
+/// manifest never makes the runtime fetch a URL or read a file.
+struct NoExternalRefs;
+
+impl jsonschema::Retrieve for NoExternalRefs {
+    fn retrieve(
+        &self,
+        uri: &jsonschema::Uri<String>,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        Err(format!("$ref {uri} is external; config.schema must be self-contained").into())
     }
 }
 
@@ -763,6 +785,53 @@ mod tests {
             "{err}"
         );
         assert!(m.validate_config(None).is_ok());
+    }
+
+    #[test]
+    fn config_schema_refuses_external_refs() {
+        for uri in [
+            "file:///etc/hosts",
+            "http://127.0.0.1:1/schema.json",
+            "https://example.com/schema.json",
+        ] {
+            let err = Manifest::parse(
+                format!(r#"{{"abi":2,"config":{{"schema":{{"$ref":"{uri}"}}}}}}"#).as_bytes(),
+            )
+            .expect_err("refuse");
+            assert!(err.starts_with("config.schema: "), "{err}");
+            assert!(
+                err.contains(&format!(
+                    "$ref {uri} is external; config.schema must be self-contained"
+                )),
+                "{err}"
+            );
+        }
+        // A reference inside the schema never reaches the retriever.
+        let m = manifest(
+            r##"{"abi":2,"config":{"schema":{"$defs":{"s":{"type":"string"}},"type":"object","properties":{"greeting":{"$ref":"#/$defs/s"}}}}}"##,
+        );
+        assert!(
+            m.validate_config(Some(&serde_json::json!({"greeting": "hi"})))
+                .is_ok()
+        );
+        assert!(
+            m.validate_config(Some(&serde_json::json!({"greeting": 3})))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn config_schema_pattern_is_linear_time() {
+        // The regex crate has no look-around or backreferences, so a
+        // pattern that needs backtracking is refused at load rather than run.
+        let err = Manifest::parse(
+            r#"{"abi":2,"config":{"schema":{"type":"string","pattern":"a(?=b)"}}}"#.as_bytes(),
+        )
+        .expect_err("refuse");
+        assert!(err.starts_with("config.schema: "), "{err}");
+        let m = manifest(r#"{"abi":2,"config":{"schema":{"type":"string","pattern":"^[a-z]+$"}}}"#);
+        assert!(m.validate_config(Some(&serde_json::json!("hi"))).is_ok());
+        assert!(m.validate_config(Some(&serde_json::json!("Hi"))).is_err());
     }
 
     #[test]

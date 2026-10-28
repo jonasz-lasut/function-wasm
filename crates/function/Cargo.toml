@@ -22,7 +22,10 @@ function-wasm-engine = { path = "../engine" }
 hex = "0.4"
 http = "1"
 http-body = "1"
-jsonschema = "0.60"
+# default-features off: the crate's defaults resolve a $ref over http and the
+# filesystem, which a module's config.schema must never do (the 1.0 audit's
+# F-3); idna stays for the idn-hostname format.
+jsonschema = { version = "0.60", default-features = false, features = ["idna"] }
 tempfile = "3"
 pbjson-types = "0.9"
 prost = "0.14"
