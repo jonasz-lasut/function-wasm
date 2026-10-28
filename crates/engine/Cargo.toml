@@ -18,11 +18,12 @@ serde_json.workspace = true
 tempfile = "3"
 thiserror = "2"
 tracing.workspace = true
-# wasmtime's default features less two: cache (the runtime keeps its own
+# wasmtime's default features less cache (the runtime keeps its own
 # compiled-artifact cache and never sets Config::cache, and the feature pulls
-# zstd into the binary) and threads (the engine refuses shared memories; see
-# Config::wasm_threads in lib.rs). A wasmtime bump that adds a default
-# feature is checked by hand against this list.
+# zstd into the binary), threads and the gc set (the proposals the engine
+# refuses, compiled out where the crate lets them be; see the Config in
+# lib.rs). A wasmtime bump that adds a default feature is checked by hand
+# against this list.
 wasmtime = { version = "50.0.0", default-features = false, features = [
     "addr2line",
     "anyhow",
@@ -37,10 +38,6 @@ wasmtime = { version = "50.0.0", default-features = false, features = [
     "debug",
     "debug-builtins",
     "demangle",
-    "gc",
-    "gc-copying",
-    "gc-drc",
-    "gc-null",
     "parallel-compilation",
     "pooling-allocator",
     "profiling",

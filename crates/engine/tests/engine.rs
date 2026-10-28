@@ -713,3 +713,46 @@ fn relaxed_simd_is_deterministic() {
     }
     assert_eq!(out, want);
 }
+
+#[test]
+fn a_second_memory_is_refused_at_compile() {
+    // Multi-memory is off: a module with two memories never compiles.
+    let e = Engine::new(Config::default()).expect("engine");
+    let wasm = wat::parse_str(
+        r#"(component
+  (core module $m
+    (memory (export "memory") 1)
+    (memory 1)
+    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+    (func (export "run") (param i32 i32) (result i32) i32.const 64))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+)"#,
+    )
+    .expect("wat");
+    let err = e.compile(&wasm).expect_err("second memory").to_string();
+    assert!(err.starts_with("cannot compile module: "), "{err}");
+}
+
+#[test]
+fn a_tail_call_is_refused_at_compile() {
+    // Tail calls are off: a module using return_call never compiles.
+    let e = Engine::new(Config::default()).expect("engine");
+    let wasm = wat::parse_str(
+        r#"(component
+  (core module $m
+    (memory (export "memory") 1)
+    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 4096)
+    (func $tail (param i32 i32) (result i32) i32.const 64)
+    (func (export "run") (param i32 i32) (result i32)
+      local.get 0 local.get 1 return_call $tail))
+  (core instance $i (instantiate $m))
+  (func (export "run") (param "request" (list u8)) (result (result (list u8) (error string)))
+    (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+)"#,
+    )
+    .expect("wat");
+    let err = e.compile(&wasm).expect_err("tail call").to_string();
+    assert!(err.starts_with("cannot compile module: "), "{err}");
+}

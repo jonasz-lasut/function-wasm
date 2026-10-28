@@ -364,14 +364,21 @@ impl Engine {
         wc.native_unwind_info(false);
         wc.max_wasm_stack(config.stack_limit as usize);
         // The proposal set is a one-way door for the 1.x contract: a
-        // proposal refused later refuses guests that compiled before.
-        // Threads (shared memories and atomics) are compiled out, the crate
-        // feature being off in Cargo.toml, since no component toolchain
-        // emits them without a wasi-threads host, which this runtime has
-        // none of; relaxed SIMD runs with its deterministic semantics, so a
-        // module computes the same result on every host (the 1.0 audit's
-        // F-8).
+        // proposal refused later refuses guests that compiled before, and
+        // one enabled later is a minor. The engine accepts WebAssembly 2.0
+        // plus extended const (componentize-py's output needs it) and
+        // relaxed SIMD with its deterministic semantics, so a module
+        // computes the same result on every host. Every other WebAssembly
+        // 3.0 proposal is refused at compile: threads and the GC set
+        // (GC, function references, exceptions) are compiled out, the
+        // crate features being off in Cargo.toml, and tail calls,
+        // multi-memory and memory64 are off here. None of the nine guests
+        // the project builds uses any of them (measured with wasm-tools on
+        // 2026-10-28, the 1.0 audit's F-8).
         wc.relaxed_simd_deterministic(true);
+        wc.wasm_tail_call(false);
+        wc.wasm_multi_memory(false);
+        wc.wasm_memory64(false);
         // Explicit in both directions: the decision is the runtime's --debug,
         // never the WASMTIME_BACKTRACE_DETAILS environment wasmtime would
         // otherwise read.
