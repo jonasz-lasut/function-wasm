@@ -62,7 +62,7 @@ wasmtime-wasi-http = { version = "50.0.1", default-features = false, features = 
 # compiled. Renovate moves the adapter with the wasmtime group and ignores the
 # other three: bump them by hand in that PR to what `cargo tree -i wit-component`
 # shows wasmtime pulling.
-wasi-preview1-component-adapter-provider = "49.0.5"
+wasi-preview1-component-adapter-provider = "50.0.1"
 wasmparser = { version = "0.258.3", default-features = false }
 wit-component = "0.258.3"
 wit-parser = "0.258.3"
