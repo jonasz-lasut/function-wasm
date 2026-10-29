@@ -23,7 +23,7 @@ tracing.workspace = true
 # refuses, compiled out where the crate lets them be; see the Config in
 # lib.rs). A wasmtime bump that adds a default feature is checked by hand
 # against this list.
-wasmtime = { version = "50.0.0", default-features = false, features = [
+wasmtime = { version = "50.0.1", default-features = false, features = [
     "addr2line",
     "anyhow",
     "async",
@@ -48,11 +48,11 @@ wasmtime = { version = "50.0.0", default-features = false, features = [
 ] }
 # p1 stays off: the runtime serves components only (WASI 0.2 and 0.3), so
 # the preview1 host and its wiggle dependency are not built.
-wasmtime-wasi = { version = "50.0.0", default-features = false, features = ["p2", "p3"] }
+wasmtime-wasi = { version = "50.0.1", default-features = false, features = ["p2", "p3"] }
 # default-send-request stays off on purpose: the compiler then requires the
 # egress hooks implementation - a run can never fall through to an
 # unpoliced default HTTP client.
-wasmtime-wasi-http = { version = "50.0.0", default-features = false, features = ["p2", "p3"] }
+wasmtime-wasi-http = { version = "50.0.1", default-features = false, features = ["p2", "p3"] }
 # guestfn build's componentizing (componentize.rs) moves with wasmtime: the
 # wasip1 adapter is built in the wasmtime repository and published at its
 # version, so the adapter linked into a guest is always the one the
@@ -62,7 +62,7 @@ wasmtime-wasi-http = { version = "50.0.0", default-features = false, features = 
 # compiled. Renovate moves the adapter with the wasmtime group and ignores the
 # other three: bump them by hand in that PR to what `cargo tree -i wit-component`
 # shows wasmtime pulling.
-wasi-preview1-component-adapter-provider = "49.0.4"
+wasi-preview1-component-adapter-provider = "49.0.5"
 wasmparser = { version = "0.258.3", default-features = false }
 wit-component = "0.258.3"
 wit-parser = "0.258.3"
