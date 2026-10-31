@@ -237,7 +237,7 @@ WITH_TOOLS := PATH="$(TOOLS)/bin:$$PATH"
 # per change of .vale.ini (the stamp file), under the gitignored part of
 # .vale/styles.
 # renovate: datasource=github-releases depName=errata-ai/vale
-VALE_VERSION := 3.25.1
+VALE_VERSION := 3.26.0
 VALE_OS := $(if $(filter Darwin,$(shell uname -s)),macOS,Linux)
 VALE_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,64-bit)
 VALE := $(TOOLS)/vale-$(VALE_VERSION)/vale
