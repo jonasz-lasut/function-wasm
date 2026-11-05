@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft (a `requireResource` action over the response's requirements, for finding F-6 of the 1.0 security audit, #208)
+* Status: draft, revision 0.2 (a `requireResource` action over the response's requirements, for finding F-6 of the 1.0 security audit, #208; the owner settled the open points on 2026-11-05)
 
 ## Summary
 
@@ -20,7 +20,9 @@ every resource selector of a response in both policy layers, scoped
 default-permit in each, over the entities `composeResource` uses and with a
 refusal sentence of the same form. The runtime judges the selectors because
 the selectors are what it sees. Crossplane reads the resources themselves
-after the response and sends them to the module in a later request.
+after the response and sends them to the module in a later request. The
+manifest gains an advisory `reads` declaration beside `composes`, for the
+tooling.
 
 ## Design
 
@@ -122,9 +124,41 @@ metric the fence needs.
 `function validate` can't judge a selector offline any more than it can
 judge output. It marks a step whose `compositionPolicy` scopes the action
 with `requireResource` on its OK line and in the JSON `admitted` list,
-beside `composeResource`. The manifest declares nothing about reads for
-now. The "Alternatives" section records the advisory declaration
-considered.
+beside `composeResource`.
+
+### The manifest's `reads` declaration
+
+A manifest declares what the module reads, beside what it composes:
+
+```yaml
+reads:
+  - kind: apiextensions.crossplane.io/EnvironmentConfig   # <group>/<Kind>, the core group spelled core
+    by: [name]                                            # name, labels; both when omitted
+```
+
+The declaration is advisory, as `composes` is. The fence judges the actual
+selectors after the run regardless of the declaration, because a manifest
+requests and never grants. The tooling reads it in the three places that
+read `composes`:
+
+- `function validate --resolve` warns where a layer would refuse a declared
+  kind: `the module declares it reads
+  apiextensions.crossplane.io/EnvironmentConfig (by name), which the
+  compositionPolicy does not permit (requireResource)`. The offline
+  judgment evaluates a read by name with `context.name` empty and a read by
+  labels with `context.labels` empty, and never sets `context.namespace`,
+  so a rule conditioned on a value may warn for a selector the run would
+  permit. The warning is advisory, as the `composes` warning is.
+- `guestfn inspect` shows it in the manifest summary, as `reads <kinds>`.
+- `guestfn scaffold composition` writes one `requireResource` permit per
+  declared kind into the `compositionPolicy` skeleton, with
+  `context has name` or `context has labels` from `by`.
+
+`guestfn build` and `guestfn manifest validate` refuse a `kind` that isn't
+`<group>/<Kind>`, a `by` entry other than `name` and `labels`, and an
+unknown field inside `reads`, as they do for `composes`. The policy-gate
+example and the end-to-end guest declare their EnvironmentConfig read, the
+example's version bumped so the published artifact contains it.
 
 ### A worked example
 
@@ -176,7 +210,13 @@ keeping the Cedar import, and its tests run without an engine. `compose::group_o
 `require_refused_by`, `admit_require` and `describe_requirement`, mirroring
 their `compose` twins, with the layer naming shared. `runner.rs` calls them
 after the response decode and before the output fence, under the same
-`tracing::debug!` of what it judges. `validate.rs` adds the marker.
+`tracing::debug!` of what it judges. `validate.rs` adds the marker and the
+advisory loop over the manifest's `reads`, beside the one over `composes`.
+
+`crates/function/src/manifest.rs` gains the `Reads` type (`kind`, `by`),
+its validation, its strict decode for the author's own file and its place
+in the summary. `crates/guestfn/src/composition.rs` writes the skeleton
+permits from it.
 
 ## Tests
 
@@ -187,13 +227,19 @@ after the response decode and before the output fence, under the same
   kind and a response with no requirements.
 - `admission.rs`: the layer stated in each sentence, and an unscoped layer
   narrowing nothing.
+- `manifest.rs`: `reads` parsed, validated and refused for a bad kind, a
+  bad `by` and an unknown field, and shown in the summary.
 - `runner.rs`: a `fixed_component` guest returning a response with
   selectors, admitted under one policy and refused under another, the
   fatal-result case judged, and the `refused` outcome counted.
 - Conformance: a `require.yaml` fixture beside `compose.yaml` whose first
   step scopes the action, with `require-ceiling.cedar` and the
   `RequireResource`, `RequireResource-json` and
-  `RequireResource-OperatorCeiling` goldens, recorded on purpose.
+  `RequireResource-OperatorCeiling` goldens, recorded on purpose, plus the
+  `RequireResource-Declared` and `RequireResource-DeclaredCeiling` goldens
+  for the advisory warning under `--resolve`, as `composes` has.
+- `guestfn`: the scaffold-composition golden with a manifest that declares
+  reads, and `inspect` showing them.
 - End to end, default profile: the guest's `requirements` knob under a
   `compositionPolicy` that forbids the EnvironmentConfig kind, expecting the
   fatal sentence and no `status.environmentConfig`, beside the existing
@@ -207,7 +253,9 @@ it, the worked example and the refusal rows. `trust-model.md`, `AGENTS.md`
 and the one-pager on three-layer authorization lose the sentence that
 states the gap and count ten actions. `troubleshooting.md` gets the two
 sentences, `how-a-request-runs.md` the step and `docs/project/testing.md`
-the cluster case.
+the cluster case. `docs/guests/module-manifests.md` gets a "The `reads`
+declaration" section beside the `composes` one, and the module manifest
+one-pager a revision for the field.
 
 ## Compatibility
 
@@ -230,14 +278,20 @@ reads on upgrade, which is what its author wrote.
   and equality natural, and a set would make a rule parse strings.
 - Skipping a response with a fatal result, as the output fence does.
   Rejected. The selector travels either way.
-- An advisory `reads` declaration in the manifest, mirroring `composes`, so
-  `function validate --resolve` warns and `guestfn scaffold composition`
-  writes a skeleton rule. Deferred. It's additive, and no module has asked
-  for it. The manifest remains a request, never a grant, so it changes
-  nothing about the fence.
-- Fencing `requirements.schemas`. Non-goal. A schema is public metadata.
+- Releasing the fence without the manifest's `reads` declaration and adding
+  it in a later minor. Rejected (Jonasz, 2026-11-05). The tooling that reads
+  `composes` reads `reads` the same way, and a module author who declares
+  what the module composes expects to declare what it reads beside it.
+- Fencing `requirements.schemas`. Non-goal (Jonasz, 2026-11-05). A schema
+  is public metadata, and the runtime relays a schema request as before.
 
 ## Decision
 
-Proposed. The owner's decision is pending. Scheduled for 1.0.0 with the
-other audit findings in #204.
+Jonasz settled the four open points on 2026-11-05.
+
+- The runtime judges the selectors of a response with a fatal result.
+- The runtime judges the deprecated `extra_resources` map beside `resources`.
+- The manifest's `reads` declaration is part of the same release as the fence.
+- `requirements.schemas` remains unfenced.
+
+Scheduled for 1.0.0 with the other audit findings in #204.
