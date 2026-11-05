@@ -27,12 +27,12 @@ requires:
       - host: example.com
         methods: [GET]
   credentials: [cmdb]
+  resources:
+    - kind: apiextensions.crossplane.io/EnvironmentConfig
+      by: [name]
 composes:
   - kind: policy/PodDisruptionBudget
     changes: [add]
-reads:
-  - kind: apiextensions.crossplane.io/EnvironmentConfig
-    by: [name]
 config:
   schema:
     type: object
@@ -96,7 +96,7 @@ fn push_then_inspect_and_show() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("manifest: greeter v0.1.0, requires egress example.com, credentials cmdb, composes policy/PodDisruptionBudget (add), reads apiextensions.crossplane.io/EnvironmentConfig (name)"),
+        stdout.contains("manifest: greeter v0.1.0, requires egress example.com, credentials cmdb, resources apiextensions.crossplane.io/EnvironmentConfig (name), composes policy/PodDisruptionBudget (add)"),
         "{stdout}"
     );
     assert!(
@@ -235,7 +235,7 @@ fn manifest_validate() {
     assert!(ok, "{stderr}");
     assert!(
         stdout.contains(
-            "wasmfn.yaml: valid (greeter v0.1.0, requires egress example.com, credentials cmdb, composes policy/PodDisruptionBudget (add), reads apiextensions.crossplane.io/EnvironmentConfig (name);"
+            "wasmfn.yaml: valid (greeter v0.1.0, requires egress example.com, credentials cmdb, resources apiextensions.crossplane.io/EnvironmentConfig (name), composes policy/PodDisruptionBudget (add);"
         ),
         "{stdout}"
     );

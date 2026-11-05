@@ -413,7 +413,7 @@ attribute as unmatched, and an unmatched `forbid` is no fence.
 `function validate` can't judge an ask offline. It marks a step whose
 `compositionPolicy` scopes the action with `requireResource` on its OK line, and
 with `--resolve` it warns where a kind the module's manifest declares it
-[reads](../guests/module-manifests.md#the-reads-declaration) would be refused.
+[requires](../guests/module-manifests.md#the-requiresresources-declaration) would be refused.
 
 ## Refusal sentences
 

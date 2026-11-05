@@ -2,8 +2,8 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.5 (the `reads` declaration beside
-  `composes`; rewritten in the present tense over the Rust workspace; merges
+* Status: implemented, revision 1.5 (the `requires.resources` declaration
+  beside `composes`; rewritten in the present tense over the Rust workspace; merges
   in the manifest-less-sources record, revision 0.1, whose manifests by
   reference are a section here)
 
@@ -134,13 +134,14 @@ name. The tooling reads it: `function validate --resolve` warns where a
 declared change would be refused, `guestfn inspect` shows it and `guestfn
 scaffold composition` writes the matching permits.
 
-**Declared reads** work the same way: `reads` lists the `<group>/<Kind>` a
-module asks Crossplane for through its response's `requirements` and how it
-selects them (`by`: `name`, `labels`, both when omitted). It's advisory in the same way
-(#208): the runtime judges the actual selectors against the policy layers'
-`requireResource` rules after the run, and the same three tools read the
-declaration, `function validate --resolve` judging a declared read with an
-empty name or no labels and no namespace.
+**Declared resources** work the same way: `requires.resources` lists the
+`<group>/<Kind>` a module asks Crossplane for through its response's
+`requirements` and how it selects them (`by`: `name`, `labels`, both when
+omitted). Of the `requires` entries, this one alone the runtime never grants
+or refuses before the run. It's advisory (#208), judged after the run over
+the actual selectors against the policy layers' `requireResource` rules, and
+the same three tools read it, where `function validate --resolve` judges a
+declared read with an empty name or no labels and no namespace.
 
 **`guestfn scaffold composition`** prints a Composition step, or with `--full`
 a Composition, whose `module` is a `Path` for a file or the pinned `OCI`

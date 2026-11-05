@@ -1226,7 +1226,7 @@ fn validate_resolve_composes_matches_the_goldens() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
-/// The advisory `reads` declaration of a manifest (#208) under `--resolve`,
+/// The advisory `requires.resources` declaration of a manifest (#208) under `--resolve`,
 /// as `composes` above: a declared kind a layer would refuse is a warning
 /// naming the layer, judged with an empty name or no labels and no
 /// namespace; the step stays admitted.
@@ -1238,7 +1238,7 @@ fn validate_resolve_reads_matches_the_goldens() {
     std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
     std::fs::write(
         dir.path().join("manifest.yaml"),
-        "abi: 2\nname: policy-gate\nversion: 0.1.1\nreads:\n  - kind: apiextensions.crossplane.io/EnvironmentConfig\n    by: [name]\n  - kind: core/Secret\n",
+        "abi: 2\nname: policy-gate\nversion: 0.1.1\nrequires:\n  resources:\n    - kind: apiextensions.crossplane.io/EnvironmentConfig\n      by: [name]\n    - kind: core/Secret\n",
     )
     .expect("write manifest");
     let composition = |name: &str, policy: &str| {

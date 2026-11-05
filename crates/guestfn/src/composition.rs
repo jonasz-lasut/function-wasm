@@ -1,7 +1,7 @@
 //! guestfn scaffold composition: a Composition step for a module, from its
 //! manifest - the module source, a config skeleton from the manifest's
 //! schema, and a commented compositionPolicy skeleton derived from the
-//! manifest's requires, composes and reads.
+//! manifest's requires (its resources included) and composes.
 
 use std::path::{Path, PathBuf};
 
@@ -231,15 +231,15 @@ fn composition_policy_skeleton(src: &Source, m: Option<&Manifest>) -> Option<Str
             ));
         }
     }
-    if let Some(reads) = m.map(|m| &m.reads)
-        && !reads.is_empty()
+    if let Some(resources) = m.and_then(|m| m.requires.as_ref()).map(|r| &r.resources)
+        && !resources.is_empty()
     {
         body.push(
-            "// what the module declares it reads through its requirements (requireResource"
+            "// the resources the module declares it requires from Crossplane (requireResource"
                 .to_string(),
         );
         body.push("// fences a module's reads; unscoped, nothing is narrowed):".to_string());
-        for r in reads {
+        for r in resources {
             let when = match r.by.as_slice() {
                 [] => String::new(),
                 by => {

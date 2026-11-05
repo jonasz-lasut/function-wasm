@@ -719,12 +719,18 @@ impl Validator {
                 }
             }
         }
-        // What the manifest declares the module reads, held against the
-        // layers' requireResource rules the same way: a declared read by
-        // name is judged with an empty name and one by labels with no
-        // labels, never a namespace, so a rule conditioned on a value may
-        // warn for a selector the run would permit - advisory, as above.
-        for rd in &m.reads {
+        // What the manifest declares the module requires from Crossplane
+        // (requires.resources), held against the layers' requireResource
+        // rules the same way: a declared match by name is judged with an
+        // empty name and one by labels with no labels, never a namespace, so
+        // a rule conditioned on a value may warn for a selector the run would
+        // permit - advisory, as above.
+        let resources = m
+            .requires
+            .as_ref()
+            .map(|q| q.resources.as_slice())
+            .unwrap_or_default();
+        for rd in resources {
             let Some((group, kind)) = rd.group_and_kind() else {
                 continue;
             };
@@ -747,7 +753,7 @@ impl Validator {
                     &principal,
                 ) {
                     r.warnings.push(format!(
-                        "the module declares it reads {} (by {by}), which {} does not permit (requireResource)",
+                        "the module declares it requires {} (by {by}), which {} does not permit (requireResource)",
                         rd.kind,
                         layer.describe()
                     ));
