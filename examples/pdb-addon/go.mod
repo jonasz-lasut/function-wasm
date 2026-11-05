@@ -1,6 +1,6 @@
 module github.com/jonasz-lasut/function-wasm/examples/pdb-addon
 
-go 1.26.6
+go 1.27.3
 
 require (
 	github.com/crossplane/crossplane-runtime/v2 v2.4.3
