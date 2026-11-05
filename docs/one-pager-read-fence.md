@@ -307,4 +307,5 @@ Jonasz settled the four open points on 2026-11-05.
 - The manifest's declaration, as `requires.resources`, is part of the same release as the fence.
 - `requirements.schemas` remains unfenced.
 
-Scheduled for 1.0.0 with the other audit findings in #204.
+Implemented on 2026-11-05 (#233), with the other audit findings of #204
+closed before 1.0.0.

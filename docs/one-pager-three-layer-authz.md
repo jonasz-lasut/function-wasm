@@ -185,6 +185,8 @@ upgrade.
   ceiling. The AND combination makes it impossible.
 - A permissive default for the operator layer or the `from` fence. Both stay
   default-deny. The output fence is the recorded exception.
-- Fencing `results` or `context` writes. `results` are messages, and a
-  `context` write could take an action of the same form later without
-  touching this design. `requirements` was here until the read fence (#208).
+- Fencing `results` or `context` writes (Jonasz, 2026-11-05). `results` are
+  messages. `context` is a scratch space the pipeline's later steps read and
+  the last step's output drops, and it reaches nothing in the cluster, so a
+  fence would guard nothing. `requirements` was here until the read fence
+  (#208).
