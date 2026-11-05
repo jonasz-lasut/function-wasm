@@ -21,7 +21,7 @@ function-sdk-rust = "0.4.0"
 function-wasm-engine = { path = "../engine" }
 # getrandom draws the compiled store's per-process key, hmac signs each
 # artifact under it (store.rs).
-getrandom = "0.3"
+getrandom = "0.4"
 hex = "0.4"
 hmac = "0.13"
 http = "1"
