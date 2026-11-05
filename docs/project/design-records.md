@@ -15,6 +15,7 @@ record fails the prose job until both say the same.
 | [Module and compiled artifacts cache](../one-pager-cache.md) | Implemented, revision 2.7 |
 | [Module manifest](../one-pager-module-manifest.md) | Implemented, revision 1.5 |
 | [Module source schema](../one-pager-module-source-schema.md) | Implemented, revision 2.3 |
+| [OCI runtime](../one-pager-oci-runtime.md) | Draft |
 | [Read fence](../one-pager-read-fence.md) | Implemented, revision 1.0 |
 | [Runtime resource governance](../one-pager-resource-governance.md) | Implemented, revision 1.7 |
 | [Three-layer authorization model](../one-pager-three-layer-authz.md) | Implemented, revision 1.4 |
