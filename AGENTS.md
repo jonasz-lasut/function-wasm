@@ -25,8 +25,9 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
     ↓
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ crates/function/src/runner.rs: WasmFunction::handle_raw()                    │
-│  1. decode a typed copy for admission (a v1beta1 apiVersion: one warn line,  │
-│       input::V1BETA1_DEPRECATION); admission::admit(input, ceilings) -       │
+│  1. decode a typed copy for admission (the group of 0.6 and earlier,        │
+│       wasm.fn.crossplane.io: refused by name, input::renamed_group);         │
+│       admission::admit(input, ceilings) -                                    │
 │       compositionPolicy compiled (content-hash cached, malformed Cedar →     │
 │       fatal); limits → engine RunOptions, or a fatal naming the limit and    │
 │       the ceiling flag; module shape checked                                 │
@@ -526,9 +527,10 @@ Makefile                    the end-to-end targets (e2e.up, e2e.crossplane - a k
 Dockerfile, Dockerfile.dev  the release image (the workspace compiled in a Rust build stage) and
                             the same image around a prebuilt binary (CI's e2e job wraps the
                             binary build-tools compiled; make e2e.image uses it under FUNCTION_BIN)
-package/                    crossplane.yaml + the checked-in Input CRD (documentation for tooling;
-                            Crossplane never installs a function's Input CRD - the CRD is maintained
-                            by hand now that the Go types that generated it are gone)
+package/                    crossplane.yaml + the Input CRD (documentation for tooling and
+                            crossplane beta validate; Crossplane never installs a function's
+                            Input CRD), generated from input.rs by crd.rs and held to it by
+                            tests/crd.rs (UPDATE_GOLDENS=1 re-records it)
 docs/abi-v2.md              the host/guest contract: the component world every scaffold targets
                             (ABI v1, core modules, was removed in 1.0.0)
 book.toml, docs/SUMMARY.md  the documentation site (mdBook over docs/; "Documentation site" below):
@@ -545,14 +547,14 @@ book.toml, docs/SUMMARY.md  the documentation site (mdBook over docs/; "Document
 
 ### Input
 
-The function receives an `Input` (`wasm.fn.crossplane.io/v1`; a `v1beta1` document, the same fields, is accepted throughout 1.x with `input::V1BETA1_DEPRECATION` said under the step by `function validate`, once per request by the runtime and on the build line by `guestfn build`, and is removed in 2.0.0): a KRM-like object (`crates/function/src/input.rs`):
+The function receives an `Input` (`guestfn.crossplane.io/v1`; the group of 0.6 and earlier, `wasm.fn.crossplane.io` in both its versions, the same fields, is refused by name with `input::renamed_group` under the step by `function validate`, on every request by the runtime and on the build line by `guestfn build`, with no alias: the rename was made before 1.0): a KRM-like object (`crates/function/src/input.rs`):
 
 - `module` — `type: OCI|HTTP|Path` (required) + exactly one of `oci{ref, credentials}`, `http{url, digest, manifestURL, manifestDigest}`, `path` (+ `manifestPath`), or `from` (the XR field holding that object; with `allowEmpty: true` a field the XR leaves unset - absent or null - skips the step: no module runs and the desired state goes back unchanged; refused without `from`)
 - `compositionPolicy` — raw Cedar, the composition author's layer: fences `from` sources (`pullModule`/`spendCredential`, default-deny) and may narrow sandbox capabilities (scoped default-permit); read from the Input only, never from the XR
 - `limits` — `timeout`, `memory`, `concurrency`, each ≤ the runtime's ceiling flag (concurrency silently capped)
 - `config` — opaque; the guest reads it via `GetConfig` - non-secret module configuration lives here
 
-There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), and what it asks Crossplane for through the response's `requirements` through a tenth, `requireResource` (#208), both judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` and `requires.resources` declare them for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs` and the CRD under `package/input/`.
+There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), and what it asks Crossplane for through the response's `requirements` through a tenth, `requireResource` (#208), both judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` and `requires.resources` declare them for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs`; the CRD under `package/input/` follows `input.rs` by generation.
 
 ### ABI v2
 
@@ -682,7 +684,7 @@ The user manual is an mdBook under `docs/`: `book.toml` at the repository root (
 
 1. Add the field to `crates/function/src/input.rs` (serde) and enforce its rules at runtime — `admission::admit`, the resolver, or `from.rs` for something the XR may choose (never read `compositionPolicy` or `limits` from the composite). A new *capability* is not an Input field at all: it is a manifest requirement (`manifest.rs` `Requires` + its shape check) decided by `admission::admit_requires` under both Cedar layers (`authz.rs`: a new action in the shared schema, permits on both policies) → engine `RunOptions` + the sandbox wiring
 2. Everything `admit`/`admit_requires` checks is what `function validate` checks — add a fixture under `testdata/validate/` and a conformance golden for the new refusal; a new ceiling flag goes into `main.rs` so `serve` and `validate` share it
-3. Update the hand-maintained CRD under `package/input/` and the "Input reference" table in `docs/operators/input-reference.md`
+3. Give the field a doc comment (it is the CRD's description), any `schemars` validation attribute the CRD should carry, re-record the CRD with `UPDATE_GOLDENS=1 cargo test -p function-wasm --test crd`, and update the "Input reference" table in `docs/operators/input-reference.md`
 
 ### Adding a host import
 

@@ -152,7 +152,7 @@ stringData:
       source: Secret
       secretRef: {namespace: crossplane-system, name: cmdb-tokens}
     input:
-      apiVersion: wasm.fn.crossplane.io/v1
+      apiVersion: guestfn.crossplane.io/v1
       kind: Input
       module:
         type: OCI

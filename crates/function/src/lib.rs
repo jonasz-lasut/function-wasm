@@ -8,6 +8,7 @@ pub mod authz;
 pub mod cache;
 pub mod compose;
 pub mod cosign;
+pub mod crd;
 pub mod egress;
 pub mod egress_rules;
 pub mod from;

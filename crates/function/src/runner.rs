@@ -136,12 +136,6 @@ impl WasmFunction {
                 )));
             }
         };
-        // The deprecation policy's runtime half: an Input is decoded per
-        // request and cached nowhere, so the line is per request.
-        if input.api_version == crate::input::API_VERSION_V1BETA1 {
-            tracing::warn!(tag, "{}", crate::input::V1BETA1_DEPRECATION);
-        }
-
         // What the Composition asks of the runtime is settled before any
         // module is read or compiled: nothing will run if it is refused.
         let admitted = match admission::admit(&input, &self.engine.config()) {
@@ -784,7 +778,7 @@ mod tests {
 
     fn input(module: serde_json::Value) -> serde_json::Value {
         serde_json::json!({
-            "apiVersion": "wasm.fn.crossplane.io/v1",
+            "apiVersion": "guestfn.crossplane.io/v1",
             "kind": "Input",
             "module": module,
         })
@@ -1015,7 +1009,7 @@ mod tests {
             }),
             input: Some(resource::json_to_struct(
                 serde_json::json!({
-                    "apiVersion": "wasm.fn.crossplane.io/v1",
+                    "apiVersion": "guestfn.crossplane.io/v1",
                     "kind": "Input",
                     "module": {"type": "Path", "path": "fn.wasm"},
                 })
@@ -1397,7 +1391,7 @@ mod tests {
         let raw = RunFunctionRequest {
             input: Some(resource::json_to_struct(
                 serde_json::json!({
-                    "apiVersion": "wasm.fn.crossplane.io/v1",
+                    "apiVersion": "guestfn.crossplane.io/v1",
                     "kind": "Input",
                     "module": {"type": "Path", "path": "fn.wasm"},
                 })

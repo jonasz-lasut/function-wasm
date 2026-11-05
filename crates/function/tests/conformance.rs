@@ -129,13 +129,13 @@ fn cases() -> Vec<Case> {
             stdin: "",
         },
         Case {
-            name: "DeprecatedAPIVersion",
-            args: &["testdata/validate/v1beta1.yaml"],
+            name: "RenamedAPIGroup",
+            args: &["testdata/validate/renamed-group.yaml"],
             stdin: "",
         },
         Case {
-            name: "DeprecatedAPIVersion-json",
-            args: &["testdata/validate/v1beta1.yaml", "--output", "json"],
+            name: "RenamedAPIGroup-json",
+            args: &["testdata/validate/renamed-group.yaml", "--output", "json"],
             stdin: "",
         },
         Case {
@@ -176,12 +176,12 @@ fn cases() -> Vec<Case> {
         Case {
             name: "Stdin",
             args: &["-"],
-            stdin: "apiVersion: wasm.fn.crossplane.io/v1\nkind: Input\nmodule: {type: OCI, oci: {ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a}}\n",
+            stdin: "apiVersion: guestfn.crossplane.io/v1\nkind: Input\nmodule: {type: OCI, oci: {ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a}}\n",
         },
         Case {
             name: "ConcurrencyDetail",
             args: &["-"],
-            stdin: "apiVersion: wasm.fn.crossplane.io/v1\nkind: Input\nmodule: {type: OCI, oci: {ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a}}\nlimits: {concurrency: 2}\n",
+            stdin: "apiVersion: guestfn.crossplane.io/v1\nkind: Input\nmodule: {type: OCI, oci: {ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a}}\nlimits: {concurrency: 2}\n",
         },
         Case {
             name: "SeveralFiles",
@@ -398,7 +398,7 @@ fn validate_resolve_matches_the_goldens() {
     let composition = dir.path().join("composition.yaml");
     let step = |name: &str, path: &str| {
         format!(
-            "  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: {path}}}\n"
+            "  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: guestfn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: {path}}}\n"
         )
     };
     std::fs::write(
@@ -493,7 +493,7 @@ fn validate_resolve_manifest_matches_the_goldens() {
         std::fs::write(
             &composition,
             format!(
-                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: fn.wasm, manifestPath: {name}-manifest.yaml}}\n"
+                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: guestfn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: fn.wasm, manifestPath: {name}-manifest.yaml}}\n"
             ),
         )
         .expect("write composition");
@@ -669,7 +669,7 @@ fn validate_resolve_http_source_matches_the_goldens() {
     let dir = tempfile::tempdir().expect("tempdir");
     let step = |name: &str, module: &str| {
         format!(
-            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {module}\n"
+            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: guestfn.crossplane.io/v1\n      kind: Input\n      module: {module}\n"
         )
     };
     let base = format!("http://127.0.0.1:{port}");
@@ -828,7 +828,7 @@ fn validate_resolve_oci_source_matches_the_goldens() {
     std::fs::write(
         &composition,
         format!(
-            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: oci\nspec:\n  pipeline:\n  - step: oci\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: OCI, oci: {{ref: {addr}/example/greeter@{artifact_digest}}}}}\n"
+            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: oci\nspec:\n  pipeline:\n  - step: oci\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: guestfn.crossplane.io/v1\n      kind: Input\n      module: {{type: OCI, oci: {{ref: {addr}/example/greeter@{artifact_digest}}}}}\n"
         ),
     )
     .expect("write");
@@ -900,7 +900,7 @@ fn validate_resolve_cosign_matches_the_goldens() {
 
     let composition = |name: &str, digest: &str| {
         format!(
-            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: OCI, oci: {{ref: {addr}/example/greeter@{digest}}}}}\n"
+            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: guestfn.crossplane.io/v1\n      kind: Input\n      module: {{type: OCI, oci: {{ref: {addr}/example/greeter@{digest}}}}}\n"
         )
     };
     let mut failures = Vec::new();
@@ -1098,7 +1098,7 @@ fn validate_resolve_keyless_cosign_matches_the_goldens() {
         std::fs::write(
             &file,
             format!(
-                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: OCI, oci: {{ref: {addr}/example/greeter@{digest}}}}}\n"
+                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: guestfn.crossplane.io/v1\n      kind: Input\n      module: {{type: OCI, oci: {{ref: {addr}/example/greeter@{digest}}}}}\n"
             ),
         )
         .expect("write");
@@ -1183,7 +1183,7 @@ fn validate_resolve_composes_matches_the_goldens() {
         std::fs::write(
             &path,
             format!(
-                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: fn.wasm, manifestPath: manifest.yaml}}\n{policy_block}"
+                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: guestfn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: fn.wasm, manifestPath: manifest.yaml}}\n{policy_block}"
             ),
         )
         .expect("write composition");
@@ -1254,7 +1254,7 @@ fn validate_resolve_reads_matches_the_goldens() {
         std::fs::write(
             &path,
             format!(
-                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: fn.wasm, manifestPath: manifest.yaml}}\n{policy_block}"
+                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: guestfn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: fn.wasm, manifestPath: manifest.yaml}}\n{policy_block}"
             ),
         )
         .expect("write composition");

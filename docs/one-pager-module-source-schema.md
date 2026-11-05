@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 2.3 (rewritten in the present tense over the Rust workspace; the Input is `wasm.fn.crossplane.io/v1`)
+* Status: implemented, revision 2.4 (the Input's group is `guestfn.crossplane.io`, the generic name both runtimes serve, with the CRD generated from `input.rs`, #242; rewritten in the present tense over the Rust workspace)
 
 The Input is what a Composition step hands the runtime. A discriminated
 `module` says what runs, and the fields the Composition author controls sit
@@ -18,7 +18,7 @@ may request.
 ## The Input, in one place
 
 ```yaml
-apiVersion: wasm.fn.crossplane.io/v1
+apiVersion: guestfn.crossplane.io/v1
 kind: Input
 module:                                   # what runs - required
   type: OCI                               # OCI | HTTP | Path - always the Composition's choice

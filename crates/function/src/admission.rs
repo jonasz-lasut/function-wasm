@@ -37,6 +37,12 @@ pub struct Admitted {
 }
 
 pub fn admit(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<Admitted, String> {
+    // The group the Input had before the OCI runtime is refused by name
+    // rather than skipped: a Composition written for 0.6 fails with the
+    // new name on its first request and under its step in validate.
+    if crate::input::is_legacy_group(&input.api_version) {
+        return Err(crate::input::renamed_group(&input.api_version));
+    }
     let composition = compile_composition_policy(&input.composition_policy)
         .map_err(|e| format!("compositionPolicy is invalid: {e}"))?;
     let mut admitted = run_options(input, ceilings)?;

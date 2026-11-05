@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use function_sdk_rust::proto::v1::function_runner_service_client::FunctionRunnerServiceClient;
 use function_sdk_rust::proto::v1::{RequestMeta, RunFunctionRequest};
 use function_sdk_rust::resource;
-use function_wasm::input::{API_VERSION, API_VERSION_V1BETA1, V1BETA1_DEPRECATION};
+use function_wasm::input::API_VERSION;
 
 const GUEST_MSG: &str = "a debug record from the guest";
 
@@ -194,42 +194,6 @@ fn without_debug_the_runtime_logs_json_at_info() {
     assert!(
         served.starts_with('{') && served.contains("\"level\":\"INFO\""),
         "the pod's lines are JSON: {served}"
-    );
-}
-
-/// The deprecation policy's runtime half (README, "Compatibility"): a
-/// v1beta1 Input is served as a v1 one with one WARN line per request
-/// naming the replacement, and a v1 Input is served without it.
-#[test]
-fn a_v1beta1_input_is_served_with_one_warning_per_request() {
-    fn deprecations(lines: &[String]) -> Vec<&String> {
-        lines
-            .iter()
-            .filter(|l| l.contains(V1BETA1_DEPRECATION))
-            .collect()
-    }
-
-    let lines = serve_and_run_input(&[], None, API_VERSION_V1BETA1, V1BETA1_DEPRECATION);
-    let warned = deprecations(&lines);
-    assert_eq!(
-        warned.len(),
-        1,
-        "one request, one deprecation line:\n{}",
-        lines.join("\n")
-    );
-    assert!(
-        warned[0].contains("\"level\":\"WARN\"") && warned[0].contains("\"tag\":\"t\""),
-        "logged at WARN with the request's tag: {}",
-        warned[0]
-    );
-
-    // "Running function" is logged right before the warning would be, and
-    // the pipe is drained after the response, so its absence is proven.
-    let lines = serve_and_run_input(&[], None, API_VERSION, "Running function");
-    assert!(
-        deprecations(&lines).is_empty(),
-        "a v1 Input is not deprecated:\n{}",
-        lines.join("\n")
     );
 }
 

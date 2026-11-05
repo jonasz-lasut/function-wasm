@@ -440,7 +440,7 @@ fn run_guest(guest: &str) {
         (
             "Default",
             format!(
-                r#"{{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}}}}"#
             ),
             response("hello my-xr"),
             vec![
@@ -451,7 +451,7 @@ fn run_guest(guest: &str) {
         (
             "Configured",
             format!(
-                r#"{{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"greeting":"hi"}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"greeting":"hi"}}}}"#
             ),
             response("hi my-xr"),
             vec!["Running function".to_string()],
@@ -459,7 +459,7 @@ fn run_guest(guest: &str) {
         (
             "GreetingFromURL",
             format!(
-                r#"{{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{{"type":"OCI","oci":{{"ref":"{egress_ref}"}}}},"config":{{"greetingUrl":"http://{greetings}/en"}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"OCI","oci":{{"ref":"{egress_ref}"}}}},"config":{{"greetingUrl":"http://{greetings}/en"}}}}"#
             ),
             response("howdy my-xr"),
             vec!["outcome=\"ok\"".to_string()],
@@ -467,7 +467,7 @@ fn run_guest(guest: &str) {
         (
             "GreetingFromURLPath",
             format!(
-                r#"{{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}","manifestPath":"{path_manifest}"}},"config":{{"greetingUrl":"http://{greetings}/en"}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}","manifestPath":"{path_manifest}"}},"config":{{"greetingUrl":"http://{greetings}/en"}}}}"#
             ),
             response("howdy my-xr"),
             vec!["outcome=\"ok\"".to_string()],
@@ -475,7 +475,7 @@ fn run_guest(guest: &str) {
         (
             "GreetingURLWithoutGrant",
             format!(
-                r#"{{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"greetingUrl":"http://{greetings}/en"}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"greetingUrl":"http://{greetings}/en"}}}}"#
             ),
             fatal_response(),
             vec!["outcome=\"refused\"".to_string()],
@@ -483,7 +483,7 @@ fn run_guest(guest: &str) {
         (
             "BadConfig",
             format!(
-                r#"{{"apiVersion":"wasm.fn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"greeting":7}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"greeting":7}}}}"#
             ),
             fatal_response(),
             Vec::new(),

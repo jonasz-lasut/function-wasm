@@ -39,7 +39,7 @@ fn object(fields : Map[String, @wkt.Value]) -> @wkt.Value {
 /// wire and back, as the host hands it to the guest.
 fn request(config : Map[String, @wkt.Value]) -> @fnv1.RunFunctionRequest raise {
   let input = @wkt.Struct::Struct({
-    "apiVersion": text("wasm.fn.crossplane.io/v1"),
+    "apiVersion": text("guestfn.crossplane.io/v1"),
     "kind": text("Input"),
     "config": object(config),
   })

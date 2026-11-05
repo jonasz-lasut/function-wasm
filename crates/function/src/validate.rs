@@ -29,7 +29,7 @@ const COMPOSITION_KIND: &str = "Composition";
 #[derive(clap::Args, Debug)]
 pub struct ValidateArgs {
     /// Composition or Input files, YAML or JSON, multi-document; - reads
-    /// stdin. Every pipeline step whose input is a wasm.fn.crossplane.io/v1
+    /// stdin. Every pipeline step whose input is a guestfn.crossplane.io/v1
     /// Input is checked, and every bare Input document.
     #[arg(value_name = "file", required = true)]
     files: Vec<String>,
@@ -779,9 +779,6 @@ impl Validator {
     /// The short fixed list of accepted-but-unwise findings.
     fn warnings(&self, input: &Input) -> Vec<String> {
         let mut out = Vec::new();
-        if input.api_version == crate::input::API_VERSION_V1BETA1 {
-            out.push(crate::input::V1BETA1_DEPRECATION.to_string());
-        }
         if input.module.r#type == "Path" {
             out.push("module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest".to_string());
         }
