@@ -78,7 +78,7 @@ the rollout. Each binary uses one profile.
 | Profile | What it tests |
 |---|---|
 | `default` | every case a runtime admits, under both signature verifiers |
-| `strict` | the refusals: no verifier and no grants |
+| `strict` | the refusals of a narrow operator layer, the read fence's ceiling among them |
 | `lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
 
 The `default` profile runs the runtime with `--cosign-key` (the suite's key)
@@ -90,9 +90,10 @@ and the tests are in `crates/e2e/tests/default.rs`.
 
 The `strict` profile has no verifier. Its policy requires a signature for the
 plain variant only and grants egress to the registry host with no
-`dialAddress` hole. Its tests cover the no-verifier refusal, the block list
-refusing the service CIDR in band, and the env, credential and `/tmp`
-refusals.
+`dialAddress` hole. It also scopes `requireResource` to the tenant's own
+namespace. Its tests cover the no-verifier refusal, the block list refusing
+the service CIDR in band, the env, credential and `/tmp` refusals, and the
+operator ceiling refusing a cluster-scoped read.
 
 The `lifecycle` profile runs with `--debug`, `--warm-modules` on the published
 pdb-addon, a PVC-backed cache bounded below that module's size, a readiness

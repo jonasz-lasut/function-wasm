@@ -489,8 +489,8 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             the variants pushed and signed, the profiles' ConfigMaps and Secrets,
                             the XRD, _output/e2e/state.json for the tests), profiles/<p>/
                             (drc.yaml + policy.cedar: default grants everything the admitted
-                            cases need under both verifiers, strict grants nothing and has no
-                            verifier, lifecycle warms the published pdb-addon on a PVC-backed
+                            cases need under both verifiers, strict grants nothing, fences reads to
+                            the tenant's namespace and has no verifier, lifecycle warms the published pdb-addon on a PVC-backed
                             cache under --debug with the trusted root fetched over TUF from the
                             public-good instance, no root file mounted), tests/<p>.rs one target
                             per profile, and

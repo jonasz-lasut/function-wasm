@@ -249,7 +249,9 @@ permits from it.
 - End to end, default profile: the guest's `requirements` knob under a
   `compositionPolicy` that forbids the EnvironmentConfig kind, expecting the
   fatal sentence and no `status.environmentConfig`, beside the existing
-  round-trip test, which gains a `permit` to prove the admitted path.
+  round-trip test, which gains a `permit` to prove the admitted path. Strict
+  profile: the operator policy scopes the action to the tenant's namespace
+  and refuses the same ask with its own sentence.
 
 ## Documentation
 
