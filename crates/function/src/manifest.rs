@@ -52,6 +52,50 @@ pub struct Manifest {
     /// `guestfn scaffold composition` writes the matching permits.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub composes: Vec<Composes>,
+    /// What the module reads through its response's requirements -
+    /// advisory (#208), as composes is: the runtime judges the actual
+    /// selectors against the policy layers' requireResource rules and never
+    /// reads this; `function validate --resolve` warns where a declared
+    /// kind would be refused, `guestfn inspect` shows it and `guestfn
+    /// scaffold composition` writes the matching permits.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reads: Vec<Reads>,
+}
+
+/// One kind a module declares it reads, and how it selects it.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Reads {
+    /// `<group>/<Kind>`, the core group spelled `core`, as the policy's
+    /// `Kind::` entity names it: `apiextensions.crossplane.io/EnvironmentConfig`.
+    pub kind: String,
+    /// `name`, `labels`; empty means both.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub by: Vec<String>,
+}
+
+/// The ways a selector matches, as a `reads` declaration spells them.
+pub const READ_MATCHES: &[&str] = &["name", "labels"];
+
+impl Reads {
+    /// The group and kind halves of `kind`.
+    pub fn group_and_kind(&self) -> Option<(&str, &str)> {
+        self.kind
+            .split_once('/')
+            .filter(|(g, k)| !g.is_empty() && !k.is_empty())
+    }
+
+    /// The matches declared, both when none is.
+    pub fn match_kinds(&self) -> Vec<&str> {
+        if self.by.is_empty() {
+            return READ_MATCHES.to_vec();
+        }
+        self.by
+            .iter()
+            .map(String::as_str)
+            .filter(|b| READ_MATCHES.contains(b))
+            .collect()
+    }
 }
 
 /// One kind a module declares it composes, and how.
@@ -165,7 +209,7 @@ impl Manifest {
         let value: serde_json::Value = serde_saphyr::from_slice(&raw)
             .map_err(|e| format!("{} is not valid YAML: {e}", path.display()))?;
         if let Some(map) = value.as_object() {
-            const KNOWN: [&str; 9] = [
+            const KNOWN: [&str; 10] = [
                 "abi",
                 "name",
                 "version",
@@ -175,6 +219,7 @@ impl Manifest {
                 "config",
                 "minRuntime",
                 "composes",
+                "reads",
             ];
             for key in map.keys() {
                 if !KNOWN.contains(&key.as_str()) {
@@ -189,6 +234,12 @@ impl Manifest {
             {
                 strict_composes(composes)
                     .map_err(|e| format!("{}: cannot parse composes: {e}", path.display()))?;
+            }
+            if let Some(reads) = map.get("reads")
+                && !reads.is_null()
+            {
+                strict_reads(reads)
+                    .map_err(|e| format!("{}: cannot parse reads: {e}", path.display()))?;
             }
         }
         let json =
@@ -259,6 +310,21 @@ impl Manifest {
                 if crate::authz::ChangeKind::parse(change).is_none() {
                     return Err(format!(
                         "composes[{i}].changes must be among add, modify and remove, got {change:?}"
+                    ));
+                }
+            }
+        }
+        for (i, r) in self.reads.iter().enumerate() {
+            if r.group_and_kind().is_none() {
+                return Err(format!(
+                    "reads[{i}].kind must be <group>/<Kind> (the core group spelled core), got {:?}",
+                    r.kind
+                ));
+            }
+            for by in &r.by {
+                if !READ_MATCHES.contains(&by.as_str()) {
+                    return Err(format!(
+                        "reads[{i}].by must be among name and labels, got {by:?}"
                     ));
                 }
             }
@@ -353,6 +419,20 @@ impl Manifest {
                 })
                 .collect();
             parts.push(format!("composes {}", kinds.join(" ")));
+        }
+        if !self.reads.is_empty() {
+            let kinds: Vec<String> = self
+                .reads
+                .iter()
+                .map(|r| {
+                    if r.by.is_empty() {
+                        r.kind.clone()
+                    } else {
+                        format!("{} ({})", r.kind, r.by.join(" "))
+                    }
+                })
+                .collect();
+            parts.push(format!("reads {}", kinds.join(" ")));
         }
         let mut out = parts.join(", ");
         if self.config_schema().is_some() {
@@ -533,6 +613,18 @@ fn strict_composes(v: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// The strict decode of the reads declaration for the author's own file.
+fn strict_reads(v: &Value) -> Result<(), String> {
+    #[derive(Deserialize, Default)]
+    #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+    struct StrictReads {
+        kind: String,
+        by: Vec<String>,
+    }
+    let _: Vec<StrictReads> = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Whether one required rule is admitted by a granted rule: the same host,
 /// or a granted pattern covering the required host or pattern; the required
 /// methods among the granted; the granted path prefix a prefix of the
@@ -689,6 +781,29 @@ mod tests {
             )
             .unwrap_err(),
             r#"composes[0].changes must be among add, modify and remove, got "patch""#
+        );
+        // reads is validated in shape, and read by summary.
+        let reading = Manifest::parse(
+            br#"{"abi":2,"name":"policy-gate","reads":[{"kind":"apiextensions.crossplane.io/EnvironmentConfig","by":["name"]},{"kind":"core/ConfigMap"}]}"#,
+        )
+        .expect("reads");
+        assert_eq!(
+            reading.summary(),
+            "policy-gate, reads apiextensions.crossplane.io/EnvironmentConfig (name) core/ConfigMap"
+        );
+        assert_eq!(
+            reading.reads[1].match_kinds(),
+            ["name", "labels"],
+            "no by declared means both"
+        );
+        assert_eq!(
+            Manifest::parse(br#"{"abi":2,"reads":[{"kind":"Secret"}]}"#).unwrap_err(),
+            r#"reads[0].kind must be <group>/<Kind> (the core group spelled core), got "Secret""#
+        );
+        assert_eq!(
+            Manifest::parse(br#"{"abi":2,"reads":[{"kind":"core/Secret","by":["uid"]}]}"#)
+                .unwrap_err(),
+            r#"reads[0].by must be among name and labels, got "uid""#
         );
     }
 

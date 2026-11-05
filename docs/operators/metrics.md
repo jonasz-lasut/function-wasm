@@ -25,7 +25,7 @@ only ([the side ports](install.md#the-side-ports)). Probes are on
 The `requests_total` outcomes:
 
 - `ok`: the module ran and returned a response.
-- `refused`: the runtime declined the request before the run (input, policy, grants, limits, resolution or verification), or refused the module's output at the `composeResource` fence. In the second case the module ran, so the run is in `run_duration_seconds` too.
+- `refused`: the runtime declined the request before the run (input, policy, grants, limits, resolution or verification), or refused the module's response at the `requireResource` or `composeResource` fence. In the second case the module ran, so the run is in `run_duration_seconds` too.
 - `error`: the load or the run failed.
 - `skipped`: the composite resource chose no module and `module.allowEmpty` allowed it, so nothing ran (logged as `No module chosen by the composite resource`).
 

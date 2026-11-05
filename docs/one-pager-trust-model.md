@@ -242,7 +242,11 @@ over that XR, unless the `compositionPolicy` or the operator's policy fences
 `composeResource` (#174). Then each change the module makes to the desired
 state (a resource added, modified or removed, the XR's own status included)
 must be permitted by kind, and a refused change is a fatal result: none of
-what the module composed is applied. They can't pick a module outside the
+what the module composed is applied. Where a layer fences `requireResource`
+(#208), each resource the module asks Crossplane for through the response's
+`requirements` must be permitted by kind too, and a refused selector is a
+fatal result that Crossplane fetches nothing for. They can't pick a module
+outside the
 `compositionPolicy`'s `pullModule` permits or one the runtime's signature
 policy refuses, spend a step credential no `spendCredential` permit names for
 that repository, widen the run's `limits` or the sandbox, or read another

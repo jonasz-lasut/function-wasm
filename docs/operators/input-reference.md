@@ -200,8 +200,10 @@ A module declares the capabilities it can't run without in its manifest, as
 grants each one only when the Input's `compositionPolicy` and the operator's
 `--sandbox-policy-file` both permit it
 ([three-layer authorization](../one-pager-three-layer-authz.md)). The same
-two layers may fence what the module composes with `composeResource`: see the
-[output fence](cedar-policy.md#the-output-fence). Egress is covered on
+two layers may fence what the module composes with `composeResource` and what
+it asks Crossplane for with `requireResource`: see the
+[output fence](cedar-policy.md#the-output-fence) and the
+[read fence](cedar-policy.md#the-read-fence). Egress is covered on
 [HTTP egress](http-egress.md).
 
 ### Step credentials

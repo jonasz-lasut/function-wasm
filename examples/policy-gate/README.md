@@ -124,7 +124,7 @@ with its manifest, then reference the digest `guestfn push` prints as the last
 step of each Composition:
 
 ```shell
-guestfn push ghcr.io/example/policy-gate:v0.1.0
+guestfn push ghcr.io/example/policy-gate:v0.1.1
 ```
 
 ```yaml
@@ -137,7 +137,7 @@ guestfn push ghcr.io/example/policy-gate:v0.1.0
       module:
         type: OCI
         oci:
-          ref: ghcr.io/example/policy-gate:v0.1.0@sha256:…
+          ref: ghcr.io/example/policy-gate:v0.1.1@sha256:…
 ```
 
 Apply one EnvironmentConfig per environment. The gate needs no operator

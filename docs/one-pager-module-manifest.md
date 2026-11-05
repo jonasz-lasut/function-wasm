@@ -2,9 +2,10 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.4 (rewritten in the present tense over the
-  Rust workspace; merges in the manifest-less-sources record, revision 0.1,
-  whose manifests by reference are a section here)
+* Status: implemented, revision 1.5 (the `reads` declaration beside
+  `composes`; rewritten in the present tense over the Rust workspace; merges
+  in the manifest-less-sources record, revision 0.1, whose manifests by
+  reference are a section here)
 
 A module declares what it needs in a manifest: the sandbox capabilities it
 can't run without, the schema of the `config` it reads and the oldest runtime
@@ -132,6 +133,14 @@ refusal before the run would be unsound for rules conditioned on a resource's
 name. The tooling reads it: `function validate --resolve` warns where a
 declared change would be refused, `guestfn inspect` shows it and `guestfn
 scaffold composition` writes the matching permits.
+
+**Declared reads** work the same way: `reads` lists the `<group>/<Kind>` a
+module asks Crossplane for through its response's `requirements` and how it
+selects them (`by`: `name`, `labels`, both when omitted). It's advisory in the same way
+(#208): the runtime judges the actual selectors against the policy layers'
+`requireResource` rules after the run, and the same three tools read the
+declaration, `function validate --resolve` judging a declared read with an
+empty name or no labels and no namespace.
 
 **`guestfn scaffold composition`** prints a Composition step, or with `--full`
 a Composition, whose `module` is a `Path` for a file or the pinned `OCI`

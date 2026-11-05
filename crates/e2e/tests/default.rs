@@ -3,6 +3,7 @@
 //! Every test here is a feature the runtime admits; what Crossplane then
 //! shows is the oracle.
 
+use function_wasm_e2e::ns::status_of;
 use function_wasm_e2e::prelude::*;
 
 const WAIT: Duration = Duration::from_secs(180);
@@ -242,6 +243,9 @@ async fn without_the_requirement_tmp_is_not_writable() -> Result<()> {
     .await
 }
 
+/// The requirements round trip, under a compositionPolicy that scopes the
+/// read fence (requireResource) and permits the EnvironmentConfig read by
+/// name: the selector is judged and relayed, and Crossplane answers it.
 #[tokio::test]
 async fn the_requirements_round_trip_resolves_an_environment_config() -> Result<()> {
     with_temp_ns("requirements", |ns| async move {
@@ -249,7 +253,10 @@ async fn the_requirements_round_trip_resolves_an_environment_config() -> Result<
         let env = ns
             .environment_config(json!({"region": "eu-central-1", "tier": "gold"}))
             .await?;
-        let step = Step::oci(&ns.state.variant("plain").reference());
+        let step = Step::oci(&ns.state.variant("plain").reference()).with_composition_policy(
+            r#"permit (principal, action == Action::"requireResource", resource == Kind::"apiextensions.crossplane.io/EnvironmentConfig")
+when { context has name };"#,
+        );
         let guest = ns
             .guest(
                 "probe",
@@ -263,6 +270,43 @@ async fn the_requirements_round_trip_resolves_an_environment_config() -> Result<
         assert_eq!(
             status.environment_config,
             Some(json!({"region": "eu-central-1", "tier": "gold"}))
+        );
+        Ok(())
+    })
+    .await
+}
+
+/// The same ask under a compositionPolicy that forbids the kind: the
+/// selector is refused by name, with the layer, nothing is fetched and the
+/// composite reports the fatal result.
+#[tokio::test]
+async fn a_fenced_read_is_refused_for_a_kind_the_policy_does_not_permit() -> Result<()> {
+    with_temp_ns("require-refused", |ns| async move {
+        ns.ensure_profile(Profile::Default).await?;
+        let env = ns.environment_config(json!({"tier": "gold"})).await?;
+        let step = Step::oci(&ns.state.variant("plain").reference()).with_composition_policy(
+            r#"forbid (principal, action == Action::"requireResource", resource == Kind::"apiextensions.crossplane.io/EnvironmentConfig");
+permit (principal, action == Action::"requireResource", resource);"#,
+        );
+        let guest = ns
+            .guest(
+                "probe",
+                &step,
+                json!({"requirements": {"environmentConfig": env}}),
+            )
+            .await?;
+        let message = guest.wait_fatal(WAIT).await?;
+        ensure!(
+            message.contains(&format!(
+                r#"required apiextensions.crossplane.io/EnvironmentConfig {env:?} (requirements.resources["environment"]), which the compositionPolicy does not permit (requireResource)"#
+            )),
+            "{message}"
+        );
+        ensure!(
+            status_of(&guest.get().await?)
+                .and_then(|s| s.environment_config)
+                .is_none(),
+            "a refused ask must not be answered"
         );
         Ok(())
     })

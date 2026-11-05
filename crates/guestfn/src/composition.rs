@@ -1,7 +1,7 @@
 //! guestfn scaffold composition: a Composition step for a module, from its
 //! manifest - the module source, a config skeleton from the manifest's
 //! schema, and a commented compositionPolicy skeleton derived from the
-//! manifest's requires and composes.
+//! manifest's requires, composes and reads.
 
 use std::path::{Path, PathBuf};
 
@@ -228,6 +228,29 @@ fn composition_policy_skeleton(src: &Source, m: Option<&Manifest>) -> Option<Str
             body.push(format!(
                 "permit (principal, action == Action::\"composeResource\", resource == Kind::\"{}\"){when};",
                 c.kind
+            ));
+        }
+    }
+    if let Some(reads) = m.map(|m| &m.reads)
+        && !reads.is_empty()
+    {
+        body.push(
+            "// what the module declares it reads through its requirements (requireResource"
+                .to_string(),
+        );
+        body.push("// fences a module's reads; unscoped, nothing is narrowed):".to_string());
+        for r in reads {
+            let when = match r.by.as_slice() {
+                [] => String::new(),
+                by => {
+                    let tests: Vec<String> =
+                        by.iter().map(|b| format!("context has {b}")).collect();
+                    format!(" when {{ {} }}", tests.join(" || "))
+                }
+            };
+            body.push(format!(
+                "permit (principal, action == Action::\"requireResource\", resource == Kind::\"{}\"){when};",
+                r.kind
             ));
         }
     }

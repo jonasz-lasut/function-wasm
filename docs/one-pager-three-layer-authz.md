@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.3 (rewritten in the present tense over the Rust workspace; supersedes the request-delivered-secrets record)
+* Status: implemented, revision 1.4 (the read fence, `requireResource`, beside the output fence; rewritten in the present tense over the Rust workspace; supersedes the request-delivered-secrets record)
 
 ## Summary
 
@@ -22,8 +22,9 @@ The capabilities are a private `/tmp` (`usePrivateTmp`), HTTP egress to a host,
 method and path (`grantEgress`), an environment variable bound to a step
 credential (`setEnv` and `spendCredential`), a step credential read whole from
 the request (`spendCredential`) and the repository of a source an XR chose
-(`pullModule`). A further action, `composeResource`, fences what a module
-writes rather than what it may do (see "The output fence").
+(`pullModule`). `composeResource` fences what a module writes and
+`requireResource` what it asks Crossplane for, both over the response rather
+than as capabilities (see "The output fence" and "The read fence").
 
 Because each decision belongs to a layer, the Input has no `sandbox` or
 `policy` field. It holds `module`, `limits`, `config` and an optional
@@ -130,12 +131,26 @@ usual rule applies, and a `forbid` alone permits nothing. A `context.fields`
 set that would let a policy permit the ready flag alone is a possible additive
 extension no use case has asked for yet.
 
+## The read fence
+
+`requireResource` (Jonasz, 2026-11-05, #208) fences what a module asks
+Crossplane for through the response's `requirements`. After the run, and
+before the output fence, the runtime judges every resource selector in
+`requirements.resources` and the deprecated `requirements.extra_resources`
+as `Kind::"<group>/<Kind>"` in the same `Group` hierarchy, with
+`context.name`, `labels` (a record) and `namespace` where the selector sets
+them. It's scoped default-permit in both layers for the output fence's
+reason. A refused selector is a fatal result naming kind, match, namespace,
+entry and layer, and the ask isn't relayed. A response with a fatal result
+is judged too, since the ask travels whatever the results say. The design
+record is [Read fence](one-pager-read-fence.md).
+
 ## Cedar schema
 
 Both policies compile against one schema. The composition policy can use
-`pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv` and
-`composeResource`, and the operator policy everything but `pullModule`, plus
-`requireSignature`, `trustSigner` and `dialAddress`. The principal is
+`pullModule`, `spendCredential`, `grantEgress`, `usePrivateTmp`, `setEnv`,
+`composeResource` and `requireResource`, and the operator policy everything but
+`pullModule`, plus `requireSignature`, `trustSigner` and `dialAddress`. The principal is
 `Request { namespace, xrKind, composition }`. The entities, the contexts and
 the evaluation rules are on [Cedar policy](operators/cedar-policy.md).
 
@@ -144,10 +159,12 @@ the evaluation rules are on [Cedar policy](operators/cedar-policy.md).
 `crates/function/src/authz.rs` is the only file that imports `cedar-policy`. It
 holds `CompositionPolicy` and `OperatorPolicy` with a `permits_*` method per
 action, and `scopes_action` (the composition layer's opt-in signal, with
-`scopes_compose_resource` for the operator's). `crates/function/src/admission.rs`
-combines them: `admit` runs the Input's checks, `admit_requires` intersects the
-manifest's request with both layers into `Capabilities`, and `admit_compose`
-judges the output fence. `crates/function/src/from.rs` applies the `from`
+`scopes_action` on the operator's for the two response fences).
+`crates/function/src/admission.rs` combines them: `admit` runs the Input's
+checks, `admit_requires` intersects the manifest's request with both layers
+into `Capabilities`, `admit_compose` judges the output fence and
+`admit_require` the read fence, over the selectors
+`crates/function/src/require.rs` reads from the response. `crates/function/src/from.rs` applies the `from`
 fence. `crates/function/src/sandboxenv.rs` materializes the env bindings and
 checks the required credentials, and `crates/function/src/protowire.rs` drops
 the credentials that weren't granted. `function validate` calls the same
@@ -168,7 +185,6 @@ upgrade.
   ceiling. The AND combination makes it impossible.
 - A permissive default for the operator layer or the `from` fence. Both stay
   default-deny. The output fence is the recorded exception.
-- Fencing `results`, `requirements` or `context` writes. `results` are
-  messages, `requirements` are reads the proxy already relays, and a `context`
-  write could take an action of the same form later without touching this
-  design.
+- Fencing `results` or `context` writes. `results` are messages, and a
+  `context` write could take an action of the same form later without
+  touching this design. `requirements` was here until the read fence (#208).

@@ -17,7 +17,7 @@
 //! whole group. Cedar owns the decision only; callers keep their own
 //! refusal strings.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -40,6 +40,12 @@ pub const ACTION_SET_ENV: &str = "setEnv";
 /// layer does not decide default-deny, since a runtime with no policy file
 /// must keep serving every module's output as before.
 pub const ACTION_COMPOSE_RESOURCE: &str = "composeResource";
+/// The read fence (#208): judged over the resource selectors a module's
+/// response asks Crossplane for, in both layers, scoped default-permit in
+/// each as composeResource is and for the same reason - nothing judged the
+/// ask before, and a module that reads an EnvironmentConfig must keep
+/// running on upgrade.
+pub const ACTION_REQUIRE_RESOURCE: &str = "requireResource";
 const ACTION_REQUIRE_SIGNATURE: &str = "requireSignature";
 const ACTION_TRUST_SIGNER: &str = "trustSigner";
 const ACTION_DIAL_ADDRESS: &str = "dialAddress";
@@ -51,7 +57,12 @@ const COMPOSITION_ACTIONS: &[&str] = &[
     ACTION_USE_PRIVATE_TMP,
     ACTION_SET_ENV,
     ACTION_COMPOSE_RESOURCE,
+    ACTION_REQUIRE_RESOURCE,
 ];
+
+/// The two actions judged over a module's response, which the operator
+/// layer decides scoped default-permit like the composition layer does.
+const OUTPUT_FENCE_ACTIONS: &[&str] = &[ACTION_COMPOSE_RESOURCE, ACTION_REQUIRE_RESOURCE];
 
 /// Identifies the caller of a grant-policy decision: the observed composite
 /// resource's namespace and kind, and the Composition's name. Any field may
@@ -119,6 +130,41 @@ impl Change {
         } else {
             "composed"
         }
+    }
+}
+
+/// How a resource selector matches what it asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequirementMatch {
+    /// `matchName`: one resource by name.
+    Name(String),
+    /// `matchLabels`: every resource with these labels, in key order.
+    Labels(BTreeMap<String, String>),
+    /// Neither: a selector Crossplane would not serve, judged by its kind
+    /// alone, with no `name` or `labels` in the context.
+    None,
+}
+
+/// One resource selector a module's response asks Crossplane for, as the
+/// requireResource decision sees it (#208): the resource's kind within its
+/// group, how it matches, the namespace when the selector sets one, and the
+/// requirements map and key it came from, for the sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Requirement {
+    /// The API group; `core` for the core group.
+    pub group: String,
+    pub kind: String,
+    pub matches: RequirementMatch,
+    pub namespace: Option<String>,
+    /// `resources` or `extra_resources`, as the response spelled it.
+    pub field: String,
+    pub key: String,
+}
+
+impl Requirement {
+    /// The Kind entity's id, `<group>/<Kind>`.
+    pub fn kind_id(&self) -> String {
+        format!("{}/{}", self.group, self.kind)
     }
 }
 
@@ -285,6 +331,22 @@ impl CompositionPolicy {
             compose_context(change),
         )
     }
+
+    /// Whether a permit matches requireResource for one resource selector
+    /// of a module's response, over the Kind-in-Group hierarchy with
+    /// `context.name`, `context.labels` and `context.namespace`, each
+    /// present only where the selector sets it.
+    pub fn permits_require(&self, principal: &Principal, r: &Requirement) -> bool {
+        let (resource, entities) = kind_entities(&r.group, &r.kind);
+        decide(
+            &self.policy,
+            principal,
+            ACTION_REQUIRE_RESOURCE,
+            resource,
+            entities,
+            require_context(r),
+        )
+    }
 }
 
 /// The operator's grant policy, compiled from --sandbox-policy-file and
@@ -294,9 +356,9 @@ impl CompositionPolicy {
 #[derive(Debug)]
 pub struct OperatorPolicy {
     policy: PolicySet,
-    // Whether any rule scopes composeResource: the operator layer narrows
-    // a module's output only where it says so.
-    scopes_compose: bool,
+    // Which of the output-fence actions any rule scopes: the operator layer
+    // narrows a module's output, and its reads, only where it says so.
+    scoped: HashMap<&'static str, bool>,
 }
 
 impl crate::cosign::SignerPolicy for OperatorPolicy {
@@ -321,21 +383,46 @@ impl OperatorPolicy {
         let policy: PolicySet = doc
             .parse()
             .map_err(|e| format!("cannot compile the operator policy {name}: {e}"))?;
-        let scopes_compose = policy
-            .policies()
-            .any(|p| policy_scopes_action(p, ACTION_COMPOSE_RESOURCE));
-        Ok(OperatorPolicy {
-            policy,
-            scopes_compose,
-        })
+        let mut scoped = HashMap::new();
+        for action in OUTPUT_FENCE_ACTIONS {
+            let hit = policy.policies().any(|p| policy_scopes_action(p, action));
+            scoped.insert(*action, hit);
+        }
+        Ok(OperatorPolicy { policy, scoped })
     }
 
-    /// Whether any rule scopes composeResource - the operator layer's opt-in
-    /// to the output fence. Unscoped, the layer does not narrow a module's
-    /// output: unlike a capability, which no policy file means no grant for,
-    /// a module's output was never gated before the fence existed.
+    /// Whether any rule scopes one of the output-fence actions - the
+    /// operator layer's opt-in to judging a module's response. Unscoped, the
+    /// layer does not narrow a module's output or its reads: unlike a
+    /// capability, which no policy file means no grant for, neither was
+    /// gated before its fence existed. False for every other action, which
+    /// the layer decides default-deny.
+    pub fn scopes_action(&self, action: &str) -> bool {
+        self.scoped.get(action).copied().unwrap_or_default()
+    }
+
+    /// Whether any rule scopes composeResource.
     pub fn scopes_compose_resource(&self) -> bool {
-        self.scopes_compose
+        self.scopes_action(ACTION_COMPOSE_RESOURCE)
+    }
+
+    /// Whether any rule scopes requireResource.
+    pub fn scopes_require_resource(&self) -> bool {
+        self.scopes_action(ACTION_REQUIRE_RESOURCE)
+    }
+
+    /// Whether a permit matches requireResource for one resource selector,
+    /// as the composition layer decides it.
+    pub fn permits_require(&self, principal: &Principal, r: &Requirement) -> bool {
+        let (resource, entities) = kind_entities(&r.group, &r.kind);
+        decide(
+            &self.policy,
+            principal,
+            ACTION_REQUIRE_RESOURCE,
+            resource,
+            entities,
+            require_context(r),
+        )
     }
 
     /// Whether a permit matches composeResource for one change, as the
@@ -908,6 +995,26 @@ fn compose_context(c: &Change) -> Value {
     json!({ "change": c.change.as_str(), "name": c.name, "target": c.target() })
 }
 
+/// The requireResource context: `name` for a match by name, `labels` (a
+/// record keyed by label) for a match by labels, `namespace` where the
+/// selector sets one - each absent otherwise, so a rule tests it with `has`.
+fn require_context(r: &Requirement) -> Value {
+    let mut ctx = serde_json::Map::new();
+    match &r.matches {
+        RequirementMatch::Name(name) => {
+            ctx.insert("name".to_string(), json!(name));
+        }
+        RequirementMatch::Labels(labels) => {
+            ctx.insert("labels".to_string(), json!(labels));
+        }
+        RequirementMatch::None => {}
+    }
+    if let Some(ns) = &r.namespace {
+        ctx.insert("namespace".to_string(), json!(ns));
+    }
+    Value::Object(ctx)
+}
+
 impl std::fmt::Display for IpPrefix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}", self.addr, self.len)
@@ -1087,6 +1194,175 @@ mod tests {
                 ChangeKind::Modify,
                 "rb"
             )
+        ));
+    }
+
+    fn requirement(group: &str, kind: &str, matches: RequirementMatch) -> Requirement {
+        Requirement {
+            group: group.to_string(),
+            kind: kind.to_string(),
+            matches,
+            namespace: None,
+            field: "resources".to_string(),
+            key: "r".to_string(),
+        }
+    }
+
+    fn labels(pairs: &[(&str, &str)]) -> RequirementMatch {
+        RequirementMatch::Labels(
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn require_resource_hierarchy_is_group_correct() {
+        let p = composition(
+            r#"permit (principal, action == Action::"requireResource", resource in Group::"apiextensions.crossplane.io");
+               permit (principal, action == Action::"requireResource", resource == Kind::"core/ConfigMap");"#,
+        );
+        assert!(p.scopes_action(ACTION_REQUIRE_RESOURCE));
+        let principal = Principal::default();
+        let by_name = |g: &str, k: &str| requirement(g, k, RequirementMatch::Name("x".to_string()));
+        for (r, want) in [
+            (
+                by_name("apiextensions.crossplane.io", "EnvironmentConfig"),
+                true,
+            ),
+            (by_name("apiextensions.crossplane.io", "Usage"), true),
+            (
+                by_name("apiextensions.crossplane.io.example", "Thing"),
+                false,
+            ),
+            (by_name("core", "ConfigMap"), true),
+            (
+                requirement("core", "ConfigMap", RequirementMatch::None),
+                true,
+            ),
+            (by_name("core", "Secret"), false),
+        ] {
+            assert_eq!(p.permits_require(&principal, &r), want, "{r:?}");
+        }
+    }
+
+    #[test]
+    fn require_resource_context_is_present_only_where_the_selector_sets_it() {
+        let p = composition(
+            r#"permit (principal, action == Action::"requireResource", resource)
+               when { context has name && context.name like "team-a-*" };
+               permit (principal, action == Action::"requireResource", resource)
+               when { context has labels && context.labels has team && context.labels.team == "a" };
+               permit (principal, action == Action::"requireResource", resource)
+               when { context has labels && context.labels["app.kubernetes.io/part-of"] == "shop" };
+               permit (principal, action == Action::"requireResource", resource == Kind::"core/ConfigMap")
+               when { context has namespace && context.namespace == principal.namespace };"#,
+        );
+        let team_a = Principal {
+            namespace: "team-a".to_string(),
+            ..Default::default()
+        };
+        let mut cases = vec![
+            (
+                requirement(
+                    "core",
+                    "Secret",
+                    RequirementMatch::Name("team-a-db".to_string()),
+                ),
+                true,
+            ),
+            (
+                requirement(
+                    "core",
+                    "Secret",
+                    RequirementMatch::Name("team-b-db".to_string()),
+                ),
+                false,
+            ),
+            (
+                requirement("core", "Secret", labels(&[("team", "a")])),
+                true,
+            ),
+            (
+                requirement("core", "Secret", labels(&[("team", "b")])),
+                false,
+            ),
+            (
+                requirement(
+                    "core",
+                    "Secret",
+                    labels(&[("app.kubernetes.io/part-of", "shop")]),
+                ),
+                true,
+            ),
+            // No labels at all: the `has labels` guards fail, the rules do not error.
+            (requirement("core", "Secret", labels(&[])), false),
+            (requirement("core", "Secret", RequirementMatch::None), false),
+        ];
+        let mut own = requirement("core", "ConfigMap", RequirementMatch::None);
+        own.namespace = Some("team-a".to_string());
+        let mut other = own.clone();
+        other.namespace = Some("team-b".to_string());
+        cases.push((own, true));
+        cases.push((other, false));
+        cases.push((
+            requirement("core", "ConfigMap", RequirementMatch::None),
+            false,
+        ));
+        for (r, want) in cases {
+            assert_eq!(p.permits_require(&team_a, &r), want, "{r:?}");
+        }
+    }
+
+    #[test]
+    fn a_forbid_alone_scopes_require_resource_and_refuses_every_selector() {
+        let p = composition(
+            r#"forbid (principal, action == Action::"requireResource", resource == Kind::"core/Secret");"#,
+        );
+        assert!(p.scopes_action(ACTION_REQUIRE_RESOURCE));
+        assert!(!p.scopes_action(ACTION_COMPOSE_RESOURCE));
+        let principal = Principal::default();
+        assert!(!p.permits_require(
+            &principal,
+            &requirement("core", "Secret", RequirementMatch::None)
+        ));
+        assert!(!p.permits_require(
+            &principal,
+            &requirement("core", "ConfigMap", RequirementMatch::None)
+        ));
+    }
+
+    #[test]
+    fn the_operator_policy_scopes_require_resource_only_when_a_rule_names_it() {
+        let compose_only = OperatorPolicy::new(
+            "test",
+            r#"permit (principal, action == Action::"composeResource", resource);"#,
+        )
+        .expect("policy");
+        assert!(compose_only.scopes_compose_resource());
+        assert!(!compose_only.scopes_require_resource());
+        assert!(!compose_only.scopes_action(ACTION_USE_PRIVATE_TMP));
+        let ceiling = OperatorPolicy::new(
+            "test",
+            r#"forbid (principal, action == Action::"requireResource", resource == Kind::"core/Secret");
+               permit (principal, action == Action::"requireResource", resource);"#,
+        )
+        .expect("policy");
+        assert!(ceiling.scopes_require_resource());
+        assert!(!ceiling.scopes_compose_resource());
+        let principal = Principal::default();
+        assert!(ceiling.permits_require(
+            &principal,
+            &requirement(
+                "apiextensions.crossplane.io",
+                "EnvironmentConfig",
+                RequirementMatch::Name("e".to_string())
+            )
+        ));
+        assert!(!ceiling.permits_require(
+            &principal,
+            &requirement("core", "Secret", labels(&[("team", "a")]))
         ));
     }
 

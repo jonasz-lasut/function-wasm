@@ -30,6 +30,9 @@ requires:
 composes:
   - kind: policy/PodDisruptionBudget
     changes: [add]
+reads:
+  - kind: apiextensions.crossplane.io/EnvironmentConfig
+    by: [name]
 config:
   schema:
     type: object
@@ -93,7 +96,7 @@ fn push_then_inspect_and_show() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("manifest: greeter v0.1.0, requires egress example.com, credentials cmdb, composes policy/PodDisruptionBudget (add)"),
+        stdout.contains("manifest: greeter v0.1.0, requires egress example.com, credentials cmdb, composes policy/PodDisruptionBudget (add), reads apiextensions.crossplane.io/EnvironmentConfig (name)"),
         "{stdout}"
     );
     assert!(
@@ -232,7 +235,7 @@ fn manifest_validate() {
     assert!(ok, "{stderr}");
     assert!(
         stdout.contains(
-            "wasmfn.yaml: valid (greeter v0.1.0, requires egress example.com, credentials cmdb, composes policy/PodDisruptionBudget (add);"
+            "wasmfn.yaml: valid (greeter v0.1.0, requires egress example.com, credentials cmdb, composes policy/PodDisruptionBudget (add), reads apiextensions.crossplane.io/EnvironmentConfig (name);"
         ),
         "{stdout}"
     );
@@ -344,6 +347,10 @@ fn scaffold_composition_from_a_file() {
     );
     assert!(
         stdout.contains("#   permit (principal, action == Action::\"composeResource\", resource == Kind::\"policy/PodDisruptionBudget\") when { context.change == \"add\" };"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("#   permit (principal, action == Action::\"requireResource\", resource == Kind::\"apiextensions.crossplane.io/EnvironmentConfig\") when { context has name };"),
         "{stdout}"
     );
 

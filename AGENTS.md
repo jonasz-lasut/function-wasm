@@ -75,6 +75,17 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       outgoing-handler) → the run's egress client (grant, block list,        │
 │       budgets, audit line) or an internal-error (wasihttp.rs); a core        │
 │       module (ABI v1, removed in 1.0.0) never gets here: refused at load     │
+│  8a. the read fence (require.rs + admission::admit_require, #208): where a   │
+│       policy layer scopes requireResource, every resource selector of the    │
+│       decoded response's requirements (resources, then the deprecated        │
+│       extra_resources, each in key order) is judged as Kind::"<group>/<Kind>"│
+│       in the Group hierarchy with context name / labels (a record) /         │
+│       namespace, each present only where the selector sets it - composition  │
+│       layer first, then operator, each scoped default-permit; a refusal is a │
+│       fatal result naming kind, match, namespace, entry and layer, counted   │
+│       refused, and the ask is not relayed; a response carrying a fatal       │
+│       result is judged too (the ask travels whatever the results say); the   │
+│       bytes are never touched                                                 │
 │  8b. the output fence (compose.rs + admission::admit_compose, #174): where   │
 │       a policy layer scopes composeResource, the decoded response's desired  │
 │       state is diffed against the request's by composition resource name    │
@@ -136,7 +147,9 @@ crates/function/            the runtime crate: a library (everything below) + th
                               --resolve → resolve + verify + fetch + engine.inspect + admit_requires
                               and the credentials the module's request carries (credentials:);
                               text or --output json; exit 0 admitted / 1 refused / 2 tool failure
-  src/admission.rs            admit (step 1), admit_requires (step 6, the three-layer AND) and
+  src/admission.rs            admit (step 1), admit_requires (step 6, the three-layer AND),
+                              admit_require (step 8a, the read fence over require.rs's
+                              selectors; require_fenced says whether any layer scopes it) and
                               admit_compose (step 8b, the output fence over compose.rs's
                               changes; compose_fenced says whether any layer scopes it) -
                               shared verbatim with validate
@@ -146,8 +159,17 @@ crates/function/            the runtime crate: a library (everything below) + th
                               grants, requireSignature per repository, dialAddress → IpRules);
                               composeResource in both (#174: Kind-in-Group entities, context
                               change/name/target, scoped default-permit in the operator layer
-                              too - scopes_compose_resource is its opt-in); refusal strings stay
-                              in the callers
+                              too - scopes_compose_resource is its opt-in); requireResource in
+                              both (#208: the same Kind-in-Group entities, context
+                              name/labels/namespace present only where the selector sets them,
+                              scoped default-permit in both layers - scopes_require_resource);
+                              refusal strings stay in the callers
+  src/require.rs              the read fence's selectors: every ResourceSelector of a
+                              response's requirements (resources, then the deprecated
+                              extra_resources, each in key order) as a Requirement - kind in
+                              group, name or labels (sorted), namespace when set, the map
+                              and key for the sentence; a selector with no apiVersion or
+                              kind is an error. Pure: no Cedar, no I/O
   src/compose.rs              the output fence's diff: the changes a response makes to the
                               request's desired state (Change per composition resource name,
                               the composite first; Resource compared by value so a reordered
@@ -530,7 +552,7 @@ The function receives an `Input` (`wasm.fn.crossplane.io/v1`; a `v1beta1` docume
 - `limits` — `timeout`, `memory`, `concurrency`, each ≤ the runtime's ceiling flag (concurrency silently capped)
 - `config` — opaque; the guest reads it via `GetConfig` - non-secret module configuration lives here
 
-There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` declares it for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs` and the CRD under `package/input/`.
+There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), and what it asks Crossplane for through the response's `requirements` through a tenth, `requireResource` (#208), both judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` and `reads` declare them for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs` and the CRD under `package/input/`.
 
 ### ABI v2
 
@@ -745,10 +767,10 @@ A new refusal gets its entry there, beside its fixture under `testdata/validate/
 
 ## Key Reference Documents
 
-- `docs/` (the documentation site: `book.toml`, `docs/SUMMARY.md`): user-facing behaviour - `docs/operators/input-reference.md` (the Input reference), `docs/operators/runtime-flags.md`, `docs/operators/cedar-policy.md` (both policy layers: the schema, the nine actions, the evaluation rules and the refusal sentences, from authz.rs and admission.rs), `docs/operators/trust-model.md`, `docs/contract/compatibility.md`, `docs/operators/troubleshooting.md`; `README.md` is the landing page only
+- `docs/` (the documentation site: `book.toml`, `docs/SUMMARY.md`): user-facing behaviour - `docs/operators/input-reference.md` (the Input reference), `docs/operators/runtime-flags.md`, `docs/operators/cedar-policy.md` (both policy layers: the schema, the ten actions, the evaluation rules and the refusal sentences, from authz.rs and admission.rs), `docs/operators/trust-model.md`, `docs/contract/compatibility.md`, `docs/operators/troubleshooting.md`; `README.md` is the landing page only
 - `docs/abi-v2.md` - the host/guest contract (ABI v2, the component world; ABI v1 was removed in 1.0.0)
 - `docs/one-pager-abi-v2.md` — ABI v2 on the component model and this Rust host (the port delivered its phases 1-4; the v2 spike is issue #65)
-- `docs/one-pager-three-layer-authz.md`, `docs/one-pager-trust-model.md`, `docs/one-pager-sandbox.md` — the authorization and sandbox model
+- `docs/one-pager-three-layer-authz.md`, `docs/one-pager-read-fence.md`, `docs/one-pager-trust-model.md`, `docs/one-pager-sandbox.md` — the authorization and sandbox model
 - `docs/one-pager-cache.md`, `docs/one-pager-resource-governance.md` — caches, bounds, fairness and the egress rate limit
 - `docs/one-pager-module-source-schema.md`, `docs/one-pager-module-manifest.md` — the Input and the manifest (manifests by reference included)
 - `docs/project/testing.md` - the two test tiers, where a new test goes, the end-to-end suite's profiles, module and workflow

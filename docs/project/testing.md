@@ -118,7 +118,7 @@ The Guest XR is the composite resource the suite creates for each test, and its
 | `egress.url` | sends a GET request to the URL through `wasi:http` and writes the status and body, or the host's refusal, to `status.egress` |
 | `env`, `credentials` | writes those variables and the keys of those step credentials to status |
 | `privateTmp` | writes and reads back a file under `/tmp`, reporting the outcome |
-| `requirements.environmentConfig` | asks Crossplane for that EnvironmentConfig and echoes its data once resolved |
+| `requirements.environmentConfig` | asks Crossplane for that EnvironmentConfig and echoes its data once resolved; the read fence's cluster cases permit and refuse that ask by kind |
 | `fatal`, `spin`, `growMiB` | a fatal result with the message, a spin past the deadline, a memory growth refused at the limit |
 
 A variant is the same `fn.wasm` published under one manifest. The suite has

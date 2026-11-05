@@ -33,10 +33,11 @@ permit ([Cedar policy](cedar-policy.md)):
 - HTTP requests through the host ([HTTP egress](http-egress.md)).
 
 What a module writes to the desired state can be fenced per kind with
-`composeResource`. What it reads can't: through the response's
-`requirements` it can ask Crossplane for any resource the Function's RBAC
-permits, as a native function can. Scope that RBAC to what the modules
-should see ([the output fence](cedar-policy.md#the-output-fence)).
+`composeResource` ([the output fence](cedar-policy.md#the-output-fence)),
+and what it asks Crossplane for through the response's `requirements` with
+`requireResource` ([the read fence](cedar-policy.md#the-read-fence)). Both
+narrow the Function's RBAC per Composition and per tenant. The RBAC remains
+the outer boundary, so scope it to what the modules should see.
 
 ## Modules chosen by an XR author
 

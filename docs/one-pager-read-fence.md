@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft, revision 0.2 (a `requireResource` action over the response's requirements, for finding F-6 of the 1.0 security audit, #208; the owner settled the open points on 2026-11-05)
+* Status: implemented, revision 1.0 (a `requireResource` action over the response's requirements, for finding F-6 of the 1.0 security audit, #208; the owner settled the open points on 2026-11-05)
 
 ## Summary
 

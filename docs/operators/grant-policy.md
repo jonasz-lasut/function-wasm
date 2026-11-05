@@ -19,7 +19,7 @@ The capability actions are:
 - `spendCredential`: the step credentials a module reads.
 - `grantEgress`: HTTP egress, which is also the host allowlist.
 
-The operator layer also decides `dialAddress`, on the [egress page](http-egress.md), and `requireSignature` and `trustSigner` on [signatures](signatures.md). `composeResource`, below, fences a module's output rather than granting a capability.
+The operator layer also decides `dialAddress`, on the [egress page](http-egress.md), and `requireSignature` and `trustSigner` on [signatures](signatures.md). `composeResource` and `requireResource`, below, fence a module's output and its reads rather than granting a capability.
 
 The principal's attributes, and the resources and context of each action, are in the [Cedar policy reference](cedar-policy.md).
 
@@ -89,3 +89,19 @@ when { resource in Group::"rbac.authorization.k8s.io" || resource == Kind::"core
 
 permit (principal, action == Action::"composeResource", resource);
 ```
+
+## Fence what modules read
+
+`requireResource` is the same kind of ceiling over what any module may ask Crossplane for through the response's `requirements`, judged over the selectors after the run and only where a rule scopes it. This policy keeps Secrets off limits, lets a module read its own namespace and opens the cluster-scoped Crossplane kinds:
+
+```cedar
+forbid (principal, action == Action::"requireResource", resource)
+when { resource == Kind::"core/Secret" };
+
+permit (principal, action == Action::"requireResource", resource)
+when { context has namespace && context.namespace == principal.namespace };
+
+permit (principal, action == Action::"requireResource", resource in Group::"apiextensions.crossplane.io");
+```
+
+The context and the refusal sentences are on the [Cedar policy reference](cedar-policy.md#the-read-fence).
