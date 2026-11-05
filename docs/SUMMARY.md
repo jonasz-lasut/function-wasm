@@ -45,6 +45,7 @@
   - [Module and compiled artifacts cache (Implemented, revision 2.3)](one-pager-cache.md)
   - [Module manifest (Implemented, revision 1.4)](one-pager-module-manifest.md)
   - [Module source schema (Implemented, revision 2.3)](one-pager-module-source-schema.md)
+  - [Read fence (Draft)](one-pager-read-fence.md)
   - [Runtime resource governance (Implemented, revision 1.4)](one-pager-resource-governance.md)
   - [Three-layer authorization model (Implemented, revision 1.3)](one-pager-three-layer-authz.md)
   - [Trust model (Implemented, revision 1.10)](one-pager-trust-model.md)
