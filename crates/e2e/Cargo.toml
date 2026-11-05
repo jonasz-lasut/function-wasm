@@ -36,6 +36,9 @@ base64 = { version = "0.23", optional = true }
 # signer (cosign::testutil) and the in-memory Sigstore instance.
 function-wasm = { path = "../function", features = ["testutil"], optional = true }
 hex = { version = "0.4", optional = true }
+# kube pins the k8s-openapi minor it was built against, and a second copy
+# fails k8s-openapi's build script: Renovate moves the two as one group
+# (.github/renovate.json5).
 k8s-openapi = { version = "0.28", features = ["v1_36"], optional = true }
 # One crypto provider in the process: the runtime's crates use aws-lc-rs.
 kube = { version = "4.2", default-features = false, features = ["client", "ws", "rustls-tls", "aws-lc-rs"], optional = true }

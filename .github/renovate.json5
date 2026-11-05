@@ -298,6 +298,21 @@
       matchPackageNames: ['wit-component', 'wasmparser', 'wit-parser'],
       enabled: false,
     },
+    // kube and k8s-openapi (the end-to-end suite's, crates/e2e/Cargo.toml)
+    // move together: each kube major is built against one k8s-openapi
+    // minor (kube 4 on 0.28, kube 5 on 0.29), and k8s-openapi's build
+    // script refuses a second copy of itself with no v1_* feature on it,
+    // which is what either bumped alone leaves in Cargo.lock - the suite's
+    // copy with its feature beside kube's without (#200, #227). The two
+    // sides are a 0.x minor and a major, so the group also keeps majors
+    // in: with separateMajorMinor Renovate would still split them into
+    // renovate/kube and renovate/major-kube, each failing the same way.
+    {
+      matchManagers: ['cargo'],
+      matchPackageNames: ['kube', 'kube-*', 'k8s-openapi'],
+      groupName: 'kube',
+      separateMajorMinor: false,
+    },
 
     // Dockerfile: the rust build stage floats by design; the runtime base is
     // pinned to a digest that moves with Chainguard's daily rebuilds - one PR
