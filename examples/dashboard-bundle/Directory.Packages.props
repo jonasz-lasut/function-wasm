@@ -16,6 +16,6 @@
     <PackageVersion Include="runtime.linux-arm64.Microsoft.DotNet.ILCompiler.LLVM" Version="10.0.0-rc.1.26306.1" />
     <PackageVersion Include="runtime.win-x64.Microsoft.DotNet.ILCompiler.LLVM" Version="10.0.0-rc.1.26306.1" />
     <PackageVersion Include="Google.Protobuf" Version="3.36.2" />
-    <PackageVersion Include="MSTest" Version="4.4.1" />
+    <PackageVersion Include="MSTest" Version="4.5.2" />
   </ItemGroup>
 </Project>
