@@ -19,7 +19,7 @@ record fails the prose job until both say the same.
 | [Runtime resource governance](../one-pager-resource-governance.md) | Implemented, revision 1.7 |
 | [Three-layer authorization model](../one-pager-three-layer-authz.md) | Implemented, revision 1.4 |
 | [Trust model](../one-pager-trust-model.md) | Implemented, revision 1.10 |
-| [Use-case examples](../one-pager-use-case-examples.md) | Implemented, revision 1.7 |
+| [Use-case examples](../one-pager-use-case-examples.md) | Implemented, revision 1.8 |
 | [WASM sandbox](../one-pager-sandbox.md) | Implemented, revision 1.9 |
 
 The guest ABI isn't a one-pager: [ABI v2](../abi-v2.md) is the contract
