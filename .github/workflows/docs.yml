@@ -32,6 +32,7 @@ on:
       - '.vale.ini'
       - '.vale/**'
       - 'Makefile'
+      - 'hack/design-records.sh'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
@@ -42,6 +43,7 @@ on:
       - '.vale.ini'
       - '.vale/**'
       - 'Makefile'
+      - 'hack/design-records.sh'
       - '.github/workflows/docs.yml'
   workflow_dispatch: {}
 
@@ -103,8 +105,10 @@ jobs:
   # The prose: Vale over the book, the README and SECURITY.md through the
   # Makefile's target, so CI runs the binary and the style packages a
   # contributor's `make vale` runs (.vale.ini pins the packages, the
-  # Makefile the binary). The checkout brings the crossplane build
-  # submodule the Makefile includes.
+  # Makefile the binary), after hack/design-records.sh has held the design
+  # records index and the book's contents to each record's status line.
+  # The checkout brings the crossplane build submodule the Makefile
+  # includes.
   prose:
     runs-on: ubuntu-26.04
     steps:

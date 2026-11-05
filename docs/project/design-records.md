@@ -4,7 +4,9 @@ The design records live under `docs/` as one-pagers, one per feature, each
 headed by its owner, reviewers and status (draft, implemented with a
 revision, withdrawn or superseded). Each describes the design in today's Rust workspace,
 the alternatives it rejected and the questions still open. The
-status below is each document's own, at the time of writing.
+status below is each document's own. `make vale` checks this table and
+the book's contents against every record's status line. A revised
+record fails the prose job until both say the same.
 
 | design record | status |
 |---|---|

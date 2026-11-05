@@ -195,7 +195,7 @@ e2e.guest:
 # change to a world, a re-vendoring of the WASI WIT, or a wit-bindgen bump
 # (the generated files' header names the version; e2e.yml's drift checks
 # install the same one).
-.PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens vendor-docs-highlight gen-bindings tools tools-clean vale
+.PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens vendor-docs-highlight gen-bindings tools tools-clean vale design-records
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:
 
@@ -391,11 +391,17 @@ $(WIT_BINDGEN):
 tools-clean: ## Remove the installed tools
 	rm -rf .cache/tools
 
+# The design records index and the book's contents restate each record's
+# status, and drifted more than once; hack/design-records.sh holds them to
+# the records' own `* Status:` lines, and the prose job runs it first.
+design-records: ## Check the design records index and docs/SUMMARY.md against the one-pagers' status lines
+	@hack/design-records.sh
+
 # Every alert fails, warnings included (Vale's own exit code is 1 for
 # errors only): the line output is empty when the prose is clean, and a run
 # that printed nothing but did not exit 0 is a broken configuration, which
 # fails too rather than passing as clean.
-vale: $(VALE) $(VALE_SYNCED) ## Lint the documentation's prose with the pinned Vale (installs it and syncs the style packages first); any alert fails
+vale: design-records $(VALE) $(VALE_SYNCED) ## Lint the documentation's prose with the pinned Vale (installs it and syncs the style packages first); any alert fails
 	@if out=$$($(VALE) --output=line $(VALE_PATHS)); then status=0; else status=$$?; fi; \
 	if [ -n "$$out" ]; then printf '%s\n' "$$out"; echo "vale: $$(printf '%s\n' "$$out" | wc -l | tr -d ' ') alerts"; exit 1; fi; \
 	if [ "$$status" -ne 0 ]; then echo "vale: exited $$status with no alerts"; exit "$$status"; fi; \

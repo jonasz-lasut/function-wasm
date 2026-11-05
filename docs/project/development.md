@@ -15,7 +15,7 @@ cargo deny check advisories bans licenses sources   # cargo install cargo-deny -
 
 The tests include the conformance goldens and the scaffold goldens. The
 `cargo deny` run checks `Cargo.lock` against `deny.toml`: every crate is
-free of published advisories, under an allowed license and from crates.io. A pull request that touches the documentation (`docs/`, `README.md`, `SECURITY.md` or `book.toml`) also runs Vale:
+free of published advisories, under an allowed license and from crates.io. A pull request that touches the documentation (`docs/`, `README.md`, `SECURITY.md` or `book.toml`) also runs Vale, after a check that the design records index and `docs/SUMMARY.md` restate each one-pager's status line:
 
 ```shell
 make vale
