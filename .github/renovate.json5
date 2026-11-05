@@ -441,6 +441,20 @@
       matchPackageNames: ['go', 'github.com/crossplane/function-sdk-go', 'go.bytecodealliance.org/pkg'],
       enabled: false,
     },
+    // ...and k8s.io/kube-openapi, an indirect requirement with no tagged
+    // release, which follows apimachinery instead: apimachinery pins the
+    // commit it was built with, and a bump of apimachinery carries it
+    // there through go get and gomodTidy. Bumped on its own to the newest
+    // commit it outran apimachinery (#225: the 2026-11-04 commit built on
+    // structured-merge-diff v7 and required Go 1.27 while apimachinery
+    // v0.37.2 still built on v6, so the guest failed to compile and the go
+    // directive rose with it).
+    {
+      matchManagers: ['gomod'],
+      matchFileNames: ['examples/pdb-addon/go.mod'],
+      matchPackageNames: ['k8s.io/kube-openapi'],
+      enabled: false,
+    },
     // dashboard-bundle is example-only, with no template to drift from: its
     // NuGet packages take regular updates. nuget reads every version from
     // its Directory.Packages.props (the projects name packages without one)
