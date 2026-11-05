@@ -209,3 +209,6 @@ paravirtual
 rootfs
 podman
 podman's
+Xen
+krata
+dom0

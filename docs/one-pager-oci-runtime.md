@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft, revision 0.2 (a second runtime that runs an OCI image inside a microVM under the same manifest, policy layers and tooling as a WebAssembly module; the owner settled the packaging, the contract, the egress, the artifact, the names and the order on 2026-11-05, and the sandbox waits for the evaluation's spike)
+* Status: draft, revision 0.3 (a second runtime that runs an OCI image inside a microVM under the same manifest, policy layers and tooling as a WebAssembly module; the owner settled the packaging, the contract, the egress, the artifact, the names and the order on 2026-11-05, and the sandbox waits for the evaluation's spike)
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/239
 
 ## Summary
@@ -276,8 +276,10 @@ spike's verdict says whether the project needs it.
 
 The owner asked which sandbox fits before the record commits to one, and
 weighs a Rust code base as a plus. The candidates below all run an
-unmodified OCI image under a guest kernel, except the last two, which the
-table keeps for contrast.
+unmodified OCI image under a guest kernel, except the last two rows, which
+the table keeps for contrast. Edera, a Xen-based runtime the owner asked
+about, is under Alternatives: it sandboxes pods at the node, not requests
+inside a pod.
 
 | candidate | language | form | rootfs | host-mediated I/O | macOS | notes |
 |---|---|---|---|---|---|---|
@@ -440,6 +442,15 @@ package starts alpha on the shared release train.
 - **Kata Containers through a RuntimeClass.** The runtime would create a
   Pod per request and talk to it. Seconds of latency per request, RBAC to
   create Pods and no `crossplane render`. Rejected.
+- **Edera.** A Xen-based hypervisor, with its control plane in Rust, that
+  gives each pod its own microVM and kernel through a RuntimeClass. The
+  node boots into Edera's hypervisor, which is the operator's platform
+  decision, and the open source part, krata (the Xen control plane,
+  GPL-2.0), is a component of the commercial Edera Protect. The function
+  pod can't embed it, and a zone contains a whole pod. Rejected as the
+  runtime's sandbox for the same reason as Kata. An operator who runs the runtime pod itself
+  under an Edera RuntimeClass adds a second boundary around the whole
+  runtime, which this record neither needs nor prevents.
 - **A plain OCI runtime (crun, youki) as the production sandbox.** Shares
   the host kernel. A development fallback at most, if the evaluation picks
   a VMM without a macOS port.
