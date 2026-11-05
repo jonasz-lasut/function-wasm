@@ -1,0 +1,31 @@
+.{
+    .name = .cert_rotator,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xd46469ebe49485df,
+    .dependencies = .{
+        // The protobuf codec: three C files, heap-allocating decode/encode
+        // (PB_ENABLE_MALLOC) over the structs nanopb_generator writes from the
+        // vendored proto (src/fnv1).
+        .nanopb = .{
+            .url = "https://github.com/nanopb/nanopb/archive/refs/tags/0.4.9.2.tar.gz",
+            .hash = "N-V-__8AAC4aKQDfYc_SoLQzYD5EUMZ2mN6f8qXQy--vmpFN",
+        },
+        // The TLS library the guest reads and writes certificates with,
+        // configured by src/cert_rotator_mbedtls_config.h: X.509, ECDSA over
+        // P-256, SHA-256, PEM and base64, and nothing that needs a socket,
+        // a file or a clock. The sources build.zig lists are compiled with
+        // zig cc, like nanopb.
+        .mbedtls = .{
+            .url = "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-3.6.5.tar.gz",
+            .hash = "N-V-__8AAIvwlAIZbpoVC3YR52HdYcdnnw0Zzs6aGpR7wA1K",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "proto",
+        "wit",
+    },
+}
