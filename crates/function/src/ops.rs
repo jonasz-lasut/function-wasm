@@ -53,13 +53,13 @@ pub async fn serve_metrics(address: &str) -> Result<(), std::io::Error> {
             let response = if path == "/metrics" {
                 let (body, content_type) = if wants_classic_text(&head) {
                     (
-                        function_wasm_engine::metrics::render(),
+                        function_wasm_engine_api::metrics::render(),
                         "text/plain; version=0.0.4",
                     )
                 } else {
                     (
-                        function_wasm_engine::metrics::render_openmetrics(),
-                        function_wasm_engine::metrics::OPENMETRICS_CONTENT_TYPE,
+                        function_wasm_engine_api::metrics::render_openmetrics(),
+                        function_wasm_engine_api::metrics::OPENMETRICS_CONTENT_TYPE,
                     )
                 };
                 format!(
@@ -184,14 +184,16 @@ fn warm_source(entry: &str) -> ModuleSource {
 mod tests {
     use super::*;
     use crate::cache::CacheOptions;
-    use function_wasm_engine::{Config, Engine};
+    use function_wasm_engine_api::Config;
+
+    use crate::engine::Selected;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn warms_path_entries_into_the_cache() {
         let dir = tempfile::tempdir().expect("tempdir");
         let wasm = crate::testing::guests::tiny_component();
         std::fs::write(dir.path().join("fn.wasm"), &wasm).expect("write");
-        let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
+        let engine = Arc::new(Selected::new(Config::default()).expect("engine"));
         let resolver = Arc::new(Resolver::new(Some(dir.path().to_owned()), 128 << 20, None));
         let cache = ModuleCache::new(Arc::clone(&engine), CacheOptions::default());
 

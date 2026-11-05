@@ -37,8 +37,13 @@ config:
 
 The fields:
 
-- `abi`: the module's ABI version. Required, and `2` is the only
-  value the runtime accepts.
+- `type`: `wasm` or `oci`. Leave it out for a WebAssembly component, the
+  default. `oci` marks an OCI image for the OCI runtime
+  ([design record](../one-pager-oci-runtime.md)), which function-wasm
+  refuses by name until that package exists.
+- `abi`: the version of the type's contract. Required. `2` is the only
+  value for `wasm`, the component world, and `1` the only value for
+  `oci`, the process contract.
 - `name`, `version`, `description` and `source`: what the module says about
   itself.
 - `requires`: the sandbox capabilities the module can't run without. These

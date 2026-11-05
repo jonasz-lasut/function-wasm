@@ -7,10 +7,11 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
+use function_wasm_engine::Engine as _;
 use function_wasm_engine::componentize::{
     StringEncoding, carries_component_type, componentize, embed_world,
 };
-use function_wasm_engine::{Config, Engine, RunOptions};
+use function_wasm_engine::{Config, RunOptions, Wasmtime};
 
 /// The runtime's own wit/ directory: the world the engine compiles.
 const RUNTIME_WIT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../wit");
@@ -73,12 +74,12 @@ fn with_world(wasm: Vec<u8>) -> Vec<u8> {
     .expect("embed the world")
 }
 
-fn engine() -> Engine {
-    Engine::new(Config::default()).expect("engine")
+fn engine() -> Wasmtime {
+    Wasmtime::new(Config::default()).expect("engine")
 }
 
 /// The wrapped component through the runtime: inspect's verdict, then a run.
-fn assert_serves(e: &Engine, wasm: &[u8], rsp: &[u8]) -> function_wasm_engine::Inspection {
+fn assert_serves(e: &Wasmtime, wasm: &[u8], rsp: &[u8]) -> function_wasm_engine::Inspection {
     let shape = e.inspect(wasm).expect("inspect");
     assert_eq!(shape.abi_error, None, "the world typechecks");
     assert!(

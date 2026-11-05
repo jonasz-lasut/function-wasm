@@ -29,6 +29,7 @@ use function_sdk_rust::proto::v1::{
     RunFunctionRequest, RunFunctionResponse, Severity, State, Status, Target,
 };
 use function_sdk_rust::resource;
+use function_wasm::engine::Engine as _;
 use function_wasm::oci::testregistry;
 use function_wasm::testing::{http, policy, runtime};
 use function_wasm_engine::componentize;

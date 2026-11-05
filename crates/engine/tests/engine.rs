@@ -1,4 +1,4 @@
-//! Engine tests over WAT fixtures: components implementing the
+//! Wasmtime tests over WAT fixtures: components implementing the
 //! wasmfn:function world: a component that returns fixed response bytes,
 //! components that misbehave in one way each, the world typecheck refusals,
 //! and the sandbox reached through WASI 0.2's own interfaces.
@@ -14,15 +14,16 @@ use std::fmt::Write as _;
 use std::time::Duration;
 
 use function_sdk_rust::proto::v1::{Result as FnResult, RunFunctionResponse, Severity, Target};
+use function_wasm_engine::Engine as _;
 use function_wasm_engine::testing::{
     COMPONENT_CORE_PRELUDE, component_importing, component_with_run, fixed_component, grow_guest,
     lift_run, ok_result, spinning_guest, wat_bytes,
 };
-use function_wasm_engine::{CORE_MODULE_REFUSAL, Config, Engine, RunOptions};
+use function_wasm_engine::{CORE_MODULE_REFUSAL, Config, RunOptions, Wasmtime};
 use prost::Message;
 
-fn engine() -> Engine {
-    Engine::new(Config::default()).expect("engine")
+fn engine() -> Wasmtime {
+    Wasmtime::new(Config::default()).expect("engine")
 }
 
 fn response_bytes() -> Vec<u8> {
@@ -38,7 +39,7 @@ fn response_bytes() -> Vec<u8> {
     .encode_to_vec()
 }
 
-fn compile(e: &Engine, wat: &str) -> function_wasm_engine::Module {
+fn compile(e: &Wasmtime, wat: &str) -> function_wasm_engine::Module {
     e.compile(&wat::parse_str(wat).expect("wat"))
         .expect("compile")
 }
@@ -132,7 +133,7 @@ fn the_stack_limit_bounds_recursion() {
     e.run(&m, b"", RunOptions::default())
         .expect("fits in the default stack");
 
-    let small = Engine::new(Config {
+    let small = Wasmtime::new(Config {
         stack_limit: 8 << 10,
         ..Config::default()
     })
@@ -231,7 +232,7 @@ fn guest_error_string() {
 /// fail rather than the run trapping.
 #[test]
 fn the_memory_limit_denies_growth() {
-    let e = Engine::new(Config {
+    let e = Wasmtime::new(Config {
         memory_limit: 8 << 16, // eight pages
         ..Config::default()
     })
@@ -256,7 +257,7 @@ fn the_pool_denies_growth_it_cannot_serve() {
     // charged when instantiation claims it. The prelude's four pages each
     // fill half of the eight-page pool.
     let e = std::sync::Arc::new(
-        Engine::new(Config {
+        Wasmtime::new(Config {
             memory_limit: 8 << 16,
             max_total_run_memory: 8 << 16,
             ..Config::default()
@@ -599,7 +600,7 @@ fn inspection() {
 fn the_memory_limit_denies_table_growth() {
     // Eight pages of ceiling; a table of 100,000 elements costs a host
     // pointer each, 800 KB on a 64-bit host, which is past it.
-    let e = Engine::new(Config {
+    let e = Wasmtime::new(Config {
         memory_limit: 8 << 16,
         ..Config::default()
     })
@@ -629,7 +630,7 @@ fn the_pool_denies_table_growth_it_cannot_serve() {
     // one table element more needs bytes the pool cannot serve before the
     // short deadline.
     let e = std::sync::Arc::new(
-        Engine::new(Config {
+        Wasmtime::new(Config {
             memory_limit: 8 << 16,
             max_total_run_memory: 8 << 16,
             ..Config::default()
@@ -668,7 +669,7 @@ fn the_pool_denies_table_growth_it_cannot_serve() {
 fn a_shared_memory_is_refused_at_compile() {
     // Threads are off: a module declaring a shared memory never compiles,
     // in wasmtime's own words under the runtime's prefix.
-    let e = Engine::new(Config::default()).expect("engine");
+    let e = Wasmtime::new(Config::default()).expect("engine");
     let wasm = wat::parse_str(
         r#"(component
   (core module $m
@@ -693,7 +694,7 @@ fn relaxed_simd_is_deterministic() {
     // i32x4.relaxed_trunc_f32x4_s may differ by host; under the
     // deterministic semantics it saturates like i32x4.trunc_sat_f32x4_s:
     // NaN to 0, out of range to the nearest bound.
-    let e = Engine::new(Config::default()).expect("engine");
+    let e = Wasmtime::new(Config::default()).expect("engine");
     let m = compile(
         &e,
         &component_with_run(
@@ -716,7 +717,7 @@ fn relaxed_simd_is_deterministic() {
 #[test]
 fn a_second_memory_is_refused_at_compile() {
     // Multi-memory is off: a module with two memories never compiles.
-    let e = Engine::new(Config::default()).expect("engine");
+    let e = Wasmtime::new(Config::default()).expect("engine");
     let wasm = wat::parse_str(
         r#"(component
   (core module $m
@@ -737,7 +738,7 @@ fn a_second_memory_is_refused_at_compile() {
 #[test]
 fn a_tail_call_is_refused_at_compile() {
     // Tail calls are off: a module using return_call never compiles.
-    let e = Engine::new(Config::default()).expect("engine");
+    let e = Wasmtime::new(Config::default()).expect("engine");
     let wasm = wat::parse_str(
         r#"(component
   (core module $m
@@ -762,7 +763,7 @@ fn the_ceiling_is_per_run_across_regions() {
     // instantiation; a table of 40,000 elements (320 KB on a 64-bit host)
     // fits the ceiling on its own but not beside the memory, so a ceiling
     // checked per region would admit it and the per-run one denies it.
-    let e = Engine::new(Config {
+    let e = Wasmtime::new(Config {
         memory_limit: 8 << 16,
         ..Config::default()
     })
@@ -775,7 +776,7 @@ fn the_ceiling_is_per_run_across_regions() {
         "a growth past the run's total should be denied"
     );
     // Under a sixteen-page ceiling the same run fits.
-    let roomy = Engine::new(Config {
+    let roomy = Wasmtime::new(Config {
         memory_limit: 16 << 16,
         ..Config::default()
     })

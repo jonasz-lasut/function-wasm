@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 bytes = "1"
+function-wasm-engine-api = { path = "../engine-api" }
 http = "1"
 http-body-util = "0.1"
 prometheus-client = "0.25.0"

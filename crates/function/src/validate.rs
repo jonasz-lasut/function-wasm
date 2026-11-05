@@ -15,7 +15,9 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use function_wasm_engine::{Config, Engine, duration};
+use function_wasm_engine_api::{Config, duration};
+
+use crate::engine::{Engine as _, Selected};
 
 use crate::admission;
 use crate::authz::OperatorPolicy;
@@ -253,7 +255,7 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
     if args.resolve {
         // wasmtime reads a module only by compiling it: --resolve pays the
         // compile the runtime would, for the verdict the runtime would reach.
-        engine = Some(Engine::new(ceilings).map_err(|e| e.to_string())?);
+        engine = Some(Selected::new(ceilings).map_err(|e| e.to_string())?);
         resolver = Some(Resolver::new(
             args.module_dir.clone(),
             args.max_module_size << 20,
@@ -465,7 +467,7 @@ fn find_steps(file: &str, docs: &[serde_json::Value], function_name: Option<&str
 /// Judges steps against one set of ceilings.
 struct Validator {
     ceilings: Config,
-    engine: Option<Engine>,
+    engine: Option<Selected>,
     resolver: Option<Resolver>,
     xr: Option<serde_json::Value>,
     policy: Option<std::sync::Arc<OperatorPolicy>>,

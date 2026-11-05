@@ -9,10 +9,10 @@ use std::time::{Duration, Instant};
 use wasmtime::Trap;
 use wasmtime_wasi::I32Exit;
 
-use crate::{EPOCH_TICK, Engine, Error, Module, RunOptions, duration, first_line};
+use crate::{EPOCH_TICK, Error, Module, RunOptions, Wasmtime, duration, first_line};
 
 pub(crate) fn run(
-    engine: &Engine,
+    engine: &Wasmtime,
     m: &Module,
     request: &[u8],
     opts: RunOptions,

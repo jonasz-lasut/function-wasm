@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use function_wasm_engine::{Engine, Module};
+use crate::engine::{Engine as _, Module, Selected};
 use tokio::sync::{Mutex as AsyncMutex, OnceCell, Semaphore};
 
 use crate::store::Store;
@@ -45,7 +45,7 @@ pub struct CacheOptions {
 }
 
 pub struct ModuleCache {
-    engine: Arc<Engine>,
+    engine: Arc<Selected>,
     disk: Option<Arc<Store>>,
     ttl: Duration,
     no_memory: bool,
@@ -62,7 +62,7 @@ struct Entry {
 }
 
 impl ModuleCache {
-    pub fn new(engine: Arc<Engine>, o: CacheOptions) -> Self {
+    pub fn new(engine: Arc<Selected>, o: CacheOptions) -> Self {
         ModuleCache {
             engine,
             disk: o.disk,
@@ -82,7 +82,7 @@ impl ModuleCache {
     where
         F: FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
     {
-        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
+        use function_wasm_engine_api::metrics::{self, CACHE_EVENTS};
         if let Some(m) = self.memory_get(digest) {
             CACHE_EVENTS
                 .with_label_values(&[metrics::CACHE_COMPILED, metrics::EVENT_HIT])
@@ -117,7 +117,7 @@ impl ModuleCache {
         // artifact is a miss - the store refuses one whose MAC isn't this
         // process's, wasmtime refuses one it can't load - and the module
         // recompiles.
-        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
+        use function_wasm_engine_api::metrics::{self, CACHE_EVENTS};
         if let Some(disk) = &self.disk {
             match disk.path(digest) {
                 crate::store::Lookup::Hit(path) => {
@@ -185,7 +185,7 @@ impl ModuleCache {
                         .inc();
                     return Err(format!(
                         "compile exceeded --module-compile-timeout {}",
-                        function_wasm_engine::duration::format(bound)
+                        function_wasm_engine_api::duration::format(bound)
                     ));
                 }
             },
@@ -235,10 +235,10 @@ impl ModuleCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use function_wasm_engine::Config;
+    use function_wasm_engine_api::Config;
 
-    fn engine() -> Arc<Engine> {
-        Arc::new(Engine::new(Config::default()).expect("engine"))
+    fn engine() -> Arc<Selected> {
+        Arc::new(Selected::new(Config::default()).expect("engine"))
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -319,7 +319,7 @@ mod tests {
             fetched.load(std::sync::atomic::Ordering::SeqCst),
             "the planted artifact must not be served: the module is fetched and compiled"
         );
-        let stale = function_wasm_engine::metrics::sample(
+        let stale = function_wasm_engine_api::metrics::sample(
             "function_wasm_module_cache_events_total",
             &[("cache", "compiled-disk"), ("event", "stale")],
         )
@@ -385,7 +385,7 @@ mod tests {
             .await
             .expect_err("cut short");
         assert_eq!(err, "compile exceeded --module-compile-timeout 50ms");
-        let timeouts = function_wasm_engine::metrics::sample(
+        let timeouts = function_wasm_engine_api::metrics::sample(
             "function_wasm_module_cache_events_total",
             &[("cache", "compiled"), ("event", "timeout")],
         )
