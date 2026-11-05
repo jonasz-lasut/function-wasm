@@ -719,6 +719,47 @@ impl Validator {
                 }
             }
         }
+        // What the manifest declares the module requires from Crossplane
+        // (requires.resources), held against the layers' requireResource
+        // rules the same way: a declared match by name is judged with an
+        // empty name and one by labels with no labels, never a namespace, so
+        // a rule conditioned on a value may warn for a selector the run would
+        // permit - advisory, as above.
+        let resources = m
+            .requires
+            .as_ref()
+            .map(|q| q.resources.as_slice())
+            .unwrap_or_default();
+        for rd in resources {
+            let Some((group, kind)) = rd.group_and_kind() else {
+                continue;
+            };
+            for by in rd.match_kinds() {
+                let declared = crate::authz::Requirement {
+                    group: group.to_string(),
+                    kind: kind.to_string(),
+                    matches: match by {
+                        "name" => crate::authz::RequirementMatch::Name(String::new()),
+                        _ => crate::authz::RequirementMatch::Labels(Default::default()),
+                    },
+                    namespace: None,
+                    field: "resources".to_string(),
+                    key: String::new(),
+                };
+                if let Some(layer) = admission::require_refused_by(
+                    &declared,
+                    self.policy.as_deref(),
+                    comp,
+                    &principal,
+                ) {
+                    r.warnings.push(format!(
+                        "the module declares it requires {} (by {by}), which {} does not permit (requireResource)",
+                        rd.kind,
+                        layer.describe()
+                    ));
+                }
+            }
+        }
         // The credentials the module was granted are checked against the
         // request at run time; whether one is the pull credential the
         // Input already says.
@@ -890,6 +931,9 @@ fn describe_admitted(input: &Input, admitted: &admission::Admitted) -> Vec<Strin
         out.push("compositionPolicy".to_string());
         if comp.scopes_action(crate::authz::ACTION_COMPOSE_RESOURCE) {
             out.push("composeResource".to_string());
+        }
+        if comp.scopes_action(crate::authz::ACTION_REQUIRE_RESOURCE) {
+            out.push("requireResource".to_string());
         }
     }
     out

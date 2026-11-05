@@ -5,8 +5,8 @@
 # make one possible.
 abi: 2
 name: policy-gate
-version: 0.1.0
-# requires: nothing. The gate reads its rules from the EnvironmentConfig
+version: 0.1.1
+# requires: no capability. The gate reads its rules from the EnvironmentConfig
 # Crossplane supplies in the request, so it needs no egress, no /tmp and no
 # credentials, and renders without any grant; it is built without wasi:http
 # (jco componentize -d http), so it could not use an egress grant either.
@@ -17,3 +17,11 @@ config:
   schema:
     type: object
     additionalProperties: false
+# What the gate asks Crossplane for through its response's requirements: the
+# EnvironmentConfig named after spec.environment, by name - advisory, for the
+# tooling, and no grant. The runtime judges the actual selector against the
+# policy layers' requireResource rules after every run.
+requires:
+  resources:
+    - kind: apiextensions.crossplane.io/EnvironmentConfig
+      by: [name]

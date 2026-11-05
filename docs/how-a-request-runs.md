@@ -58,11 +58,14 @@ stdout and stderr go to the pod's log.
 
 ## 4. Response
 
-The runtime returns the response as the module produced it. Where a policy
-layer scopes `composeResource`, every change to the desired state must first
-be permitted. A refused change is a fatal result that specifies the kind, the
-name, the change and the layer
-([Cedar policy reference](operators/cedar-policy.md#the-output-fence)).
+The runtime returns the response as the module produced it, after two
+fences. Where a policy layer scopes `requireResource`, every resource selector
+in the response's `requirements` must be permitted
+([the read fence](operators/cedar-policy.md#the-read-fence)). Where one scopes
+`composeResource`, every change to the desired state must be permitted
+([the output fence](operators/cedar-policy.md#the-output-fence)). A refused
+selector or change is a fatal result that specifies the kind, the name, the
+entry or change and the layer.
 
 A trap, a timeout, the memory limit or an unusable module is also a fatal
 result, and the function pod keeps running. The timeout counts guest compute

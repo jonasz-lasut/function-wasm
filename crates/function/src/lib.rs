@@ -21,6 +21,7 @@ pub mod oci;
 pub mod ops;
 pub mod protowire;
 pub mod quantity;
+pub mod require;
 pub mod resolver;
 pub mod runner;
 pub mod sandboxenv;

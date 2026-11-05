@@ -1,8 +1,10 @@
 //! The strict profile: no verifier, a policy that requires a signature for
-//! the plain variant and grants egress to the registry host but opens no
-//! address for it, and nothing else. Every test here is a refusal an
-//! operator's narrow layer produces, as Crossplane or the module shows it.
+//! the plain variant, grants egress to the registry host but opens no
+//! address for it, and fences reads to the tenant's own namespace, and
+//! nothing else. Every test here is a refusal an operator's narrow layer
+//! produces, as Crossplane or the module shows it.
 
+use function_wasm_e2e::ns::status_of;
 use function_wasm_e2e::prelude::*;
 
 const WAIT: Duration = Duration::from_secs(180);
@@ -55,6 +57,42 @@ async fn egress_to_a_blocked_address_is_refused_in_band() -> Result<()> {
         ensure!(
             refused.unwrap_or_default() >= 1.0,
             "http_requests_total{{refused}}: {refused:?}"
+        );
+        Ok(())
+    })
+    .await
+}
+
+/// The read fence's operator ceiling (requireResource): the egress variant
+/// loads and runs under this profile, and its ask for a cluster-scoped
+/// EnvironmentConfig matches no permit of a policy that scopes the action to
+/// the tenant's namespace, so the operator layer refuses it by name and
+/// nothing is fetched.
+#[tokio::test]
+async fn a_read_outside_the_namespace_is_refused_by_the_operator_ceiling() -> Result<()> {
+    with_temp_ns("require-ceiling", |ns| async move {
+        ns.ensure_profile(Profile::Strict).await?;
+        let env = ns.environment_config(json!({"tier": "gold"})).await?;
+        let step = Step::oci(&ns.state.variant("egress").reference());
+        let guest = ns
+            .guest(
+                "probe",
+                &step,
+                json!({"requirements": {"environmentConfig": env}}),
+            )
+            .await?;
+        let message = guest.wait_fatal(WAIT).await?;
+        ensure!(
+            message.contains(&format!(
+                r#"required apiextensions.crossplane.io/EnvironmentConfig {env:?} (requirements.resources["environment"]), which the operator policy (--sandbox-policy-file) does not permit (requireResource)"#
+            )),
+            "{message}"
+        );
+        ensure!(
+            status_of(&guest.get().await?)
+                .and_then(|s| s.environment_config)
+                .is_none(),
+            "a refused ask must not be answered"
         );
         Ok(())
     })

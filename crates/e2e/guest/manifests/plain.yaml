@@ -4,3 +4,10 @@ abi: 2
 name: e2e-guest
 version: 0.1.0
 description: function-wasm's end-to-end test module, requiring nothing
+# What the requirements knob asks Crossplane for - advisory, for the tooling,
+# and no grant: the runtime judges the actual selector against the policy
+# layers' requireResource rules after the run.
+requires:
+  resources:
+    - kind: apiextensions.crossplane.io/EnvironmentConfig
+      by: [name]

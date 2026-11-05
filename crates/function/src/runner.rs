@@ -536,6 +536,37 @@ impl WasmFunction {
                 )));
             }
         };
+        // The read fence (requireResource, #208): where a policy layer
+        // scopes the action, every resource selector the module's response
+        // asks Crossplane for must be permitted - a response carrying a
+        // fatal result included, since the ask travels whatever the results
+        // say, and before the output fence, since the read precedes the
+        // write. Judged over the decoded copy: the guest's bytes stay
+        // untouched either way.
+        if admission::require_fenced(self.policy.as_deref(), admitted.composition.as_deref()) {
+            let judged = crate::require::requirements(&got).and_then(|requirements| {
+                tracing::debug!(
+                    module = %resolved.description,
+                    digest = %resolved.digest,
+                    selectors = requirements.len(),
+                    names = ?requirements.iter().map(admission::describe_requirement).collect::<Vec<_>>(),
+                    "Judging the resource selectors the module asks for"
+                );
+                admission::admit_require(
+                    &requirements,
+                    self.policy.as_deref(),
+                    admitted.composition.as_deref(),
+                    &principal,
+                )
+            });
+            if let Err(e) = judged {
+                return Ok(raw_rsp(self.fatal(
+                    &req,
+                    OUTCOME_REFUSED,
+                    format!("module {} {e}", resolved.description),
+                )));
+            }
+        }
         // The output fence (composeResource, #174): where a policy layer
         // scopes the action, every change the module made to the desired
         // state must be permitted - judged over the decoded copies, so the
@@ -1676,5 +1707,185 @@ when { context.change == "add" };"#;
         let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
         let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
         assert!(rsp.results.is_empty(), "{:?}", rsp.results);
+    }
+
+    /// A response asking Crossplane for resources: the selectors under
+    /// `requirements.resources`, the desired state echoed.
+    fn asking(
+        selectors: &[(&str, function_sdk_rust::proto::v1::ResourceSelector)],
+    ) -> RunFunctionResponse {
+        RunFunctionResponse {
+            meta: Some(ResponseMeta {
+                tag: "t".to_string(),
+                ..Default::default()
+            }),
+            desired: Some(desired_with(&[("deployment", deployment())])),
+            requirements: Some(function_sdk_rust::proto::v1::Requirements {
+                resources: selectors
+                    .iter()
+                    .map(|(k, s)| (k.to_string(), s.clone()))
+                    .collect(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn selector(
+        api_version: &str,
+        kind: &str,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> function_sdk_rust::proto::v1::ResourceSelector {
+        function_sdk_rust::proto::v1::ResourceSelector {
+            api_version: api_version.to_string(),
+            kind: kind.to_string(),
+            namespace: namespace.map(str::to_string),
+            r#match: Some(
+                function_sdk_rust::proto::v1::resource_selector::Match::MatchName(name.to_string()),
+            ),
+        }
+    }
+
+    const ENVIRONMENT_ONLY: &str = r#"permit (principal, action == Action::"requireResource", resource == Kind::"apiextensions.crossplane.io/EnvironmentConfig")
+when { context has name };"#;
+
+    fn environment_selector() -> function_sdk_rust::proto::v1::ResourceSelector {
+        selector(
+            "apiextensions.crossplane.io/v1beta1",
+            "EnvironmentConfig",
+            "team-a",
+            None,
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_read_fence_refuses_a_selector_the_policy_does_not_permit() {
+        let rsp = asking(&[
+            ("environment", environment_selector()),
+            (
+                "db",
+                selector("v1", "Secret", "db-password", Some("team-b")),
+            ),
+        ]);
+        let (dir, _) = fenced_stage(&rsp, &[]);
+        let f = function(Some(dir.path().to_owned()));
+        let refused_before = function_wasm_engine::metrics::sample(
+            "function_wasm_module_requests_total",
+            &[("outcome", "refused")],
+        )
+        .unwrap_or_default();
+        let req = fence_request(
+            ENVIRONMENT_ONLY,
+            desired_with(&[("deployment", deployment())]),
+        );
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        assert_eq!(rsp.results.len(), 1);
+        assert_eq!(rsp.results[0].severity, Severity::Fatal as i32);
+        assert_eq!(
+            rsp.results[0].message,
+            r#"module module file fn.wasm required core/Secret "db-password" in namespace "team-b" (requirements.resources["db"]), which the compositionPolicy does not permit (requireResource)"#
+        );
+        assert!(
+            rsp.requirements.is_none(),
+            "the refused ask is not relayed: Crossplane fetches nothing"
+        );
+        let refused_after = function_wasm_engine::metrics::sample(
+            "function_wasm_module_requests_total",
+            &[("outcome", "refused")],
+        )
+        .unwrap_or_default();
+        assert!(refused_after >= refused_before + 1.0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_read_fence_returns_a_permitted_response_verbatim() {
+        let rsp = asking(&[("environment", environment_selector())]);
+        let unknown = [0xba, 0x3e, 0x03, b'x', b'y', b'z'];
+        let (dir, bytes) = fenced_stage(&rsp, &unknown);
+        let f = function(Some(dir.path().to_owned()));
+        let req = fence_request(
+            ENVIRONMENT_ONLY,
+            desired_with(&[("deployment", deployment())]),
+        );
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        assert_eq!(
+            out, bytes,
+            "the guest's bytes travel back untouched through the fence"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_read_fence_judges_a_response_with_a_fatal_result() {
+        let mut rsp = asking(&[("db", selector("v1", "Secret", "db-password", None))]);
+        rsp.results = vec![function_sdk_rust::proto::v1::Result {
+            severity: Severity::Fatal as i32,
+            message: "the guest says no".to_string(),
+            ..Default::default()
+        }];
+        let (dir, _) = fenced_stage(&rsp, &[]);
+        let f = function(Some(dir.path().to_owned()));
+        let req = fence_request(
+            ENVIRONMENT_ONLY,
+            desired_with(&[("deployment", deployment())]),
+        );
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        assert_eq!(
+            rsp.results[0].message,
+            r#"module module file fn.wasm required core/Secret "db-password" (requirements.resources["db"]), which the compositionPolicy does not permit (requireResource)"#,
+            "the ask travels whatever the results say, so it is judged"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_read_fence_operator_ceiling_refuses_with_its_own_sentence() {
+        let rsp = asking(&[(
+            "secrets",
+            function_sdk_rust::proto::v1::ResourceSelector {
+                api_version: "v1".to_string(),
+                kind: "Secret".to_string(),
+                namespace: None,
+                r#match: Some(
+                    function_sdk_rust::proto::v1::resource_selector::Match::MatchLabels(
+                        function_sdk_rust::proto::v1::MatchLabels {
+                            labels: [("tier", "gold"), ("team", "a")]
+                                .into_iter()
+                                .map(|(k, v)| (k.to_string(), v.to_string()))
+                                .collect(),
+                        },
+                    ),
+                ),
+            },
+        )]);
+        let (dir, bytes) = fenced_stage(&rsp, &[]);
+        let mut f = function(Some(dir.path().to_owned()));
+        f.policy = Some(Arc::new(
+            crate::authz::OperatorPolicy::new(
+                "test",
+                r#"forbid (principal, action == Action::"requireResource", resource == Kind::"core/Secret");
+                   permit (principal, action == Action::"requireResource", resource);"#,
+            )
+            .expect("policy"),
+        ));
+        let req = fence_request("", desired_with(&[("deployment", deployment())]));
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        let got = RunFunctionResponse::decode(out.as_slice()).expect("decode");
+        assert_eq!(
+            got.results[0].message,
+            r#"module module file fn.wasm required core/Secret with labels team=a,tier=gold (requirements.resources["secrets"]), which the operator policy (--sandbox-policy-file) does not permit (requireResource)"#
+        );
+        // An operator policy that scopes composeResource alone narrows no read.
+        f.policy = Some(Arc::new(
+            crate::authz::OperatorPolicy::new(
+                "test",
+                r#"permit (principal, action == Action::"composeResource", resource);"#,
+            )
+            .expect("policy"),
+        ));
+        let req = fence_request("", desired_with(&[("deployment", deployment())]));
+        let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
+        assert_eq!(out, bytes, "unscoped, the selector is relayed as before");
     }
 }

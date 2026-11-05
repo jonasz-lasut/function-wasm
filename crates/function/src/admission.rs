@@ -11,9 +11,9 @@ use std::time::Duration;
 use function_wasm_engine::duration;
 
 use crate::authz::{
-    ACTION_COMPOSE_RESOURCE, ACTION_GRANT_EGRESS, ACTION_SET_ENV, ACTION_SPEND_CREDENTIAL,
-    ACTION_USE_PRIVATE_TMP, Change, CompositionPolicy, EgressGrant, OperatorPolicy, Principal,
-    compile_composition_policy,
+    ACTION_COMPOSE_RESOURCE, ACTION_GRANT_EGRESS, ACTION_REQUIRE_RESOURCE, ACTION_SET_ENV,
+    ACTION_SPEND_CREDENTIAL, ACTION_USE_PRIVATE_TMP, Change, CompositionPolicy, EgressGrant,
+    OperatorPolicy, Principal, Requirement, RequirementMatch, compile_composition_policy,
 };
 use crate::egress_rules::HttpRule;
 use crate::input::{Input, ModuleSource};
@@ -222,6 +222,79 @@ pub fn describe_change(c: &Change) -> String {
     } else {
         format!("{} {:?} ({})", c.kind_id(), c.name, c.change.as_str())
     }
+}
+
+/// Whether either layer scopes requireResource - when a run's resource
+/// selectors are judged at all. A runtime where no rule anywhere names the
+/// action pays nothing beyond this boolean.
+pub fn require_fenced(policy: Option<&OperatorPolicy>, comp: Option<&CompositionPolicy>) -> bool {
+    scopes(comp, ACTION_REQUIRE_RESOURCE) || policy.is_some_and(|p| p.scopes_require_resource())
+}
+
+/// The read fence (requireResource, #208) over one selector: the
+/// composition layer first, then the operator's, each only where it scopes
+/// the action - a layer with no such rule does not narrow a module's reads.
+/// None when both admit it.
+pub fn require_refused_by(
+    r: &Requirement,
+    policy: Option<&OperatorPolicy>,
+    comp: Option<&CompositionPolicy>,
+    principal: &Principal,
+) -> Option<Layer> {
+    if scopes(comp, ACTION_REQUIRE_RESOURCE) && !comp.expect("scoped").permits_require(principal, r)
+    {
+        return Some(Layer::Composition);
+    }
+    if let Some(policy) = policy
+        && policy.scopes_require_resource()
+        && !policy.permits_require(principal, r)
+    {
+        return Some(Layer::Operator);
+    }
+    None
+}
+
+/// Judges every resource selector a module's response asks for, in order;
+/// the first refusal is the error, worded for a fatal result the caller
+/// prefixes with the module's name.
+pub fn admit_require(
+    requirements: &[Requirement],
+    policy: Option<&OperatorPolicy>,
+    comp: Option<&CompositionPolicy>,
+    principal: &Principal,
+) -> Result<(), String> {
+    for r in requirements {
+        if let Some(layer) = require_refused_by(r, policy, comp, principal) {
+            return Err(format!(
+                "required {}, which {} does not permit (requireResource)",
+                describe_requirement(r),
+                layer.describe()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// One selector as a refusal names it: `core/Secret "db-password" in
+/// namespace "team-b" (requirements.resources["db"])` for a match by name,
+/// `core/Secret with labels team=a,tier=gold (requirements.resources["s"])`
+/// for a match by labels, the namespace clause only where the selector sets
+/// one, the map as the response spelled it.
+pub fn describe_requirement(r: &Requirement) -> String {
+    let mut out = r.kind_id();
+    match &r.matches {
+        RequirementMatch::Name(name) => out.push_str(&format!(" {name:?}")),
+        RequirementMatch::Labels(labels) => {
+            let pairs: Vec<String> = labels.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            out.push_str(&format!(" with labels {}", pairs.join(",")));
+        }
+        RequirementMatch::None => {}
+    }
+    if let Some(ns) = &r.namespace {
+        out.push_str(&format!(" in namespace {ns:?}"));
+    }
+    out.push_str(&format!(" (requirements.{}[{:?}])", r.field, r.key));
+    out
 }
 
 /// Runs both policy layers over the module's egress rules, once per rule and
@@ -889,6 +962,125 @@ mod tests {
         assert_eq!(
             compose_refused_by(&pdb, Some(&ceiling), None, &principal),
             None
+        );
+    }
+
+    fn requirement(group: &str, kind: &str, matches: RequirementMatch, key: &str) -> Requirement {
+        Requirement {
+            group: group.to_string(),
+            kind: kind.to_string(),
+            matches,
+            namespace: None,
+            field: "resources".to_string(),
+            key: key.to_string(),
+        }
+    }
+
+    #[test]
+    fn admit_require_names_the_layer_that_refused_and_only_narrows_where_scoped() {
+        let principal = Principal::default();
+        let environment_only = compile_composition_policy(
+            r#"permit (principal, action == Action::"requireResource", resource == Kind::"apiextensions.crossplane.io/EnvironmentConfig")
+               when { context has name };"#,
+        )
+        .expect("compiles")
+        .expect("present");
+        let ceiling = OperatorPolicy::new(
+            "test",
+            r#"forbid (principal, action == Action::"requireResource", resource == Kind::"core/Secret");
+               permit (principal, action == Action::"requireResource", resource);"#,
+        )
+        .expect("policy");
+        let compose_only = OperatorPolicy::new(
+            "test",
+            r#"permit (principal, action == Action::"composeResource", resource);"#,
+        )
+        .expect("policy");
+        let environment = requirement(
+            "apiextensions.crossplane.io",
+            "EnvironmentConfig",
+            RequirementMatch::Name("team-a".to_string()),
+            "environment",
+        );
+        let mut secret = requirement(
+            "core",
+            "Secret",
+            RequirementMatch::Name("db-password".to_string()),
+            "db",
+        );
+        secret.namespace = Some("team-b".to_string());
+        let mut secrets = requirement(
+            "core",
+            "Secret",
+            RequirementMatch::Labels(
+                [("tier", "gold"), ("team", "a")]
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            ),
+            "secrets",
+        );
+        secrets.field = "extra_resources".to_string();
+        let bare = requirement("core", "ConfigMap", RequirementMatch::None, "cm");
+
+        // Nothing scoped anywhere: nothing is narrowed, no policy file included.
+        assert!(!require_fenced(None, None));
+        assert!(!require_fenced(Some(&compose_only), None));
+        assert!(admit_require(&[secret.clone(), secrets.clone()], None, None, &principal).is_ok());
+        assert!(
+            admit_require(
+                std::slice::from_ref(&secret),
+                Some(&compose_only),
+                None,
+                &principal
+            )
+            .is_ok(),
+            "an operator policy that scopes no requireResource rule must not narrow the reads"
+        );
+
+        // The composition layer, first and whole.
+        assert!(require_fenced(None, Some(&environment_only)));
+        assert!(
+            admit_require(
+                std::slice::from_ref(&environment),
+                Some(&ceiling),
+                Some(&environment_only),
+                &principal
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            admit_require(
+                &[environment.clone(), secret.clone()],
+                Some(&ceiling),
+                Some(&environment_only),
+                &principal
+            )
+            .unwrap_err(),
+            r#"required core/Secret "db-password" in namespace "team-b" (requirements.resources["db"]), which the compositionPolicy does not permit (requireResource)"#,
+            "the composition layer is read first even where the operator would also refuse"
+        );
+        assert_eq!(
+            admit_require(
+                std::slice::from_ref(&bare),
+                None,
+                Some(&environment_only),
+                &principal
+            )
+            .unwrap_err(),
+            r#"required core/ConfigMap (requirements.resources["cm"]), which the compositionPolicy does not permit (requireResource)"#
+        );
+
+        // The operator's ceiling alone.
+        assert!(require_fenced(Some(&ceiling), None));
+        assert!(admit_require(&[environment, bare], Some(&ceiling), None, &principal).is_ok());
+        assert_eq!(
+            admit_require(&[secrets], Some(&ceiling), None, &principal).unwrap_err(),
+            r#"required core/Secret with labels team=a,tier=gold (requirements.extra_resources["secrets"]), which the operator policy (--sandbox-policy-file) does not permit (requireResource)"#
+        );
+        assert_eq!(
+            require_refused_by(&secret, Some(&ceiling), None, &principal),
+            Some(Layer::Operator)
         );
     }
 }

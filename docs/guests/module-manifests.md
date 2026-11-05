@@ -59,6 +59,8 @@ same way.
 - `minRuntime`: the oldest runtime that serves the module.
 - `composes`: what the module writes, advisory
   ([below](#the-composes-declaration)).
+- `requires.resources`: what the module asks Crossplane for, advisory
+  ([below](#the-requiresresources-declaration)).
 
 `guestfn push` publishes the file as a second layer of the OCI artifact, with
 the media type `application/vnd.wasmfn.manifest.v1+json`. The layer is covered
@@ -130,3 +132,36 @@ The tooling reads it in three places:
 `guestfn build` refuses an unknown field inside `composes`, which catches a
 typo in the file you're editing. Parsing a published manifest doesn't check
 `composes` for unknown fields. The runtime ignores them.
+
+## The `requires.resources` declaration
+
+A manifest can declare what the module asks Crossplane for through its
+response's `requirements`, under `requires` beside the capabilities:
+
+```yaml
+requires:
+  resources:
+    - kind: apiextensions.crossplane.io/EnvironmentConfig   # <group>/<Kind>, the core group spelled core
+      by: [name]                                            # name, labels; both when omitted
+```
+
+The declaration is for tooling, and unlike the other `requires` entries it's
+never granted or refused before the run. The policy layers fence a module's
+reads with `requireResource` rules, judged over the actual selectors after the
+run ([the read fence](../operators/cedar-policy.md#the-read-fence)), and the
+runtime doesn't read `requires.resources`. The tooling reads it in the same
+three places:
+
+- `function validate --resolve` warns where a layer would refuse a declared
+  kind, such as
+  `the module declares it requires core/Secret (by name), which the compositionPolicy does not permit (requireResource)`.
+  It judges a read by name with an empty name and a read by labels with no
+  labels, and never with a namespace, so a rule conditioned on a value may
+  warn for a selector the run would permit.
+- `guestfn inspect` shows it in the manifest summary.
+- `guestfn scaffold composition` writes the matching `requireResource`
+  permits, with `context has name` or `context has labels` from `by`.
+
+`guestfn build` refuses a `kind` that isn't `<group>/<Kind>`, a `by` entry
+other than `name` and `labels`, and an unknown field inside an entry, as it
+does for the rest of `requires`.

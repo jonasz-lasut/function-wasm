@@ -43,7 +43,7 @@ By default `validate` checks the Input alone: the `compositionPolicy` compiles, 
 - `--output json` prints one JSON object per step, one per line, for CI annotations.
 - `-` reads stdin.
 
-A step whose `compositionPolicy` scopes `composeResource` ends its OK line's parenthesis with `composeResource`, as in `OK (path fn.wasm, compositionPolicy, composeResource)`. The policy fences the module's output, which only a run can judge, so `validate` reports the scoping and not a verdict.
+A step whose `compositionPolicy` scopes `composeResource` or `requireResource` ends its OK line's parenthesis with the action, as in `OK (path fn.wasm, compositionPolicy, composeResource)`. The policy fences the module's output or its reads, which only a run can judge, so `validate` reports the scoping and not a verdict.
 
 ## Warnings and exit codes
 

@@ -40,7 +40,7 @@ spec:
               CompositionPolicy is the composition author's own Cedar policy layer,
               as policy text over the same schema as the operator's
               --sandbox-policy-file (actions pullModule, spendCredential,
-              grantEgress, usePrivateTmp, setEnv, composeResource; a Request principal carrying
+              grantEgress, usePrivateTmp, setEnv, composeResource, requireResource; a Request principal carrying
               namespace and xrKind; Repository, HostPattern, Capability,
               Credential, Kind and Group entities). It is AND-combined with the module's manifest
               and the operator's policy, so it can only narrow. Two regimes: a

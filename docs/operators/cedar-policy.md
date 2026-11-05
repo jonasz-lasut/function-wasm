@@ -36,8 +36,8 @@ the names these rules use.
 
 | layer | written by | actions it may use |
 |---|---|---|
-| operator policy | the operator | `usePrivateTmp`, `setEnv`, `spendCredential`, `grantEgress`, `composeResource`, `requireSignature`, `trustSigner`, `dialAddress` |
-| composition policy | the composition author | `pullModule`, `spendCredential`, `usePrivateTmp`, `setEnv`, `grantEgress`, `composeResource` |
+| operator policy | the operator | `usePrivateTmp`, `setEnv`, `spendCredential`, `grantEgress`, `composeResource`, `requireResource`, `requireSignature`, `trustSigner`, `dialAddress` |
+| composition policy | the composition author | `pullModule`, `spendCredential`, `usePrivateTmp`, `setEnv`, `grantEgress`, `composeResource`, `requireResource` |
 
 The runtime compiles the operator policy at startup and doesn't reread it. A
 change needs a restart. The composition policy is the Input's
@@ -91,10 +91,11 @@ hierarchy. `in` is reflexive: an entity is `in` itself.
   aren't.
 - `Capability` is `privateTmp` or `env`. `Credential` is the name of a
   pipeline-step credential.
-- `Kind` is `<group>/<Kind>` of a resource a module composed, read from its
-  `apiVersion` and `kind`: `apps/Deployment`, `policy/PodDisruptionBudget`,
-  `core/Secret` (the core group is spelled `core`). The API version is dropped,
-  so `policy/v1` and `policy/v1beta1` are one kind.
+- `Kind` is `<group>/<Kind>` of a resource a module composed, or asked
+  Crossplane for, read from its `apiVersion` and `kind`: `apps/Deployment`,
+  `policy/PodDisruptionBudget`, `core/Secret` (the core group is spelled
+  `core`). The API version is dropped, so `policy/v1` and `policy/v1beta1` are
+  one kind.
 - `Group` is an API group (`apps`, `policy`, `core`) and the parent of every
   `Kind` in it: `resource in Group::"apps"` is every kind of the apps group and
   no other.
@@ -112,6 +113,7 @@ notes below it cover what a cell can't:
 | `setEnv` | both | `Capability::"env"` | `keys`, the set of every environment variable name the manifest binds | the env bindings as a whole |
 | `grantEgress` | both | `HostPattern` | `method` (upper case) and `path` (the rule's `pathPrefix`, empty when it has none) | one rule's host and method |
 | `composeResource` | both | `Kind` | `change`, `name` and `target` | nothing: it fences the module's output |
+| `requireResource` | both | `Kind` | `name`, `labels` and `namespace`, each present only where the selector sets it | nothing: it fences what the module asks Crossplane for |
 | `requireSignature` | operator | `Repository` | none | nothing: it demands a cosign signature for modules at that location |
 | `trustSigner` | operator | `Repository` | `issuer` and `identity` | nothing by itself: it makes a keyless signer trusted for `requireSignature` |
 | `dialAddress` | operator | none | `ip` | nothing at request time: it adds to the egress block list |
@@ -127,6 +129,13 @@ notes below it cover what a cell can't:
   `add`, `modify` or `remove`, `name` is the composition resource name (empty
   for the composite resource) and `target` is `composite` or `composed`. See
   [the output fence](#the-output-fence).
+- `requireResource` is decided once per resource selector in the response's
+  `requirements`: `name` is the selector's `matchName`, `labels` is a record
+  of its `matchLabels` with the label keys as attributes
+  (`context.labels has team`, `context.labels["app.kubernetes.io/part-of"]`),
+  and `namespace` is the selector's namespace. A selector matches by name or
+  by labels, never both, and an attribute the selector doesn't set is absent,
+  so test it with `has` first. See [the read fence](#the-read-fence).
 - `trustSigner`'s `issuer` is the OIDC issuer of a keyless signature's Fulcio
   certificate and `identity` its subject alternative name, both strings for `==`
   and `like`. [Signatures](signatures.md) has the precedence with `--cosign-key`.
@@ -165,8 +174,8 @@ decide that action alone. Once scoped, a matching `permit` and no matching
 (`permit (principal, action, resource);`) scopes nothing. A `forbid` alone scopes
 an action and permits nothing. A ceiling needs a `permit` beside it.
 
-`composeResource` follows the same rule in both layers. It's the one action where
-the operator layer isn't default-deny.
+`composeResource` and `requireResource` follow the same rule in both layers.
+They're the two actions where the operator layer isn't default-deny.
 
 The runtime evaluates the composition layer first and whole. A composition
 author reads their own layer's refusal even where the operator would also deny.
@@ -198,12 +207,42 @@ result that states the module, the kind, the name, the change and the layer, and
 none of the module's output is applied. The runtime doesn't judge a response that
 already contains a fatal result.
 
-The fence judges the desired state and nothing else. A module can ask
-Crossplane for any resource the Function's RBAC lets Crossplane read, through
-the response's `requirements`. It can also write `context` and `conditions`.
-The fence sees none of these. Scope the Function's RBAC to what its modules
-should see. A fence over the requirements, a `requireResource` action judged the
-same way, is proposed for 1.0.0.
+The fence judges the desired state. What a module asks Crossplane for is
+judged by [the read fence](#the-read-fence). A module can also write `context`
+and `conditions`, which neither fence sees.
+
+### The read fence
+
+`requireResource` fences what a module asks Crossplane for. Through the
+response's `requirements` a module can request any resource the Function's RBAC
+lets Crossplane read, and Crossplane returns it in the next request's
+`required_resources`. After the run, the runtime judges every
+`ResourceSelector` in `requirements.resources` and in the deprecated
+`requirements.extra_resources`, in key order with the current map first, as
+`Kind::"<group>/<Kind>"` with the selector's `name`, `labels` and `namespace`
+in the context where the selector sets them. The runtime judges the ask, since
+the ask is what it sees. Crossplane reads the resources after the response.
+
+The fence is scoped default-permit in both layers, as the output fence is and
+for the same reason: nothing judged the ask before, and a default-deny would
+refuse every module that reads an EnvironmentConfig on upgrade. Every layer
+that scopes the action must permit each selector. A refusal is a fatal result
+that states the module, the kind, the name or labels, the namespace where set,
+the requirements entry and the layer. The runtime doesn't relay the refused
+ask, so Crossplane doesn't fetch. Unlike the output fence, the read fence judges
+a response with a fatal result too, because the ask travels whatever the
+results say. A selector
+with no `apiVersion` or `kind` can't be judged by any rule and is refused with
+its own sentence where a layer scopes the action.
+
+The runtime judges the requirements before it diffs the desired state, so a
+response with a refused selector and a refused kind reports the selector.
+`requirements.schemas`, the CRD schemas a module may request, isn't fenced,
+since a schema is public metadata of a kind. The request's
+`required_resources` isn't edited either: it holds what Crossplane fetched for
+an ask the runtime permitted on the previous call. Scoping the Function's RBAC
+remains the outer boundary, per Function; the fence narrows it per Composition
+and per tenant.
 
 ## Worked examples
 
@@ -342,6 +381,40 @@ permit (principal, action == Action::"composeResource", resource);
 with `--resolve` it warns where a kind the module's manifest declares it composes
 would be refused.
 
+### `requireResource`
+
+To let a step read the EnvironmentConfig its composite resource specifies:
+
+```cedar
+permit (principal, action == Action::"requireResource",
+        resource == Kind::"apiextensions.crossplane.io/EnvironmentConfig")
+when { context has name };
+```
+
+An operator who keeps every module's reads inside the tenant's namespace,
+Secrets off limits and the cluster-scoped Crossplane kinds open:
+
+```cedar
+forbid (principal, action == Action::"requireResource", resource)
+when { resource == Kind::"core/Secret" };
+
+permit (principal, action == Action::"requireResource", resource)
+when { context has namespace && context.namespace == principal.namespace };
+
+permit (principal, action == Action::"requireResource",
+        resource in Group::"apiextensions.crossplane.io");
+```
+
+A selector that omits the namespace and selects a namespaced kind matches no
+`permit`, so a module can't read across namespaces by leaving the field out.
+Guard a value test with `has`. Cedar treats a rule that reads an absent
+attribute as unmatched, and an unmatched `forbid` is no fence.
+
+`function validate` can't judge an ask offline. It marks a step whose
+`compositionPolicy` scopes the action with `requireResource` on its OK line, and
+with `--resolve` it warns where a kind the module's manifest declares it
+[requires](../guests/module-manifests.md#the-requiresresources-declaration) would be refused.
+
 ## Refusal sentences
 
 A refused capability is a fatal result that states the module (`module oci
@@ -357,6 +430,7 @@ the sentence for each `requires` entry, by who refuses it:
 | an env binding's credential (`spendCredential`) | as in the preceding row | `requires env API_TOKEN from credential "apikeys", which the compositionPolicy does not permit (spendCredential)` | `requires env API_TOKEN from credential "apikeys", which the operator policy (--sandbox-policy-file) does not permit (spendCredential)` |
 | `requires.credentials[i]` | `requires credential "cmdb" (requires.credentials[0]), but the runtime has no --sandbox-policy-file, which is required to grant step credentials (spendCredential)` | `requires credential "cmdb" (requires.credentials[0]), which the compositionPolicy does not permit` | `requires credential "cmdb" (requires.credentials[0]), which the operator policy (--sandbox-policy-file) does not permit` |
 | a change to the desired state (`composeResource`, after the run) | not refused: no policy file narrows the output | `composed apps/Deployment "deployment" (modify), which the compositionPolicy does not permit (composeResource)`; for the composite resource `composed platform.example.org/WebApp (composite, modify), which …` | `composed core/Secret "db-password" (add), which the operator policy (--sandbox-policy-file) does not permit (composeResource)` |
+| a resource selector in the response's requirements (`requireResource`, after the run) | not refused: no policy file narrows the reads | `required core/Secret "db-password" in namespace "team-b" (requirements.resources["db"]), which the compositionPolicy does not permit (requireResource)`; for a match by labels `required core/Secret with labels team=a,tier=gold (requirements.resources["secrets"]), which …` | `required core/Secret "db-password" in namespace "team-b" (requirements.resources["db"]), which the operator policy (--sandbox-policy-file) does not permit (requireResource)` |
 
 ### Signature refusals
 

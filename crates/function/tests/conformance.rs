@@ -79,6 +79,27 @@ fn cases() -> Vec<Case> {
             ],
             stdin: "",
         },
+        // The read fence (requireResource, #208): the same marking and the
+        // same offline limits as the output fence.
+        Case {
+            name: "RequireResource",
+            args: &["testdata/validate/require.yaml"],
+            stdin: "",
+        },
+        Case {
+            name: "RequireResource-json",
+            args: &["testdata/validate/require.yaml", "--output", "json"],
+            stdin: "",
+        },
+        Case {
+            name: "RequireResource-OperatorCeiling",
+            args: &[
+                "testdata/validate/require.yaml",
+                "--sandbox-policy-file",
+                "testdata/validate/require-ceiling.cedar",
+            ],
+            stdin: "",
+        },
         Case {
             name: "FromWithXR",
             args: &[
@@ -1196,6 +1217,77 @@ fn validate_resolve_composes_matches_the_goldens() {
         let rust_out = run_validate(rust, &args, "", &cwd);
         if let Some(f) = assert_golden(
             &format!("ComposeResource/{name}"),
+            &rust_out,
+            &[(module_dir.clone(), "<DIR>")],
+        ) {
+            failures.push(f);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}
+
+/// The advisory `requires.resources` declaration of a manifest (#208) under `--resolve`,
+/// as `composes` above: a declared kind a layer would refuse is a warning
+/// naming the layer, judged with an empty name or no labels and no
+/// namespace; the step stays admitted.
+#[test]
+fn validate_resolve_reads_matches_the_goldens() {
+    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let cwd = crate_dir();
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
+    std::fs::write(
+        dir.path().join("manifest.yaml"),
+        "abi: 2\nname: policy-gate\nversion: 0.1.1\nrequires:\n  resources:\n    - kind: apiextensions.crossplane.io/EnvironmentConfig\n      by: [name]\n    - kind: core/Secret\n",
+    )
+    .expect("write manifest");
+    let composition = |name: &str, policy: &str| {
+        let path = dir.path().join(format!("{name}.yaml"));
+        let policy_block = if policy.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "      compositionPolicy: |\n        {}\n",
+                policy.replace('\n', "\n        ")
+            )
+        };
+        std::fs::write(
+            &path,
+            format!(
+                "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: {name}\nspec:\n  pipeline:\n  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: wasm.fn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: fn.wasm, manifestPath: manifest.yaml}}\n{policy_block}"
+            ),
+        )
+        .expect("write composition");
+        path.display().to_string()
+    };
+    let fenced = composition(
+        "Declared",
+        "permit (principal, action == Action::\"requireResource\", resource == Kind::\"apiextensions.crossplane.io/EnvironmentConfig\")\nwhen { context has name };",
+    );
+    let unfenced = composition("DeclaredCeiling", "");
+    let module_dir = dir.path().display().to_string();
+    let mut failures = Vec::new();
+    for (name, composition, extra) in [
+        ("Declared", &fenced, Vec::new()),
+        (
+            "DeclaredCeiling",
+            &unfenced,
+            vec![
+                "--sandbox-policy-file",
+                "testdata/validate/require-ceiling.cedar",
+            ],
+        ),
+    ] {
+        let mut args = vec![
+            composition.as_str(),
+            "--resolve",
+            "--module-dir",
+            module_dir.as_str(),
+        ];
+        args.extend(extra);
+        let rust_out = run_validate(rust, &args, "", &cwd);
+        if let Some(f) = assert_golden(
+            &format!("RequireResource/{name}"),
             &rust_out,
             &[(module_dir.clone(), "<DIR>")],
         ) {

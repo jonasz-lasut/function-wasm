@@ -54,6 +54,43 @@ pub struct Manifest {
     pub composes: Vec<Composes>,
 }
 
+/// One kind a module declares it requires from Crossplane through its
+/// response's requirements, and how it selects it.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RequiredResource {
+    /// `<group>/<Kind>`, the core group spelled `core`, as the policy's
+    /// `Kind::` entity names it: `apiextensions.crossplane.io/EnvironmentConfig`.
+    pub kind: String,
+    /// `name`, `labels`; empty means both.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub by: Vec<String>,
+}
+
+/// The ways a selector matches, as a `requires.resources` entry spells them.
+pub const RESOURCE_MATCHES: &[&str] = &["name", "labels"];
+
+impl RequiredResource {
+    /// The group and kind halves of `kind`.
+    pub fn group_and_kind(&self) -> Option<(&str, &str)> {
+        self.kind
+            .split_once('/')
+            .filter(|(g, k)| !g.is_empty() && !k.is_empty())
+    }
+
+    /// The matches declared, both when none is.
+    pub fn match_kinds(&self) -> Vec<&str> {
+        if self.by.is_empty() {
+            return RESOURCE_MATCHES.to_vec();
+        }
+        self.by
+            .iter()
+            .map(String::as_str)
+            .filter(|b| RESOURCE_MATCHES.contains(b))
+            .collect()
+    }
+}
+
 /// One kind a module declares it composes, and how.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -103,6 +140,16 @@ pub struct Requires {
     /// request; every other step credential is withheld from it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub credentials: Vec<String>,
+    /// The resources the module asks Crossplane for through its response's
+    /// requirements - advisory (#208), as composes is: the runtime judges
+    /// the actual selectors against the policy layers' requireResource
+    /// rules after the run and never reads this, so unlike the entries
+    /// above it is never granted or refused before the run; `function
+    /// validate --resolve` warns where a declared kind would be refused,
+    /// `guestfn inspect` shows it and `guestfn scaffold composition` writes
+    /// the matching permits.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<RequiredResource>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -247,6 +294,21 @@ impl Manifest {
             }
             sandboxenv::validate_bindings("requires.env", &r.env)?;
             sandboxenv::validate_credentials("requires.credentials", &r.credentials)?;
+            for (i, res) in r.resources.iter().enumerate() {
+                if res.group_and_kind().is_none() {
+                    return Err(format!(
+                        "requires.resources[{i}].kind must be <group>/<Kind> (the core group spelled core), got {:?}",
+                        res.kind
+                    ));
+                }
+                for by in &res.by {
+                    if !RESOURCE_MATCHES.contains(&by.as_str()) {
+                        return Err(format!(
+                            "requires.resources[{i}].by must be among name and labels, got {by:?}"
+                        ));
+                    }
+                }
+            }
         }
         for (i, c) in self.composes.iter().enumerate() {
             if c.group_and_kind().is_none() {
@@ -338,6 +400,20 @@ impl Manifest {
             }
             if !r.credentials.is_empty() {
                 parts.push(format!("credentials {}", r.credentials.join(" ")));
+            }
+            if !r.resources.is_empty() {
+                let kinds: Vec<String> = r
+                    .resources
+                    .iter()
+                    .map(|res| {
+                        if res.by.is_empty() {
+                            res.kind.clone()
+                        } else {
+                            format!("{} ({})", res.kind, res.by.join(" "))
+                        }
+                    })
+                    .collect();
+                parts.push(format!("resources {}", kinds.join(" ")));
             }
         }
         if !self.composes.is_empty() {
@@ -486,6 +562,13 @@ fn strict_requires(v: &Value) -> Result<(), String> {
         filesystem: Option<StrictFilesystem>,
         env: Vec<StrictBinding>,
         credentials: Vec<String>,
+        resources: Vec<StrictResource>,
+    }
+    #[derive(Deserialize, Default)]
+    #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+    struct StrictResource {
+        kind: String,
+        by: Vec<String>,
     }
     #[derive(Deserialize, Default)]
     #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
@@ -689,6 +772,40 @@ mod tests {
             )
             .unwrap_err(),
             r#"composes[0].changes must be among add, modify and remove, got "patch""#
+        );
+        // requires.resources is validated in shape, strictly decoded like
+        // the rest of requires, and read by summary.
+        let requiring = Manifest::parse(
+            br#"{"abi":2,"name":"policy-gate","requires":{"resources":[{"kind":"apiextensions.crossplane.io/EnvironmentConfig","by":["name"]},{"kind":"core/ConfigMap"}]}}"#,
+        )
+        .expect("resources");
+        assert_eq!(
+            requiring.summary(),
+            "policy-gate, resources apiextensions.crossplane.io/EnvironmentConfig (name) core/ConfigMap"
+        );
+        assert_eq!(
+            requiring.requires.as_ref().expect("requires").resources[1].match_kinds(),
+            ["name", "labels"],
+            "no by declared means both"
+        );
+        assert_eq!(
+            Manifest::parse(br#"{"abi":2,"requires":{"resources":[{"kind":"Secret"}]}}"#)
+                .unwrap_err(),
+            r#"requires.resources[0].kind must be <group>/<Kind> (the core group spelled core), got "Secret""#
+        );
+        assert_eq!(
+            Manifest::parse(
+                br#"{"abi":2,"requires":{"resources":[{"kind":"core/Secret","by":["uid"]}]}}"#
+            )
+            .unwrap_err(),
+            r#"requires.resources[0].by must be among name and labels, got "uid""#
+        );
+        assert!(
+            Manifest::parse(
+                br#"{"abi":2,"requires":{"resources":[{"kind":"core/Secret","namespace":"x"}]}}"#
+            )
+            .expect_err("strict resources")
+            .starts_with("cannot parse manifest requires:")
         );
     }
 
