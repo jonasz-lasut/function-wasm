@@ -222,7 +222,7 @@ from that exact tagged source.
 The same run publishes the use-case examples (`publish-examples`) and
 attaches `function-wasm-examples-<release>.yaml` to the release. Only an
 example version not yet in the registry is pushed, so an example change ships
-only if its `wasmfn.yaml` `version` was bumped on `main` before cutting; say
+only if its `guestfn.yaml` `version` was bumped on `main` before cutting; say
 which examples moved in the release notes. After an example's first publish,
 make its GHCR package (`wasmfn/examples/<name>`) public, as for the WIT world.
 

@@ -63,7 +63,7 @@ fn empty_registry() -> String {
 fn push_then_inspect_and_show() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
-    std::fs::write(dir.path().join("wasmfn.yaml"), MANIFEST_YAML).expect("write");
+    std::fs::write(dir.path().join("guestfn.yaml"), MANIFEST_YAML).expect("write");
     let addr = empty_registry();
     let reference = format!("{addr}/example/greeter:v1");
 
@@ -88,7 +88,7 @@ fn push_then_inspect_and_show() {
     assert!(ok, "inspect failed: {stderr}");
     assert!(stdout.contains("layer: application/wasm"), "{stdout}");
     assert!(
-        stdout.contains("layer: application/vnd.wasmfn.manifest.v1+json"),
+        stdout.contains("layer: application/vnd.guestfn.manifest.v1+json"),
         "{stdout}"
     );
     assert!(
@@ -230,12 +230,12 @@ fn inspect_a_file() {
 #[test]
 fn manifest_validate() {
     let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::write(dir.path().join("wasmfn.yaml"), MANIFEST_YAML).expect("write");
+    std::fs::write(dir.path().join("guestfn.yaml"), MANIFEST_YAML).expect("write");
     let (stdout, stderr, ok) = guestfn(dir.path(), &["manifest", "validate"]);
     assert!(ok, "{stderr}");
     assert!(
         stdout.contains(
-            "wasmfn.yaml: valid (greeter v0.1.0, requires egress example.com, credentials cmdb, resources apiextensions.crossplane.io/EnvironmentConfig (name), composes policy/PodDisruptionBudget (add);"
+            "guestfn.yaml: valid (greeter v0.1.0, requires egress example.com, credentials cmdb, resources apiextensions.crossplane.io/EnvironmentConfig (name), composes policy/PodDisruptionBudget (add);"
         ),
         "{stdout}"
     );
@@ -270,7 +270,7 @@ fn init_offline_writes_a_project() {
         "go.mod",
         "main.go",
         "fn.go",
-        "wasmfn.yaml",
+        "guestfn.yaml",
         "internal/wasmfn/register.go",
     ] {
         assert!(dir.path().join("my-fn").join(f).is_file(), "missing {f}");
@@ -310,7 +310,7 @@ fn init_names_a_component_project_after_its_directory() {
             "{lang}: {stdout}"
         );
         let project = dir.path().join(name);
-        let wasmfn = std::fs::read_to_string(project.join("wasmfn.yaml")).expect("wasmfn.yaml");
+        let wasmfn = std::fs::read_to_string(project.join("guestfn.yaml")).expect("guestfn.yaml");
         assert!(
             wasmfn.contains(&format!("name: {name}\n")),
             "{lang}: {wasmfn}"
@@ -330,7 +330,7 @@ fn init_names_a_component_project_after_its_directory() {
 fn scaffold_composition_from_a_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
-    std::fs::write(dir.path().join("wasmfn.yaml"), MANIFEST_YAML).expect("write");
+    std::fs::write(dir.path().join("guestfn.yaml"), MANIFEST_YAML).expect("write");
     let (stdout, stderr, ok) = guestfn(dir.path(), &["scaffold", "composition"]);
     assert!(ok, "{stderr}");
     assert!(stdout.contains("- step: greeter"), "{stdout}");

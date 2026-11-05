@@ -58,7 +58,7 @@ spec:
         # published artifact carries its own manifest.
         type: Path
         path: fn.wasm
-        manifestPath: example/wasmfn.local.yaml
+        manifestPath: example/guestfn.local.yaml
       # The Composition's own policy layer. The module receives the cmdb
       # credential, every team's token, because its manifest requires it and
       # this layer permits it - and no other step credential, whatever a

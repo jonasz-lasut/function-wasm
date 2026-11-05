@@ -82,7 +82,7 @@ jobs:
       - name: Build Package
         # --examples-root must point at a directory of Crossplane example objects
         # only: xpkg build parses every YAML file under it. The default
-        # (./examples) recurses into the guest projects and their wasmfn.yaml
+        # (./examples) recurses into the guest projects and their guestfn.yaml
         # module manifests (no Kind), so the package takes one guest's
         # example/ directory, which holds nothing else.
         run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/ --examples-root=examples/pdb-addon/example --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
@@ -343,7 +343,7 @@ jobs:
   # The use-case examples (#112) as CNCF Wasm OCI artifacts with their module
   # manifests, at ghcr.io/jonasz-lasut/wasmfn/examples/<name>:v<version>,
   # signed and attested like the image. Each example carries its own version
-  # in its wasmfn.yaml, independent of the runtime's: a version already
+  # in its guestfn.yaml, independent of the runtime's: a version already
   # published is never pushed again, so a release publishes only the examples
   # whose version moved, and a published tag stays immutable. Only the
   # examples that work as published are here: team-tags and dashboard-bundle
@@ -380,9 +380,9 @@ jobs:
       - name: Read the Example Version
         id: example
         run: |
-          version=$(sed -nE 's/^version: *([^ #]+).*$/\1/p' "${EXAMPLE}/wasmfn.yaml")
+          version=$(sed -nE 's/^version: *([^ #]+).*$/\1/p' "${EXAMPLE}/guestfn.yaml")
           if [ -z "${version}" ]; then
-            echo "::error::${EXAMPLE}/wasmfn.yaml declares no version"
+            echo "::error::${EXAMPLE}/guestfn.yaml declares no version"
             exit 1
           fi
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
@@ -491,7 +491,7 @@ jobs:
         run: |
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           export SOURCE_DATE_EPOCH
-          output=$("${GUESTFN}" push --file "${EXAMPLE}/fn.wasm" --manifest "${EXAMPLE}/wasmfn.yaml" \
+          output=$("${GUESTFN}" push --file "${EXAMPLE}/fn.wasm" --manifest "${EXAMPLE}/guestfn.yaml" \
             --revision "${GITHUB_SHA}" "ghcr.io/${REPOSITORY}:${TAG}")
           echo "${output}"
           digest=$(printf '%s\n' "${output}" | sed -nE 's/^Pushed .*@(sha256:[0-9a-f]{64})$/\1/p')

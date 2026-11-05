@@ -55,7 +55,7 @@ function needs no package of its own, only the two capabilities it declares:
   tmpfs `emptyDir` with a `sizeLimit` caps what one run may write (a full
   tmpfs fails the module's write, not the runtime).
 - **Both capabilities are requested and granted, one by one.** The manifest
-  (`wasmfn.yaml`) requires `filesystem.privateTmp` and `GET` to the bundle
+  (`guestfn.yaml`) requires `filesystem.privateTmp` and `GET` to the bundle
   host under `/dashboards/`; the runtime grants each only where the
   Composition's `compositionPolicy` and the operator's Cedar policy both
   permit it. The module cannot open a socket: the runtime fetches on its
@@ -134,7 +134,7 @@ A local render needs no internet. `example/` holds:
 - `xr.yaml` and `xr-payments.yaml`: two teams' bundles, in their own
   namespaces and folders.
 - `composition.yaml`: one pipeline step, the module served from this
-  directory under `example/wasmfn.local.yaml`, a manifest that asks for the
+  directory under `example/guestfn.local.yaml`, a manifest that asks for the
   fixture server instead of `artifacts.example.com`.
 - `bundles/`: the dashboards the fixture bundles are packed from, and
   `pack.py`, which `make bundles` runs to repack them and print the digests
@@ -154,7 +154,7 @@ A local render needs no internet. `example/` holds:
 
 ## In a cluster
 
-Name your artifact host in `wasmfn.yaml`, publish the module with its
+Name your artifact host in `guestfn.yaml`, publish the module with its
 manifest, then reference the digest `guestfn push` prints:
 
 ```shell

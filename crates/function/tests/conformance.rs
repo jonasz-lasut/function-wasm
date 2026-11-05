@@ -435,7 +435,7 @@ fn validate_resolve_matches_the_goldens() {
 }
 
 /// The manifest path of the three-layer decision over generated fixtures: a module
-/// whose wasmfn.yaml requires a private /tmp, env bindings, or egress, with
+/// whose guestfn.yaml requires a private /tmp, env bindings, or egress, with
 /// and without an operator grant policy. Egress that both layers permit is
 /// the one recorded gap: this runtime does not carry the egress client yet.
 #[test]
@@ -566,8 +566,8 @@ fn validate_resolve_credentials_matches_the_goldens() {
     .expect("wat");
     std::fs::write(dir.path().join("fn.wasm"), &ok).expect("write");
     std::fs::copy(
-        cwd.join("testdata/validate/credentials.wasmfn.yaml"),
-        dir.path().join("credentials.wasmfn.yaml"),
+        cwd.join("testdata/validate/credentials.guestfn.yaml"),
+        dir.path().join("credentials.guestfn.yaml"),
     )
     .expect("copy manifest");
 
@@ -605,7 +605,7 @@ fn validate_resolve_credentials_matches_the_goldens() {
 }
 
 /// The HTTP module source over a local server both binaries fetch from:
-/// a module pinned by its stated digest, a wasmfn.yaml manifest by
+/// a module pinned by its stated digest, a guestfn.yaml manifest by
 /// reference (manifestURL/manifestDigest) decided by the three layers, and
 /// a stated digest the download does not match.
 #[test]
@@ -651,7 +651,7 @@ fn validate_resolve_http_source_matches_the_goldens() {
                 let head = String::from_utf8_lossy(&buf[..n]);
                 let body: &[u8] = if head.starts_with("GET /fn.wasm") {
                     &wasm
-                } else if head.starts_with("GET /wasmfn.yaml") {
+                } else if head.starts_with("GET /guestfn.yaml") {
                     &manifest
                 } else {
                     b""
@@ -685,7 +685,7 @@ fn validate_resolve_http_source_matches_the_goldens() {
             step(
                 "with-manifest",
                 &format!(
-                    "{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}, manifestURL: {base}/wasmfn.yaml, manifestDigest: {manifest_digest}}}}}"
+                    "{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}, manifestURL: {base}/guestfn.yaml, manifestDigest: {manifest_digest}}}}}"
                 ),
             ),
             vec![],
@@ -694,7 +694,7 @@ fn validate_resolve_http_source_matches_the_goldens() {
             step(
                 "granted",
                 &format!(
-                    "{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}, manifestURL: {base}/wasmfn.yaml, manifestDigest: {manifest_digest}}}}}"
+                    "{{type: HTTP, http: {{url: {base}/fn.wasm, digest: {wasm_digest}, manifestURL: {base}/guestfn.yaml, manifestDigest: {manifest_digest}}}}}"
                 ),
             ),
             vec![
@@ -771,7 +771,7 @@ fn validate_resolve_oci_source_matches_the_goldens() {
         "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": digest_of(config), "size": config.len()},
         "layers": [
             {"mediaType": "application/wasm", "digest": wasm_digest, "size": wasm.len()},
-            {"mediaType": "application/vnd.wasmfn.manifest.v1+json", "digest": manifest_digest, "size": module_manifest.len()},
+            {"mediaType": "application/vnd.guestfn.manifest.v1+json", "digest": manifest_digest, "size": module_manifest.len()},
         ],
     }))
     .expect("manifest json");

@@ -152,7 +152,7 @@ spec:
                     type: string
                   manifestURL:
                     description: |-
-                      ManifestURL optionally locates the module's wasmfn.yaml manifest, served
+                      ManifestURL optionally locates the module's guestfn.yaml manifest, served
                       over HTTP(S) beside the module - the module's request layer, authored by
                       the module author (docs/one-pager-three-layer-authz.md). Without it an
                       HTTP source carries no manifest and gets only the default sandbox.
@@ -174,7 +174,7 @@ spec:
                   rule: has(self.manifestURL) == has(self.manifestDigest)
               manifestPath:
                 description: |-
-                  ManifestPath optionally names the module's wasmfn.yaml manifest file,
+                  ManifestPath optionally names the module's guestfn.yaml manifest file,
                   relative to --module-dir - the request layer for a Path source
                   (docs/one-pager-three-layer-authz.md), letting a Path module declare the
                   capabilities it needs like an OCI artifact does. Valid only with type

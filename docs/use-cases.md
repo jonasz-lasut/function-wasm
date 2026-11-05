@@ -61,7 +61,7 @@ explains why these were chosen and how they're published.
 
 A release publishes `cloudflare-origin`, `policy-gate` and `pdb-addon` to
 `ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, signed and attested, when the
-version in the example's `wasmfn.yaml` isn't in the registry yet. The
+version in the example's `guestfn.yaml` isn't in the registry yet. The
 digest-pinned references are in the release's
 `function-wasm-examples-<release>.yaml`.
 

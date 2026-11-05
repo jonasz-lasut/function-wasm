@@ -17,7 +17,7 @@ pub struct CompositionCmd {
     #[arg(long, default_value = "fn.wasm")]
     from: String,
 
-    /// The manifest to scaffold from; by default the wasmfn.yaml next to a
+    /// The manifest to scaffold from; by default the guestfn.yaml next to a
     /// module file (when there is one), or the artifact's manifest layer
     /// for a reference.
     #[arg(long)]
@@ -74,7 +74,7 @@ impl CompositionCmd {
     }
 
     /// Resolves --from to a module source and its manifest: --manifest,
-    /// else the wasmfn.yaml beside a module file, else an artifact's
+    /// else the guestfn.yaml beside a module file, else an artifact's
     /// manifest layer; None when there is none.
     fn source(&self) -> Result<(Source, Option<Manifest>), String> {
         let mut m = match &self.manifest {

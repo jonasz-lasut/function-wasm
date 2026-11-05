@@ -1178,13 +1178,13 @@ mod tests {
         )
         .expect("write");
         std::fs::write(
-            dir.path().join("wasmfn.yaml"),
+            dir.path().join("guestfn.yaml"),
             "abi: 2\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n  credentials: [cmdb]\n",
         )
         .expect("write");
         let f = granting_function(Some(dir.path()));
         let declared =
-            serde_json::json!({"type": "Path", "path": "fn.wasm", "manifestPath": "wasmfn.yaml"});
+            serde_json::json!({"type": "Path", "path": "fn.wasm", "manifestPath": "guestfn.yaml"});
 
         // The env binding's credential and the required one reach the guest,
         // whole; the step's other credential does not.

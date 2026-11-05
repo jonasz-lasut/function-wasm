@@ -68,7 +68,7 @@ Reference the module from a Composition step of function-wasm:
 `example/` renders locally with the function-wasm runtime serving this
 directory (`--module-dir`) under `example/policy.cedar` and the fixture
 server `render.sh` starts, so the render shows the greeting fetched through
-the host's egress under `example/wasmfn.local.yaml`, a manifest that requires
+the host's egress under `example/guestfn.local.yaml`, a manifest that requires
 it:
 
 ```shell

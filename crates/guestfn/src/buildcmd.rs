@@ -2,7 +2,7 @@
 //! language, wrap a core module that carries wit-bindgen's component-type
 //! section into a component (embedding the world first for a Go project,
 //! whose toolchain emits none), check the result as the runtime would at
-//! load, and validate the project's wasmfn.yaml, if any, as the manifest
+//! load, and validate the project's guestfn.yaml, if any, as the manifest
 //! guestfn push will publish beside it.
 
 use std::path::{Path, PathBuf};
@@ -88,7 +88,7 @@ impl BuildCmd {
                 wasm
             }
         };
-        // The manifest is checked with the build so a broken wasmfn.yaml
+        // The manifest is checked with the build so a broken guestfn.yaml
         // fails here rather than at push time.
         let manifest_path = self.dir.join(function_wasm::manifest::FILE_NAME);
         let m = if manifest_path.is_file() {

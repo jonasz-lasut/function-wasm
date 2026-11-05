@@ -114,7 +114,7 @@ rule has exactly one of `host` (an exact name) and `hostPattern`
 normalized path must start with.
 
 ```yaml
-# wasmfn.yaml
+# guestfn.yaml
 requires:
   egress:
     http:

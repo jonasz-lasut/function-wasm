@@ -91,7 +91,7 @@ guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest
 ```
 
 For Go, `guestfn init` writes a plain function-sdk-go `RunFunction`, a
-vendored `internal/wasmfn` glue the project owns and a `wasmfn.yaml` manifest
+vendored `internal/wasmfn` glue the project owns and a `guestfn.yaml` manifest
 declaring what the module needs. `guestfn push` prints the `module:` block to
 paste into a Composition step. The
 [Guest authors](https://jonasz-lasut.github.io/function-wasm/guests/write-a-module.html) pages cover the full

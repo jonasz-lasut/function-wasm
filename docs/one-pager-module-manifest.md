@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.5 (the `requires.resources` declaration
+* Status: implemented, revision 1.6 (the manifest file is `guestfn.yaml` and its layer's media type is under `vnd.guestfn`, #241; the `requires.resources` declaration
   beside `composes`; rewritten in the present tense over the Rust workspace; merges
   in the manifest-less-sources record, revision 0.1, whose manifests by
   reference are a section here)
@@ -11,7 +11,7 @@ A module declares what it needs in a manifest: the sandbox capabilities it
 can't run without, the schema of the `config` it reads and the oldest runtime
 it works on, plus, advisory only, the kinds it composes. For an OCI artifact
 the manifest is a second layer of the artifact. A `Path` or `HTTP` source
-names its `wasmfn.yaml` by reference. The runtime reads it before the run and fails
+names its `guestfn.yaml` by reference. The runtime reads it before the run and fails
 fast, with a message that identifies the module and the refusing policy layer,
 when a `requires` entry isn't permitted or the `config` doesn't match the
 module's schema. Registries and `guestfn inspect` show what a module needs
@@ -42,7 +42,7 @@ permit. The manual page is [Module manifests](guests/module-manifests.md).
 
 ## Shape
 
-The source is `wasmfn.yaml` in the project (every scaffold includes one):
+The source is `guestfn.yaml` in the project (every scaffold includes one):
 
 ```yaml
 abi: 2                                   # required; the world of docs/abi-v2.md
@@ -72,7 +72,7 @@ composes:                                # advisory: what the module writes
 ```
 
 **The layer.** `guestfn push` adds the manifest as UTF-8 JSON in a layer of
-media type `application/vnd.wasmfn.manifest.v1+json` after the
+media type `application/vnd.guestfn.manifest.v1+json` after the
 `application/wasm` layer and lists both digests in the artifact config's
 `layerDigests`. It also sets the standard `org.opencontainers.image.*`
 annotations (`title`, `version`, `source`, `description`, `revision`) from the
@@ -85,10 +85,10 @@ its request. The values arrive at the pipeline step, never in the manifest,
 and the request the module receives contains only the credentials these two
 name: the runtime edits every other one out of it. `oras push
 fn.wasm:application/wasm
-wasmfn.json:application/vnd.wasmfn.manifest.v1+json` produces the same
+guestfn.json:application/vnd.guestfn.manifest.v1+json` produces the same
 artifact.
 
-**Who writes it.** `guestfn build` reads `wasmfn.yaml` when present and
+**Who writes it.** `guestfn build` reads `guestfn.yaml` when present and
 validates it, so a project with a bad manifest doesn't build. The parse is
 strict and refuses unknown fields, and the egress rules and env bindings pass
 the runtime's own checks. `guestfn push` reads it again and
@@ -164,7 +164,7 @@ credential-sourced env var with no way to request it (tracked in
 [#30](https://github.com/jonasz-lasut/function-wasm/issues/30)).
 
 A manifest is only a request. A manifest-less source misses nothing but a
-place to put its `wasmfn.yaml`: the document the module author already writes
+place to put its `guestfn.yaml`: the document the module author already writes
 and `guestfn push` embeds, stored beside the module instead of inside the
 artifact. Such a source names it by reference:
 
@@ -183,7 +183,7 @@ module:
   manifestPath: fn-manifest.yaml                          # optional, under --module-dir
 ```
 
-- The referenced file is a `wasmfn.yaml`. The resolver normalizes it to the
+- The referenced file is a `guestfn.yaml`. The resolver normalizes it to the
   JSON an OCI manifest layer contains, so `Manifest::parse` is the one decoder.
   It verifies `manifestURL` against `manifestDigest`, bounds the file to the
   manifest size limit and reads `manifestPath` under `--module-dir` with the
@@ -219,7 +219,7 @@ requests.
 ## Mechanics
 
 - `crates/function/src/manifest.rs` holds the `Manifest` types. `load` reads
-  the `wasmfn.yaml` of a project and refuses unknown fields, `parse` decodes a layer (at most 64
+  the `guestfn.yaml` of a project and refuses unknown fields, `parse` decodes a layer (at most 64
   KiB, unknown top-level fields ignored, an unknown `requires` field refused),
   `validate` checks the egress rules, env bindings and credentials through the
   same functions the Input's use, `minRuntime` as semver and the schema
@@ -236,10 +236,10 @@ requests.
   order. `function validate --resolve` (`validate.rs`) reads the same manifest,
   prints its summary on the resolved line and applies the same decision with
   the same refusal.
-- `crates/guestfn`: `build` validates `wasmfn.yaml`; `push [--manifest f]
+- `crates/guestfn`: `build` validates `guestfn.yaml`; `push [--manifest f]
   [--module-version v] [--revision r]` adds the layer and annotations;
   `inspect <ref>` and `manifest show <ref>` read the layer; `manifest validate
-  [wasmfn.yaml]` checks the file; `scaffold composition` writes a step or a
+  [guestfn.yaml]` checks the file; `scaffold composition` writes a step or a
   Composition. The flag is `--module-version` because the root `--version` is
   taken by the CLI's own.
 
@@ -262,7 +262,7 @@ counted on. These checks never read the composite resource.
 - **An OCI layer, not a custom section** (Jonasz, 2026-08-17). The manifest
   is a second layer of the artifact, so the same digest and signature cover
   it, no parser is needed, and `oras push` can produce it. The cost accepted:
-  `Path` and `HTTP` sources have no layer, so they name their `wasmfn.yaml` by
+  `Path` and `HTTP` sources have no layer, so they name their `guestfn.yaml` by
   reference, and a `guestfn manifest set` that embeds into an existing module
   has no meaning and doesn't exist.
 - **Environment variables are a `requires` entry** (Jonasz, 2026-08-19, which
@@ -283,7 +283,7 @@ counted on. These checks never read the composite resource.
 - **The home of the manifest is the artifact or the referenced file.**
   `guestfn push` derives the OCI annotations from it for registry UIs and the
   runtime never reads them.
-- **The source file is `wasmfn.yaml`.**
+- **The source file is `guestfn.yaml`.**
 
 ## Alternatives
 
@@ -295,7 +295,7 @@ counted on. These checks never read the composite resource.
   sources.** The Composition would author the request for these sources only,
   so a module would have two possible request authors and two schemas to keep
   aligned.
-- **A sidecar `wasmfn.yaml` discovered beside a `Path` module.** Rejected for
+- **A sidecar `guestfn.yaml` discovered beside a `Path` module.** Rejected for
   an explicit `manifestPath`: a source states what it loads, nothing is picked
   up implicitly, and one field pattern (`manifestURL`, `manifestPath`) covers
   both kinds.
