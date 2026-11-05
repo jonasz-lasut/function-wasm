@@ -120,7 +120,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
 
@@ -172,7 +172,7 @@ jobs:
       # The rust-v2 guest's rust-toolchain.toml brings its own toolchain and
       # target; stable builds the runtime under test.
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
 
@@ -356,7 +356,7 @@ jobs:
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
 
@@ -955,7 +955,7 @@ jobs:
       # NativeAOT-LLVM's linux-x64 compiler: the Makefile builds with the
       # host's dotnet here, no container.
       - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '10.0.x'
           cache: false
@@ -994,7 +994,7 @@ jobs:
           submodules: true
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
 
