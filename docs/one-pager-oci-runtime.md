@@ -253,7 +253,7 @@ as the limit alone; without swap the guest kernel thrashed its page cache
 for the whole budget before its killer acted, which the cgroup cap
 settles.) The run slots, the fair scheduler by digest, the memory pool,
 the step slots and the gRPC deadline cap apply unchanged, because they
-wrap `Engine::run`. A process past its cap is killed by the kernel. The
+wrap `Engine::run`. The kernel kills a process past its cap. The
 init reports the exit, and the fatal states the limit as the Wasmtime
 limiter's does.
 
