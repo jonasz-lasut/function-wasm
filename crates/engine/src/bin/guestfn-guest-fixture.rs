@@ -23,14 +23,20 @@ fn main() {
         "spin" => loop {
             std::hint::spin_loop();
         },
-        // Touch every page of the asked memory, so the limit is met.
+        // Take the asked memory in chunks, touching every page, so the
+        // kernel's limit is what ends it: one reservation of the whole
+        // would fail by overcommit's heuristic before any page is used.
         "grow" => {
             let mib: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(64);
-            let mut v: Vec<u8> = Vec::with_capacity(mib << 20);
-            for i in 0..(mib << 20) {
-                v.push((i % 251) as u8);
+            let mut held: Vec<Vec<u8>> = Vec::new();
+            for _ in 0..mib.div_ceil(8) {
+                let mut chunk: Vec<u8> = Vec::with_capacity(8 << 20);
+                for i in 0..(8 << 20) {
+                    chunk.push((i % 251) as u8);
+                }
+                held.push(chunk);
             }
-            println!("grew {} bytes", v.len());
+            println!("grew {} bytes", held.iter().map(Vec::len).sum::<usize>());
         }
         "env" => {
             let mut vars: Vec<String> = std::env::vars().map(|(k, v)| format!("{k}={v}")).collect();

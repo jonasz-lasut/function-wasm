@@ -54,16 +54,16 @@ pub fn gzip(bytes: &[u8]) -> Vec<u8> {
     enc.finish().expect("gzip")
 }
 
+/// Where fixture_image puts the program.
+pub const FIXTURE_PATH: &str = "/fixture";
+
 /// An image layout around one layer (gzip) holding `/etc/passwd` and
-/// `/etc/group` with root and `app` (1000:1000), and `program` at the
-/// path the first entrypoint word names (or `/app/run` for a bare
-/// command); the config for this host's platform with the entrypoint,
-/// user and env given.
+/// `/etc/group` with root and `app` (1000:1000), and `program` at
+/// FIXTURE_PATH; the config for this host's platform with the entrypoint,
+/// user and env given (an entrypoint elsewhere than FIXTURE_PATH is the
+/// missing-command case).
 pub fn fixture_image(program: &[u8], entrypoint: &[&str], user: &str, env: &[&str]) -> Vec<u8> {
-    let at = entrypoint
-        .first()
-        .map(|p| p.trim_start_matches('/').to_string())
-        .unwrap_or_else(|| "app/run".to_string());
+    let at = FIXTURE_PATH.trim_start_matches('/').to_string();
     let layer = gzip(&tar_layer(&[
         ("etc/", None, 0o755),
         (

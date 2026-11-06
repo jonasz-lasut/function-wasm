@@ -240,7 +240,7 @@ local.xpkg.deploy.function.function-oci: FUNCTION_RUNTIME_CONFIG := e2e-oci
 e2e.oci.up: $(if $(wildcard $(E2E_OCI_GUEST)),,e2e.oci.guest) controlplane.up e2e.crossplane e2e.setup xpkg.build.function-oci local.xpkg.deploy.function.function-oci
 	@$(INFO) waiting for function-oci to become healthy
 	@$(KUBECTL) wait function.pkg.crossplane.io/function-oci --for=condition=Healthy --timeout=300s || $(FAIL)
-	@$(OK) the oci profile's cluster is up, run make e2e.test.oci
+	@$(OK) the oci profile cluster is up, run make e2e.test.oci
 
 e2e.test.oci:
 	@$(INFO) running the oci profile suite
