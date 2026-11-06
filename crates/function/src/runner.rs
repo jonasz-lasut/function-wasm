@@ -369,6 +369,15 @@ impl WasmFunction {
                 }
             }
         };
+        if let Some(m) = &manifest
+            && let Err(e) = m.check_type(Selected::KIND)
+        {
+            return Ok(raw_rsp(self.fatal(
+                &req,
+                OUTCOME_REFUSED,
+                format!("module {} {e}", resolved.description),
+            )));
+        }
         let principal = principal_from(&req);
         let caps = match admission::admit_requires(
             manifest.as_ref().and_then(|m| m.requires.as_ref()),

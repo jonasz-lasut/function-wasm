@@ -184,6 +184,7 @@ pub mod registry {
     }
 }
 
+#[cfg(feature = "wasm")]
 pub mod runtime {
     //! The runtime in process, as `function serve` assembles it from its
     //! flags, with the defaults a test wants.

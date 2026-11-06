@@ -11,13 +11,16 @@ use kube::api::{Patch, PatchParams};
 use serde_json::json;
 use tokio::sync::OnceCell;
 
-use crate::k8s::{self, CROSSPLANE_NAMESPACE, FUNCTION_NAME, dynamic};
+use crate::k8s::{self, CROSSPLANE_NAMESPACE, dynamic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Profile {
     Default,
     Strict,
     Lifecycle,
+    /// The function-oci package (docs/one-pager-oci-runtime.md): a second
+    /// Function beside function-wasm, switched the same way.
+    Oci,
 }
 
 impl Profile {
@@ -26,7 +29,21 @@ impl Profile {
             Profile::Default => "default",
             Profile::Strict => "strict",
             Profile::Lifecycle => "lifecycle",
+            Profile::Oci => "oci",
         }
+    }
+
+    /// The Function the profile reconfigures and the tests compose with.
+    pub fn function_name(self) -> &'static str {
+        match self {
+            Profile::Oci => "function-oci",
+            _ => k8s::FUNCTION_NAME,
+        }
+    }
+
+    /// The label selector of that Function's pods.
+    pub fn pod_selector(self) -> String {
+        format!("pkg.crossplane.io/function={}", self.function_name())
     }
 
     /// The DeploymentRuntimeConfig's name.
@@ -39,6 +56,7 @@ impl Profile {
             Profile::Default => include_str!("../profiles/default/drc.yaml"),
             Profile::Strict => include_str!("../profiles/strict/drc.yaml"),
             Profile::Lifecycle => include_str!("../profiles/lifecycle/drc.yaml"),
+            Profile::Oci => include_str!("../profiles/oci/drc.yaml"),
         }
     }
 
@@ -48,6 +66,7 @@ impl Profile {
             Profile::Default => Some(include_str!("../profiles/default/policy.cedar")),
             Profile::Strict => Some(include_str!("../profiles/strict/policy.cedar")),
             Profile::Lifecycle => Some(include_str!("../profiles/lifecycle/policy.cedar")),
+            Profile::Oci => Some(include_str!("../profiles/oci/policy.cedar")),
         }
     }
 
@@ -75,6 +94,11 @@ impl Profile {
 
 static SWITCHED: OnceCell<Profile> = OnceCell::const_new();
 
+/// The profile this process switched to, once it has.
+pub fn current() -> Option<Profile> {
+    SWITCHED.get().copied()
+}
+
 /// Switches the Function to profile once per process and waits for the
 /// rollout; a second profile in the same process is a test-file bug.
 pub async fn ensure(client: &kube::Client, profile: Profile) -> Result<()> {
@@ -94,9 +118,10 @@ pub async fn ensure(client: &kube::Client, profile: Profile) -> Result<()> {
 
 async fn switch(client: &kube::Client, profile: Profile) -> Result<()> {
     let functions = dynamic(client, "pkg.crossplane.io/v1", "Function", None);
+    let function = profile.function_name();
     functions
         .patch(
-            FUNCTION_NAME,
+            function,
             &PatchParams::apply(k8s::FIELD_MANAGER),
             &Patch::Merge(json!({
                 "metadata": {"labels": {"e2e.function-wasm.io/profile": profile.name()}},
@@ -104,11 +129,11 @@ async fn switch(client: &kube::Client, profile: Profile) -> Result<()> {
             })),
         )
         .await
-        .with_context(|| format!("switching {FUNCTION_NAME} to profile {}", profile.name()))?;
+        .with_context(|| format!("switching {function} to profile {}", profile.name()))?;
     let want = profile.args()?;
     let deadline = Instant::now() + Duration::from_secs(240);
     loop {
-        let pods = k8s::function_pods(client).await?;
+        let pods = k8s::function_pods_of(client, &profile.pod_selector()).await?;
         let matching: Vec<_> = pods
             .iter()
             .filter(|p| k8s::runtime_args(p) == want)

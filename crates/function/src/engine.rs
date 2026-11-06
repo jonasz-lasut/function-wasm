@@ -2,18 +2,90 @@
 //! function-wasm-engine-api: what `runner.rs` compiles, inspects and runs
 //! modules through, what `cache.rs` keeps and what `validate.rs` reads. A
 //! Cargo feature selects the one engine a package serves with (`wasm`:
-//! Wasmtime, in `function-wasm-engine`; the OCI runtime of
-//! docs/one-pager-oci-runtime.md adds `oci`), and the rest of the crate
+//! Wasmtime, in `function-wasm-engine`; `oci`: the OCI engine of
+//! docs/one-pager-oci-runtime.md, in `function-wasm-engine-oci`, built
+//! with --no-default-features --features oci), and the rest of the crate
 //! names it only as `Selected`, so a second engine is a second feature and
-//! no other change here.
+//! no other change here. With both features on, which is what the lint's
+//! --all-features does, wasm serves. The engine's own flags, if any, are
+//! `EngineArgs`, flattened into serve's and validate's.
 
 pub use function_wasm_engine_api::{Config, Engine, Error, Inspection, RunOptions};
 
 #[cfg(feature = "wasm")]
 pub use function_wasm_engine::Wasmtime as Selected;
 
-#[cfg(not(feature = "wasm"))]
-compile_error!("function-wasm serves with one engine: build with the `wasm` feature");
+#[cfg(all(feature = "oci", not(feature = "wasm")))]
+pub use function_wasm_engine_oci::Oci as Selected;
+
+#[cfg(not(any(feature = "wasm", feature = "oci")))]
+compile_error!("function-wasm serves with one engine: build with the `wasm` or the `oci` feature");
 
 /// A compiled module of the selected engine.
 pub type Module = <Selected as Engine>::Module;
+
+/// The Wasmtime engine takes nothing beyond the ceilings.
+#[cfg(feature = "wasm")]
+#[derive(clap::Args, Debug, Default, Clone)]
+pub struct EngineArgs {}
+
+/// The OCI engine's flags: the VM pieces the package image puts under
+/// /usr/lib/guestfn, and the vCPUs per VM (docs/operators/oci-runtime.md).
+#[cfg(all(feature = "oci", not(feature = "wasm")))]
+#[derive(clap::Args, Debug, Clone)]
+pub struct EngineArgs {
+    /// The Firecracker binary that boots a microVM per request.
+    #[arg(
+        long,
+        default_value = "/usr/lib/guestfn/firecracker",
+        env = "GUESTFN_VMM"
+    )]
+    pub vmm: std::path::PathBuf,
+
+    /// The guest kernel, an uncompressed vmlinux.
+    #[arg(
+        long,
+        default_value = "/usr/lib/guestfn/vmlinux",
+        env = "GUESTFN_KERNEL"
+    )]
+    pub guest_kernel: std::path::PathBuf,
+
+    /// The init the runtime boots as the VM's first process.
+    #[arg(long, default_value = "/usr/lib/guestfn/init", env = "GUESTFN_INIT")]
+    pub guest_init: std::path::PathBuf,
+
+    /// vCPUs per VM.
+    #[arg(long, default_value_t = 1, env = "GUESTFN_VM_VCPUS")]
+    pub vm_vcpus: u8,
+}
+
+#[cfg(all(feature = "oci", not(feature = "wasm")))]
+impl Default for EngineArgs {
+    fn default() -> Self {
+        EngineArgs {
+            vmm: "/usr/lib/guestfn/firecracker".into(),
+            guest_kernel: "/usr/lib/guestfn/vmlinux".into(),
+            guest_init: "/usr/lib/guestfn/init".into(),
+            vm_vcpus: 1,
+        }
+    }
+}
+
+/// The selected engine under the ceilings and its own flags.
+#[cfg(feature = "wasm")]
+pub fn new(config: Config, _args: &EngineArgs) -> Result<Selected, Error> {
+    Selected::new(config)
+}
+
+#[cfg(all(feature = "oci", not(feature = "wasm")))]
+pub fn new(config: Config, args: &EngineArgs) -> Result<Selected, Error> {
+    Selected::new(
+        config,
+        function_wasm_engine_oci::Options {
+            vmm: args.vmm.clone(),
+            kernel: args.guest_kernel.clone(),
+            init: args.guest_init.clone(),
+            vcpus: args.vm_vcpus,
+        },
+    )
+}

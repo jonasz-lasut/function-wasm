@@ -22,6 +22,7 @@ function-sdk-rust = "0.4.0"
 # always, the Wasmtime engine under the `wasm` feature.
 function-wasm-engine-api = { path = "../engine-api" }
 function-wasm-engine = { path = "../engine", optional = true }
+function-wasm-engine-oci = { path = "../engine-oci", optional = true }
 # getrandom draws the compiled store's per-process key, hmac signs each
 # artifact under it (store.rs).
 getrandom = "0.4"
@@ -88,8 +89,12 @@ time = { version = "0.3", features = ["formatting"] }
 
 [features]
 default = ["wasm"]
-# The engine the package serves with; exactly one (src/engine.rs).
+# The engine the package serves with (src/engine.rs): wasm, the Wasmtime
+# engine, or oci, the OCI engine of docs/one-pager-oci-runtime.md, built
+# with --no-default-features --features oci. With both on (--all-features,
+# the lint) wasm serves and the oci crate is compiled beside it.
 wasm = ["dep:function-wasm-engine"]
+oci = ["dep:function-wasm-engine-oci"]
 # The testing module (the in-memory registry, the signers, the runtime
 # builder, the greeting server, the open policy) and what it stands on:
 # rcgen and x509-cert for testsigstore, the in-memory Sigstore instance

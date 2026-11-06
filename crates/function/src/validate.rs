@@ -17,7 +17,7 @@ use serde::Serialize;
 
 use function_wasm_engine_api::{Config, duration};
 
-use crate::engine::{Engine as _, Selected};
+use crate::engine::{self, Engine as _, Selected};
 
 use crate::admission;
 use crate::authz::OperatorPolicy;
@@ -51,6 +51,9 @@ pub struct ValidateArgs {
     /// the runtime's own verdict: size, ABI, host imports.
     #[arg(long)]
     resolve: bool,
+
+    #[command(flatten)]
+    engine: engine::EngineArgs,
 
     /// text: one line per step, warnings indented below it; json: one JSON
     /// object per step, one per line.
@@ -153,11 +156,14 @@ struct StepResult {
 struct Resolved {
     digest: String,
     size: usize,
-    /// The one ABI this runtime implements, stated for readers of older
-    /// output: a module that loads is a v2 component.
+    /// The contract the module loads under: `v2` on function-wasm (a
+    /// module that loads is a v2 component), `process v1` on function-oci.
     abi: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     imports: Vec<String>,
+    /// What else the engine read (an image's entrypoint, user, platform).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    details: Vec<(String, String)>,
     /// The module's manifest, when it carries one.
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest: Option<crate::manifest::Manifest>,
@@ -255,12 +261,11 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
     if args.resolve {
         // wasmtime reads a module only by compiling it: --resolve pays the
         // compile the runtime would, for the verdict the runtime would reach.
-        engine = Some(Selected::new(ceilings).map_err(|e| e.to_string())?);
-        resolver = Some(Resolver::new(
-            args.module_dir.clone(),
-            args.max_module_size << 20,
-            None,
-        ));
+        engine = Some(engine::new(ceilings, &args.engine).map_err(|e| e.to_string())?);
+        resolver = Some(
+            Resolver::new(args.module_dir.clone(), args.max_module_size << 20, None)
+                .serving(Selected::KIND),
+        );
     }
     let mut xr = None;
     if let Some(path) = &args.xr {
@@ -329,13 +334,16 @@ fn print_result(output: &str, r: &StepResult) -> Result<(), String> {
     }
     if let Some(resolved) = &r.resolved {
         let mut line = format!(
-            "  module: {}, {}, ABI {}",
+            "  module: {}, {}, {}",
             resolved.digest,
             human_bytes(resolved.size),
-            resolved.abi
+            contract_label(&resolved.abi)
         );
         if !resolved.imports.is_empty() {
             line += &format!(", imports {}", resolved.imports.join(" "));
+        }
+        for (k, v) in &resolved.details {
+            line += &format!(", {k} {v}");
         }
         if let Some(m) = &resolved.manifest {
             line += &format!("; manifest: {}", m.summary());
@@ -349,6 +357,25 @@ fn print_result(output: &str, r: &StepResult) -> Result<(), String> {
         println!("  warning: {warning}");
     }
     Ok(())
+}
+
+/// The `abi` value of the JSON output for the engine's contract: `v2` for
+/// the component world, as older output read, `process v1` for the OCI
+/// runtime.
+fn contract_value() -> String {
+    if Selected::KIND == crate::manifest::TYPE_OCI {
+        "process v1".to_string()
+    } else {
+        "v2".to_string()
+    }
+}
+
+/// The text output's label for it: `ABI v2`, `process contract v1`.
+fn contract_label(value: &str) -> String {
+    match value.strip_prefix("process ") {
+        Some(v) => format!("process contract {v}"),
+        None => format!("ABI {value}"),
+    }
 }
 
 /// Reads every YAML or JSON document of a file (- is stdin) as an
@@ -628,8 +655,9 @@ impl Validator {
         r.resolved = Some(Resolved {
             digest: resolved.digest.clone(),
             size: wasm.len(),
-            abi: "v2".to_string(),
+            abi: contract_value(),
             imports: inspection.host_imports,
+            details: inspection.details,
             manifest: None,
         });
 
@@ -656,6 +684,9 @@ impl Validator {
         };
         if let Some(res) = &mut r.resolved {
             res.manifest = Some(m.clone());
+        }
+        if let Err(e) = m.check_type(Selected::KIND) {
+            refuse!(format!("module {} {e}", resolved.description));
         }
         if m.requires
             .as_ref()

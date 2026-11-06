@@ -136,9 +136,14 @@ pub async fn events_for(
 
 /// The function pods, as the current rollout left them.
 pub async fn function_pods(client: &Client) -> Result<Vec<Pod>> {
+    function_pods_of(client, FUNCTION_POD_SELECTOR).await
+}
+
+/// The pods of one Function, by its label selector.
+pub async fn function_pods_of(client: &Client, selector: &str) -> Result<Vec<Pod>> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), CROSSPLANE_NAMESPACE);
     Ok(pods
-        .list(&ListParams::default().labels(FUNCTION_POD_SELECTOR))
+        .list(&ListParams::default().labels(selector))
         .await
         .context("listing function pods")?
         .items)
