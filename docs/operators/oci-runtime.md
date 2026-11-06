@@ -71,7 +71,7 @@ spec:
           - name: package-runtime
             resources:
               limits:
-                squat.ai/kvm: "1"
+                devic.es/kvm: "1"
 ```
 
 The container runs as the package's non-root user, which needs read and

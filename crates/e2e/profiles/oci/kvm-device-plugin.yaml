@@ -2,7 +2,7 @@
 # (docs/operators/oci-runtime.md, "Node requirements"): an unprivileged
 # container opens only the devices its runtime admitted into its device
 # cgroup, and a hostPath mount of a device node admits nothing, so the
-# e2e-oci runtime config requests squat.ai/kvm from this plugin instead.
+# e2e-oci runtime config requests devic.es/kvm from this plugin instead.
 # The plugin publishes no release tags: the digest pins the build.
 apiVersion: apps/v1
 kind: DaemonSet
