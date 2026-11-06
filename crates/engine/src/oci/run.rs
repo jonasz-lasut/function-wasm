@@ -13,9 +13,13 @@ use crate::{Error, RunOptions, duration, metrics};
 use crate::oci::sandbox::{Ended, VmSpec};
 use crate::oci::{Image, Oci};
 
-/// The least memory a VM gets: the kernel and the init need it before
-/// the process runs, whatever the step's limit.
-pub const MIN_VM_MIB: u64 = 64;
+/// What the VM gets beyond the process's limit: the guest kernel, the
+/// init and the root filesystem's overlay. The process's own cap is the
+/// step's `limits.memory`, held by a cgroup the init puts it in.
+pub const VM_OVERHEAD_MIB: u64 = 32;
+/// The least a process is capped at: below it the kernel's own needs
+/// would end every run.
+pub const MIN_PROCESS_MIB: u64 = 16;
 
 /// Released on drop: what a run reserved from the pool.
 struct Reservation {
@@ -48,7 +52,8 @@ pub(crate) fn run(
     };
     // A VM's memory is reserved whole before it boots: the guest kernel
     // may touch all of it, so the pool counts the ceiling, not a growth.
-    let memory_mib = limits.memory_limit.div_ceil(1 << 20).max(MIN_VM_MIB);
+    let process_mib = limits.memory_limit.div_ceil(1 << 20).max(MIN_PROCESS_MIB);
+    let memory_mib = process_mib + VM_OVERHEAD_MIB;
     let _reservation = match &engine.mem {
         Some(pool) => {
             pool.reserve(memory_mib << 20, wait_deadline)
@@ -62,7 +67,15 @@ pub(crate) fn run(
     };
     metrics::RUNS_IN_FLIGHT.inc();
     let start = Instant::now();
-    let result = boot_and_run(engine, image, request, &opts, limits.timeout, memory_mib);
+    let result = boot_and_run(
+        engine,
+        image,
+        request,
+        &opts,
+        limits.timeout,
+        memory_mib,
+        process_mib,
+    );
     metrics::RUNS_IN_FLIGHT.dec();
     metrics::RUN_DURATION
         .with_label_values(&[match &result {
@@ -81,6 +94,7 @@ fn boot_and_run(
     opts: &RunOptions,
     budget: Duration,
     memory_mib: u64,
+    process_mib: u64,
 ) -> Result<Vec<u8>, Error> {
     // The budget covers the boot: a VM that takes the whole budget to boot
     // never ran, and the deadline says so.
@@ -90,7 +104,8 @@ fn boot_and_run(
     {
         deadline = d;
     }
-    let description = image.config.describe(opts);
+    let mut description = image.config.describe(opts);
+    description.memory_max = process_mib << 20;
     let outcome = engine.sandbox.run(VmSpec {
         kernel: &engine.options.kernel,
         initrd: engine.initrd.as_ref(),
@@ -120,7 +135,7 @@ fn boot_and_run(
             if exit.oom {
                 return Err(Error(format!(
                     "process was killed: the run's memory limit of {} was exceeded",
-                    format_bytes(memory_mib << 20)
+                    format_bytes(process_mib << 20)
                 )));
             }
             if let Some(signal) = exit.signal {

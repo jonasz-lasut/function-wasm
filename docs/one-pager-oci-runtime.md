@@ -230,7 +230,7 @@ the unpacking.
 
 **One VM per request.** The runtime starts the VM with the kernel, the
 root filesystem read-only, a vsock device, memory sized to the step's
-`limits.memory` under the operator's ceiling, one vCPU (`--vm-vcpus`) and
+`limits.memory` plus the kernel's share, one vCPU (`--vm-vcpus`) and
 the deadline. The init mounts the root filesystem with a tmpfs overlay and
 reads the run's description over vsock (env, user, cwd, entrypoint and the
 proxy settings). It starts the process and pipes the request to its stdin.
@@ -241,12 +241,17 @@ holds. A later revision may snapshot a booted VM per image digest and
 restore it per request where the VMM supports it. The record puts it under
 Alternatives until measurements ask for it.
 
-**Bounds.** `limits.timeout` is the VM's wall clock. `limits.memory` is the
-VM's memory. The run slots, the fair scheduler by digest, the memory pool,
-the step slots and the gRPC deadline cap apply unchanged, because they wrap
-`Engine::run`. A VM that exceeds its memory kills its own process. The init
-reports the exit, and the fatal states the limit as the Wasmtime limiter's
-does.
+**Bounds.** `limits.timeout` is the VM's wall clock, the boot included.
+`limits.memory` is the process's memory. The init runs it in a cgroup
+capped at the limit. The VM gets the limit plus a fixed share for the
+kernel, the init and the overlay. (The first build tried the VM's memory
+as the limit alone; without swap the guest kernel thrashed its page cache
+for the whole budget before its killer acted, which the cgroup cap
+settles.) The run slots, the fair scheduler by digest, the memory pool,
+the step slots and the gRPC deadline cap apply unchanged, because they
+wrap `Engine::run`. A process past its cap is killed by the kernel. The
+init reports the exit, and the fatal states the limit as the Wasmtime
+limiter's does.
 
 **Egress.** The VM has no network interface. The init listens on
 `127.0.0.1:3128` inside the guest and sets `HTTP_PROXY`, `HTTPS_PROXY` and

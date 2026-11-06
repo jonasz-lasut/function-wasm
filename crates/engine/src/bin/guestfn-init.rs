@@ -29,6 +29,8 @@ const ROOTFS_DEVICE: &str = "/dev/vda";
 const LOWER: &str = "/lower";
 const RW: &str = "/rw";
 const MERGED: &str = "/merged";
+/// The cgroup the process runs in, under the merged root's cgroup mount.
+const CGROUP: &str = "/sys/fs/cgroup/run";
 
 fn main() {
     if let Err(e) = run() {
@@ -71,8 +73,12 @@ fn run() -> Result<(), String> {
         set_hostname(&description.hostname);
     }
     // Into the image: from here the init sees what the process sees (the
-    // process's PATH resolves inside it), plus /dev/kmsg for the OOM check.
+    // process's PATH resolves inside it), plus /dev/kmsg for the OOM check
+    // and the cgroup tree.
     chroot(MERGED)?;
+    if description.memory_max > 0 {
+        memory_cgroup(description.memory_max)?;
+    }
     let sock = Arc::new(Mutex::new(sock));
     let exit = match spawn(&description, request, &sock) {
         Ok(exit) => exit,
@@ -138,6 +144,12 @@ fn spawn(d: &Description, request: Vec<u8>, sock: &Arc<Mutex<UnixStream>>) -> Re
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot start {program}: {e}"))?;
+    // Into the capped cgroup before it has allocated anything of note; a
+    // failure here is the init's, not the process's.
+    if d.memory_max > 0 {
+        std::fs::write(format!("{CGROUP}/cgroup.procs"), child.id().to_string())
+            .map_err(|e| format!("cannot put the process in its cgroup: {e}"))?;
+    }
     let mut stdin = child.stdin.take().expect("piped");
     let feeder = std::thread::spawn(move || {
         // A process that exits without reading gets EPIPE here, which is
@@ -225,6 +237,29 @@ fn mount_base() -> Result<(), String> {
     // A fresh, writable /tmp whatever the image put there: the private
     // scratch space the contract promises.
     mount("tmpfs", &format!("{MERGED}/tmp"), "tmpfs", 0, "mode=1777")?;
+    // The cgroup tree, for the process's memory cap.
+    let cgroup = format!("{MERGED}/sys/fs/cgroup");
+    std::fs::create_dir_all(&cgroup).map_err(|e| format!("cannot create {cgroup}: {e}"))?;
+    mount("cgroup2", &cgroup, "cgroup2", 0, "")?;
+    Ok(())
+}
+
+/// A cgroup capped at `max` bytes, with its memory controller on and the
+/// whole group killed together on an out-of-memory.
+fn memory_cgroup(max: u64) -> Result<(), String> {
+    std::fs::create_dir_all(CGROUP).map_err(|e| format!("cannot create {CGROUP}: {e}"))?;
+    let w = |path: String, value: &str| {
+        std::fs::write(&path, value).map_err(|e| format!("cannot write {value:?} to {path}: {e}"))
+    };
+    w(
+        "/sys/fs/cgroup/cgroup.subtree_control".to_string(),
+        "+memory",
+    )?;
+    w(format!("{CGROUP}/memory.max"), &max.to_string())?;
+    // Best effort: an older kernel has no such knob.
+    let _ = std::fs::write(format!("{CGROUP}/memory.oom.group"), "1");
+    // No swap in the VM, but say so in case one appears.
+    let _ = std::fs::write(format!("{CGROUP}/memory.swap.max"), "0");
     Ok(())
 }
 
@@ -344,7 +379,8 @@ fn kmsg_mentions_oom() -> bool {
             Ok(n) => text.push_str(&String::from_utf8_lossy(&buf[..n])),
         }
     }
-    text.contains("Out of memory") || text.contains("oom-kill")
+    let lower = text.to_ascii_lowercase();
+    lower.contains("out of memory") || lower.contains("oom-kill")
 }
 
 fn poweroff() {
