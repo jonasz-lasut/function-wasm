@@ -96,8 +96,8 @@ wraps it directly. For `go` and MoonBit, wit-bindgen writes bindings only, so
 
 These guests solve their own use case or show one more language. Each has unit
 tests in its language and a build job that checks its generated code for drift.
-`guestfn init` scaffolds none of them, and `guestfn build` detects only Odin (as
-a `c` project) and MoonBit.
+`guestfn init` scaffolds none of them, and `guestfn build` detects only Odin and
+C++ (as `c` projects) and MoonBit.
 
 - **C#**:
   [`examples/dashboard-bundle`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/dashboard-bundle),
@@ -112,6 +112,16 @@ a `c` project) and MoonBit.
   guest to an object, `zig cc` links it with the C half, and `guestfn build`
   treats the project as a `c` one and wraps it without an adapter. `make test`
   runs the unit tests natively.
+- **C++**:
+  [`examples/cert-rotator`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/cert-rotator),
+  ~160 KB, built with Zig 0.16 by `make build`. It reuses the `c` flavour's
+  bindings, nanopb codec, WIT and proto, with a C adapter over the generated
+  structs (nanopb names a field `namespace`, which C++ can't include) and
+  the function's logic in C++ over [mbedTLS](https://github.com/Mbed-TLS/mbedtls),
+  both fetched by `build.zig.zon`. `zig c++` compiles the logic with libc++
+  for `wasm32-wasi`, no exceptions and no RTTI, and `guestfn build` treats the project
+  as a `c` one and wraps it with the wasip1 adapter for the clock and the
+  randomness it imports. `make test` runs the unit tests natively.
 - **MoonBit**:
   [`examples/hello-moonbit`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/hello-moonbit),
   ~107 KB, built with `moon` (version `0.1.20260920`). It uses wit-bindgen's
@@ -123,7 +133,6 @@ a `c` project) and MoonBit.
 
 ## Untested
 
-- **C++**: no guest here.
 - **TinyGo**: the scaffold was retired on 2026-10-07 (#114). The `go` flavour is
   the Go path.
 - **AssemblyScript**: not supported, because it has no component path.
