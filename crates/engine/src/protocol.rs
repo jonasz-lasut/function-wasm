@@ -83,6 +83,12 @@ pub struct Description {
     /// The supplementary groups, from the image's /etc/group.
     pub groups: Vec<u32>,
     pub hostname: String,
+    /// The process's memory limit in bytes, the step's `limits.memory`:
+    /// the init runs the process in a cgroup capped at it, so the kernel's
+    /// out-of-memory killer ends a process past it at once rather than
+    /// the VM thrashing its page cache first. 0 is no cap.
+    #[serde(default)]
+    pub memory_max: u64,
 }
 
 /// How the process ended.
@@ -175,6 +181,7 @@ mod tests {
             gid: 1000,
             groups: vec![4],
             hostname: "guest".into(),
+            memory_max: 96 << 20,
         };
         write_json(&mut buf, Kind::Run, &d).unwrap();
         write_chunked(&mut buf, Kind::Stdin, &vec![7u8; MAX_FRAME + 10]).unwrap();

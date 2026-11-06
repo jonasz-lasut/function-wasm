@@ -12,8 +12,10 @@ otherwise. The package is alpha.
 
 `function-oci` boots one microVM per request with Firecracker. The VM gets
 its own guest kernel, the image's root filesystem read-only under a tmpfs
-overlay, as much memory as the step's `limits.memory` allows (at least 64
-MiB) and no network device. Inside it, the runtime's init runs the image's
+overlay, the step's `limits.memory` for the process (at least 16 MiB,
+held by a cgroup the init puts the process in, so the kernel's
+out-of-memory killer ends a process past it at once) plus 32 MiB for the
+kernel and the init, and no network device. Inside it, the runtime's init runs the image's
 configured command as the image's configured user, with the request on its
 standard input, and relays its standard output, standard error and exit
 status to the host ([the process contract](../guests/oci-modules.md)). The
@@ -62,10 +64,11 @@ the device and says so:
 cannot open /dev/kvm: No such file or directory; the OCI runtime boots a microVM per request and needs the device mounted into its pod
 ```
 
-A VM's memory comes out of the pod's: size the container's memory limit
-for `--module-memory-limit` times `--max-concurrent-runs`, plus the
-runtime's own use. `--max-total-run-memory` bounds the VMs together; a VM
-reserves its whole memory before it boots.
+A VM's memory comes out of the pod's. The container's memory limit
+needs `--module-memory-limit` plus 32 MiB for each of
+`--max-concurrent-runs`, and the runtime's own use on top.
+`--max-total-run-memory` bounds the VMs together. A VM reserves its whole
+memory before it boots.
 
 ## Flags
 

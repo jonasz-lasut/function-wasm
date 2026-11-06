@@ -154,6 +154,7 @@ impl ImageConfig {
             gid: self.gid,
             groups: self.groups.clone(),
             hostname: HOSTNAME.to_string(),
+            memory_max: 0,
         }
     }
 
