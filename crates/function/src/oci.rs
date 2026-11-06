@@ -92,6 +92,49 @@ pub struct Descriptor {
     pub size: i64,
     #[serde(default)]
     pub annotations: std::collections::BTreeMap<String, String>,
+    /// An index entry's platform.
+    #[serde(default)]
+    pub platform: Option<Platform>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Platform {
+    #[serde(default)]
+    pub architecture: String,
+    #[serde(default)]
+    pub os: String,
+}
+
+/// The media types of an image's config: what makes a manifest an image
+/// rather than an artifact.
+pub const IMAGE_CONFIG_TYPES: &[&str] = &[
+    "application/vnd.oci.image.config.v1+json",
+    "application/vnd.docker.container.image.v1+json",
+];
+
+impl OciManifest {
+    /// Whether this is an image index (a manifest list).
+    pub fn is_index(&self) -> bool {
+        self.media_type == OCI_INDEX_TYPE
+            || self.media_type.contains("manifest.list")
+            || (self.media_type.is_empty() && !self.manifests.is_empty())
+    }
+
+    /// An index's entries, with their platforms.
+    pub fn index_entries(&self) -> Vec<Descriptor> {
+        self.manifests
+            .iter()
+            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+            .collect()
+    }
+
+    /// Whether this is a container image: its config is an image config
+    /// (the OCI runtime runs it as a manifest-less module).
+    pub fn is_image(&self) -> bool {
+        self.config
+            .as_ref()
+            .is_some_and(|c| IMAGE_CONFIG_TYPES.contains(&c.media_type.as_str()))
+    }
 }
 
 /// A distribution-API client for one artifact's registry.

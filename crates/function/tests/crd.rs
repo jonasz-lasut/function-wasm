@@ -5,21 +5,24 @@
 
 use std::path::PathBuf;
 
+/// Both packages ship the one Input CRD: function-wasm's under
+/// package/input/, function-oci's under package/oci/input/.
 #[test]
 fn the_input_crd_is_what_input_rs_generates() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(function_wasm::crd::FILE);
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let want = function_wasm::crd::yaml();
-    if std::env::var_os("UPDATE_GOLDENS").is_some() {
-        std::fs::write(&path, &want).expect("write the CRD");
-        return;
+    for file in [function_wasm::crd::FILE, function_wasm::crd::OCI_FILE] {
+        let path = root.join(file);
+        if std::env::var_os("UPDATE_GOLDENS").is_some() {
+            std::fs::write(&path, &want).expect("write the CRD");
+            continue;
+        }
+        let got = std::fs::read_to_string(&path).expect("read the CRD");
+        assert_eq!(
+            got,
+            want,
+            "{} differs from what crd::document generates; UPDATE_GOLDENS=1 cargo test -p function-wasm --test crd re-records it",
+            path.display()
+        );
     }
-    let got = std::fs::read_to_string(&path).expect("read the CRD");
-    assert_eq!(
-        got,
-        want,
-        "{} differs from what crd::document generates; UPDATE_GOLDENS=1 cargo test -p function-wasm --test crd re-records it",
-        path.display()
-    );
 }

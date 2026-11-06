@@ -1,0 +1,32 @@
+[package]
+name = "function-wasm-engine-oci"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The OCI engine of the function-oci runtime: an OCI image as a module, unpacked into a squashfs root filesystem and run once per request in a Firecracker microVM under the process contract"
+publish = false
+
+[dependencies]
+# What every engine shares, and the init's protocol the host side speaks.
+function-wasm-engine-api = { path = "../engine-api" }
+guestfn-init = { path = "../init" }
+# The root filesystem: squashfs written in pure Rust (gzip through zlib-rs,
+# so no C), kept read-only on the VM's block device under a tmpfs overlay.
+backhand = { version = "0.25.5", default-features = false, features = ["gzip"] }
+flate2 = "1"
+hex = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+tar = "0.4"
+tempfile = "3"
+tracing.workspace = true
+
+[features]
+# The fixtures the engine's own tests and the end-to-end suite build images
+# from.
+testutil = []
+
+[dev-dependencies]
+function-wasm-engine-oci = { path = ".", features = ["testutil"] }

@@ -10,12 +10,14 @@
 - [Write a module](guests/write-a-module.md)
 - [Other languages](guests/other-languages.md)
 - [Module manifests](guests/module-manifests.md)
+- [OCI modules](guests/oci-modules.md)
 - [Render locally](guests/render-locally.md)
 - [Check a composition](guests/validate.md)
 
 # Operators
 
 - [Install](operators/install.md)
+- [The OCI runtime](operators/oci-runtime.md)
 - [Input reference](operators/input-reference.md)
 - [Runtime flags](operators/runtime-flags.md)
 - [Operator grant policy](operators/grant-policy.md)

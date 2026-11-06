@@ -523,18 +523,43 @@ impl Manifest {
     /// minRuntime, and config must satisfy the schema. The first miss is the
     /// error, worded for a fatal result the caller prefixes with the
     /// module's name.
+    /// Holds the manifest's type to the package serving it (`served`: the
+    /// engine's kind), so a step pointed at the wrong package fails with
+    /// the other package's name rather than at the engine; and, on the OCI
+    /// runtime, refuses what its sandbox does not offer yet (egress, until
+    /// the record's proxy phase). Worded for a fatal result the caller
+    /// prefixes with the module's name.
+    pub fn check_type(&self, served: &str) -> Result<(), String> {
+        match (self.kind(), served) {
+            (TYPE_OCI, TYPE_WASM) => Err(
+                "is a type: oci module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)".to_string(),
+            ),
+            (TYPE_WASM, TYPE_OCI) => Err(
+                "is a WebAssembly module (type wasm), which function-oci does not serve; function-wasm serves it".to_string(),
+            ),
+            (TYPE_OCI, TYPE_OCI)
+                if self
+                    .requires
+                    .as_ref()
+                    .and_then(|r| r.egress.as_ref())
+                    .is_some_and(|e| !e.http.is_empty()) =>
+            {
+                Err(
+                    "requires egress (requires.egress.http), which function-oci does not serve yet: the VM has no network device (docs/one-pager-oci-runtime.md)".to_string(),
+                )
+            }
+            _ => Ok(()),
+        }
+    }
+
     pub fn check(
         &self,
         g: &Grants,
         config: Option<&Value>,
         runtime_version: &str,
     ) -> Result<(), String> {
-        // The OCI runtime's modules are its package's to serve: this one
-        // says which, rather than failing at the engine.
         if self.kind() == TYPE_OCI {
-            return Err(
-                "is a type: oci module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)".to_string(),
-            );
+            return Ok(());
         }
         if !WASM_CONTRACTS.contains(&self.contract) {
             return Err(format!(
@@ -795,9 +820,21 @@ mod tests {
             "tagger 0.3.0, type oci, image ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"
         );
         assert_eq!(
-            oci.check(&Grants::default(), None, "1.0.0").unwrap_err(),
+            oci.check_type(TYPE_WASM).unwrap_err(),
             "is a type: oci module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)"
         );
+        assert!(oci.check_type(TYPE_OCI).is_ok());
+        assert_eq!(
+            wasm.check_type(TYPE_OCI).unwrap_err(),
+            "is a WebAssembly module (type wasm), which function-oci does not serve; function-wasm serves it"
+        );
+        assert!(wasm.check_type(TYPE_WASM).is_ok());
+        let egress = manifest(
+            r#"{"type":"oci","contract":1,"requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
+        );
+        assert!(egress.check_type(TYPE_OCI).unwrap_err().starts_with(
+            "requires egress (requires.egress.http), which function-oci does not serve yet"
+        ));
         let err = |raw: &str| Manifest::parse(raw.as_bytes()).unwrap_err();
         assert_eq!(
             err(r#"{"type":"oci","contract":2}"#),

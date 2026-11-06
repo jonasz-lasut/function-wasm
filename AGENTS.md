@@ -115,9 +115,16 @@ Crossplane RunFunctionResponse (whatever the module produced)
 crates/function/            the runtime crate: a library (everything below) + the `function` binary
   src/engine.rs               the engine behind the runtime, behind engine-api's Engine trait:
                               a Cargo feature selects it (`wasm`, the default: Wasmtime from
-                              crates/engine; the OCI runtime adds `oci`) and the crate names it
-                              only as `engine::Selected` and `engine::Module`, so a second
-                              engine is a second feature and no other change here
+                              crates/engine; `oci`: the OCI engine from crates/engine-oci,
+                              built --no-default-features --features oci; both on, the lint's
+                              --all-features, wasm serves) and the crate names it only as
+                              `engine::Selected` and `engine::Module`, so a second engine is a
+                              second feature and no other change here; `engine::EngineArgs`
+                              are the engine's own flags (none for wasm; --vmm, --guest-kernel,
+                              --guest-init, --vm-vcpus for oci), flattened into serve's and
+                              validate's, and `engine::new` builds it. `Selected::KIND` is the
+                              module type the package serves (the resolver fetches by it, the
+                              manifest's check_type refuses the other type's manifest by name)
   src/main.rs                 clap CLI: serve (default) + validate subcommand; every ceiling flag
                               (module-dir, max-module-size, module-timeout, module-memory-limit,
                               module-stack-limit, module-compile-timeout, sandbox-policy-file, cosign-key,
@@ -523,6 +530,36 @@ examples/cert-rotator       the C++ use case (example only: no scaffold; guestfn
                             the operator's ceiling and example/required-resources.yaml the
                             Secret crossplane render supplies. Tests: src/rotator_test.cpp and
                             src/fn_test.c natively (zig build test); the build-cpp job. ~160 KB
+crates/engine-oci/          the OCI engine of the function-oci runtime (docs/one-pager-oci-runtime.md,
+                            docs/operators/oci-runtime.md): function-wasm-engine-oci implements
+                            engine-api's Engine trait as `Oci` over a `Sandbox` seam
+                            (sandbox.rs; firecracker.rs the first VMM, one process per run from
+                            a config file, no API, the init's vsock port on a Unix socket). A
+                            module is an OCI image layout tar (layout.rs: index, platform
+                            manifest, config and layers, every blob verified, plus the Writer
+                            the resolver assembles one with), compiled by applying the layers
+                            with their whiteouts into a tree and writing a squashfs (rootfs.rs,
+                            backhand, gzip, ownership from the tar headers, the image config
+                            with the user resolved inside it at /.guestfn/config.json) that is
+                            the compiled store's artifact and the VM's read-only block device;
+                            image.rs is the config, the contract check (a command, this
+                            platform) and the run's Description; initrd.rs the cpio around the
+                            init; run.rs the slot, the whole-VM memory reservation, the stderr
+                            lines logged (JSON level/msg typed) and the fatal wording
+                            (`process exited with status N: <last line>`, the deadline
+                            family, the memory limit). tests/vm.rs runs the fixture process in
+                            real VMs when GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set
+                            (make oci.test), skipping otherwise unless FUNCTION_WASM_REQUIRE_KVM
+crates/init/                the guestfn-init package: the guest init (src/main.rs, PID 1 of
+                            the VM: devtmpfs/proc/sys, the squashfs on /dev/vda under a tmpfs
+                            overlay, a fresh /tmp, vsock to the host, chroot, the process as
+                            the described user with the request on stdin, stdout/stderr
+                            relayed as frames, the exit with an OOM check of /dev/kmsg, then
+                            power off), the protocol library (src/lib.rs: Hello, Run with the
+                            Description, Stdin/StdinEnd, Stdout, Stderr, Exit; framed) and the
+                            fixture process the engine's VM tests run (src/bin/fixture.rs:
+                            echo, exit, stderr, spin, grow, env, cwd, id, tmp, hostname,
+                            silent). Built static for musl (make oci.init, Dockerfile.oci)
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package function-wasm-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library
@@ -578,6 +615,13 @@ Makefile                    the end-to-end targets (e2e.up, e2e.crossplane - a k
 Dockerfile, Dockerfile.dev  the release image (the workspace compiled in a Rust build stage) and
                             the same image around a prebuilt binary (CI's e2e job wraps the
                             binary build-tools compiled; make e2e.image uses it under FUNCTION_BIN)
+Dockerfile.oci,             the function-oci image: the runtime built --no-default-features
+Dockerfile.oci.dev          --features oci, the init for musl, the pinned Firecracker release
+                            and the kernel Firecracker's CI publishes under /usr/lib/guestfn
+                            (the engine flags' defaults); the .dev one wraps prebuilt files
+                            (make e2e.oci.image, FUNCTION_OCI_TOOLS)
+package/oci/                function-oci's crossplane.yaml and its copy of the Input CRD,
+                            held equal to package/input's by tests/crd.rs
 package/                    crossplane.yaml + the Input CRD (documentation for tooling and
                             crossplane beta validate; Crossplane never installs a function's
                             Input CRD), generated from input.rs by crd.rs and held to it by

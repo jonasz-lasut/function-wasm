@@ -80,6 +80,7 @@ the rollout. Each binary uses one profile.
 | `default` | every case a runtime admits, under both signature verifiers |
 | `strict` | the refusals of a narrow operator layer, the read fence's ceiling among them |
 | `lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
+| `oci` | the `function-oci` package ([the OCI runtime](../operators/oci-runtime.md)): the test module as a process in a Firecracker VM, under the default profile's policy |
 
 The `default` profile runs the runtime with `--cosign-key` (the suite's key)
 and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with
@@ -162,6 +163,21 @@ A `/e2e` comment on a pull request runs `e2e.yml`:
 The jobs cache under `e2e-` keys that no trusted workflow restores, and the
 workflow sets `cache-mode: write` because a comment-started run gets a
 read-only cache token.
+
+The `oci` profile has its own workflow, `e2e-oci.yml`, which runs on every
+push that touches the runtime's crates, the suite, the Makefile or the OCI
+package's files, and by hand. A comment-started run reads `e2e.yml` from
+`main`, so a new job there is proved only after it merges; a push-started
+run reads the branch's own file, which is what lets a branch prove the OCI
+runtime before it merges. Its jobs build the runtime with the `oci` engine,
+the init and the test module as a process, fetch the pinned Firecracker
+and kernel (`make oci.tools`), run the engine's suite over real VMs (`make
+oci.test`, with `FUNCTION_WASM_REQUIRE_KVM=1` so a missing tool fails
+instead of skipping) and bring up the profile's cluster (`make e2e.oci.up`,
+then `make e2e.test.oci`). GitHub's Linux runners expose `/dev/kvm` to a
+udev rule the jobs install. The profile's Function is `function-oci`,
+installed beside `function-wasm` under the `e2e-oci` runtime config, which
+mounts the node's `/dev/kvm`.
 
 ### The release matrix
 

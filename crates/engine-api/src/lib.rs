@@ -100,18 +100,25 @@ pub struct RunOptions {
     pub digest: String,
 }
 
-/// What Inspect reads from a component: its top-level imports and exports,
-/// the world's host imports among them, and, when the component does not
-/// implement the world, the load check's refusal.
-#[derive(Debug)]
+/// What Inspect reads from a module without running it: for a component,
+/// its top-level imports and exports with the world's host imports among
+/// them; for an OCI image, its config as `details`; for either, the
+/// contract check's refusal when the module does not implement it.
+#[derive(Debug, Default)]
 pub struct Inspection {
     /// The world's host imports the component uses (its `log`).
     pub host_imports: Vec<String>,
+    /// The contract verdict: None when the module implements the engine's
+    /// contract, else the sentence the load prints.
     pub abi_error: Option<String>,
     /// Exports in declaration order.
     pub exports: Vec<Extern>,
     /// Imports in declaration order.
     pub imports: Vec<Extern>,
+    /// What else the engine read, as `name: value` lines a tool prints in
+    /// order (an image's entrypoint, user and platform); empty for a
+    /// component, whose shape is the lists above.
+    pub details: Vec<(String, String)>,
 }
 
 /// One top-level export or import of a component, as a listing shows it.
@@ -133,6 +140,16 @@ pub trait Engine: Send + Sync + 'static {
     /// A compiled module: what `compile` makes and `run` takes, cheap to
     /// clone and shared between runs.
     type Module: Clone + Send + Sync + std::fmt::Debug + 'static;
+
+    /// The module type this engine serves, as the manifest's `type` names
+    /// it: `wasm` or `oci`. The runtime fetches, admits and describes
+    /// modules by it, and refuses the other type's by name.
+    const KIND: &'static str;
+
+    /// The contract the engine implements, as a tool prints it beside a
+    /// module's size: `ABI v2` for the component world, `process contract
+    /// v1` for an image.
+    const CONTRACT: &'static str;
 
     /// The ceilings this engine was created with.
     fn config(&self) -> Config;

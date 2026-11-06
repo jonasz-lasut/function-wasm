@@ -393,6 +393,7 @@ impl Wasmtime {
             abi_error,
             exports,
             imports,
+            details: Vec::new(),
         })
     }
 
@@ -505,6 +506,8 @@ impl Wasmtime {
 /// The runtime's seam: the inherent methods above, through the trait every
 /// engine implements.
 impl Engine for Wasmtime {
+    const KIND: &'static str = "wasm";
+    const CONTRACT: &'static str = "ABI v2";
     type Module = Module;
 
     fn config(&self) -> Config {

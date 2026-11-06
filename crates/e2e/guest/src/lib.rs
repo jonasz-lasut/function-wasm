@@ -396,8 +396,17 @@ fn grow(mib: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Natively (the module as an OCI image's process), the growth is real
+/// memory, touched page by page, so the VM's limit meets it.
 #[cfg(not(target_arch = "wasm32"))]
-fn grow(_mib: u32) -> Result<(), String> {
+fn grow(mib: u32) -> Result<(), String> {
+    let mut held: Vec<u8> = Vec::new();
+    held.try_reserve_exact((mib as usize) << 20)
+        .map_err(|e| format!("cannot reserve {mib} MiB: {e}"))?;
+    for i in 0..((mib as usize) << 20) {
+        held.push((i % 251) as u8);
+    }
+    std::hint::black_box(&held);
     Ok(())
 }
 

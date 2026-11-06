@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft (a second runtime that runs OCI images in a microVM behind the same manifest and policy layers as a WebAssembly module. The owner settled the packaging and the contract and the egress and the artifact and the names and the order on 2026-11-05. The renames and the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247). The sandbox waits for the evaluation's spike)
+* Status: draft (a second runtime that runs OCI images in a microVM behind the same manifest and policy layers as a WebAssembly module. The owner settled the packaging and the contract and the egress and the artifact and the names and the order on 2026-11-05. The renames and the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247). The first `function-oci` build runs a process under Firecracker, the evaluation's first prototype behind the `Sandbox` seam, with the egress proxy and the scaffolds still ahead)
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/239
 
 ## Summary
@@ -207,16 +207,25 @@ candidate differs, the evaluation says how.
 
 **What boots.** The runtime unpacks the image's layers once per image
 digest, applies the whiteouts and preserves ownership and modes without
-root, into the form the sandbox boots from: an ext4 block image written
-straight from the layer tarballs for a VMM with block devices only, or a
-directory for a VMM that shares files through virtio-fs. The
+root, into the form the sandbox boots from. For a VMM with block devices
+only, that form is a squashfs image, which a pure Rust writer builds
+straight from the layer tarballs; a VMM that shares files through
+virtio-fs takes a directory instead. (The record first said ext4. A squashfs writer keeps the
+ownership without root, and the guest mounts the image read-only under
+its overlay, as the design describes. The first build uses it.) The image
+config, with the
+user resolved against the image's `/etc/passwd` and `/etc/group`, goes
+inside the squashfs, so a stored root filesystem describes itself. The
 content-addressed store keeps the result beside the compiled WebAssembly
 artifacts, under `engine::version()`, under the same LRU sweep and the
 same per-process key. The key check refuses a planted root filesystem
 before the VMM sees it. The guest kernel comes with the package, either
 built by the project from a microVM configuration or supplied by the VMM,
-and Renovate tracks it with the VMM.
-`function_wasm_module_compile_duration_seconds` measures the unpacking.
+and Renovate tracks it with the VMM. The first build takes the kernel
+Firecracker's CI publishes (6.1, with squashfs, overlayfs, virtio and
+vsock built in), pinned with Firecracker's release in `Dockerfile.oci` and
+the Makefile. `function_wasm_module_compile_duration_seconds` measures
+the unpacking.
 
 **One VM per request.** The runtime starts the VM with the kernel, the
 root filesystem read-only, a vsock device, memory sized to the step's
@@ -323,7 +332,11 @@ The criteria, in the order the owner weighs them:
 
 On the criteria, libkrun leads and Firecracker is the alternative the
 project understands best. The spike picks one by measurement rather than
-by reading:
+by reading. The first build of `function-oci` is the Firecracker prototype
+of that spike. A static release binary, a published kernel and no library
+to link made it the one to write first. It runs the end-to-end suite's
+`oci` profile on a GitHub runner. The libkrun prototype goes behind the
+same `Sandbox` seam next, and the measurements decide.
 
 - **The spike.** One week, two prototypes behind one `Sandbox` seam,
   libkrun and Firecracker, each running the committed test image's
@@ -380,14 +393,20 @@ The `v1beta1` deprecation goes with the old group.
   `oci.rs` reads both manifest media types and the wrapping artifact.
 - `crates/engine`: the trait over Wasmtime, with its behaviour and its
   tests unchanged.
-- `crates/engine-oci`: the `Sandbox` trait and the chosen VMM behind it
-  (the machine config, the devices and the lifecycle), the layer unpacking
-  into the sandbox's root filesystem form, the init protocol over vsock (a
-  framed stream with the run description, stdin, stderr lines, stdout and
-  the exit), and the egress bridge onto `HttpRequester`.
-- `crates/init`: the guest init, a static binary that depends on nothing in
-  the image. It mounts, overlays, runs the proxy with its authority, starts
-  the process and relays the streams.
+- `crates/engine-oci`: the `Sandbox` trait with the chosen VMM behind it
+  (`firecracker.rs` first: the machine config, the devices, the
+  lifecycle). Beside it, `rootfs.rs` unpacks the layers into the squashfs
+  root filesystem, `layout.rs` reads the image layout the runtime hands
+  over, `image.rs` holds the image config and the run description,
+  `initrd.rs` packs the initramfs around the init, `run.rs` applies the
+  bounds and words the fatals, and the egress bridge onto `HttpRequester`
+  comes later.
+- `crates/init` (the `guestfn-init` package): the guest init, a static
+  binary that depends on nothing in the image, and the protocol it speaks
+  with the host (`guestfn_init::{Description, Exit, Kind}`, framed over
+  vsock). It mounts, overlays, starts the process and relays the streams;
+  the proxy with its authority comes with the egress phase. A second
+  binary, the fixture process, is what the engine's VM tests run.
 - `crates/guestfn`: `--type oci` through init, build, push and inspect, and
   the OCI template sets.
 - `package/oci/`: `crossplane.yaml` and the shared Input CRD.
@@ -511,7 +530,8 @@ The owner decided this on 2026-11-06:
 Open:
 
 8. **The sandbox.** The evaluation's spike (libkrun against Firecracker)
-   decides, and the verdict goes into the record.
+   decides, and the verdict goes into the record. Firecracker is the first
+   prototype, in the tree.
 9. **The development loop without KVM.** Follows the sandbox: a VMM with a
    macOS port runs the loop by itself, the others need a container
    fallback behind `--insecure`.
@@ -529,14 +549,21 @@ Open:
    `guestfn push --image` writes, and taught `guestfn inspect` the
    artifact. Left: `guestfn init` and `guestfn build` for `type: oci` (the
    OCI scaffolds), with the contract check deferred to phase 3.
-3. The sandbox spike, then `crates/engine-oci` with the chosen VMM behind
-   the `Sandbox` trait, the init and its protocol, the layer unpacking, the
-   VM lifecycle, the bounds, `function validate --resolve` for images, the
-   contract check in `guestfn build`, and the OCI scaffolds in the guest
-   suite on a KVM runner.
-4. The `oci` e2e profile on a KVM runner, with the kernel build where the
-   project builds its own.
-5. The egress bridge, the env bindings and the credentials through the
-   init, with audit and metrics parity.
-6. The `function-oci` package, its install page and the publish workflow,
-   plus one use-case example.
+3. Done in part, as the spike's Firecracker prototype: `crates/engine-oci`
+   behind the `Sandbox` trait, the init and its protocol, the layer
+   unpacking into squashfs, the VM lifecycle, the bounds, `function
+   validate --resolve` for images, the `oci` Cargo feature of the
+   `function` crate with its flags, the image fetch of the resolver through the
+   wrapping artifact, and the env bindings and the credentials through the
+   init. Left: the libkrun prototype and the measurements, the contract
+   check in `guestfn build`, and the OCI scaffolds in the guest suite.
+4. Done: the `oci` e2e profile on a GitHub runner with KVM, in its own
+   workflow (`e2e-oci.yml`, on every push that touches the runtime, which
+   tests a branch before it merges), with the published kernel. The
+   kernel build, where the project builds its own, remains open.
+5. The egress bridge (the TLS-decrypting proxy in the init) with audit and
+   metrics parity; until then `function-oci` refuses a manifest that
+   requires egress, by name.
+6. The `function-oci` package's publish workflow and one use-case example;
+   its image (`Dockerfile.oci`), its package root (`package/oci`) and its
+   operators page are in the tree.
