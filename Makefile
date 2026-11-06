@@ -110,7 +110,7 @@ E2E_OCI_IMAGE := function-oci-e2e:dev
 E2E_OCI_GUEST ?= $(E2E_GUEST_DIR)/target/$(MUSL_TARGET)/release/e2e-guest-oci
 
 .PHONY: e2e.up e2e.crossplane e2e.setup e2e.image e2e.test e2e.down e2e.guest e2e.dump xpkg.build.function-wasm print-crossplane-version
-.PHONY: oci.tools oci.init oci.test e2e.oci.guest e2e.oci.image e2e.oci.up e2e.test.oci xpkg.build.function-oci
+.PHONY: oci.tools oci.init oci.test e2e.oci.guest e2e.oci.image e2e.oci.kvm e2e.oci.up e2e.test.oci e2e.pods xpkg.build.function-oci
 print-crossplane-version:
 	@echo $(CROSSPLANE_VERSION)
 
@@ -241,7 +241,20 @@ local.xpkg.deploy.function.function-oci: FUNCTION_RUNTIME_CONFIG := e2e-oci
 # config (/dev/kvm from the node). make e2e.up adds function-wasm beside it.
 # The guest as a process is built unless E2E_OCI_GUEST already names one
 # (the OCI workflow's cluster job gets it from the build job).
-e2e.oci.up: $(if $(wildcard $(E2E_OCI_GUEST)),,e2e.oci.guest) controlplane.up e2e.crossplane e2e.setup xpkg.build.function-oci local.xpkg.deploy.function.function-oci
+# The device plugin that grants the node's /dev/kvm to function-oci's pod
+# (crates/e2e/profiles/oci/kvm-device-plugin.yaml), applied before the
+# Function so its pod, which requests one squat.ai/kvm, can schedule.
+e2e.oci.kvm: $(KUBECTL)
+	@$(INFO) installing the kvm device plugin
+	@$(KUBECTL) apply -f crates/e2e/profiles/oci/kvm-device-plugin.yaml || $(FAIL)
+	@$(KUBECTL) -n kube-system rollout status daemonset/generic-device-plugin --timeout=120s || $(FAIL)
+	@n=""; for i in $$(seq 1 60); do \
+		n=$$($(KUBECTL) get nodes -o jsonpath='{.items[0].status.allocatable.squat\.ai/kvm}'); \
+		if [ -n "$$n" ] && [ "$$n" != "0" ]; then break; fi; sleep 2; \
+	done; if [ -z "$$n" ] || [ "$$n" = "0" ]; then echo "the node allocates no squat.ai/kvm"; $(FAIL); fi
+	@$(OK) installing the kvm device plugin
+
+e2e.oci.up: $(if $(wildcard $(E2E_OCI_GUEST)),,e2e.oci.guest) controlplane.up e2e.crossplane e2e.oci.kvm e2e.setup xpkg.build.function-oci local.xpkg.deploy.function.function-oci
 	@$(INFO) waiting for function-oci to become healthy
 	@$(KUBECTL) wait function.pkg.crossplane.io/function-oci --for=condition=Healthy --timeout=300s || $(FAIL)
 	@$(OK) the oci profile cluster is up, run make e2e.test.oci
@@ -269,6 +282,20 @@ e2e.down: controlplane.down
 # The cluster's state for a failed run (controlplane.dump plus the suite's
 # own logs under _output/e2e/logs); CI uploads the directory.
 e2e.dump: controlplane.dump
+
+# The pods and, for every function pod, its description and its logs (the
+# previous container's too), printed: what a failed run shows in its job
+# log, where the dump is an artifact.
+e2e.pods: $(KUBECTL)
+	@$(KUBECTL) get pods --all-namespaces -o wide || true
+	@for p in $$($(KUBECTL) -n crossplane-system get pods -l pkg.crossplane.io/function -o name); do \
+		echo "==== $$p"; \
+		$(KUBECTL) -n crossplane-system describe $$p || true; \
+		echo "---- $$p logs"; \
+		$(KUBECTL) -n crossplane-system logs $$p --all-containers --tail=200 || true; \
+		echo "---- $$p previous logs"; \
+		$(KUBECTL) -n crossplane-system logs $$p --all-containers --previous --tail=200 2>/dev/null || true; \
+	done
 
 # The committed test module. cargo builds it on the rust scaffold's pinned
 # toolchain (crates/e2e/guest/rust-toolchain.toml); guestfn inspect states

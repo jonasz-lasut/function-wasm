@@ -209,6 +209,10 @@ jobs:
       - name: Run the OCI Profile
         run: make e2e.test.oci
 
+      - name: Show the Function Pods
+        if: failure()
+        run: make e2e.pods
+
       - name: Dump the Cluster
         if: failure()
         run: make e2e.dump
