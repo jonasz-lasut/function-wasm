@@ -83,11 +83,11 @@ Put the node's `kvm` group among the pod's `supplementalGroups`:
       template:
         spec:
           securityContext:
-            supplementalGroups: [108]
+            supplementalGroups: [994]
 ```
 
-The gid is the node image's (108 on Ubuntu images; other images differ),
-so read it once per node pool, through the API alone:
+The gid is the node image's (994 on the end-to-end suite's kind node;
+images differ), so read it once per node pool, through the API alone:
 
 ```shell
 kubectl debug node/<node> -it --image=busybox -- stat -c %g /host/dev/kvm
