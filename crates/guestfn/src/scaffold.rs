@@ -271,7 +271,7 @@ mod tests {
     /// header, like dashboard-bundle's.
     #[test]
     fn examples_share_the_scaffold_plumbing() {
-        let examples: [(&str, &[&str], Options); 8] = [
+        let examples: [(&str, &[&str], Options); 9] = [
             (
                 "pdb-addon",
                 &[
@@ -327,6 +327,25 @@ mod tests {
                 Options {
                     lang: LANG_C.into(),
                     name: "hello-c".into(),
+                    ..Default::default()
+                },
+            ),
+            // The C++ example has no scaffold of its own either: its C
+            // adapter and glue are the c flavour's byte for byte, its
+            // logic is its own.
+            (
+                "cert-rotator",
+                &[
+                    "proto/",
+                    "wit/",
+                    "src/fnv1/",
+                    "src/gen/",
+                    "src/structpb.",
+                    "src/wasmfn.",
+                ],
+                Options {
+                    lang: LANG_C.into(),
+                    name: "cert-rotator".into(),
                     ..Default::default()
                 },
             ),
