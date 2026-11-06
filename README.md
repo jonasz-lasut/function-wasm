@@ -110,8 +110,9 @@ the toolchain, the scaffolded module's size and an example.
 | `ts` | node + npm (esbuild, jco) | ~14 MB | [`examples/policy-gate`](examples/policy-gate) |
 | `python` | `python3` (componentize-py) | ~21 MB | [`examples/team-tags`](examples/team-tags) |
 
-C#, Odin and MoonBit exist as examples only
+C#, C++, Odin and MoonBit exist as examples only
 ([`examples/dashboard-bundle`](examples/dashboard-bundle),
+[`examples/cert-rotator`](examples/cert-rotator),
 [`examples/hello-odin`](examples/hello-odin),
 [`examples/hello-moonbit`](examples/hello-moonbit)). Any toolchain that
 produces a component for the world can target the runtime.
