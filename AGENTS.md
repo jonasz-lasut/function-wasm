@@ -229,9 +229,12 @@ crates/function/            the runtime crate: a library (everything below) + th
                               and http_requests_total per request
   src/manifest.rs             the module manifest: parse (artifact layer), load (guestfn.yaml,
                               unknown top-level fields refused), validate (type wasm|oci, the
-                              abi the type's contract takes), check (a type: oci manifest refused
-                              by name - the OCI runtime's package serves it; grants, config
-                              schema via jsonschema, minRuntime vs runtime_version()), summary, json
+                              contract the type takes - 2 the component world, 1 the process
+                              contract; `abi` through 0.6, renamed with no alias - and image,
+                              the digest-pinned image of a type: oci module alone), check (a
+                              type: oci manifest refused by name - the OCI runtime's package
+                              serves it; grants, config schema via jsonschema, minRuntime vs
+                              runtime_version()), summary, json
   src/from.rs, input.rs,      module.from fencing, the Input types, egress rule, env binding and
   egress_rules.rs,            required-credential shapes, quantity/duration parsing, env
   sandboxenv.rs, quantity.rs  materialization and the required credentials held against the request
@@ -310,7 +313,13 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
                               wit-component's words), the ABI verdict, guestfn.yaml validation,
                               the example-config warning
   src/push.rs                 the CNCF wasm OCI artifact (wasm layer, manifest layer, layerDigests
-                              config, OCI annotations, SOURCE_DATE_EPOCH-reproducible), upload
+                              config, OCI annotations, SOURCE_DATE_EPOCH-reproducible), upload;
+                              for a type: oci manifest (--image, or the file's image) the
+                              wrapping artifact instead: artifactType
+                              application/vnd.guestfn.module.v1, the empty config, the manifest
+                              as the one layer with its image pinned, no module file read
+                              (oci::is_module_artifact recognises it, wasm_layer refuses it by
+                              name, inspect names the image it pins and refuses --pull)
   src/inspect.rs              file → engine.inspect; reference → manifest, layers, annotations, the
                               module-layer rule, the manifest summary; --pull; text/json
   src/manifestcmd.rs          manifest validate <file> / manifest show <ref>

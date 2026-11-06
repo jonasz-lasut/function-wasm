@@ -76,7 +76,7 @@ The runtime reports it as a fatal result (`cannot load module <desc>: …`), and
 
 A typecheck refusal begins `component does not implement the wasmfn:function@2.0.0 world: …`.
 
-A module manifest declares `abi: 2`. Any other value is refused before the module is looked at: `abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 1`.
+A module manifest declares `contract: 2`. Any other value is refused before the module is looked at: `contract must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 1`.
 
 ## Versioning
 

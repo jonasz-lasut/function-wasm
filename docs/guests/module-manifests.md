@@ -16,7 +16,7 @@ the [Cedar policy reference](../operators/cedar-policy.md).
 # manifest layer, and the runtime holds it against what the policy layers grant
 # before every run - a manifest can refuse a run earlier and say why, never
 # make one possible.
-abi: 2
+contract: 2
 name: my-fn
 version: 0.1.0
 # requires: the sandbox capabilities the module cannot run without
@@ -41,9 +41,14 @@ The fields:
   default. `oci` marks an OCI image for the OCI runtime
   ([#239](https://github.com/jonasz-lasut/function-wasm/issues/239)), which
   function-wasm refuses by name until that package exists.
-- `abi`: the version of the type's contract. Required. `2` is the only
+- `contract`: the version of the type's contract. Required. `2` is the only
   value for `wasm`, the component world, and `1` the only value for
-  `oci`, the process contract.
+  `oci`, the process contract. The field was `abi` through 0.6, and the
+  old name is refused as unknown: an OCI image has no ABI.
+- `image`: the digest-pinned reference of the image a `type: oci` module
+  runs (`ghcr.io/acme/tagger@sha256:…`). `guestfn push --image` writes it
+  into the published manifest, so the file may leave it out. A `type: wasm`
+  manifest has no `image`, and the runtime refuses one that sets it.
 - `name`, `version`, `description` and `source`: what the module says about
   itself.
 - `requires`: the sandbox capabilities the module can't run without. These
@@ -71,6 +76,16 @@ same way.
 the media type `application/vnd.guestfn.manifest.v1+json`. The layer is covered
 by the manifest digest the Composition pins, and so by any cosign signature on
 it.
+
+For a `type: oci` manifest, `guestfn push <ref> --image <image@sha256:…>`
+publishes the wrapping artifact instead. Its one layer is the manifest with
+`image` set, under the artifact type `application/vnd.guestfn.module.v1`
+and OCI 1.1's empty config. The image itself is built and pushed by its own
+toolchain. The Composition pins the artifact, a signature covers it, and the
+manifest pins the image. The OCI runtime then pulls an image the signed
+manifest names. `guestfn inspect` names that image in place of a module
+layer. function-wasm refuses the artifact by name, since the OCI runtime's
+package serves it.
 
 A `path` or `http` source has no OCI manifest layer. It can reference its
 `guestfn.yaml` instead, with `module.manifestPath` or `module.http.manifestURL`

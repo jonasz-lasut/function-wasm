@@ -575,7 +575,7 @@ mod tests {
         // The 1.0 audit's F-5 rule for the manifests store: verify-on-read,
         // keyed by the manifest's own digest, never by the artifact's.
         let wasm = b"not really wasm";
-        let module_manifest = br#"{"abi":2}"#;
+        let module_manifest = br#"{"contract":2}"#;
         let (pinning, addr) =
             crate::oci::testregistry::wasm_artifact(wasm, Some(module_manifest), false);
         let dir = tempfile::tempdir().expect("tempdir");

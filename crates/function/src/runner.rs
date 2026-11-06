@@ -811,7 +811,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn runs_an_oci_module_with_its_manifest_granted() {
         let wasm = wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat");
-        let module_manifest = br#"{"abi":2,"requires":{"filesystem":{"privateTmp":true}}}"#;
+        let module_manifest = br#"{"contract":2,"requires":{"filesystem":{"privateTmp":true}}}"#;
         let (digest, addr) =
             crate::oci::testregistry::wasm_artifact(&wasm, Some(module_manifest), true);
         let mut f = function(None);
@@ -1173,7 +1173,7 @@ mod tests {
         .expect("write");
         std::fs::write(
             dir.path().join("guestfn.yaml"),
-            "abi: 2\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n  credentials: [cmdb]\n",
+            "contract: 2\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n  credentials: [cmdb]\n",
         )
         .expect("write");
         let f = granting_function(Some(dir.path()));
@@ -1342,7 +1342,7 @@ mod tests {
 
         let out = run_with_credentials(
             &f,
-            module(br#"{"abi":2,"requires":{"credentials":["cmdb"]}}"#),
+            module(br#"{"contract":2,"requires":{"credentials":["cmdb"]}}"#),
             &["registry", "cmdb", "other"],
         )
         .await;
@@ -1352,7 +1352,7 @@ mod tests {
         // run, as an env binding naming it is.
         let out = run_with_credentials(
             &f,
-            module(br#"{"abi":2,"requires":{"credentials":["registry"]}}"#),
+            module(br#"{"contract":2,"requires":{"credentials":["registry"]}}"#),
             &["registry", "cmdb"],
         )
         .await;

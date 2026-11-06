@@ -2,7 +2,7 @@
 # (module.manifestPath in composition-egress.yaml): the published guestfn.yaml
 # plus an egress requirement for the fixture server render.sh starts on
 # 127.0.0.1:9480, so the greeting is fetched through the host's egress.
-abi: 2
+contract: 2
 name: hello-c
 version: 0.1.0
 requires:
