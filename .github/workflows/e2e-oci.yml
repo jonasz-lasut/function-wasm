@@ -149,6 +149,7 @@ jobs:
       - name: Run the Engine Suite in VMs
         env:
           FUNCTION_WASM_REQUIRE_KVM: "1"
+          GUESTFN_VM_CONSOLE: "1"
         run: |
           chmod +x "${RUNNER_TEMP}/oci-tools/firecracker" "${RUNNER_TEMP}/oci-tools/init" "${RUNNER_TEMP}/oci-tools/fixture"
           export GUESTFN_FIRECRACKER="${RUNNER_TEMP}/oci-tools/firecracker"
