@@ -56,6 +56,10 @@ struct ReferenceInfo {
     module_layer: Option<DescriptorInfo>,
     #[serde(rename = "moduleLayerError", skip_serializing_if = "String::is_empty")]
     module_layer_error: String,
+    /// The image a wrapping artifact's manifest pins: the module of a
+    /// `type: oci` artifact, which has no module layer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
     /// The module manifest the artifact carries as its manifest layer, read
     /// without pulling the module.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -131,26 +135,47 @@ impl InspectCmd {
             annotations: m.annotations.clone(),
             module_layer: None,
             module_layer_error: String::new(),
+            image: None,
             manifest: None,
             manifest_error: String::new(),
         };
-        let layer = match oci::wasm_layer(&m) {
-            Ok(l) => {
-                info.module_layer = Some(descriptor(&l));
-                Some(l)
-            }
-            Err(e) => {
-                info.module_layer_error = e;
-                None
+        let wrapping = oci::is_module_artifact(&m);
+        let layer = if wrapping {
+            None
+        } else {
+            match oci::wasm_layer(&m) {
+                Ok(l) => {
+                    info.module_layer = Some(descriptor(&l));
+                    Some(l)
+                }
+                Err(e) => {
+                    info.module_layer_error = e;
+                    None
+                }
             }
         };
         if let Some(ml) = oci::manifest_layer(&m) {
             match fetch_manifest(&client, &ml) {
-                Ok(parsed) => info.manifest = Some(parsed),
+                Ok(parsed) => {
+                    if wrapping {
+                        info.image = Some(parsed.image.clone());
+                    }
+                    info.manifest = Some(parsed);
+                }
                 Err(e) => info.manifest_error = e,
             }
         }
+        if wrapping && info.image.is_none() {
+            info.module_layer_error =
+                "wraps an OCI image, but its manifest layer does not say which".to_string();
+        }
         out.reference = Some(info);
+        if self.pull && wrapping {
+            return Err(format!(
+                "{} wraps an OCI image (a type: oci module) and has no module layer to pull; the OCI runtime pulls the image its manifest pins",
+                self.target
+            ));
+        }
         if self.pull
             && let Some(layer) = layer
         {
@@ -194,14 +219,17 @@ impl InspectCmd {
             if !r.annotations.is_empty() {
                 println!("  annotations:{}", annotations_text(&r.annotations));
             }
-            match &r.module_layer {
-                Some(l) => println!(
+            match (&r.module_layer, &r.image) {
+                (Some(l), _) => println!(
                     "  module layer: {} {} ({})",
                     l.media_type,
                     l.digest,
                     crate::human_bytes(l.size as u64)
                 ),
-                None => println!(
+                (None, Some(image)) => println!(
+                    "  image: {image} (a type: oci module, which the OCI runtime, function-oci, serves)"
+                ),
+                (None, None) => println!(
                     "  module layer: none - the runtime would refuse it: {}",
                     r.module_layer_error
                 ),

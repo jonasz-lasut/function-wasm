@@ -1,6 +1,6 @@
 //! The module manifest: what a module
 //! declares about itself (the capabilities it cannot run without, the JSON
-//! Schema of its config, its ABI and the oldest runtime it works on). A
+//! Schema of its config, its contract and the oldest runtime it works on). A
 //! manifest is a request, never a grant: it can make a run fail earlier and
 //! say why, it cannot make a run possible. Refusal strings are pinned by the
 //! conformance goldens, except where a message embeds a library's own wording
@@ -15,11 +15,12 @@ use crate::sandboxenv::{self, EnvBinding};
 /// Bounds the layer and the file: a manifest is a few lines of requirements
 /// and a schema, never a document.
 pub const MAX_SIZE: usize = 64 << 10;
-/// The ABIs this runtime implements: v2 (docs/abi-v2.md, components) alone
-/// since function-wasm 1.0.0 removed v1 (core modules). A manifest still
-/// declares its abi, so a v1 manifest is refused by its declaration before
-/// its module is refused by its binary format.
-pub const SUPPORTED_ABIS: [i64; 1] = [2];
+/// The contracts of `type: wasm` this runtime implements: ABI v2
+/// (docs/abi-v2.md, components) alone since function-wasm 1.0.0 removed v1
+/// (core modules). A manifest still declares its contract, so a v1 manifest
+/// is refused by its declaration before its module is refused by its binary
+/// format.
+pub const WASM_CONTRACTS: [i64; 1] = [2];
 
 /// The kinds of module a manifest describes (docs/one-pager-oci-runtime.md):
 /// a WebAssembly component, which this package serves, and an OCI image,
@@ -27,9 +28,10 @@ pub const SUPPORTED_ABIS: [i64; 1] = [2];
 /// before the field is a WebAssembly one.
 pub const TYPE_WASM: &str = "wasm";
 pub const TYPE_OCI: &str = "oci";
-/// The process contract's version, the `abi` a `type: oci` manifest states
-/// (the OCI runtime's record versions it beside the component world's 2).
-pub const OCI_CONTRACT_ABI: i64 = 1;
+/// The process contract's version, the `contract` a `type: oci` manifest
+/// states (the OCI runtime's record versions it beside the component
+/// world's 2).
+pub const OCI_CONTRACT: i64 = 1;
 
 /// What a module declares about itself.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -41,13 +43,20 @@ pub struct Manifest {
     #[serde(rename = "type", skip_serializing_if = "String::is_empty")]
     pub r#type: String,
     /// The version of the contract the module's type names: the component
-    /// world for `wasm` (SUPPORTED_ABIS), the process contract for `oci`
-    /// (OCI_CONTRACT_ABI). Required.
-    pub abi: i64,
+    /// world for `wasm` (WASM_CONTRACTS), the process contract for `oci`
+    /// (OCI_CONTRACT). Required. Named `abi` through 0.6; renamed with no
+    /// alias, since an OCI image has no ABI (docs/one-pager-oci-runtime.md).
+    pub contract: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub version: String,
+    /// The image a `type: oci` module is, pinned by digest
+    /// (`ghcr.io/acme/tagger@sha256:…`): what the OCI runtime pulls and
+    /// boots. `guestfn push --image` writes it into the published manifest;
+    /// a `type: wasm` manifest must not carry it.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub image: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub source: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -228,10 +237,12 @@ impl Manifest {
         let value: serde_json::Value = serde_saphyr::from_slice(&raw)
             .map_err(|e| format!("{} is not valid YAML: {e}", path.display()))?;
         if let Some(map) = value.as_object() {
-            const KNOWN: [&str; 9] = [
-                "abi",
+            const KNOWN: [&str; 11] = [
+                "type",
+                "contract",
                 "name",
                 "version",
+                "image",
                 "source",
                 "description",
                 "requires",
@@ -293,25 +304,40 @@ impl Manifest {
         Ok(m)
     }
 
-    /// Checks the manifest's shape and compiles its schema: abi is one of
-    /// SUPPORTED_ABIS, every required egress rule passes the checks a
-    /// Composition's rule passes, minRuntime is a semantic version, and
-    /// config.schema is a JSON Schema.
+    /// Checks the manifest's shape and compiles its schema: contract is
+    /// the one the type takes (WASM_CONTRACTS, OCI_CONTRACT), image is a
+    /// digest-pinned reference of a `type: oci` module alone, every
+    /// required egress rule passes the checks a Composition's rule passes,
+    /// minRuntime is a semantic version, and config.schema is a JSON
+    /// Schema.
     pub fn validate(&self) -> Result<(), String> {
         match self.kind() {
             TYPE_WASM => {
-                if !SUPPORTED_ABIS.contains(&self.abi) {
+                if !WASM_CONTRACTS.contains(&self.contract) {
                     return Err(format!(
-                        "abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got {}",
-                        self.abi
+                        "contract must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got {}",
+                        self.contract
                     ));
+                }
+                if !self.image.is_empty() {
+                    return Err(
+                        "image names an OCI image, which only a type: oci manifest carries"
+                            .to_string(),
+                    );
                 }
             }
             TYPE_OCI => {
-                if self.abi != OCI_CONTRACT_ABI {
+                if self.contract != OCI_CONTRACT {
                     return Err(format!(
-                        "abi must be {OCI_CONTRACT_ABI} for type oci (the process contract), got {}",
-                        self.abi
+                        "contract must be {OCI_CONTRACT} for type oci (the process contract), got {}",
+                        self.contract
+                    ));
+                }
+                if !self.image.is_empty()
+                    && let Err(e) = crate::location::parse_oci_reference(&self.image)
+                {
+                    return Err(format!(
+                        "image must be an OCI reference pinned by digest (registry/repository@sha256:…): {e}"
                     ));
                 }
             }
@@ -416,6 +442,9 @@ impl Manifest {
         }
         if self.kind() == TYPE_OCI {
             parts.push("type oci".to_string());
+            if !self.image.is_empty() {
+                parts.push(format!("image {}", self.image));
+            }
         }
         if let Some(r) = &self.requires {
             if let Some(egress) = &r.egress
@@ -507,10 +536,10 @@ impl Manifest {
                 "is a type: oci module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)".to_string(),
             );
         }
-        if !SUPPORTED_ABIS.contains(&self.abi) {
+        if !WASM_CONTRACTS.contains(&self.contract) {
             return Err(format!(
                 "requires ABI v{}, this runtime implements ABI v2 only",
-                self.abi
+                self.contract
             ));
         }
         if let Some(r) = &self.requires {
@@ -749,31 +778,48 @@ mod tests {
         Manifest::parse(raw.as_bytes()).expect("parse")
     }
 
-    /// `type` is `wasm` unless written, `oci` takes the process contract's
-    /// abi and nothing else, and this package serves `wasm` alone.
+    /// `type` is `wasm` unless written, `oci` takes the process contract
+    /// and an image and nothing else, and this package serves `wasm` alone.
     #[test]
     fn the_type_selects_the_contract_and_the_package() {
-        let wasm = manifest(r#"{"abi":2,"name":"greeter"}"#);
+        let wasm = manifest(r#"{"contract":2,"name":"greeter"}"#);
         assert_eq!(wasm.kind(), TYPE_WASM);
         assert!(wasm.validate().is_ok());
-        let oci = manifest(r#"{"type":"oci","abi":1,"name":"tagger","version":"0.3.0"}"#);
+        let oci = manifest(
+            r#"{"type":"oci","contract":1,"name":"tagger","version":"0.3.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#,
+        );
         assert_eq!(oci.kind(), TYPE_OCI);
         assert!(oci.validate().is_ok());
-        assert_eq!(oci.summary(), "tagger 0.3.0, type oci");
+        assert_eq!(
+            oci.summary(),
+            "tagger 0.3.0, type oci, image ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"
+        );
         assert_eq!(
             oci.check(&Grants::default(), None, "1.0.0").unwrap_err(),
             "is a type: oci module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)"
         );
         let err = |raw: &str| Manifest::parse(raw.as_bytes()).unwrap_err();
         assert_eq!(
-            err(r#"{"type":"oci","abi":2}"#),
-            "abi must be 1 for type oci (the process contract), got 2"
+            err(r#"{"type":"oci","contract":2}"#),
+            "contract must be 1 for type oci (the process contract), got 2"
         );
         assert_eq!(
-            err(r#"{"type":"jar","abi":2}"#),
+            err(r#"{"type":"jar","contract":2}"#),
             "type must be wasm or oci, got jar"
         );
-        assert!(err(r#"{"type":"wasm","abi":1}"#).starts_with("abi must be 2"));
+        assert!(err(r#"{"type":"wasm","contract":1}"#).starts_with("contract must be 2"));
+        // The image is the OCI module's, pinned, and no WebAssembly
+        // module's.
+        assert!(
+            err(r#"{"type":"oci","contract":1,"image":"ghcr.io/acme/tagger:v1"}"#)
+                .starts_with("image must be an OCI reference pinned by digest")
+        );
+        assert_eq!(
+            err(
+                r#"{"contract":2,"image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#
+            ),
+            "image names an OCI image, which only a type: oci manifest carries"
+        );
         // The field is absent from a WebAssembly manifest's bytes.
         assert!(
             !String::from_utf8(wasm.json().unwrap())
@@ -785,7 +831,7 @@ mod tests {
     #[test]
     fn parses_and_summarises() {
         let m = manifest(
-            r#"{"abi":2,"name":"greeter","version":"0.1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
+            r#"{"contract":2,"name":"greeter","version":"0.1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
         );
         assert_eq!(
             m.summary(),
@@ -797,22 +843,22 @@ mod tests {
     fn refuses_with_go_strings() {
         let cases: &[(&str, &str)] = &[
             (
-                r#"{"abi":3}"#,
-                "abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 3",
+                r#"{"contract":3}"#,
+                "contract must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 3",
             ),
             // A manifest of the removed ABI: refused by its declaration, so
             // a v1 artifact's author reads the fix before the module's own
             // refusal.
             (
-                r#"{"abi":1}"#,
-                "abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 1",
+                r#"{"contract":1}"#,
+                "contract must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 1",
             ),
             (
-                r#"{"abi":2,"requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,
+                r#"{"contract":2,"requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,
                 "requires.egress.http[0] must set exactly one of host and hostPattern",
             ),
             (
-                r#"{"abi":2,"minRuntime":"latest"}"#,
+                r#"{"contract":2,"minRuntime":"latest"}"#,
                 r#"minRuntime "latest" is not a semantic version (e.g. v0.2.0)"#,
             ),
         ];
@@ -826,14 +872,14 @@ mod tests {
         // An unknown field under requires fails closed; an unknown top-level
         // field is forward compatibility.
         assert!(
-            Manifest::parse(br#"{"abi":2,"requires":{"sockets":true}}"#)
+            Manifest::parse(br#"{"contract":2,"requires":{"sockets":true}}"#)
                 .expect_err("strict requires")
                 .starts_with("cannot parse manifest requires:")
         );
-        assert!(Manifest::parse(br#"{"abi":2,"future":true}"#).is_ok());
+        assert!(Manifest::parse(br#"{"contract":2,"future":true}"#).is_ok());
         // composes is validated in shape, and read by summary.
         let composing = Manifest::parse(
-            br#"{"abi":2,"name":"pdb-addon","composes":[{"kind":"policy/PodDisruptionBudget","changes":["add"]},{"kind":"apps/Deployment"}]}"#,
+            br#"{"contract":2,"name":"pdb-addon","composes":[{"kind":"policy/PodDisruptionBudget","changes":["add"]},{"kind":"apps/Deployment"}]}"#,
         )
         .expect("composes");
         assert_eq!(
@@ -846,12 +892,12 @@ mod tests {
             "no changes declared means every change"
         );
         assert_eq!(
-            Manifest::parse(br#"{"abi":2,"composes":[{"kind":"Deployment"}]}"#).unwrap_err(),
+            Manifest::parse(br#"{"contract":2,"composes":[{"kind":"Deployment"}]}"#).unwrap_err(),
             r#"composes[0].kind must be <group>/<Kind> (the core group spelled core), got "Deployment""#
         );
         assert_eq!(
             Manifest::parse(
-                br#"{"abi":2,"composes":[{"kind":"apps/Deployment","changes":["patch"]}]}"#
+                br#"{"contract":2,"composes":[{"kind":"apps/Deployment","changes":["patch"]}]}"#
             )
             .unwrap_err(),
             r#"composes[0].changes must be among add, modify and remove, got "patch""#
@@ -859,7 +905,7 @@ mod tests {
         // requires.resources is validated in shape, strictly decoded like
         // the rest of requires, and read by summary.
         let requiring = Manifest::parse(
-            br#"{"abi":2,"name":"policy-gate","requires":{"resources":[{"kind":"apiextensions.crossplane.io/EnvironmentConfig","by":["name"]},{"kind":"core/ConfigMap"}]}}"#,
+            br#"{"contract":2,"name":"policy-gate","requires":{"resources":[{"kind":"apiextensions.crossplane.io/EnvironmentConfig","by":["name"]},{"kind":"core/ConfigMap"}]}}"#,
         )
         .expect("resources");
         assert_eq!(
@@ -872,20 +918,20 @@ mod tests {
             "no by declared means both"
         );
         assert_eq!(
-            Manifest::parse(br#"{"abi":2,"requires":{"resources":[{"kind":"Secret"}]}}"#)
+            Manifest::parse(br#"{"contract":2,"requires":{"resources":[{"kind":"Secret"}]}}"#)
                 .unwrap_err(),
             r#"requires.resources[0].kind must be <group>/<Kind> (the core group spelled core), got "Secret""#
         );
         assert_eq!(
             Manifest::parse(
-                br#"{"abi":2,"requires":{"resources":[{"kind":"core/Secret","by":["uid"]}]}}"#
+                br#"{"contract":2,"requires":{"resources":[{"kind":"core/Secret","by":["uid"]}]}}"#
             )
             .unwrap_err(),
             r#"requires.resources[0].by must be among name and labels, got "uid""#
         );
         assert!(
             Manifest::parse(
-                br#"{"abi":2,"requires":{"resources":[{"kind":"core/Secret","namespace":"x"}]}}"#
+                br#"{"contract":2,"requires":{"resources":[{"kind":"core/Secret","namespace":"x"}]}}"#
             )
             .expect_err("strict resources")
             .starts_with("cannot parse manifest requires:")
@@ -895,7 +941,7 @@ mod tests {
     #[test]
     fn check_holds_requirements_against_grants() {
         let m = manifest(
-            r#"{"abi":2,"requires":{"filesystem":{"privateTmp":true},"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
+            r#"{"contract":2,"requires":{"filesystem":{"privateTmp":true},"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
         );
         let full = Grants {
             private_tmp: true,
@@ -917,7 +963,7 @@ mod tests {
     #[test]
     fn required_credentials_parse_summarise_and_check() {
         let m = manifest(
-            r#"{"abi":2,"name":"team-tags","requires":{"env":[{"name":"API_TOKEN","fromCredential":{"name":"apikeys","key":"token"}}],"credentials":["cmdb","db"]}}"#,
+            r#"{"contract":2,"name":"team-tags","requires":{"env":[{"name":"API_TOKEN","fromCredential":{"name":"apikeys","key":"token"}}],"credentials":["cmdb","db"]}}"#,
         );
         assert_eq!(m.summary(), "team-tags, env API_TOKEN, credentials cmdb db");
         // Published and printed as declared.
@@ -944,11 +990,11 @@ mod tests {
         // required once.
         let cases: &[(&str, &str)] = &[
             (
-                r#"{"abi":2,"requires":{"credentials":[""]}}"#,
+                r#"{"contract":2,"requires":{"credentials":[""]}}"#,
                 "requires.credentials[0] must not be empty",
             ),
             (
-                r#"{"abi":2,"requires":{"credentials":["cmdb","cmdb"]}}"#,
+                r#"{"contract":2,"requires":{"credentials":["cmdb","cmdb"]}}"#,
                 r#"requires.credentials[1]: credential "cmdb" is already required by requires.credentials[0]"#,
             ),
         ];
@@ -961,7 +1007,7 @@ mod tests {
         }
         // Not a list of names: the strict decode refuses it.
         assert!(
-            Manifest::parse(br#"{"abi":2,"requires":{"credentials":[{"name":"cmdb"}]}}"#)
+            Manifest::parse(br#"{"contract":2,"requires":{"credentials":[{"name":"cmdb"}]}}"#)
                 .expect_err("strict requires")
                 .starts_with("cannot parse manifest")
         );
@@ -970,7 +1016,7 @@ mod tests {
     #[test]
     fn config_schema_validates() {
         let m = manifest(
-            r#"{"abi":2,"config":{"schema":{"type":"object","properties":{"greeting":{"type":"string"}}}}}"#,
+            r#"{"contract":2,"config":{"schema":{"type":"object","properties":{"greeting":{"type":"string"}}}}}"#,
         );
         assert!(
             m.validate_config(Some(&serde_json::json!({"greeting": "hi"})))
@@ -994,7 +1040,7 @@ mod tests {
             "https://example.com/schema.json",
         ] {
             let err = Manifest::parse(
-                format!(r#"{{"abi":2,"config":{{"schema":{{"$ref":"{uri}"}}}}}}"#).as_bytes(),
+                format!(r#"{{"contract":2,"config":{{"schema":{{"$ref":"{uri}"}}}}}}"#).as_bytes(),
             )
             .expect_err("refuse");
             assert!(err.starts_with("config.schema: "), "{err}");
@@ -1007,7 +1053,7 @@ mod tests {
         }
         // A reference inside the schema never reaches the retriever.
         let m = manifest(
-            r##"{"abi":2,"config":{"schema":{"$defs":{"s":{"type":"string"}},"type":"object","properties":{"greeting":{"$ref":"#/$defs/s"}}}}}"##,
+            r##"{"contract":2,"config":{"schema":{"$defs":{"s":{"type":"string"}},"type":"object","properties":{"greeting":{"$ref":"#/$defs/s"}}}}}"##,
         );
         assert!(
             m.validate_config(Some(&serde_json::json!({"greeting": "hi"})))
@@ -1024,18 +1070,20 @@ mod tests {
         // The regex crate has no look-around or backreferences, so a
         // pattern that needs backtracking is refused at load rather than run.
         let err = Manifest::parse(
-            r#"{"abi":2,"config":{"schema":{"type":"string","pattern":"a(?=b)"}}}"#.as_bytes(),
+            r#"{"contract":2,"config":{"schema":{"type":"string","pattern":"a(?=b)"}}}"#.as_bytes(),
         )
         .expect_err("refuse");
         assert!(err.starts_with("config.schema: "), "{err}");
-        let m = manifest(r#"{"abi":2,"config":{"schema":{"type":"string","pattern":"^[a-z]+$"}}}"#);
+        let m = manifest(
+            r#"{"contract":2,"config":{"schema":{"type":"string","pattern":"^[a-z]+$"}}}"#,
+        );
         assert!(m.validate_config(Some(&serde_json::json!("hi"))).is_ok());
         assert!(m.validate_config(Some(&serde_json::json!("Hi"))).is_err());
     }
 
     #[test]
     fn min_runtime_compares() {
-        let m = manifest(r#"{"abi":2,"minRuntime":"0.2.0"}"#);
+        let m = manifest(r#"{"contract":2,"minRuntime":"0.2.0"}"#);
         assert!(m.check(&Grants::default(), None, "(devel)").is_ok());
         assert!(m.check(&Grants::default(), None, "").is_ok());
         assert!(m.check(&Grants::default(), None, "v0.3.0").is_ok());

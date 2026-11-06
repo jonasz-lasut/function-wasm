@@ -132,10 +132,12 @@ the VM and returns the deadline fatal in the wording family the engine uses
 today. The process sees `/tmp` writable and the rest of its root
 filesystem writable through an overlay the VM discards on exit.
 `requires.filesystem.privateTmp` remains accepted and keeps its meaning, a
-scratch space private to the run. The manifest's `abi` field versions this
-contract for `type: oci` (`abi: 1`), the way it versions the component
-world for `type: wasm` (`abi: 2`). The runtime reads `type` first, then
-holds `abi` to the contract that type selects.
+scratch space private to the run. The manifest's `contract` field versions
+this contract for `type: oci` (`contract: 1`), the way it versions the
+component world for `type: wasm` (`contract: 2`). The runtime reads `type`
+first, then holds `contract` to the contract that type selects. The field
+was `abi` through 0.6. An OCI image has no ABI, so the owner renamed it
+with no alias (decision 10).
 
 ### The artifact
 
@@ -172,7 +174,7 @@ default sandbox, exactly as it runs a bare `application/wasm` layer today.
 
 ```yaml
 type: oci          # wasm (the default when absent) or oci
-abi: 1             # the process contract; 2 is the component world
+contract: 1        # the process contract; 2 is the component world
 name: tagger
 version: 0.3.0
 image: ghcr.io/acme/tagger@sha256:…   # written by guestfn push
@@ -189,7 +191,11 @@ config:
 
 The other fields keep their meaning and their validation. `guestfn manifest
 validate` holds `image` to a digest-pinned reference and refuses it in a
-`type: wasm` manifest. The file is `guestfn.yaml` for both types. The
+`type: wasm` manifest. `guestfn push --image <ref@sha256:…>` writes the pin
+into the published manifest and publishes the wrapping artifact, with no
+module file read. `guestfn inspect` names the image a wrapping artifact
+pins in place of a module layer, and `--pull` refuses it: the OCI runtime
+pulls the image. The file is `guestfn.yaml` for both types. The
 rename from `wasmfn.yaml` goes through the scaffolds, the examples, the
 goldens, `module.manifestPath`'s documentation and the guests' pages in
 one change, with no alias.
@@ -370,7 +376,7 @@ The `v1beta1` deprecation goes with the old group.
 - `crates/function`: an `Engine` trait and a `Module` associated type in a
   new `engine.rs`. `runner.rs`, `cache.rs`, `validate.rs` and `ops.rs` take
   the trait, and the `wasm` and `oci` Cargo features select the engine.
-  `manifest.rs` gains `type`, `image` and the per-type `abi` check.
+  `manifest.rs` gains `type`, `image` and the per-type `contract` check.
   `oci.rs` reads both manifest media types and the wrapping artifact.
 - `crates/engine`: the trait over Wasmtime, with its behaviour and its
   tests unchanged.
@@ -396,7 +402,7 @@ The `v1beta1` deprecation goes with the old group.
 
 - Unit: the layer unpacking against fixtures with whiteouts and
   ownership, read back from the form the sandbox boots. The init protocol
-  framing. The manifest's `type`, `image` and per-type `abi` rules. The
+  framing. The manifest's `type`, `image` and per-type `contract` rules. The
   wrapping artifact in `push.rs`.
 - `crates/engine-oci` integration: a static test image built in the test
   from a small binary that echoes a fixed response, unpacked and run under
@@ -494,6 +500,14 @@ The owner settled these on 2026-11-05:
 7. **Order.** The trait, the manifest and the tooling, the init protocol,
    then the microVM sandbox.
 
+The owner decided this on 2026-11-06:
+
+10. **The contract field.** The manifest's `abi` becomes `contract`, with
+    no alias: an OCI image has no ABI, and the number versions the
+    contract the type selects either way (`2` the component world, `1`
+    the process contract). The runtime refuses the old name as an unknown
+    field.
+
 Open:
 
 8. **The sandbox.** The evaluation's spike (libkrun against Firecracker)
@@ -507,12 +521,14 @@ Open:
 1. Done (#247): the `Engine` trait in `function-wasm-engine-api`,
    `crates/function` generic over it as `engine::Selected`, Wasmtime behind
    it with no behaviour change and the goldens unchanged.
-2. Done in part: the renames (`guestfn.yaml` and the media type in #244,
-   the Input group and the generated CRD in #246), the manifest's `type`
-   and per-type `abi` with `type: oci` refused by name (#247). Left for
-   the next PR: the manifest's `image`, the wrapping artifact's
-   `artifactType`, and `guestfn` init, build, push and inspect for `type:
-   oci`, with the contract check deferred to phase 3.
+2. Done in part. #244 renamed the manifest file and the media type. #246
+   moved the Input group and generated the CRD. #247 added the manifest's
+   `type` with its per-type contract, with `type: oci` refused by name.
+   The next PR renamed `abi` to `contract`, added the manifest's `image`
+   and the wrapping artifact's `artifactType`, which the runtime reads and
+   `guestfn push --image` writes, and taught `guestfn inspect` the
+   artifact. Left: `guestfn init` and `guestfn build` for `type: oci` (the
+   OCI scaffolds), with the contract check deferred to phase 3.
 3. The sandbox spike, then `crates/engine-oci` with the chosen VMM behind
    the `Sandbox` trait, the init and its protocol, the layer unpacking, the
    VM lifecycle, the bounds, `function validate --resolve` for images, the

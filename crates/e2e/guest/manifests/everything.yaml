@@ -1,6 +1,6 @@
 # The test module requiring every capability at once: what the default
 # profile grants in full.
-abi: 2
+contract: 2
 name: e2e-guest
 version: 0.1.0-everything
 description: function-wasm's end-to-end test module, requiring every capability

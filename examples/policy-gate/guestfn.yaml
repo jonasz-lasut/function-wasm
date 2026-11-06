@@ -3,7 +3,7 @@
 # manifest layer, and the runtime holds it against what the policy layers grant
 # before every run - a manifest can refuse a run earlier and say why, never
 # make one possible.
-abi: 2
+contract: 2
 name: policy-gate
 version: 0.1.1
 # requires: no capability. The gate reads its rules from the EnvironmentConfig

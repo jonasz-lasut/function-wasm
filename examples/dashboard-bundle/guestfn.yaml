@@ -2,7 +2,7 @@
 # publishes it beside the module as the artifact's manifest layer, and the
 # runtime holds it against what the policy layers grant before every run - a
 # manifest can refuse a run earlier and say why, never make one possible.
-abi: 2
+contract: 2
 name: dashboard-bundle
 version: 0.1.0
 # The two capabilities this module cannot run without, granted only where the
