@@ -489,6 +489,31 @@ examples/dashboard-bundle   #112's C# use case (example only: no scaffold, guest
                             compiler: make builds in the .NET SDK container there. Its render
                             runs under example/policy.cedar against fixture bundles
                             (example/fixtures, packed from example/bundles by make bundles). ~4.5 MB
+examples/cert-rotator       the C++ use case (example only: no scaffold; guestfn build takes it
+                            for a c project by its build.zig), an ABI v2 component on the c
+                            scaffold's plumbing (examples-share-the-scaffold-plumbing: proto/,
+                            wit/, src/fnv1/, src/gen/, src/structpb.*, src/wasmfn.* byte for
+                            byte): a ServerCertificate XR names a TLS Secret, the module asks
+                            Crossplane for it through the response's requirements, reads the
+                            certificate it holds and composes the Secret again - carried
+                            forward while more than renewBeforeDays remain, with a fresh P-256
+                            key and self-signed certificate otherwise (absent, expiring,
+                            expired, unreadable) - plus status.certificate. src/fn.c is the C
+                            adapter over the nanopb structs (ResourceSelector's field is named
+                            `namespace`, which no C++ unit can include) calling rotator.h, the
+                            decision's C interface; src/rotator.cpp and src/tls.cpp the logic
+                            over mbedTLS 3.6 (X.509 parse and write, ECDSA P-256, PEM, base64;
+                            src/cert_rotator_mbedtls_config.h, entropy from getentropy in
+                            src/entropy.c), fetched with nanopb by build.zig.zon; zig c++
+                            compiles it with libc++ for wasm, no exceptions, no RTTI, and the
+                            module imports preview1 for the clock and the randomness, so
+                            guestfn build links the adapter. The manifest declares
+                            requires.resources (core/Secret by name) and composes
+                            (core/Secret); example/composition.yaml scopes requireResource and
+                            composeResource in its compositionPolicy, example/policy.cedar is
+                            the operator's ceiling and example/required-resources.yaml the
+                            Secret crossplane render supplies. Tests: src/rotator_test.cpp and
+                            src/fn_test.c natively (zig build test); the build-cpp job. ~160 KB
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package function-wasm-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library

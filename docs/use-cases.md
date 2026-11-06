@@ -90,6 +90,15 @@ digest-pinned references are in the release's
   `team`, `owner` and `cost-center` tags on every composed managed
   resource. The module receives that credential only where its manifest
   requires it and both policy layers permit it.
+- [`examples/cert-rotator`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/cert-rotator) (C++): a TLS
+  Secret's self-signed certificate, kept fresh. A `ServerCertificate` names
+  the Secret, the DNS names and the validity; the module asks Crossplane for
+  the Secret through the response's `requirements`, reads the certificate
+  in it and composes the Secret again, with a fresh P-256 key and
+  self-signed certificate once fewer than `renewBeforeDays` remain. The
+  Composition scopes both fences a response meets: the module may read
+  Secrets of its own namespace by name and compose Secrets, and any other
+  ask or kind is refused.
 - [`examples/dashboard-bundle`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/dashboard-bundle) (C#): dashboards
   as code, delivered as a bundle. A composite resource pins a team's zip of
   Grafana dashboards by sha256; the module fetches it through the host's
