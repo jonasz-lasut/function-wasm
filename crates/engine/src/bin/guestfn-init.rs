@@ -84,6 +84,18 @@ fn run() -> Result<(), String> {
     let mut s = sock.lock().expect("poisoned");
     write_json(&mut *s, Kind::Exit, &exit).map_err(|e| format!("cannot report the exit: {e}"))?;
     let _ = s.shutdown(std::net::Shutdown::Write);
+    // The frames sit in the vsock device's queue until the host drains
+    // them; a power-off now would take them with the VM. The host closes
+    // the connection once it has the exit, which the read below sees as
+    // end of file; a bound keeps a host that never closes from pinning
+    // the VM.
+    let _ = s.set_read_timeout(Some(Duration::from_secs(10)));
+    let mut sink = [0u8; 1024];
+    while let Ok(n) = s.read(&mut sink) {
+        if n == 0 {
+            break;
+        }
+    }
     Ok(())
 }
 

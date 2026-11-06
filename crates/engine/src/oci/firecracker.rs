@@ -140,6 +140,15 @@ impl Sandbox for Firecracker {
         let _ = out_thread.join();
         let _ = err_thread.join();
         let console = std::mem::take(&mut *console.lock().expect("poisoned"));
+        // GUESTFN_VM_CONSOLE prints every VM's serial console to stderr, for
+        // a test run or a laptop debugging a boot; the engine's debug log
+        // carries it otherwise.
+        if std::env::var_os("GUESTFN_VM_CONSOLE").is_some() {
+            eprintln!(
+                "--- VM console ({}) ---\n{console}--- end ---",
+                spec.description.argv.join(" ")
+            );
+        }
         let (stdout, stderr, end) = result;
         Ok(Outcome {
             stdout,
@@ -190,6 +199,8 @@ fn drive(
         Err(Talk::Deadline) => Ended::Deadline,
         Err(Talk::Lost(e)) => Ended::Lost(e),
     };
+    // The stream is dropped here: the init reads the close as its cue to
+    // power off, after every frame it sent has been drained.
     (stdout, stderr, end)
 }
 
