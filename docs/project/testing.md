@@ -180,6 +180,9 @@ installed beside `function-wasm` under the `e2e-oci` runtime config, which
 requests the node's `/dev/kvm` from the device plugin `make e2e.oci.up`
 installs first (`crates/e2e/profiles/oci/kvm-device-plugin.yaml`; the
 operator page says why a `hostPath` mount of the device isn't enough).
+The kind node's copy of the device isn't world-writable whatever the
+runner's udev rule says, and the pod's user is the package's, so the
+target opens the node's device to `0666` before the plugin advertises it.
 A failed run prints every function pod's description and logs into the
 job log (`make e2e.pods`) before it uploads the dump.
 

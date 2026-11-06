@@ -243,11 +243,16 @@ local.xpkg.deploy.function.function-oci: FUNCTION_RUNTIME_CONFIG := e2e-oci
 # (the OCI workflow's cluster job gets it from the build job).
 # The device plugin that grants the node's /dev/kvm to function-oci's pod
 # (crates/e2e/profiles/oci/kvm-device-plugin.yaml), applied before the
-# Function so its pod, which requests one devic.es/kvm, can schedule. When
-# the node never allocates one, the plugin's log and the node's device
-# say why.
+# Function so its pod, which requests one devic.es/kvm, can schedule. The
+# device node the kubelet puts in the container carries the node's mode,
+# and the kind node's copy of /dev/kvm is not world-writable whatever the
+# host's udev rule says, so the node's is opened first: the pod's user
+# is the package's, not a member of the node's kvm group. When the node
+# never allocates one, the plugin's log and the node's device say why.
 e2e.oci.kvm: $(KUBECTL)
 	@$(INFO) installing the kvm device plugin
+	@docker exec $(KIND_CLUSTER_NAME)-control-plane chmod 0666 /dev/kvm || $(FAIL)
+	@docker exec $(KIND_CLUSTER_NAME)-control-plane ls -l /dev/kvm
 	@$(KUBECTL) apply -f crates/e2e/profiles/oci/kvm-device-plugin.yaml || $(FAIL)
 	@$(KUBECTL) -n kube-system rollout status daemonset/generic-device-plugin --timeout=120s || $(FAIL)
 	@n=""; for i in $$(seq 1 60); do \
