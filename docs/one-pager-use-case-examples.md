@@ -63,6 +63,7 @@ An example belongs here when its use case needs at least one of these.
 | [`pdb-addon`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/pdb-addon) | Go (function-sdk-go) | A tenant add-on hook: a `WebApp` Composition's last step runs the module the XR names; this add-on derives a PodDisruptionBudget from the desired Deployment | `module.from`, `allowEmpty`, the `pullModule` fence, the default sandbox | [`function-go-templating#24`](https://github.com/crossplane-contrib/function-go-templating/issues/24), [`crossplane#6139`](https://github.com/crossplane/crossplane/issues/6139) (staggered rollout), [`crossplane#2524`](https://github.com/crossplane/crossplane/issues/2524) |
 | [`team-tags`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/team-tags) | Python | Team metadata from a CMDB, looked up with that team's own token from one shared Secret keyed by the XR's namespace | Step credentials, egress with an Authorization header, the composition layer fencing where tokens may go | [`crossplane#2099`](https://github.com/crossplane/crossplane/issues/2099), [`crossplane#7343`](https://github.com/crossplane/crossplane/issues/7343), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
 | [`dashboard-bundle`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/dashboard-bundle) | C# | Dashboards as code: a sha256-pinned zip of Grafana dashboards unpacked into one sidecar-labelled ConfigMap per dashboard | The private `/tmp`, egress, integrity pinning, refusing archive entries that escape | Grafana's dashboard sidecar, delivered as a versioned bundle |
+| [`cert-rotator`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/cert-rotator) | C++ (mbedTLS) | A TLS Secret's self-signed certificate kept fresh: read through the response's `requirements`, reissued with a fresh P-256 key once fewer than `renewBeforeDays` remain | The read fence and the output fence scoped together, `requires.resources` and `composes` in the manifest, a C adapter over the generated structs | Self-signed certificates for internal services, rotated without cert-manager |
 
 Design choices to keep:
 
@@ -89,7 +90,7 @@ scaffolds' plumbing; Odin and MoonBit have no scaffold, and `guestfn build`
 detects the MoonBit one by its `moon.mod`
 ([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)). Rust,
 Python, TypeScript and Go are covered by the use-case examples in the table.
-C# has only `dashboard-bundle`. The language matrix is in
+C# has only `dashboard-bundle`, C++ only `cert-rotator`. The language matrix is in
 [other languages](guests/other-languages.md).
 
 ## Testing
