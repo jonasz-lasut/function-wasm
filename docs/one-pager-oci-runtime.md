@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft, revision 0.4 (a second runtime that runs an OCI image inside a microVM under the same manifest, policy layers and tooling as a WebAssembly module; the owner settled the packaging, the contract, the egress, the artifact, the names and the order on 2026-11-05; the renames, the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247), and the sandbox waits for the evaluation's spike)
+* Status: draft (a second runtime that runs OCI images in a microVM behind the same manifest and policy layers as a WebAssembly module. The owner settled the packaging and the contract and the egress and the artifact and the names and the order on 2026-11-05. The renames and the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247). The sandbox waits for the evaluation's spike)
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/239
 
 ## Summary
@@ -327,9 +327,10 @@ by reading:
   memory per idle VM, the unpacking time for a 100 MB image, the behaviour
   under `limits.memory` and `limits.timeout`, and whether the pod runs
   without `privileged`.
-- **The verdict.** The record moves to revision 1.0 with the chosen
-  sandbox, its measurements under Decisions, and the other candidate under
-  Alternatives. gVisor stays the candidate for a cluster without
+- **The verdict.** The record takes the chosen sandbox into its Design,
+  its measurements under Decisions, and the other candidate under
+  Alternatives. The status stays `draft` until the first `function-oci`
+  package, which makes it `implemented, revision 1.0`. gVisor stays the candidate for a cluster without
   `/dev/kvm`, behind the same `Sandbox` trait, if demand appears.
 
 ### Offline validation and the CLI
@@ -496,7 +497,7 @@ The owner settled these on 2026-11-05:
 Open:
 
 8. **The sandbox.** The evaluation's spike (libkrun against Firecracker)
-   decides, and the verdict moves the record to revision 1.0.
+   decides, and the verdict goes into the record.
 9. **The development loop without KVM.** Follows the sandbox: a VMM with a
    macOS port runs the loop by itself, the others need a container
    fallback behind `--insecure`.
