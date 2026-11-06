@@ -166,3 +166,4 @@ XRs
 YAML
 Zig
 zig-protobuf
+guestfn.crossplane.io

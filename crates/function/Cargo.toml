@@ -38,6 +38,9 @@ prost = "0.14"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "gzip", "query", "json"] }
 serde.workspace = true
 serde_json.workspace = true
+# The Input's JSON Schema, from which crd.rs generates the CRD under
+# package/input/ (the doc comments are the descriptions).
+schemars = "1"
 pem = "4"
 # Signs Sigstore bundles in cosign::testutil (feature testutil) only.
 p256 = { version = "0.14", features = ["ecdsa", "pem"], optional = true }

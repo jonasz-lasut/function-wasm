@@ -5,13 +5,13 @@ operators who need to predict what the runtime admits. It lists every field
 of the step's Input and what the runtime enforces for each. Crossplane never
 installs the Input's CRD, so the runtime is the only enforcement: it checks
 every rule on every request, and `function validate` applies the same checks
-offline. The CRD under `package/input/` is for tooling and IDEs only.
+offline. The CRD under `package/input/` is for tooling and IDEs only, and
+the runtime generates it from its own types.
 
-The Input is `apiVersion: wasm.fn.crossplane.io/v1`, `kind: Input`. A step
-that still says `wasm.fn.crossplane.io/v1beta1` (the same fields) is accepted
-throughout 1.x: `function validate` prints a warning under it, the runtime
-logs one line per request naming `v1`, and 2.0.0 removes it
-([Compatibility](../contract/compatibility.md)).
+The Input is `apiVersion: guestfn.crossplane.io/v1`, `kind: Input`. A step
+that still says `wasm.fn.crossplane.io/v1` or `v1beta1`, the group of 0.6
+and earlier with the same fields, is refused with a sentence that states
+the new group ([Compatibility](../contract/compatibility.md)).
 
 ```yaml
 module:                        # required
@@ -87,7 +87,7 @@ on the step:
       namespace: crossplane-system
       name: ghcr-pull
   input:
-    apiVersion: wasm.fn.crossplane.io/v1
+    apiVersion: guestfn.crossplane.io/v1
     kind: Input
     module:
       type: OCI
@@ -112,7 +112,7 @@ says otherwise.
 
 ```yaml
     input:
-      apiVersion: wasm.fn.crossplane.io/v1
+      apiVersion: guestfn.crossplane.io/v1
       kind: Input
       module:
         type: OCI

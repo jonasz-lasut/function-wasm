@@ -135,7 +135,7 @@ impl Step {
 
     fn input(&self) -> Value {
         let mut input = json!({
-            "apiVersion": "wasm.fn.crossplane.io/v1",
+            "apiVersion": "guestfn.crossplane.io/v1",
             "kind": "Input",
             "module": self.module,
         });

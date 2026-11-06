@@ -166,11 +166,11 @@ fn warn_example_config(dir: &Path, m: &Manifest) {
         Ok(None) => {}
         Ok(Some(step)) => {
             // The runtime's words on every request carrying such a step.
-            if step.api_version == function_wasm::input::API_VERSION_V1BETA1 {
+            if function_wasm::input::is_legacy_group(&step.api_version) {
                 println!(
                     "warning: {}: {}",
                     path.display(),
-                    function_wasm::input::V1BETA1_DEPRECATION
+                    function_wasm::input::renamed_group(&step.api_version)
                 );
             }
             if let Err(e) = m.validate_config(step.config.as_ref()) {
@@ -508,7 +508,7 @@ mod tests {
     }
 
     /// The example-config check finds the step under the current apiVersion
-    /// and under the deprecated one the runtime still serves, and reads
+    /// and under the renamed group the runtime refuses by name, and reads
     /// which it was so the build line can say so.
     #[test]
     fn the_example_step_is_found_under_either_api_version() {
@@ -516,7 +516,7 @@ mod tests {
         let path = dir.path().join("composition.yaml");
         for (api_version, want) in [
             (function_wasm::input::API_VERSION, true),
-            (function_wasm::input::API_VERSION_V1BETA1, true),
+            ("wasm.fn.crossplane.io/v1", true),
             ("pt.fn.crossplane.io/v1beta1", false),
         ] {
             std::fs::write(
