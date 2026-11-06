@@ -1,6 +1,6 @@
 # The oci profile: the function-oci package (docs/one-pager-oci-runtime.md)
 # with /dev/kvm granted by the node's device plugin (kvm-device-plugin.yaml
-# beside this file: the pod requests one squat.ai/kvm, as the operator
+# beside this file: the pod requests one devic.es/kvm, as the operator
 # page documents), the default profile's policy and verifiers, and the
 # registry CA trusted beside the image's bundle. A separate Function
 # (function-oci) runs under it, beside function-wasm; the suite composes
@@ -26,7 +26,7 @@ spec:
             - --debug
             resources:
               limits:
-                squat.ai/kvm: "1"
+                devic.es/kvm: "1"
             env:
             - name: SSL_CERT_FILE
               value: /etc/function-wasm/registry-ca/ca.crt

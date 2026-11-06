@@ -243,15 +243,22 @@ local.xpkg.deploy.function.function-oci: FUNCTION_RUNTIME_CONFIG := e2e-oci
 # (the OCI workflow's cluster job gets it from the build job).
 # The device plugin that grants the node's /dev/kvm to function-oci's pod
 # (crates/e2e/profiles/oci/kvm-device-plugin.yaml), applied before the
-# Function so its pod, which requests one squat.ai/kvm, can schedule.
+# Function so its pod, which requests one devic.es/kvm, can schedule. When
+# the node never allocates one, the plugin's log and the node's device
+# say why.
 e2e.oci.kvm: $(KUBECTL)
 	@$(INFO) installing the kvm device plugin
 	@$(KUBECTL) apply -f crates/e2e/profiles/oci/kvm-device-plugin.yaml || $(FAIL)
 	@$(KUBECTL) -n kube-system rollout status daemonset/generic-device-plugin --timeout=120s || $(FAIL)
 	@n=""; for i in $$(seq 1 60); do \
-		n=$$($(KUBECTL) get nodes -o jsonpath='{.items[0].status.allocatable.squat\.ai/kvm}'); \
+		n=$$($(KUBECTL) get nodes -o jsonpath='{.items[0].status.allocatable.devic\.es/kvm}'); \
 		if [ -n "$$n" ] && [ "$$n" != "0" ]; then break; fi; sleep 2; \
-	done; if [ -z "$$n" ] || [ "$$n" = "0" ]; then echo "the node allocates no squat.ai/kvm"; $(FAIL); fi
+	done; if [ -z "$$n" ] || [ "$$n" = "0" ]; then \
+		echo "the node allocates no devic.es/kvm"; \
+		$(KUBECTL) get nodes -o jsonpath='{.items[0].status.allocatable}'; echo; \
+		$(KUBECTL) -n kube-system logs daemonset/generic-device-plugin --tail=100; \
+		docker exec $(KIND_CLUSTER_NAME)-control-plane ls -l /dev/kvm; \
+		$(FAIL); fi
 	@$(OK) installing the kvm device plugin
 
 e2e.oci.up: $(if $(wildcard $(E2E_OCI_GUEST)),,e2e.oci.guest) controlplane.up e2e.crossplane e2e.oci.kvm e2e.setup xpkg.build.function-oci local.xpkg.deploy.function.function-oci
