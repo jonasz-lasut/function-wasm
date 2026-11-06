@@ -101,7 +101,7 @@ impl Oci {
         }
         if let Err(e) = std::fs::File::open(KVM_DEVICE) {
             return Err(Error(format!(
-                "cannot open {KVM_DEVICE}: {e}; the OCI runtime boots a microVM per request and needs the device mounted into its pod (docs/operators/oci-runtime.md)"
+                "cannot open {KVM_DEVICE}: {e}; the OCI runtime boots a microVM per request and needs the device granted to its pod (docs/operators/oci-runtime.md)"
             )));
         }
         Self::with_sandbox(config, options, sandbox)

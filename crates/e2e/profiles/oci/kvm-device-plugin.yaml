@@ -1,0 +1,65 @@
+# The device plugin that grants /dev/kvm to function-oci's pod
+# (docs/operators/oci-runtime.md, "Node requirements"): an unprivileged
+# container opens only the devices its runtime admitted into its device
+# cgroup, and a hostPath mount of a device node admits nothing, so the
+# e2e-oci runtime config requests squat.ai/kvm from this plugin instead.
+# The plugin publishes no release tags: the digest pins the build.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: generic-device-plugin
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: generic-device-plugin
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: generic-device-plugin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: generic-device-plugin
+    spec:
+      priorityClassName: system-node-critical
+      tolerations:
+      - operator: Exists
+        effect: NoExecute
+      - operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: generic-device-plugin
+        image: ghcr.io/squat/generic-device-plugin:latest@sha256:8dc84958301f054bf72d9753a7a2c9af3d6642a9844b34d1171b3f2cdb4a15f6
+        args:
+        - --device
+        - |
+          name: kvm
+          groups:
+          - count: 64
+            paths:
+            - path: /dev/kvm
+        resources:
+          requests:
+            cpu: 50m
+            memory: 10Mi
+          limits:
+            cpu: 50m
+            memory: 20Mi
+        ports:
+        - containerPort: 8080
+          name: http
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: device-plugin
+          mountPath: /var/lib/kubelet/device-plugins
+        - name: dev
+          mountPath: /dev
+      volumes:
+      - name: device-plugin
+        hostPath:
+          path: /var/lib/kubelet/device-plugins
+      - name: dev
+        hostPath:
+          path: /dev
+  updateStrategy:
+    type: RollingUpdate

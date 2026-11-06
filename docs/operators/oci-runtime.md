@@ -28,7 +28,32 @@ artifacts, under the same key and the same LRU sweep. The module cache's
 
 ## Node requirements
 
-The pod needs `/dev/kvm`. Mount it through a `DeploymentRuntimeConfig`:
+The pod needs `/dev/kvm`. An unprivileged container opens only the
+devices its container runtime admitted into its device cgroup, and a
+`hostPath` mount of the device node admits nothing: the node appears in
+the container and every `open` of it fails with `Operation not permitted`.
+Kubernetes admits a device through a [device
+plugin](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/):
+the plugin advertises the node's `/dev/kvm` as a resource and the
+kubelet admits the device into the container of a pod that requests one.
+A plugin that advertises any device path is
+[generic-device-plugin](https://github.com/squat/generic-device-plugin);
+run it as a DaemonSet with the device named:
+
+```yaml
+args:
+- --device
+- |
+  name: kvm
+  groups:
+  - count: 64
+    paths:
+    - path: /dev/kvm
+```
+
+`count` is how many pods may hold the device at once, since every one of
+them shares the one `/dev/kvm`. Then request it through a
+`DeploymentRuntimeConfig`:
 
 ```yaml
 apiVersion: pkg.crossplane.io/v1beta1
@@ -44,25 +69,27 @@ spec:
         spec:
           containers:
           - name: package-runtime
-            volumeMounts:
-            - name: kvm
-              mountPath: /dev/kvm
-          volumes:
-          - name: kvm
-            hostPath:
-              path: /dev/kvm
-              type: CharDevice
+            resources:
+              limits:
+                squat.ai/kvm: "1"
 ```
 
 The container runs as the package's non-root user, which needs read and
 write access to the device: a `0666` mode on the node, or the `kvm`
 group's id among the pod's `supplementalGroups`. The pod needs no
-`privileged` flag and no capability. The runtime refuses to start without
-the device and says so:
+`privileged` flag and no capability. A `privileged: true` container is
+the other way to the device, since the kubelet admits every device of the
+node into it, at the cost of the boundary the pod keeps otherwise. The end-to-end
+suite's `oci` profile runs the plugin
+(`crates/e2e/profiles/oci/kvm-device-plugin.yaml`). The runtime refuses
+to start without the device and says so:
 
 ```text
-cannot open /dev/kvm: No such file or directory; the OCI runtime boots a microVM per request and needs the device mounted into its pod
+cannot open /dev/kvm: No such file or directory; the OCI runtime boots a microVM per request and needs the device granted to its pod
 ```
+
+`Operation not permitted` in place of `No such file or directory` is the
+`hostPath` mount: the node is there, the device isn't admitted.
 
 A VM's memory comes out of the pod's. The container's memory limit
 needs `--module-memory-limit` plus 32 MiB for each of

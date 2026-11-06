@@ -284,11 +284,18 @@ paravirtual clock, its randomness from virtio RNG. Both are what a
 container gets.
 
 **Node requirements.** The pod needs `/dev/kvm`. The install page documents
-a `DeploymentRuntimeConfig` with a `hostPath` of type `CharDevice` and the
-`kvm` group among the container's supplemental groups. The runtime refuses
-to serve with a sentence that states the device when it can't open it. The
-VMM runs as the pod's user, and the pod's cgroup is the jail, without
-`privileged` and without `CAP_SYS_ADMIN`.
+a device plugin that advertises the node's `/dev/kvm` as a resource
+(generic-device-plugin) and a `DeploymentRuntimeConfig` that requests one,
+with the `kvm` group among the container's supplemental groups. A
+`hostPath` mount of the device, the first draft's recipe, puts the node
+in the container but not in its device cgroup, so every `open` of it
+fails with `Operation not permitted` in an unprivileged pod. The e2e
+profile's first run found this. The runtime exited at startup, so
+Crossplane's gRPC client, which resolves a function's headless Service,
+found the Service empty. The runtime refuses to serve with a sentence that states
+the device when it can't open it. The VMM runs as the pod's user, and the
+pod's cgroup is the jail, without `privileged` and without
+`CAP_SYS_ADMIN`.
 
 **The development loop.** A VMM with a macOS port runs the loop on a
 laptop as it runs in the pod. For the candidates without one, a container
