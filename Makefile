@@ -92,14 +92,18 @@ FUNCTION_RUNTIME_CONFIG := e2e-default
 # directory of prebuilt function, init, firecracker and vmlinux (the OCI
 # workflow's build job hands one over); without it they are built here.
 FIRECRACKER_VERSION ?= v1.17.0
-GUEST_KERNEL_CI ?= v1.15
-GUEST_KERNEL_VERSION ?= 6.1.155
+# The guest kernel is the one Firecracker's CI builds from Amazon Linux's
+# microvm kernel (docs/kernel-policy.md there: 6.18 since Firecracker
+# 1.16.1, 6.1 past its support date), published under a dated prefix of
+# its artifact bucket.
+GUEST_KERNEL_CI ?= 20261105-6ea6634994fa-0
+GUEST_KERNEL_VERSION ?= 6.18.56
 OCI_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),aarch64,x86_64)
 # The checksums Dockerfile.oci pins, per architecture.
 FIRECRACKER_SHA256_x86_64 := 06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558
 FIRECRACKER_SHA256_aarch64 := e351ebe4f7a16b5873bbd51005d2e6767103cff4d5ebc829df2d3f95a93e2256
-GUEST_KERNEL_SHA256_x86_64 := e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2
-GUEST_KERNEL_SHA256_aarch64 := e3544b10603acbf3db492cb52e000d22ba202cb4b63b9add027565683e11c591
+GUEST_KERNEL_SHA256_x86_64 := af348226aa2a25b846156150d5cdb5dae3bf2a022f1db176e3a2b9a3249817bf
+GUEST_KERNEL_SHA256_aarch64 := 5e1990cd2f6e1c70196955b9405e32a5059f9f0a2c839478bc4f064a08f3a2ff
 MUSL_TARGET := $(OCI_ARCH)-unknown-linux-musl
 OCI_TOOLS := .cache/tools/oci
 E2E_OCI_IMAGE := function-oci-e2e:dev
