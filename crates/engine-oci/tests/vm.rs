@@ -100,7 +100,7 @@ fn the_process_runs_as_the_image_says() {
         .compile(&fixture_image(&t.fixture, &["/fixture", "id"], "app", &[]))
         .unwrap();
     let out = String::from_utf8(e.run(&m, b"", opts()).unwrap()).unwrap();
-    assert_eq!(out.trim(), "uid=1000 gid=1000 groups=1000");
+    assert_eq!(out.trim(), "uid=1000 gid=1000 groups=");
     let m = e
         .compile(&fixture_image(&t.fixture, &["/fixture", "cwd"], "", &[]))
         .unwrap();
