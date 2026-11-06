@@ -168,8 +168,10 @@ pub mod runtime {
     use crate::egress::Egress;
     use crate::resolver::Resolver;
     use crate::runner::WasmFunction;
-    use function_wasm_engine::concurrency::StepSlots;
-    use function_wasm_engine::{Config, Engine};
+    use function_wasm_engine_api::Config;
+    use function_wasm_engine_api::concurrency::StepSlots;
+
+    use crate::engine::Selected;
 
     /// The module size ceiling the suites run with.
     pub const MAX_MODULE_SIZE: u64 = 128 << 20;
@@ -221,7 +223,7 @@ pub mod runtime {
         }
 
         pub fn build(self) -> WasmFunction {
-            let engine = Arc::new(Engine::new(Config::default()).expect("engine"));
+            let engine = Arc::new(Selected::new(Config::default()).expect("engine"));
             let rules = if self.loopback {
                 IpRules {
                     blocked: Vec::new(),

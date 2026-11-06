@@ -11,6 +11,7 @@ pub mod cosign;
 pub mod crd;
 pub mod egress;
 pub mod egress_rules;
+pub mod engine;
 pub mod from;
 pub mod grpc;
 pub mod grpcmetrics;

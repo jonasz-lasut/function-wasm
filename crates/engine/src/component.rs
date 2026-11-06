@@ -13,7 +13,7 @@ use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiVie
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 use crate::{
-    ARGV0, CallState, Config, EPOCH_TICK, Engine, Error, HostTimer, RunOptions,
+    ARGV0, CallState, Config, EPOCH_TICK, Error, HostTimer, RunOptions, Wasmtime,
     run::deadline_ticks, sandbox,
 };
 
@@ -121,7 +121,7 @@ pub(crate) fn linker(engine: &wasmtime::Engine) -> Result<wasmtime::component::L
 /// world's `run` export driven on the tokio runtime (ambient in tests, the
 /// caller's when the engine runs off spawn_blocking).
 pub(crate) fn execute(
-    engine: &Engine,
+    engine: &Wasmtime,
     m: &crate::Module,
     request: &[u8],
     opts: &RunOptions,

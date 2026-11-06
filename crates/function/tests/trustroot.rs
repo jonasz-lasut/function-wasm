@@ -16,7 +16,7 @@ use function_wasm::testing::registry::Registry;
 use function_wasm::testing::tuf::Repository;
 use function_wasm::testing::{COSIGN_SIGN_PREDICATE, Shape, Sigstore, guests};
 use function_wasm::trustroot::{Origin, Outcome, Refresher};
-use function_wasm_engine::metrics;
+use function_wasm_engine_api::metrics;
 
 const INTERVAL: Duration = Duration::from_secs(3600);
 

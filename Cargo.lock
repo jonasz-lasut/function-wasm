@@ -1473,6 +1473,7 @@ dependencies = [
  "function-sdk-rust",
  "function-wasm",
  "function-wasm-engine",
+ "function-wasm-engine-api",
  "getrandom 0.4.3",
  "hex",
  "hmac",
@@ -1538,6 +1539,7 @@ dependencies = [
  "bytes",
  "function-sdk-rust",
  "function-wasm-engine",
+ "function-wasm-engine-api",
  "http",
  "http-body-util",
  "pbjson-types",
@@ -1556,6 +1558,14 @@ dependencies = [
  "wat",
  "wit-component 0.258.3",
  "wit-parser 0.258.3",
+]
+
+[[package]]
+name = "function-wasm-engine-api"
+version = "0.1.0"
+dependencies = [
+ "prometheus-client",
+ "thiserror",
 ]
 
 [[package]]

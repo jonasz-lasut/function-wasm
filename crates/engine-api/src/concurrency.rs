@@ -15,7 +15,7 @@ const DEADLINE_EXCEEDED: &str = "deadline exceeded";
 /// turn so one hot module cannot take every slot from every other. With one
 /// key in use it degrades to a FIFO.
 #[derive(Debug)]
-pub(crate) struct FairScheduler {
+pub struct FairScheduler {
     total: usize,
     state: Mutex<SchedulerState>,
 }
@@ -35,7 +35,7 @@ struct Waiter {
 }
 
 #[derive(Debug)]
-pub(crate) struct SlotGuard<'a> {
+pub struct SlotGuard<'a> {
     scheduler: &'a FairScheduler,
 }
 
@@ -48,7 +48,7 @@ impl Drop for SlotGuard<'_> {
 }
 
 impl FairScheduler {
-    pub(crate) fn new(slots: usize) -> FairScheduler {
+    pub fn new(slots: usize) -> FairScheduler {
         FairScheduler {
             total: slots,
             state: Mutex::new(SchedulerState {
@@ -62,7 +62,7 @@ impl FairScheduler {
     /// Waits for a slot until deadline. A wait the deadline cuts short held
     /// nothing; a grant that races the deadline is handed on to the next
     /// waiter rather than leaked.
-    pub(crate) fn acquire(&self, key: &str, deadline: Instant) -> Result<SlotGuard<'_>, String> {
+    pub fn acquire(&self, key: &str, deadline: Instant) -> Result<SlotGuard<'_>, String> {
         static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let (tx, rx): (SyncSender<()>, Receiver<()>) = sync_channel(1);
         {
@@ -144,14 +144,14 @@ impl FairScheduler {
 /// reservation that cannot fit waits under the run's deadline. Callers pair
 /// reserve and release themselves (the engine's RunLimiter owns that).
 #[derive(Debug)]
-pub(crate) struct MemPool {
+pub struct MemPool {
     total: u64,
     used: Mutex<u64>,
     freed: Condvar,
 }
 
 impl MemPool {
-    pub(crate) fn new(total: u64) -> MemPool {
+    pub fn new(total: u64) -> MemPool {
         MemPool {
             total,
             used: Mutex::new(0),
@@ -159,7 +159,7 @@ impl MemPool {
         }
     }
 
-    pub(crate) fn reserve(&self, n: u64, deadline: Instant) -> Result<(), String> {
+    pub fn reserve(&self, n: u64, deadline: Instant) -> Result<(), String> {
         let mut used = self.used.lock().expect("poisoned");
         loop {
             if *used + n <= self.total {
@@ -186,7 +186,7 @@ impl MemPool {
         }
     }
 
-    pub(crate) fn release(&self, n: u64) {
+    pub fn release(&self, n: u64) {
         let mut used = self.used.lock().expect("poisoned");
         *used -= n;
         // One release can admit several runs: every waiter re-checks.
@@ -290,7 +290,7 @@ impl StepSlots {
 }
 
 /// Bytes with binary-SI suffixes, as wait refusals render them.
-pub(crate) fn format_bytes(b: u64) -> String {
+pub fn format_bytes(b: u64) -> String {
     if b >= 1 << 30 && b.is_multiple_of(1 << 30) {
         return format!("{}Gi", b >> 30);
     }

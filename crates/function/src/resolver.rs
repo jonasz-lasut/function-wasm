@@ -257,7 +257,7 @@ impl Resolver {
         };
         let start = std::time::Instant::now();
         let result = self.fetch_inner(resolved);
-        function_wasm_engine::metrics::FETCH_DURATION
+        function_wasm_engine_api::metrics::FETCH_DURATION
             .with_label_values(&[source])
             .observe(start.elapsed().as_secs_f64());
         result
@@ -370,7 +370,7 @@ impl Resolver {
         digest: &str,
         fetch: impl FnOnce() -> Result<Vec<u8>, String>,
     ) -> Result<Vec<u8>, String> {
-        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
+        use function_wasm_engine_api::metrics::{self, CACHE_EVENTS};
         if let Some(blobs) = &self.blobs {
             if let Some(b) = blobs.get(digest) {
                 CACHE_EVENTS

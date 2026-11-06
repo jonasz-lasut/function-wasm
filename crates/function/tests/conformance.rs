@@ -9,6 +9,7 @@
 //! Run-specific values (temp directories, loopback ports) are replaced
 //! with stable placeholders before comparing.
 
+use function_wasm::engine::Engine as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -367,7 +368,7 @@ fn validate_resolve_matches_the_goldens() {
     // A wasmtime compiled artifact (.cwasm) named as a module source: the
     // runtime refuses it by name rather than as malformed wasm.
     let artifact = {
-        let e = function_wasm_engine::Engine::new(function_wasm_engine::Config::default())
+        let e = function_wasm::engine::Selected::new(function_wasm_engine_api::Config::default())
             .expect("engine");
         let m = e.compile(&ok).expect("compile");
         e.serialize(&m).expect("serialize")
@@ -479,6 +480,12 @@ fn validate_resolve_manifest_matches_the_goldens() {
         ("abiv1", "abi: 1\nname: greeter\nversion: 0.1.0\n"),
         // An ABI this runtime does not implement at all.
         ("abiunknown", "abi: 3\nname: greeter\nversion: 0.1.0\n"),
+        // The OCI runtime's module type (docs/one-pager-oci-runtime.md):
+        // valid, and this package says which package serves it.
+        (
+            "typeoci",
+            "type: oci\nabi: 1\nname: greeter\nversion: 0.1.0\n",
+        ),
         // A config.schema reaching outside itself: refused at load, never
         // fetched (the port 1 URL would fail, which is not the point).
         (

@@ -113,6 +113,11 @@ Crossplane RunFunctionResponse (whatever the module produced)
 
 ```
 crates/function/            the runtime crate: a library (everything below) + the `function` binary
+  src/engine.rs               the engine behind the runtime, behind engine-api's Engine trait:
+                              a Cargo feature selects it (`wasm`, the default: Wasmtime from
+                              crates/engine; the OCI runtime adds `oci`) and the crate names it
+                              only as `engine::Selected` and `engine::Module`, so a second
+                              engine is a second feature and no other change here
   src/main.rs                 clap CLI: serve (default) + validate subcommand; every ceiling flag
                               (module-dir, max-module-size, module-timeout, module-memory-limit,
                               module-stack-limit, module-compile-timeout, sandbox-policy-file, cosign-key,
@@ -223,7 +228,9 @@ crates/function/            the runtime crate: a library (everything below) + th
                               per hop, fixed budgets, the process-wide rate limit, one audit line
                               and http_requests_total per request
   src/manifest.rs             the module manifest: parse (artifact layer), load (guestfn.yaml,
-                              unknown top-level fields refused), validate, check (grants, config
+                              unknown top-level fields refused), validate (type wasm|oci, the
+                              abi the type's contract takes), check (a type: oci manifest refused
+                              by name - the OCI runtime's package serves it; grants, config
                               schema via jsonschema, minRuntime vs runtime_version()), summary, json
   src/from.rs, input.rs,      module.from fencing, the Input types, egress rule, env binding and
   egress_rules.rs,            required-credential shapes, quantity/duration parsing, env
@@ -234,8 +241,18 @@ crates/function/            the runtime crate: a library (everything below) + th
   tests/raw_client.rs         a raw-codec gRPC client proving byte transparency end to end
   testdata/validate/          the validate fixture corpus (one file per refusal family, policies, XR)
   testdata/conformance/       the recorded goldens
-crates/engine/              the wasmtime engine - the only crate that imports wasmtime
-  src/lib.rs                  Engine (compile + checkABI, inspect → the full module shape, leases,
+crates/engine-api/          what every engine shares and what the runtime holds one to (#239):
+  src/lib.rs                  the Engine trait (compile, inspect, serialize, deserialize_file,
+                              run, version, config), Config (the ceilings), RunOptions (one run's
+                              narrowing and grants), Inspection and Extern, Error
+  src/wire.rs,                the egress seam (HttpRequester, one send's request and response),
+  concurrency.rs,             the fair run slots, the memory pool and the per-digest step slots,
+  duration.rs, metrics.rs     Go-style durations, the Prometheus series (names, labels and
+                              buckets are contract; see "Metrics"). No WebAssembly here
+crates/engine/              the Wasmtime engine - the only crate that imports wasmtime; it
+                            implements engine-api's Engine trait as `Wasmtime` and re-exports
+                            the api crate, so its users and tests read everything from it
+  src/lib.rs                  Wasmtime (compile + checkABI, inspect → the full module shape, leases,
                               fair scheduler, memory pool, on-demand epoch ticker), RunOptions
                               (limits + private tmp/env + HTTP + deadline), version() namespacing
                               the compiled cache (build.rs reads wasmtime's version from Cargo.lock)

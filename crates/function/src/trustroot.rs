@@ -23,8 +23,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
 
-use function_wasm_engine::duration;
-use function_wasm_engine::metrics::{LabeledCounter, PlainGauge, plain_gauge};
+use function_wasm_engine_api::duration;
+use function_wasm_engine_api::metrics::{LabeledCounter, PlainGauge, plain_gauge};
 use sigstore_trust_root::SigstoreInstance;
 use sigstore_tuf::{FileStore, HttpRepository, StoreRepository, Updater};
 
