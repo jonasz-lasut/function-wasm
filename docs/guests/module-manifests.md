@@ -39,8 +39,8 @@ The fields:
 
 - `type`: `wasm` or `oci`. Leave it out for a WebAssembly component, the
   default. `oci` marks an OCI image for the OCI runtime
-  ([design record](../one-pager-oci-runtime.md)), which function-wasm
-  refuses by name until that package exists.
+  ([#239](https://github.com/jonasz-lasut/function-wasm/issues/239)), which
+  function-wasm refuses by name until that package exists.
 - `abi`: the version of the type's contract. Required. `2` is the only
   value for `wasm`, the component world, and `1` the only value for
   `oci`, the process contract.
