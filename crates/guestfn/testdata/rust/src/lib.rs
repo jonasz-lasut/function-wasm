@@ -305,7 +305,7 @@ mod tests {
 
     fn input(config: Option<Value>) -> Struct {
         let mut entries = vec![
-            ("apiVersion", string("wasm.fn.crossplane.io/v1")),
+            ("apiVersion", string("guestfn.crossplane.io/v1")),
             ("kind", string("Input")),
         ];
         if let Some(c) = config {

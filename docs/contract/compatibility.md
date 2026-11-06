@@ -10,7 +10,7 @@ for a rule that didn't exist before.
 
 ## What's stable
 
-- The Input, `wasm.fn.crossplane.io/v1`: its field names, types and
+- The Input, `guestfn.crossplane.io/v1`: its field names, types and
   semantics. A field the runtime doesn't know is ignored, and `function
   validate` warns naming it; the removed `policy` and `sandbox` fields it
   refuses by name.
@@ -18,7 +18,7 @@ for a rule that didn't exist before.
 - The wording of refusals and fatal results, as the conformance goldens pin
   it (`crates/function/testdata/conformance/`). Operators grep logs and XR
   conditions for these strings.
-- The module manifest (`wasmfn.yaml`): its fields and what each requests.
+- The module manifest (`guestfn.yaml`): its fields and what each requests.
 - The ABI v2 world, which has its own version (see [ABI v2](../abi-v2.md)).
 - The metric names and labels (`function_wasm_*`, `grpc_server_*`).
 - `function validate`: its exit codes (0 admitted, 1 refused, 2 the tool
@@ -48,6 +48,7 @@ A removal runs in two steps:
    use it, and the runtime logs one line per load or request that does.
 2. The next major release removes it.
 
-`wasm.fn.crossplane.io/v1beta1` is the current instance: it's accepted
-throughout 1.x with the warning and removed in 2.0.0. ABI v1 set the
-precedent: deprecated in 0.6.0, removed in 1.0.0.
+ABI v1 set the precedent: deprecated in 0.6.0, removed in 1.0.0. Before
+1.0 a rename may skip the deprecation step: the Input's group moved from
+`wasm.fn.crossplane.io` to `guestfn.crossplane.io` outright, and the
+runtime refuses the old group by name.

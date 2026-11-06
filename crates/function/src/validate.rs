@@ -15,7 +15,9 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use function_wasm_engine::{Config, Engine, duration};
+use function_wasm_engine_api::{Config, duration};
+
+use crate::engine::{Engine as _, Selected};
 
 use crate::admission;
 use crate::authz::OperatorPolicy;
@@ -29,7 +31,7 @@ const COMPOSITION_KIND: &str = "Composition";
 #[derive(clap::Args, Debug)]
 pub struct ValidateArgs {
     /// Composition or Input files, YAML or JSON, multi-document; - reads
-    /// stdin. Every pipeline step whose input is a wasm.fn.crossplane.io/v1
+    /// stdin. Every pipeline step whose input is a guestfn.crossplane.io/v1
     /// Input is checked, and every bare Input document.
     #[arg(value_name = "file", required = true)]
     files: Vec<String>,
@@ -253,7 +255,7 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
     if args.resolve {
         // wasmtime reads a module only by compiling it: --resolve pays the
         // compile the runtime would, for the verdict the runtime would reach.
-        engine = Some(Engine::new(ceilings).map_err(|e| e.to_string())?);
+        engine = Some(Selected::new(ceilings).map_err(|e| e.to_string())?);
         resolver = Some(Resolver::new(
             args.module_dir.clone(),
             args.max_module_size << 20,
@@ -465,7 +467,7 @@ fn find_steps(file: &str, docs: &[serde_json::Value], function_name: Option<&str
 /// Judges steps against one set of ceilings.
 struct Validator {
     ceilings: Config,
-    engine: Option<Engine>,
+    engine: Option<Selected>,
     resolver: Option<Resolver>,
     xr: Option<serde_json::Value>,
     policy: Option<std::sync::Arc<OperatorPolicy>>,
@@ -779,9 +781,6 @@ impl Validator {
     /// The short fixed list of accepted-but-unwise findings.
     fn warnings(&self, input: &Input) -> Vec<String> {
         let mut out = Vec::new();
-        if input.api_version == crate::input::API_VERSION_V1BETA1 {
-            out.push(crate::input::V1BETA1_DEPRECATION.to_string());
-        }
         if input.module.r#type == "Path" {
             out.push("module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest".to_string());
         }

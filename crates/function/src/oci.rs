@@ -26,7 +26,7 @@ const WASM_LAYER_TYPES: &[&str] = &[
 ];
 
 /// The media type of the artifact layer carrying the module manifest.
-pub const MANIFEST_LAYER_TYPE: &str = "application/vnd.wasmfn.manifest.v1+json";
+pub const MANIFEST_LAYER_TYPE: &str = "application/vnd.guestfn.manifest.v1+json";
 
 /// The media types of an OCI image manifest and image index.
 pub const OCI_MANIFEST_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";

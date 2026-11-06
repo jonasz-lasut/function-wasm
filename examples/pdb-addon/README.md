@@ -49,7 +49,7 @@ The platform team keeps the guardrails:
   module is never pulled. References must be pinned to a digest; a tag is
   refused.
 - **What the add-on can do.** Nothing beyond the response. Its manifest
-  (`wasmfn.yaml`) requires no capability, so it runs in function-wasm's
+  (`guestfn.yaml`) requires no capability, so it runs in function-wasm's
   default sandbox: no network, no filesystem, no environment, bounded time
   and memory. A tenant's code gets the request and nothing else, and what
   it returns is the desired state the next step sees. That is the point:
@@ -99,7 +99,7 @@ make render           # serve it with function-wasm and crossplane render exampl
 
 Each release publishes this example, signed keyless and attested, as
 `ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon:v<version>` (the version in
-`wasmfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
+`guestfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
 its reference pinned by digest. To run your own build instead, publish it
 with its manifest, then name the digest `guestfn push` prints in a WebApp
 (a WebApp naming the published add-on needs a `pullModule` permit for
@@ -116,7 +116,7 @@ The hook in the platform's Composition is the same step with `type: OCI`:
     functionRef:
       name: function-wasm
     input:
-      apiVersion: wasm.fn.crossplane.io/v1
+      apiVersion: guestfn.crossplane.io/v1
       kind: Input
       module:
         type: OCI
@@ -154,5 +154,5 @@ The step's config tunes the budget, checked against the manifest's schema:
   earlier desired state is kept.
 - `main.go` registers it with the vendored `internal/wasmfn` glue, which
   is the go scaffold's plumbing (`guestfn init`), kept identical to it.
-- `wasmfn.yaml`: the manifest `guestfn push` publishes: no requirements,
+- `guestfn.yaml`: the manifest `guestfn push` publishes: no requirements,
   and the config schema.

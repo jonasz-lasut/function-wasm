@@ -79,7 +79,7 @@ Composition; as a function-wasm module, that step is the platform team's own:
 - **It fails closed.** A missing EnvironmentConfig, a malformed policy, an
   XR without an environment, or a Crossplane that announces it cannot
   supply required resources is a fatal result, never a pass.
-- **It asks for nothing.** The manifest (`wasmfn.yaml`) requires no
+- **It asks for nothing.** The manifest (`guestfn.yaml`) requires no
   capability, and the component is built without `wasi:http`
   (`jco componentize -d http -d fetch-event`), so the gate could not reach
   the network even with a grant.
@@ -118,7 +118,7 @@ requirement round trip, the tags and the warnings.
 
 Each release publishes this example, signed keyless and attested, as
 `ghcr.io/jonasz-lasut/wasmfn/examples/policy-gate:v<version>` (the version in
-`wasmfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
+`guestfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
 its reference pinned by digest. To run your own build instead, publish it
 with its manifest, then reference the digest `guestfn push` prints as the last
 step of each Composition:
@@ -132,7 +132,7 @@ guestfn push ghcr.io/example/policy-gate:v0.1.1
     functionRef:
       name: function-wasm
     input:
-      apiVersion: wasm.fn.crossplane.io/v1
+      apiVersion: guestfn.crossplane.io/v1
       kind: Input
       module:
         type: OCI

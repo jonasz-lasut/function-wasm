@@ -4,7 +4,7 @@
 //! WebAssembly component implementing the `wasmfn:function` world
 //! (wit/wasmfn-function.wit), whose `run` export takes protobuf-encoded
 //! RunFunctionRequest bytes and returns RunFunctionResponse bytes. Every
-//! run gets a fresh store and instance; the Engine, its linker and the
+//! run gets a fresh store and instance; the Wasmtime, its linker and the
 //! compiled components are shared. A core module (ABI v1, removed in
 //! function-wasm 1.0.0) is refused at load with one sentence.
 //!
@@ -14,20 +14,20 @@
 
 mod component;
 pub mod componentize;
-pub mod concurrency;
-pub mod duration;
-pub mod metrics;
 mod run;
 mod sandbox;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testing;
 mod wasihttp;
-pub mod wire;
 
 pub use component::ABI_V2_WORLD;
-pub use wire::HttpRequester;
+// What every engine shares lives in function-wasm-engine-api; re-exported
+// here so this crate's users and tests read it from one place.
+pub use function_wasm_engine_api::{
+    Config, DEFAULT_MEMORY_LIMIT, DEFAULT_STACK_LIMIT, DEFAULT_TIMEOUT, Engine, Error, Extern,
+    HttpRequester, Inspection, RunOptions, concurrency, duration, metrics, wire,
+};
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::thread;
@@ -47,88 +47,6 @@ const ARGV0: &str = "function";
 // How often the engine's epoch counter advances; a run's deadline is
 // expressed in ticks, so it is also the timeout granularity.
 const EPOCH_TICK: Duration = Duration::from_millis(10);
-
-/// Defaults applied for unset Config fields.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
-pub const DEFAULT_MEMORY_LIMIT: u64 = 512 << 20;
-/// wasmtime's own default wasm stack ceiling, kept as ours.
-pub const DEFAULT_STACK_LIMIT: u64 = 512 << 10;
-
-/// An engine failure, whose message wording is pinned: the
-/// message is the contract (it ends up in an XR condition), not a type.
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct Error(pub(crate) String);
-
-/// Config bounds what a single run may consume, and how many may run at
-/// once.
-#[derive(Debug, Clone, Copy)]
-pub struct Config {
-    /// The wall-clock budget of one run.
-    pub timeout: Duration,
-    /// The cap on a guest's linear memory in bytes.
-    pub memory_limit: u64,
-    /// The cap on a guest's call stack in bytes; engine-wide, there is no
-    /// Input field to narrow it per run.
-    pub stack_limit: u64,
-    /// Resolve trap backtraces to file and line through the module's DWARF
-    /// (the runtime's --debug); costs DWARF parsing at compile time.
-    pub backtrace_details: bool,
-    /// Bounds how many runs execute at once on the whole engine, served
-    /// round-robin by module key; 0 leaves concurrency to the caller.
-    pub max_concurrent_runs: usize,
-    /// Bounds the aggregate linear-memory reservation of all running
-    /// modules in bytes: a component exports no top-level memory, so a run
-    /// reserves nothing up front and each growth is reserved as the guest
-    /// claims it, so only memory a guest actually claims counts against
-    /// the pool. 0 means no bound.
-    pub max_total_run_memory: u64,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            timeout: DEFAULT_TIMEOUT,
-            memory_limit: DEFAULT_MEMORY_LIMIT,
-            stack_limit: DEFAULT_STACK_LIMIT,
-            backtrace_details: false,
-            max_concurrent_runs: 0,
-            max_total_run_memory: 0,
-        }
-    }
-}
-
-/// RunOptions narrow one run's budget below the Engine's Config - what a
-/// Composition asks for through the Input's limits - and carry the sandbox
-/// grants the run gets. An unset budget field means the Config's value; a
-/// larger one is capped to it, so the Config stays the ceiling whatever a
-/// caller passes.
-#[derive(Default)]
-pub struct RunOptions {
-    /// This run's wall-clock budget.
-    pub timeout: Option<Duration>,
-    /// The request's own deadline (its gRPC timeout), when it carries one:
-    /// it bounds the waits for slots and memory and caps the run budget,
-    /// so a run never outlives the caller that asked for it.
-    pub deadline: Option<Instant>,
-    /// The cap on this run's linear memory in bytes.
-    pub memory_limit: Option<u64>,
-
-    /// Gives the guest a fresh, empty, writable /tmp for this run alone: a
-    /// directory created under the host's temp dir before the instance
-    /// exists and removed after it is gone, whatever the outcome.
-    pub private_tmp: bool,
-    /// The guest's environment variables (WASI environ); sorted by key.
-    pub env: BTreeMap<String, String>,
-
-    /// What answers the guest's wasi:http sends for this run. None is no
-    /// grant: every send gets a refusal, never a trap.
-    pub http: Option<Arc<dyn HttpRequester>>,
-
-    /// The module's description and digest, attached to guest log lines.
-    pub module: String,
-    pub digest: String,
-}
 
 /// A run's reservation from the shared memory pool; dropping it - with the
 /// store, whatever the run's outcome - releases the whole reservation.
@@ -304,32 +222,8 @@ impl std::fmt::Debug for Module {
     }
 }
 
-/// What Inspect reads from a component: its top-level imports and exports,
-/// the world's host imports among them, and, when the component does not
-/// implement the world, the load check's refusal.
-#[derive(Debug)]
-pub struct Inspection {
-    /// The world's host imports the component uses (its `log`).
-    pub host_imports: Vec<String>,
-    pub abi_error: Option<String>,
-    /// Exports in declaration order.
-    pub exports: Vec<Extern>,
-    /// Imports in declaration order.
-    pub imports: Vec<Extern>,
-}
-
-/// One top-level export or import of a component, as a listing shows it.
-#[derive(Debug, Clone)]
-pub struct Extern {
-    /// The world's name for it: `run`, `log`, or an interface such as
-    /// `wasi:cli/environment@0.2.6`.
-    pub name: String,
-    /// func, instance, type, resource, module, component or core func.
-    pub kind: String,
-}
-
-/// Engine compiles and runs guest modules. It is safe for concurrent use.
-pub struct Engine {
+/// Wasmtime compiles and runs guest modules. It is safe for concurrent use.
+pub struct Wasmtime {
     config: Config,
     pub(crate) inner: wasmtime::Engine,
     pub(crate) linker: wasmtime::component::Linker<component::Ctx>,
@@ -340,8 +234,8 @@ pub struct Engine {
     ticker: Option<thread::JoinHandle<()>>,
 }
 
-impl Engine {
-    /// Creates an Engine; dropping it stops its epoch ticker.
+impl Wasmtime {
+    /// Creates an Wasmtime; dropping it stops its epoch ticker.
     pub fn new(config: Config) -> Result<Self, Error> {
         // A pool smaller than the per-run ceiling could never admit a
         // full-limit run - caught at startup rather than as a fleet of
@@ -413,7 +307,7 @@ impl Engine {
             })
         };
 
-        Ok(Engine {
+        Ok(Wasmtime {
             config,
             inner,
             linker,
@@ -429,13 +323,13 @@ impl Engine {
 
     /// The engine's ceilings: what a run gets without RunOptions and the most
     /// it can get with them.
-    pub fn config(&self) -> Config {
+    pub(crate) fn config(&self) -> Config {
         self.config
     }
 
     /// Compiles component bytes and verifies they implement the world (the
     /// typecheck is the ABI check, once, at load).
-    pub fn compile(&self, wasm: &[u8]) -> Result<Module, Error> {
+    pub(crate) fn compile(&self, wasm: &[u8]) -> Result<Module, Error> {
         let start = std::time::Instant::now();
         let c = self.compiled(wasm)?;
         metrics::COMPILE_DURATION.observe(start.elapsed().as_secs_f64());
@@ -462,7 +356,7 @@ impl Engine {
     /// Compiles component bytes and reports what the runtime sees in them:
     /// the top-level items and the world typecheck's verdict - what
     /// `function validate --resolve` shows. The compiled code is dropped.
-    pub fn inspect(&self, wasm: &[u8]) -> Result<Inspection, Error> {
+    pub(crate) fn inspect(&self, wasm: &[u8]) -> Result<Inspection, Error> {
         let c = self.compiled(wasm)?;
         let abi_error = self.pre(c.clone()).err().map(|e| e.to_string());
         let ty = c.component_type();
@@ -505,7 +399,7 @@ impl Engine {
     /// Returns wasmtime's compiled artifact for m: machine code that this
     /// engine - same wasmtime version, same host - can load again with
     /// deserialize_file instead of recompiling.
-    pub fn serialize(&self, m: &Module) -> Result<Vec<u8>, Error> {
+    pub(crate) fn serialize(&self, m: &Module) -> Result<Vec<u8>, Error> {
         m.inner
             .serialize()
             .map_err(|e| Error(format!("cannot serialize module: {e}")))
@@ -516,7 +410,7 @@ impl Engine {
     /// refuses artifacts from another version or host, and the world is
     /// checked again, so a stale or foreign artifact is an error the caller
     /// treats as a cache miss.
-    pub fn deserialize_file(&self, path: &std::path::Path) -> Result<Module, Error> {
+    pub(crate) fn deserialize_file(&self, path: &std::path::Path) -> Result<Module, Error> {
         // The artifact says what it is; one a pre-1.0 runtime compiled from
         // a core module is refused like the module itself would be.
         let kind = wasmtime::Engine::detect_precompiled_file(path).map_err(|e| {
@@ -574,7 +468,12 @@ impl Engine {
     /// (instantiation failure, trap, exit, deadline, memory limit or the
     /// guest's own error string) and carries no response. Blocking: run it
     /// off the async executor.
-    pub fn run(&self, m: &Module, request: &[u8], opts: RunOptions) -> Result<Vec<u8>, Error> {
+    pub(crate) fn run(
+        &self,
+        m: &Module,
+        request: &[u8],
+        opts: RunOptions,
+    ) -> Result<Vec<u8>, Error> {
         run::run(self, m, request, opts)
     }
 
@@ -603,7 +502,41 @@ impl Engine {
     }
 }
 
-impl Drop for Engine {
+/// The runtime's seam: the inherent methods above, through the trait every
+/// engine implements.
+impl Engine for Wasmtime {
+    type Module = Module;
+
+    fn config(&self) -> Config {
+        self.config()
+    }
+
+    fn compile(&self, bytes: &[u8]) -> Result<Module, Error> {
+        self.compile(bytes)
+    }
+
+    fn inspect(&self, bytes: &[u8]) -> Result<Inspection, Error> {
+        self.inspect(bytes)
+    }
+
+    fn serialize(&self, m: &Module) -> Result<Vec<u8>, Error> {
+        self.serialize(m)
+    }
+
+    fn deserialize_file(&self, path: &std::path::Path) -> Result<Module, Error> {
+        self.deserialize_file(path)
+    }
+
+    fn run(&self, m: &Module, request: &[u8], opts: RunOptions) -> Result<Vec<u8>, Error> {
+        self.run(m, request, opts)
+    }
+
+    fn version() -> String {
+        version()
+    }
+}
+
+impl Drop for Wasmtime {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.ticker.take() {

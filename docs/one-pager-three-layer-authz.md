@@ -49,7 +49,7 @@ gets the default sandbox and nothing else.
 An absent manifest requests nothing, so a `path`, `http` or OCI source without
 a manifest runs in the default sandbox. A manifest can only refuse earlier; it
 never makes a run possible. A `path` or `http` source can point at a
-`wasmfn.yaml` by reference (`manifestPath`, `manifestURL`). Such a source is a static source,
+`guestfn.yaml` by reference (`manifestPath`, `manifestURL`). Such a source is a static source,
 fenced like any other, and the manifest read through it makes the same request.
 See [Module manifest](one-pager-module-manifest.md) and
 [Module manifests](guests/module-manifests.md).

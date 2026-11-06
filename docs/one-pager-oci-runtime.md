@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft, revision 0.3 (a second runtime that runs an OCI image inside a microVM under the same manifest, policy layers and tooling as a WebAssembly module; the owner settled the packaging, the contract, the egress, the artifact, the names and the order on 2026-11-05, and the sandbox waits for the evaluation's spike)
+* Status: draft, revision 0.4 (a second runtime that runs an OCI image inside a microVM under the same manifest, policy layers and tooling as a WebAssembly module; the owner settled the packaging, the contract, the egress, the artifact, the names and the order on 2026-11-05; the renames, the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247), and the sandbox waits for the evaluation's spike)
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/239
 
 ## Summary
@@ -503,12 +503,15 @@ Open:
 
 ## Phases
 
-1. The `Engine` trait: `crates/function` generic over the engine, Wasmtime
-   behind it, with no behaviour change and the goldens unchanged.
-2. The renames (`guestfn.yaml`, the media types, the Input group), the
-   manifest's `type`, `image` and per-type `abi`, and `guestfn` init,
-   build, push and inspect for `type: oci`, with the contract check
-   deferred to phase 3.
+1. Done (#247): the `Engine` trait in `function-wasm-engine-api`,
+   `crates/function` generic over it as `engine::Selected`, Wasmtime behind
+   it with no behaviour change and the goldens unchanged.
+2. Done in part: the renames (`guestfn.yaml` and the media type in #244,
+   the Input group and the generated CRD in #246), the manifest's `type`
+   and per-type `abi` with `type: oci` refused by name (#247). Left for
+   the next PR: the manifest's `image`, the wrapping artifact's
+   `artifactType`, and `guestfn` init, build, push and inspect for `type:
+   oci`, with the contract check deferred to phase 3.
 3. The sandbox spike, then `crates/engine-oci` with the chosen VMM behind
    the `Sandbox` trait, the init and its protocol, the layer unpacking, the
    VM lifecycle, the bounds, `function validate --resolve` for images, the

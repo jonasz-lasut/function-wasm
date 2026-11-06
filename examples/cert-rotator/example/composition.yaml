@@ -1,0 +1,40 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: servercertificates.pki.example.org
+spec:
+  compositeTypeRef:
+    apiVersion: pki.example.org/v1alpha1
+    kind: ServerCertificate
+  mode: Pipeline
+  pipeline:
+  # The module asks Crossplane for the Secret the composite resource names
+  # (the response's requirements), reads the certificate it holds and
+  # composes the Secret again: carried forward while the certificate has
+  # more than renewBeforeDays left, with a fresh self-signed certificate and
+  # key otherwise.
+  - step: cert-rotator
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        # For local rendering the runtime serves this directory (--module-dir).
+        # In a cluster use type: OCI and an oci reference pinned to the digest
+        # guestfn push prints.
+        type: Path
+        path: fn.wasm
+      # The composition author's layer, both fences scoped: the module may
+      # ask for Secrets by name in the composite resource's own namespace
+      # and for nothing else, and may compose Secrets and write its own
+      # status, and nothing else. A module that asked for another kind, a
+      # Secret of another namespace, or one by labels, or composed a
+      # Deployment, would be refused with a fatal result naming the layer.
+      compositionPolicy: |
+        permit (principal, action == Action::"requireResource", resource == Kind::"core/Secret")
+        when { context has name && context has namespace && context.namespace == principal.namespace };
+
+        permit (principal, action == Action::"composeResource", resource == Kind::"core/Secret");
+        permit (principal, action == Action::"composeResource", resource)
+        when { context.target == "composite" };

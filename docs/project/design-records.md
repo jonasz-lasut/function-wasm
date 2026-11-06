@@ -13,14 +13,14 @@ record fails the prose job until both say the same.
 | [ABI v2 and the Rust host](../one-pager-abi-v2.md) | Implemented, revision 0.7 |
 | [Compiled-artifact cache key](../one-pager-cache-key.md) | Implemented, revision 1.0 |
 | [Module and compiled artifacts cache](../one-pager-cache.md) | Implemented, revision 2.7 |
-| [Module manifest](../one-pager-module-manifest.md) | Implemented, revision 1.5 |
-| [Module source schema](../one-pager-module-source-schema.md) | Implemented, revision 2.3 |
-| [OCI runtime](../one-pager-oci-runtime.md) | Draft, revision 0.3 |
+| [Module manifest](../one-pager-module-manifest.md) | Implemented, revision 1.6 |
+| [Module source schema](../one-pager-module-source-schema.md) | Implemented, revision 2.4 |
+| [OCI runtime](../one-pager-oci-runtime.md) | Draft, revision 0.4 |
 | [Read fence](../one-pager-read-fence.md) | Implemented, revision 1.0 |
 | [Runtime resource governance](../one-pager-resource-governance.md) | Implemented, revision 1.7 |
 | [Three-layer authorization model](../one-pager-three-layer-authz.md) | Implemented, revision 1.4 |
 | [Trust model](../one-pager-trust-model.md) | Implemented, revision 1.10 |
-| [Use-case examples](../one-pager-use-case-examples.md) | Implemented, revision 1.7 |
+| [Use-case examples](../one-pager-use-case-examples.md) | Implemented, revision 1.8 |
 | [WASM sandbox](../one-pager-sandbox.md) | Implemented, revision 1.9 |
 
 The guest ABI isn't a one-pager: [ABI v2](../abi-v2.md) is the contract

@@ -14,7 +14,7 @@ The implementation is a Rust workspace (ported from a Go implementation in 2026-
 |---|---|---|
 | the runtime (host) | `crates/function` (binary `function`) + `crates/engine` | the gRPC function: resolves the module named by the Input, compiles and caches it, runs it per request; `function validate` runs the same admission offline |
 | the guest glue | vendored per guest (the Go scaffold writes `internal/wasmfn` and wit-bindgen's Go bindings under `internal/bindings`; the example is `examples/pdb-addon/internal/wasmfn`) | linked into a user's `.wasm`: the world's `run` export, request/response codec, a `logging.Logger` over the typed `log` import, `GetConfig`, `HTTPClient` over `wasi:http@0.2`. Not a published module - each guest owns its copy, like Rust/Zig/C own theirs |
-| the CLI | `crates/guestfn` (binary `guestfn`) | `guestfn init` scaffolds a guest project (with its `wasmfn.yaml` manifest), `guestfn build` compiles it (and checks its ABI with the runtime's engine, and its manifest), `guestfn inspect` shows what the runtime sees in a module or an artifact, `guestfn push` publishes module and manifest (refusing a module the runtime would refuse), `guestfn manifest validate\|show`, `guestfn scaffold composition` writes a Composition step from a manifest |
+| the CLI | `crates/guestfn` (binary `guestfn`) | `guestfn init` scaffolds a guest project (with its `guestfn.yaml` manifest), `guestfn build` compiles it (and checks its ABI with the runtime's engine, and its manifest), `guestfn inspect` shows what the runtime sees in a module or an artifact, `guestfn push` publishes module and manifest (refusing a module the runtime would refuse), `guestfn manifest validate\|show`, `guestfn scaffold composition` writes a Composition step from a manifest |
 
 ## Architecture Overview
 
@@ -25,8 +25,9 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
     ↓
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ crates/function/src/runner.rs: WasmFunction::handle_raw()                    │
-│  1. decode a typed copy for admission (a v1beta1 apiVersion: one warn line,  │
-│       input::V1BETA1_DEPRECATION); admission::admit(input, ceilings) -       │
+│  1. decode a typed copy for admission (the group of 0.6 and earlier,        │
+│       wasm.fn.crossplane.io: refused by name, input::renamed_group);         │
+│       admission::admit(input, ceilings) -                                    │
 │       compositionPolicy compiled (content-hash cached, malformed Cedar →     │
 │       fatal); limits → engine RunOptions, or a fatal naming the limit and    │
 │       the ceiling flag; module shape checked                                 │
@@ -48,10 +49,10 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       blob digest; a tar layer yields /fn.wasm exactly) + engine.compile     │
 │       (checkABI after wasmtime decodes it — the one ABI check) + serialize   │
 │  6. resolver.cached_manifest / manifest(resolved) → the module's manifest   │
-│       (an OCI layer, or a wasmfn.yaml a path/http source names by reference, │
+│       (an OCI layer, or a guestfn.yaml a path/http source names by reference, │
 │       else none), remembered in memory by the digest that pins it - a warm   │
 │       request contacts no registry - and kept in the manifests store under  │
-│       its own digest, verify-on-read; a Path wasmfn.yaml is read fresh;      │
+│       its own digest, verify-on-read; a Path guestfn.yaml is read fresh;      │
 │       admission::admit_requires(requires, ceilings, compositionPolicy,       │
 │       principal) - the three-layer AND: the manifest requests, the           │
 │       composition layer permits (scoped default-permit), the operator layer  │
@@ -112,6 +113,11 @@ Crossplane RunFunctionResponse (whatever the module produced)
 
 ```
 crates/function/            the runtime crate: a library (everything below) + the `function` binary
+  src/engine.rs               the engine behind the runtime, behind engine-api's Engine trait:
+                              a Cargo feature selects it (`wasm`, the default: Wasmtime from
+                              crates/engine; the OCI runtime adds `oci`) and the crate names it
+                              only as `engine::Selected` and `engine::Module`, so a second
+                              engine is a second feature and no other change here
   src/main.rs                 clap CLI: serve (default) + validate subcommand; every ceiling flag
                               (module-dir, max-module-size, module-timeout, module-memory-limit,
                               module-stack-limit, module-compile-timeout, sandbox-policy-file, cosign-key,
@@ -221,8 +227,10 @@ crates/function/            the runtime crate: a library (everything below) + th
                               address (operator dialAddress rules punch holes), redirects re-checked
                               per hop, fixed budgets, the process-wide rate limit, one audit line
                               and http_requests_total per request
-  src/manifest.rs             the module manifest: parse (artifact layer), load (wasmfn.yaml,
-                              unknown top-level fields refused), validate, check (grants, config
+  src/manifest.rs             the module manifest: parse (artifact layer), load (guestfn.yaml,
+                              unknown top-level fields refused), validate (type wasm|oci, the
+                              abi the type's contract takes), check (a type: oci manifest refused
+                              by name - the OCI runtime's package serves it; grants, config
                               schema via jsonschema, minRuntime vs runtime_version()), summary, json
   src/from.rs, input.rs,      module.from fencing, the Input types, egress rule, env binding and
   egress_rules.rs,            required-credential shapes, quantity/duration parsing, env
@@ -233,8 +241,18 @@ crates/function/            the runtime crate: a library (everything below) + th
   tests/raw_client.rs         a raw-codec gRPC client proving byte transparency end to end
   testdata/validate/          the validate fixture corpus (one file per refusal family, policies, XR)
   testdata/conformance/       the recorded goldens
-crates/engine/              the wasmtime engine - the only crate that imports wasmtime
-  src/lib.rs                  Engine (compile + checkABI, inspect → the full module shape, leases,
+crates/engine-api/          what every engine shares and what the runtime holds one to (#239):
+  src/lib.rs                  the Engine trait (compile, inspect, serialize, deserialize_file,
+                              run, version, config), Config (the ceilings), RunOptions (one run's
+                              narrowing and grants), Inspection and Extern, Error
+  src/wire.rs,                the egress seam (HttpRequester, one send's request and response),
+  concurrency.rs,             the fair run slots, the memory pool and the per-digest step slots,
+  duration.rs, metrics.rs     Go-style durations, the Prometheus series (names, labels and
+                              buckets are contract; see "Metrics"). No WebAssembly here
+crates/engine/              the Wasmtime engine - the only crate that imports wasmtime; it
+                            implements engine-api's Engine trait as `Wasmtime` and re-exports
+                            the api crate, so its users and tests read everything from it
+  src/lib.rs                  Wasmtime (compile + checkABI, inspect → the full module shape, leases,
                               fair scheduler, memory pool, on-demand epoch ticker), RunOptions
                               (limits + private tmp/env + HTTP + deadline), version() namespacing
                               the compiled cache (build.rs reads wasmtime's version from Cargo.lock)
@@ -289,7 +307,7 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
                               engine's componentize and is written back as a component, one
                               line saying so, adapter or not; a component or a plain core
                               module passes through; a failed wrap is an error with
-                              wit-component's words), the ABI verdict, wasmfn.yaml validation,
+                              wit-component's words), the ABI verdict, guestfn.yaml validation,
                               the example-config warning
   src/push.rs                 the CNCF wasm OCI artifact (wasm layer, manifest layer, layerDigests
                               config, OCI annotations, SOURCE_DATE_EPOCH-reproducible), upload
@@ -331,7 +349,7 @@ examples/hello-zig          the same guest in Zig, an ABI v2 component on the zi
                             C from the guest's bump heap: no libc, no preview1 imports, so
                             guestfn build wraps the core module with no adapter). Its render
                             fetches one greeting through the host's egress (example/policy.cedar,
-                            example/wasmfn.local.yaml named by module.manifestPath,
+                            example/guestfn.local.yaml named by module.manifestPath,
                             example/fixtures). ~60 KB
 examples/hello-c            the same guest in C, an ABI v2 component on the c scaffold's plumbing
                             (examples-share-the-scaffold-plumbing): nanopb over the vendored
@@ -341,7 +359,7 @@ examples/hello-c            the same guest in C, an ABI v2 component on the c sc
                             behind build.zig into a core module that guestfn build wraps (it
                             imports no preview1: no adapter). Its render fetches one greeting
                             through the host's egress (example/policy.cedar,
-                            example/wasmfn.local.yaml named by module.manifestPath,
+                            example/guestfn.local.yaml named by module.manifestPath,
                             example/fixtures). ~62 KB
 examples/hello-odin         the same guest in Odin, an ABI v2 component on the c scaffold's
                             plumbing (examples-share-the-scaffold-plumbing: wit/, src/gen/,
@@ -393,7 +411,7 @@ examples/hello-moonbit      the same guest in MoonBit, an ABI v2 component and a
                             240 warnings per moon run otherwise, the hand-written packages
                             keep every warning; a guest never calls println (it imports spectest.print_char). Its
                             render fetches one greeting through the host's egress
-                            (example/policy.cedar, example/wasmfn.local.yaml named by
+                            (example/policy.cedar, example/guestfn.local.yaml named by
                             module.manifestPath, example/fixtures). ~107 KB
 examples/cloudflare-origin  #112's Rust use case, an ABI v2 component on the rust scaffold's
                             plumbing (examples-share-the-scaffold-plumbing): an Origin XR's AWS
@@ -471,6 +489,31 @@ examples/dashboard-bundle   #112's C# use case (example only: no scaffold, guest
                             compiler: make builds in the .NET SDK container there. Its render
                             runs under example/policy.cedar against fixture bundles
                             (example/fixtures, packed from example/bundles by make bundles). ~4.5 MB
+examples/cert-rotator       the C++ use case (example only: no scaffold; guestfn build takes it
+                            for a c project by its build.zig), an ABI v2 component on the c
+                            scaffold's plumbing (examples-share-the-scaffold-plumbing: proto/,
+                            wit/, src/fnv1/, src/gen/, src/structpb.*, src/wasmfn.* byte for
+                            byte): a ServerCertificate XR names a TLS Secret, the module asks
+                            Crossplane for it through the response's requirements, reads the
+                            certificate it holds and composes the Secret again - carried
+                            forward while more than renewBeforeDays remain, with a fresh P-256
+                            key and self-signed certificate otherwise (absent, expiring,
+                            expired, unreadable) - plus status.certificate. src/fn.c is the C
+                            adapter over the nanopb structs (ResourceSelector's field is named
+                            `namespace`, which no C++ unit can include) calling rotator.h, the
+                            decision's C interface; src/rotator.cpp and src/tls.cpp the logic
+                            over mbedTLS 3.6 (X.509 parse and write, ECDSA P-256, PEM, base64;
+                            src/cert_rotator_mbedtls_config.h, entropy from getentropy in
+                            src/entropy.c), fetched with nanopb by build.zig.zon; zig c++
+                            compiles it with libc++ for wasm, no exceptions, no RTTI, and the
+                            module imports preview1 for the clock and the randomness, so
+                            guestfn build links the adapter. The manifest declares
+                            requires.resources (core/Secret by name) and composes
+                            (core/Secret); example/composition.yaml scopes requireResource and
+                            composeResource in its compositionPolicy, example/policy.cedar is
+                            the operator's ceiling and example/required-resources.yaml the
+                            Secret crossplane render supplies. Tests: src/rotator_test.cpp and
+                            src/fn_test.c natively (zig build test); the build-cpp job. ~160 KB
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package function-wasm-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library
@@ -526,9 +569,10 @@ Makefile                    the end-to-end targets (e2e.up, e2e.crossplane - a k
 Dockerfile, Dockerfile.dev  the release image (the workspace compiled in a Rust build stage) and
                             the same image around a prebuilt binary (CI's e2e job wraps the
                             binary build-tools compiled; make e2e.image uses it under FUNCTION_BIN)
-package/                    crossplane.yaml + the checked-in Input CRD (documentation for tooling;
-                            Crossplane never installs a function's Input CRD - the CRD is maintained
-                            by hand now that the Go types that generated it are gone)
+package/                    crossplane.yaml + the Input CRD (documentation for tooling and
+                            crossplane beta validate; Crossplane never installs a function's
+                            Input CRD), generated from input.rs by crd.rs and held to it by
+                            tests/crd.rs (UPDATE_GOLDENS=1 re-records it)
 docs/abi-v2.md              the host/guest contract: the component world every scaffold targets
                             (ABI v1, core modules, was removed in 1.0.0)
 book.toml, docs/SUMMARY.md  the documentation site (mdBook over docs/; "Documentation site" below):
@@ -545,14 +589,14 @@ book.toml, docs/SUMMARY.md  the documentation site (mdBook over docs/; "Document
 
 ### Input
 
-The function receives an `Input` (`wasm.fn.crossplane.io/v1`; a `v1beta1` document, the same fields, is accepted throughout 1.x with `input::V1BETA1_DEPRECATION` said under the step by `function validate`, once per request by the runtime and on the build line by `guestfn build`, and is removed in 2.0.0): a KRM-like object (`crates/function/src/input.rs`):
+The function receives an `Input` (`guestfn.crossplane.io/v1`; the group of 0.6 and earlier, `wasm.fn.crossplane.io` in both its versions, the same fields, is refused by name with `input::renamed_group` under the step by `function validate`, on every request by the runtime and on the build line by `guestfn build`, with no alias: the rename was made before 1.0): a KRM-like object (`crates/function/src/input.rs`):
 
 - `module` — `type: OCI|HTTP|Path` (required) + exactly one of `oci{ref, credentials}`, `http{url, digest, manifestURL, manifestDigest}`, `path` (+ `manifestPath`), or `from` (the XR field holding that object; with `allowEmpty: true` a field the XR leaves unset - absent or null - skips the step: no module runs and the desired state goes back unchanged; refused without `from`)
 - `compositionPolicy` — raw Cedar, the composition author's layer: fences `from` sources (`pullModule`/`spendCredential`, default-deny) and may narrow sandbox capabilities (scoped default-permit); read from the Input only, never from the XR
 - `limits` — `timeout`, `memory`, `concurrency`, each ≤ the runtime's ceiling flag (concurrency silently capped)
 - `config` — opaque; the guest reads it via `GetConfig` - non-secret module configuration lives here
 
-There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), and what it asks Crossplane for through the response's `requirements` through a tenth, `requireResource` (#208), both judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` and `requires.resources` declare them for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs` and the CRD under `package/input/`.
+There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), and what it asks Crossplane for through the response's `requirements` through a tenth, `requireResource` (#208), both judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` and `requires.resources` declare them for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs`; the CRD under `package/input/` follows `input.rs` by generation.
 
 ### ABI v2
 
@@ -682,7 +726,7 @@ The user manual is an mdBook under `docs/`: `book.toml` at the repository root (
 
 1. Add the field to `crates/function/src/input.rs` (serde) and enforce its rules at runtime — `admission::admit`, the resolver, or `from.rs` for something the XR may choose (never read `compositionPolicy` or `limits` from the composite). A new *capability* is not an Input field at all: it is a manifest requirement (`manifest.rs` `Requires` + its shape check) decided by `admission::admit_requires` under both Cedar layers (`authz.rs`: a new action in the shared schema, permits on both policies) → engine `RunOptions` + the sandbox wiring
 2. Everything `admit`/`admit_requires` checks is what `function validate` checks — add a fixture under `testdata/validate/` and a conformance golden for the new refusal; a new ceiling flag goes into `main.rs` so `serve` and `validate` share it
-3. Update the hand-maintained CRD under `package/input/` and the "Input reference" table in `docs/operators/input-reference.md`
+3. Give the field a doc comment (it is the CRD's description), any `schemars` validation attribute the CRD should carry, re-record the CRD with `UPDATE_GOLDENS=1 cargo test -p function-wasm --test crd`, and update the "Input reference" table in `docs/operators/input-reference.md`
 
 ### Adding a host import
 
@@ -694,7 +738,7 @@ A guest reaches the host through the world (`wit/wasmfn-function.wit`, final at 
 
 ### Changing the scaffold
 
-Edit the template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; each template set is a minimal greeting project; `wasmfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the guest suite builds the goldens, so `/e2e` proves the change. A change to the plumbing - the vendored ABI glue (`internal/wasmfn`), the generated codecs, the proto, the vendored WIT - goes into the paired example too: the examples-share-the-scaffold-plumbing test holds each example's copy of those files identical to its template (its list of shared paths per example is in `scaffold.rs`; hello-odin, which has no scaffold, rides the c template's `wit/`, `src/gen/`, `src/fnv1/` and `proto/`, and hello-moonbit its `wit/`); everything else in an example is its own. The eighteen vendored `run_function.proto` copies (five templates, five goldens, eight examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file** or regenerate the codecs checked in beside it: treat the PR as the signal to run `make vendor-proto` on its branch (`VERSION=vX.Y.Z` vendors ahead of Renovate), which fetches the upstream file at that release into every copy under its own header, regenerates every guest's codec with the protoc and nanopb_generator the root `Makefile` pins (it needs Zig, npm, python3, cargo and moon, whose `moonx` runs the pinned protoc-gen-mbt), mirrors them into the templates and refreshes the goldens; then comment /e2e, whose render jobs fail on codec drift. Per-language identity of the plumbing (template ↔ golden ↔ example) is enforced by the goldens and the examples-share-the-scaffold-plumbing test. The rust scaffold's `wit/deps/wasmfn-function.wit` is the root `wit/wasmfn-function.wit` (the world the engine compiles) byte for byte, enforced by the render-matches-the-runtime-world test: change the world at the root, copy it into `templates/rust/wit/deps/` and `examples/cloudflare-origin/wit/deps/` (and move the version in `wit/world.wit`'s `include` if the package version changed), then refresh the goldens; the guest's own world, `wit/world.wit`, is a `local:guest` package, so a scaffold never redefines the contract's package (the ts, python, c, zig and go scaffolds' `wit/world.wit` restates the world with a sync `run` instead of including it, so only the contract's copies carry its name). The vendored WASI WIT under `wit/deps/` (wasi:*@0.3 from wasmtime-wasi-http's `src/p3/wit/deps` in the rust template, its golden and cloudflare-origin, the p3 `http.wit` trimmed of its service/middleware worlds; wasi:*@0.2 from its `wit/deps` in the python, c, zig and go templates, their goldens, team-tags, hello-c, hello-zig, hello-odin, hello-moonbit, pdb-addon and dashboard-bundle) carries a `Vendored from wasmtime-wasi-http X.Y.Z` header under the same tripwire, grouped into Renovate's wasmtime PR: that PR moves the headers with the crates, and is the signal to re-vendor the files by hand from the new crate (keeping the trim). The c and zig scaffolds' `src/gen` is wit-bindgen's C output over their `wit/` - one world, one output, the two copies held identical by the c-and-zig-share-the-bindings test (Zig reads `function.h` through translate-c as its `bindings` module and compiles `function.c` beside its own glue) - `function.c`, `function.h` and `function_component_type.o`, the object carrying the component-type section `guestfn build` wraps by; their header names the generator's version: after a change to the world or a re-vendoring of the WASI WIT, `make gen-bindings` at the root regenerates it in hello-c, hello-zig and hello-odin with the pinned `wit-bindgen-cli`, mirrors the c and zig copies into their templates (hello-odin carries the c flavour's, which the plumbing test holds identical) and refreshes the goldens, and the render-c, render-zig and render-odin jobs regenerate it and fail on drift, like the codecs. The go scaffold's `internal/bindings` is wit-bindgen's Go output over its `wit/` (a `wit_bindings.go` and an `empty.s` per package plus `wit_exports`, the generated files' header naming the generator's version; the hand-written `export_wit_world/run.go` slot beside them; a generated file names the guest's module path in its imports, so the template carries it as `.go.tmpl` with `[[ .Module ]]`): the same `make gen-bindings` regenerates it in pdb-addon, mirrors it into the template and refreshes the goldens, and the render-go job regenerates it and fails on drift. `go.bytecodealliance.org/pkg`, the bindings' runtime in `go.mod.tmpl` and pdb-addon's go.mod, is pinned at the version the generator targets (`wit-bindgen go --print-remote-pkg-version`) and moves with it.
+Edit the template set under `crates/guestfn/templates/<lang>` (templates use `[[ ]]` delimiters so source braces survive; each template set is a minimal greeting project; `guestfn.yaml.tmpl` is the manifest every flavour ships; the zig and c `build.zig.zon.tmpl` take the project's identifier and fingerprint from the `zigid`/`zigfp` template helpers), then `UPDATE_GOLDENS=1 cargo test -p guestfn` to refresh the goldens; the guest suite builds the goldens, so `/e2e` proves the change. A change to the plumbing - the vendored ABI glue (`internal/wasmfn`), the generated codecs, the proto, the vendored WIT - goes into the paired example too: the examples-share-the-scaffold-plumbing test holds each example's copy of those files identical to its template (its list of shared paths per example is in `scaffold.rs`; hello-odin, which has no scaffold, rides the c template's `wit/`, `src/gen/`, `src/fnv1/` and `proto/`, and hello-moonbit its `wit/`); everything else in an example is its own. The eighteen vendored `run_function.proto` copies (five templates, five goldens, eight examples) are one wire contract: `crossplane/crossplane`'s `proto/fn/v1/run_function.proto`, stated in each file's header as `Vendored from crossplane/crossplane vX.Y.Z.` and tracked by Renovate through that header - the same tripwire function-sdk-rust carries. A Renovate bump moves the version in every copy at once but **does not re-download the file** or regenerate the codecs checked in beside it: treat the PR as the signal to run `make vendor-proto` on its branch (`VERSION=vX.Y.Z` vendors ahead of Renovate), which fetches the upstream file at that release into every copy under its own header, regenerates every guest's codec with the protoc and nanopb_generator the root `Makefile` pins (it needs Zig, npm, python3, cargo and moon, whose `moonx` runs the pinned protoc-gen-mbt), mirrors them into the templates and refreshes the goldens; then comment /e2e, whose render jobs fail on codec drift. Per-language identity of the plumbing (template ↔ golden ↔ example) is enforced by the goldens and the examples-share-the-scaffold-plumbing test. The rust scaffold's `wit/deps/wasmfn-function.wit` is the root `wit/wasmfn-function.wit` (the world the engine compiles) byte for byte, enforced by the render-matches-the-runtime-world test: change the world at the root, copy it into `templates/rust/wit/deps/` and `examples/cloudflare-origin/wit/deps/` (and move the version in `wit/world.wit`'s `include` if the package version changed), then refresh the goldens; the guest's own world, `wit/world.wit`, is a `local:guest` package, so a scaffold never redefines the contract's package (the ts, python, c, zig and go scaffolds' `wit/world.wit` restates the world with a sync `run` instead of including it, so only the contract's copies carry its name). The vendored WASI WIT under `wit/deps/` (wasi:*@0.3 from wasmtime-wasi-http's `src/p3/wit/deps` in the rust template, its golden and cloudflare-origin, the p3 `http.wit` trimmed of its service/middleware worlds; wasi:*@0.2 from its `wit/deps` in the python, c, zig and go templates, their goldens, team-tags, hello-c, hello-zig, hello-odin, hello-moonbit, pdb-addon and dashboard-bundle) carries a `Vendored from wasmtime-wasi-http X.Y.Z` header under the same tripwire, grouped into Renovate's wasmtime PR: that PR moves the headers with the crates, and is the signal to re-vendor the files by hand from the new crate (keeping the trim). The c and zig scaffolds' `src/gen` is wit-bindgen's C output over their `wit/` - one world, one output, the two copies held identical by the c-and-zig-share-the-bindings test (Zig reads `function.h` through translate-c as its `bindings` module and compiles `function.c` beside its own glue) - `function.c`, `function.h` and `function_component_type.o`, the object carrying the component-type section `guestfn build` wraps by; their header names the generator's version: after a change to the world or a re-vendoring of the WASI WIT, `make gen-bindings` at the root regenerates it in hello-c, hello-zig and hello-odin with the pinned `wit-bindgen-cli`, mirrors the c and zig copies into their templates (hello-odin carries the c flavour's, which the plumbing test holds identical) and refreshes the goldens, and the render-c, render-zig and render-odin jobs regenerate it and fail on drift, like the codecs. The go scaffold's `internal/bindings` is wit-bindgen's Go output over its `wit/` (a `wit_bindings.go` and an `empty.s` per package plus `wit_exports`, the generated files' header naming the generator's version; the hand-written `export_wit_world/run.go` slot beside them; a generated file names the guest's module path in its imports, so the template carries it as `.go.tmpl` with `[[ .Module ]]`): the same `make gen-bindings` regenerates it in pdb-addon, mirrors it into the template and refreshes the goldens, and the render-go job regenerates it and fails on drift. `go.bytecodealliance.org/pkg`, the bindings' runtime in `go.mod.tmpl` and pdb-addon's go.mod, is pinned at the version the generator targets (`wit-bindgen go --print-remote-pkg-version`) and moves with it.
 
 ### Rendering Locally
 
@@ -731,7 +775,7 @@ The decisions below, the ones taken before the port included, describe the produ
 - **Conformance is a ratchet** (2026-08): during the port, every validate case either matched Go byte-for-byte or sat on a known-gaps list required to keep differing (a gap that closed had to be removed). The golden suite keeps the ratchet's spirit: recorded outputs are the contract, and changing them is an explicit, reviewed act.
 - **wasmtime is the only reader of a module** (Jonasz, 2026-08-17): no second wasm decoder; `engine.inspect` compiles with wasmtime and reports the shape and checkABI's verdict, so every verdict `guestfn` or `validate` prints is the runtime's.
 - **`FROM scratch` images hold the module at `/fn.wasm`** (Jonasz, 2026-08-17): the tar path stays for `COPY fn.wasm /` images, but the resolver never picks "the first `.wasm` file"; raw `application/wasm` layers (`guestfn push`, `oras push`) are the recommended shape.
-- **The module manifest is a layer of the OCI artifact, not a custom section** (Jonasz, 2026-08-17): covered by the pinned manifest digest and a cosign signature, written by `guestfn push` from `wasmfn.yaml`, parsed with no wasm walker. It is a request, never a grant: `admit_requires` runs after admission and load, before the run, so a manifest can only refuse earlier - never make a run possible. `path`/`http` sources may name a `wasmfn.yaml` by reference instead (`docs/one-pager-module-manifest.md`, "Manifests by reference").
+- **The module manifest is a layer of the OCI artifact, not a custom section** (Jonasz, 2026-08-17): covered by the pinned manifest digest and a cosign signature, written by `guestfn push` from `guestfn.yaml`, parsed with no wasm walker. It is a request, never a grant: `admit_requires` runs after admission and load, before the run, so a manifest can only refuse earlier - never make a run possible. `path`/`http` sources may name a `guestfn.yaml` by reference instead (`docs/one-pager-module-manifest.md`, "Manifests by reference").
 - **Three-layer authorization** (Jonasz, 2026-08-19): a capability is granted iff the module's manifest requests it, the Input's `compositionPolicy` permits it and the operator's `--sandbox-policy-file` permits it - three AND-combined layers, each able only to narrow the one above. The composition layer is scoped default-permit for sandbox actions and default-deny for `from`-source fencing; static sources bypass it. `docs/one-pager-three-layer-authz.md`. The output fence `composeResource` (Jonasz, 2026-10-27, #174) is the one action both layers decide scoped default-permit, the operator's included: it fences what a module writes rather than granting a capability, so a default-deny would have refused every module's output on upgrade; a kind replaced under one composition resource name is a remove plus an add, `modify` is judged on the whole resource, a response carrying a fatal result is not judged, a refused output counts as `refused`, and the manifest's `composes` stays advisory (the manifest is a request, never a grant, and a pre-run refusal is unsound for name-conditioned rules).
 - **Compiled artifacts are keyed per process, with no flag** (Jonasz, 2026-10-28, `docs/one-pager-cache-key.md`): the compiled store signs each artifact under 32 bytes drawn at startup and refuses every other, so the one `unsafe` load in the workspace takes only this process's output; a mounted key (the audit's `--cache-key-file`) was rejected as configuration surface, and the cost, a recompile of every module after a restart even on a volume, accepted.
 - **Cedar-only sandbox enablement** (Jonasz, 2026-08-19): the operator's Cedar `--sandbox-policy-file` is the sole authority that enables a sandbox capability, evaluated default-deny. With no policy file every sandbox grant is refused - which is all most modules need.
@@ -758,7 +802,7 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 - **`/cut-release`** — a new minor or major version from `main` HEAD: new `release-X.Y` branch, whose push runs the release matrix (`release-matrix-e2e.yml`: the end-to-end suite on the three Crossplane minors the project supports; the skill waits for it and a red version blocks the release), tag (`.github/workflows/tag.yml`), GitHub release, package publish (`publish-pkg.yml` → `ghcr.io/jonasz-lasut/function-wasm`, mirrored to `xpkg.upbound.io/jonasz-lasut/function-wasm`; the version is stamped into the binary as `FUNCTION_WASM_VERSION` — what module manifests' `minRuntime` rules are checked against), signing/attestation (`supplychain.yml`). The bump size is the user's choice, never inferred.
 - **`/remediate-cves`**: a patch release on a `release-X.Y` branch (the latest by default) for CVEs found by `grype-scan.yml` (weekly against the latest release). Through 0.x only the latest release branch is kept; from 1.0.0 on superseded release branches stay, so an older line can be patched when asked (Jonasz, 2026-10-07). A wasmtime crate bump is in scope there (it is the sandbox's own security fix): `crates/engine` only.
 
-`publish-pkg.yml` also runs `publish-wit`: it publishes the ABI v2 world (`wit/wasmfn-function.wit`, built with a pinned `wkg`) to `ghcr.io/jonasz-lasut/wasmfn/function:<world version>`, signs and attests it, and attaches `wasmfn-wit-<world version>.tar.gz` to the release - but only for a final world version not yet in the registry, never overwriting a published tag (#106), and not at all while the rust scaffold's `rust-toolchain.toml` (`crates/guestfn/templates/rust/`) pins a beta channel: the job holds the world back with a notice until the scaffold builds on stable Rust, a gate that goes with the pin (#129's Rust 1.100 step). It also runs `publish-examples` (guestfn built once by `build-guestfn`): the use-case examples that work as published (`cloudflare-origin`, `policy-gate`, `pdb-addon`) are built and pushed with their manifests to `ghcr.io/jonasz-lasut/wasmfn/examples/<name>:v<version>` (the version in each `wasmfn.yaml`, independent of the runtime's), signed keyless and attested - only a version not yet in the registry, so bump an example's `wasmfn.yaml` version to publish a change - and `examples-release-asset` attaches `function-wasm-examples-<release>.yaml` with every published example's digest-pinned reference (`docs/one-pager-use-case-examples.md`). `SECURITY.md` is the dependency CVE policy these follow: the runtime is patched through `/remediate-cves`, the scaffold templates' pins are refreshed by `/cut-release` at every release, and the examples are refreshed by Renovate's monthly examples batch (`.github/renovate.json5`), gated by `/e2e`.
+`publish-pkg.yml` also runs `publish-wit`: it publishes the ABI v2 world (`wit/wasmfn-function.wit`, built with a pinned `wkg`) to `ghcr.io/jonasz-lasut/wasmfn/function:<world version>`, signs and attests it, and attaches `wasmfn-wit-<world version>.tar.gz` to the release - but only for a final world version not yet in the registry, never overwriting a published tag (#106), and not at all while the rust scaffold's `rust-toolchain.toml` (`crates/guestfn/templates/rust/`) pins a beta channel: the job holds the world back with a notice until the scaffold builds on stable Rust, a gate that goes with the pin (#129's Rust 1.100 step). The use-case examples publish apart from the release, on their own lifecycle (#245): `publish-examples.yml` (`Publish Examples`), run by hand from `main` (guestfn built once by `build-guestfn`), builds the examples that work as published (`cloudflare-origin`, `policy-gate`, `pdb-addon`) and pushes them with their manifests to `ghcr.io/jonasz-lasut/wasmfn/examples/<name>:v<version>` (the version in each `guestfn.yaml`, independent of the runtime's), signed keyless and attested - only a version not yet in the registry, so bump an example's `guestfn.yaml` version and run the workflow to publish a change; a keyless signature's identity is `publish-examples.yml@refs/heads/main`, and the `trustSigner` rules (the signatures page, the e2e profiles) keep `publish-pkg.yml@refs/tags/v*` beside it for the versions the release workflow published through 0.6 (`docs/one-pager-use-case-examples.md`). `SECURITY.md` is the dependency CVE policy these follow: the runtime is patched through `/remediate-cves`, the scaffold templates' pins are refreshed by `/cut-release` at every release, and the examples are refreshed by Renovate's monthly examples batch (`.github/renovate.json5`), gated by `/e2e`.
 
 ## Troubleshooting
 

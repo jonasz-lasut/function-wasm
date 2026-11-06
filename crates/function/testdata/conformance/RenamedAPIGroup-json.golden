@@ -1,0 +1,5 @@
+exit 1
+--- stdout
+{"file":"testdata/validate/renamed-group.yaml","composition":"before-the-rename","document":0,"index":0,"step":"greet","function":"function-wasm","status":"refused","message":"apiVersion wasm.fn.crossplane.io/v1 is no longer served; write apiVersion: guestfn.crossplane.io/v1 (the same fields)"}
+{"file":"testdata/validate/renamed-group.yaml","document":1,"index":-1,"step":"bare","status":"refused","message":"apiVersion wasm.fn.crossplane.io/v1beta1 is no longer served; write apiVersion: guestfn.crossplane.io/v1 (the same fields)"}
+--- stderr

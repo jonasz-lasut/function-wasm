@@ -42,7 +42,7 @@ spec:
     functionRef:
       name: function-wasm
     input:
-      apiVersion: wasm.fn.crossplane.io/v1
+      apiVersion: guestfn.crossplane.io/v1
       kind: Input
       module:
         type: OCI
@@ -91,7 +91,7 @@ guestfn push ghcr.io/example/greeter:v0.1.0     # OCI artifact with the manifest
 ```
 
 For Go, `guestfn init` writes a plain function-sdk-go `RunFunction`, a
-vendored `internal/wasmfn` glue the project owns and a `wasmfn.yaml` manifest
+vendored `internal/wasmfn` glue the project owns and a `guestfn.yaml` manifest
 declaring what the module needs. `guestfn push` prints the `module:` block to
 paste into a Composition step. The
 [Guest authors](https://jonasz-lasut.github.io/function-wasm/guests/write-a-module.html) pages cover the full
@@ -110,8 +110,9 @@ the toolchain, the scaffolded module's size and an example.
 | `ts` | node + npm (esbuild, jco) | ~14 MB | [`examples/policy-gate`](examples/policy-gate) |
 | `python` | `python3` (componentize-py) | ~21 MB | [`examples/team-tags`](examples/team-tags) |
 
-C#, Odin and MoonBit exist as examples only
+C#, C++, Odin and MoonBit exist as examples only
 ([`examples/dashboard-bundle`](examples/dashboard-bundle),
+[`examples/cert-rotator`](examples/cert-rotator),
 [`examples/hello-odin`](examples/hello-odin),
 [`examples/hello-moonbit`](examples/hello-moonbit)). Any toolchain that
 produces a component for the world can target the runtime.

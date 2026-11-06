@@ -1,0 +1,15 @@
+# A team's server certificate: the Secret shop-tls in team-a, valid for 90
+# days, rotated 30 days before the end. crossplane render supplies the
+# Secret the module asks for from example/required-resources.yaml - a
+# certificate that has expired, so the render shows a rotation.
+apiVersion: pki.example.org/v1alpha1
+kind: ServerCertificate
+metadata:
+  name: shop
+  namespace: team-a
+spec:
+  secretName: shop-tls
+  commonName: shop.example.org
+  dnsNames: [www.shop.example.org]
+  validityDays: 90
+  renewBeforeDays: 30

@@ -5,13 +5,13 @@ operators who need to predict what the runtime admits. It lists every field
 of the step's Input and what the runtime enforces for each. Crossplane never
 installs the Input's CRD, so the runtime is the only enforcement: it checks
 every rule on every request, and `function validate` applies the same checks
-offline. The CRD under `package/input/` is for tooling and IDEs only.
+offline. The CRD under `package/input/` is for tooling and IDEs only, and
+the runtime generates it from its own types.
 
-The Input is `apiVersion: wasm.fn.crossplane.io/v1`, `kind: Input`. A step
-that still says `wasm.fn.crossplane.io/v1beta1` (the same fields) is accepted
-throughout 1.x: `function validate` prints a warning under it, the runtime
-logs one line per request naming `v1`, and 2.0.0 removes it
-([Compatibility](../contract/compatibility.md)).
+The Input is `apiVersion: guestfn.crossplane.io/v1`, `kind: Input`. A step
+that still says `wasm.fn.crossplane.io/v1` or `v1beta1`, the group of 0.6
+and earlier with the same fields, is refused with a sentence that states
+the new group ([Compatibility](../contract/compatibility.md)).
 
 ```yaml
 module:                        # required
@@ -45,10 +45,10 @@ The fields are:
 | `module.oci.credentials` | string | name of the pipeline-step credential used to pull. See [Pull credentials](#pull-credentials) |
 | `module.http.url` | string | the HTTP or HTTPS URL the module is downloaded from |
 | `module.http.digest` | string | Required. `sha256:<hex>` of the module, which the runtime verifies the download against. A digest the runtime already caches is served without a download |
-| `module.http.manifestURL` | string | Optional. A `wasmfn.yaml` served beside the module. Set with `module.http.manifestDigest`. Without it an HTTP source has no manifest and gets only the default sandbox. For a `module.from` `http` source, `compositionPolicy` `pullModule` fences it like the module URL |
+| `module.http.manifestURL` | string | Optional. A `guestfn.yaml` served beside the module. Set with `module.http.manifestDigest`. Without it an HTTP source has no manifest and gets only the default sandbox. For a `module.from` `http` source, `compositionPolicy` `pullModule` fences it like the module URL |
 | `module.http.manifestDigest` | string | `sha256:<hex>` of the manifest, verified against it. Required with `module.http.manifestURL`, refused without it |
 | `module.path` | string | a file relative to the runtime's `--module-dir`. Refused unless that flag is set. A `Path` source has no digest |
-| `module.manifestPath` | string | Optional, `type: Path` only. A `wasmfn.yaml` under `--module-dir`, the manifest of a local or volume-mounted module. Never set through `module.from`, and re-read on each request. A local edit takes effect without a restart |
+| `module.manifestPath` | string | Optional, `type: Path` only. A `guestfn.yaml` under `--module-dir`, the manifest of a local or volume-mounted module. Never set through `module.from`, and re-read on each request. A local edit takes effect without a restart |
 | `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, that holds the source. See [Modules chosen by the XR](#modules-chosen-by-the-xr) |
 | `module.allowEmpty` | boolean | Optional, with `module.from` only. See [Skipping a step](#skipping-a-step) |
 | `compositionPolicy` | string | the composition author's Cedar layer. See [The composition policy](#the-composition-policy) |
@@ -87,7 +87,7 @@ on the step:
       namespace: crossplane-system
       name: ghcr-pull
   input:
-    apiVersion: wasm.fn.crossplane.io/v1
+    apiVersion: guestfn.crossplane.io/v1
     kind: Input
     module:
       type: OCI
@@ -112,7 +112,7 @@ says otherwise.
 
 ```yaml
     input:
-      apiVersion: wasm.fn.crossplane.io/v1
+      apiVersion: guestfn.crossplane.io/v1
       kind: Input
       module:
         type: OCI

@@ -58,7 +58,7 @@ the one request it declares:
   namespace is a fatal result naming both.
 - **The module sees the tokens only because it asks, and both policies
   agree.** The runtime forwards a module only the step credentials its
-  manifest names, so `wasmfn.yaml` declares `requires.credentials: [cmdb]`,
+  manifest names, so `guestfn.yaml` declares `requires.credentials: [cmdb]`,
   and the request carries `cmdb` only where the Composition's
   `compositionPolicy` and the operator's Cedar policy both permit
   `spendCredential` for it. Every other credential of the step - the one
@@ -103,7 +103,7 @@ A local render needs no CMDB and no AWS account. `example/` holds:
   `search`, with tags of its own, one of them an `owner` the CMDB's
   replaces).
 - `composition.yaml`: function-go-templating's bucket step, then the
-  module, served from this directory under `example/wasmfn.local.yaml`, a
+  module, served from this directory under `example/guestfn.local.yaml`, a
   manifest that asks for the fixture server instead of `cmdb.example.org`;
   the step names the credential `cmdb`, and its `compositionPolicy` permits
   the module that credential and fences the fixture host and path.
@@ -121,7 +121,7 @@ A local render needs no CMDB and no AWS account. `example/` holds:
 ## In a cluster
 
 Publish the module with its manifest, naming your CMDB's host in
-`wasmfn.yaml` first, then reference the digest `guestfn push` prints:
+`guestfn.yaml` first, then reference the digest `guestfn push` prints:
 
 ```shell
 guestfn push ghcr.io/example/team-tags:v0.1.0
@@ -152,7 +152,7 @@ stringData:
       source: Secret
       secretRef: {namespace: crossplane-system, name: cmdb-tokens}
     input:
-      apiVersion: wasm.fn.crossplane.io/v1
+      apiVersion: guestfn.crossplane.io/v1
       kind: Input
       module:
         type: OCI

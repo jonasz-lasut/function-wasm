@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.7 (rewritten in the present tense over the Rust workspace; the cluster-tier E2E question answered)
+* Status: implemented, revision 1.8 (the examples publish on their own, by hand, apart from the release, #245; rewritten in the present tense over the Rust workspace; the cluster-tier E2E question answered)
 * Tracking: https://github.com/jonasz-lasut/function-wasm/issues/112
 
 ## Context
@@ -63,6 +63,7 @@ An example belongs here when its use case needs at least one of these.
 | [`pdb-addon`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/pdb-addon) | Go (function-sdk-go) | A tenant add-on hook: a `WebApp` Composition's last step runs the module the XR names; this add-on derives a PodDisruptionBudget from the desired Deployment | `module.from`, `allowEmpty`, the `pullModule` fence, the default sandbox | [`function-go-templating#24`](https://github.com/crossplane-contrib/function-go-templating/issues/24), [`crossplane#6139`](https://github.com/crossplane/crossplane/issues/6139) (staggered rollout), [`crossplane#2524`](https://github.com/crossplane/crossplane/issues/2524) |
 | [`team-tags`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/team-tags) | Python | Team metadata from a CMDB, looked up with that team's own token from one shared Secret keyed by the XR's namespace | Step credentials, egress with an Authorization header, the composition layer fencing where tokens may go | [`crossplane#2099`](https://github.com/crossplane/crossplane/issues/2099), [`crossplane#7343`](https://github.com/crossplane/crossplane/issues/7343), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
 | [`dashboard-bundle`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/dashboard-bundle) | C# | Dashboards as code: a sha256-pinned zip of Grafana dashboards unpacked into one sidecar-labelled ConfigMap per dashboard | The private `/tmp`, egress, integrity pinning, refusing archive entries that escape | Grafana's dashboard sidecar, delivered as a versioned bundle |
+| [`cert-rotator`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/cert-rotator) | C++ (mbedTLS) | A TLS Secret's self-signed certificate kept fresh: read through the response's `requirements`, reissued with a fresh P-256 key once fewer than `renewBeforeDays` remain | The read fence and the output fence scoped together, `requires.resources` and `composes` in the manifest, a C adapter over the generated structs | Self-signed certificates for internal services, rotated without cert-manager |
 
 Design choices to keep:
 
@@ -89,7 +90,7 @@ scaffolds' plumbing; Odin and MoonBit have no scaffold, and `guestfn build`
 detects the MoonBit one by its `moon.mod`
 ([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)). Rust,
 Python, TypeScript and Go are covered by the use-case examples in the table.
-C# has only `dashboard-bundle`. The language matrix is in
+C# has only `dashboard-bundle`, C++ only `cert-rotator`. The language matrix is in
 [other languages](guests/other-languages.md).
 
 ## Testing
@@ -123,21 +124,23 @@ C# has only `dashboard-bundle`. The language matrix is in
 
 ## Publishing
 
-The `publish-examples` job of `publish-pkg.yml` releases the examples that work
-as published as CNCF Wasm OCI artifacts, with their module manifests:
+`publish-examples.yml`, run by hand, publishes the examples that work as
+published as CNCF Wasm OCI artifacts, with their module manifests:
 
 - **Names:** `ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, beside the WIT
   world at `wasmfn/function`. A namespace per kind of artifact is the
   convention across OCI-distributed WebAssembly plugins (Kubewarden's
   `policies/`, wasmCloud's `components/`).
-- **Versions:** each example's own semver from its `wasmfn.yaml`, tagged
+- **Versions:** each example's own semver from its `guestfn.yaml`, tagged
   `v<version>`, independent of the runtime's. A version already published is
-  never pushed again (the same registry probe as `publish-wit`), so a release
+  never pushed again (the same registry probe as `publish-wit`), so a run
   publishes only the examples whose version moved, and a published tag remains
   immutable. `minRuntime` in a manifest states the runtime it needs.
-- **When:** at a release, so a published example only ever targets a released
-  runtime.
-- **Signing:** keyless cosign plus SLSA provenance from the release workflow,
+- **When:** when a maintainer runs the workflow, from `main`, after an
+  example's version moved. The examples have a lifecycle of their own. A
+  release neither builds nor carries them, and a failed example build stays
+  out of the package's publish run.
+- **Signing:** keyless cosign plus SLSA provenance from the publish workflow,
   with no key in the repository. The runtime verifies the keyless signature
   against a Sigstore trusted root (`--cosign-trusted-root`) and admits it
   where the operator's `trustSigner` rule names this repository's release
@@ -145,10 +148,9 @@ as published as CNCF Wasm OCI artifacts, with their module manifests:
   ([#116](https://github.com/jonasz-lasut/function-wasm/issues/116); the
   signatures page has the rule); an operator may still countersign with its
   own key instead.
-- **References:** a release asset, `function-wasm-examples-<release>.yaml`,
-  lists every published example's reference pinned by digest
-  (`repo:v<version>@sha256:…`: the tag for people, the digest for the runtime).
-  The release commits nothing back.
+- **References:** the registry's: `repo:v<version>` for people, the digest
+  `guestfn inspect` prints for a Composition's `module.oci.ref`. The workflow
+  commits nothing back and attaches nothing to a release.
 - **Which:** `cloudflare-origin`, `policy-gate` and `pdb-addon`. `team-tags` and
   `dashboard-bundle` request egress to placeholder hosts (`cmdb.example.org`,
   `artifacts.example.com`) that their users replace before publishing their

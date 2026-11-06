@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
+use function_wasm_engine::Engine as _;
 
 /// Used when go is not on PATH to say better, so a scaffold is never left
 /// without a version.
@@ -37,7 +38,7 @@ enum Command {
     /// Compile a guest project to a module (a core module carrying
     /// wit-bindgen's component-type section is wrapped into a component; a
     /// go project's world is embedded from its wit/ first), check its ABI
-    /// and its manifest (wasmfn.yaml).
+    /// and its manifest (guestfn.yaml).
     Build(buildcmd::BuildCmd),
     /// Push a module to an OCI registry as a wasm artifact; a module the
     /// runtime would refuse is not pushed.
@@ -46,7 +47,7 @@ enum Command {
     /// runtime sees it: size, ABI verdict, exports, imports, memories,
     /// manifest.
     Inspect(inspect::InspectCmd),
-    /// Validate a module manifest (wasmfn.yaml) or print the one an
+    /// Validate a module manifest (guestfn.yaml) or print the one an
     /// artifact carries.
     #[command(subcommand)]
     Manifest(manifestcmd::ManifestCmd),
@@ -217,7 +218,7 @@ fn go_version() -> String {
 /// Compiles wasm with a throwaway engine and reports its shape, ABI verdict
 /// included - the runtime's own view.
 pub(crate) fn inspect_module(wasm: &[u8]) -> Result<function_wasm_engine::Inspection, String> {
-    let engine = function_wasm_engine::Engine::new(function_wasm_engine::Config::default())
+    let engine = function_wasm_engine::Wasmtime::new(function_wasm_engine::Config::default())
         .map_err(|e| e.to_string())?;
     engine.inspect(wasm).map_err(|e| {
         let e = e.to_string();

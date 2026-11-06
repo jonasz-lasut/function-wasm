@@ -263,7 +263,7 @@ mod tests {
     /// a scaffold builds on that scaffold's plumbing - the vendored ABI glue,
     /// the generated codecs, the proto and the WIT - and must carry it byte
     /// for byte, so a plumbing fix lands in the template and the example
-    /// together. Everything else (the function itself, wasmfn.yaml, the
+    /// together. Everything else (the function itself, guestfn.yaml, the
     /// README, the example manifests) is the example's own. hello-moonbit has
     /// no scaffold of its own: its wit/ is the c scaffold's (wit-bindgen's
     /// MoonBit generator reads the same world), and its proto copy is held
@@ -271,7 +271,7 @@ mod tests {
     /// header, like dashboard-bundle's.
     #[test]
     fn examples_share_the_scaffold_plumbing() {
-        let examples: [(&str, &[&str], Options); 8] = [
+        let examples: [(&str, &[&str], Options); 9] = [
             (
                 "pdb-addon",
                 &[
@@ -327,6 +327,25 @@ mod tests {
                 Options {
                     lang: LANG_C.into(),
                     name: "hello-c".into(),
+                    ..Default::default()
+                },
+            ),
+            // The C++ example has no scaffold of its own either: its C
+            // adapter and glue are the c flavour's byte for byte, its
+            // logic is its own.
+            (
+                "cert-rotator",
+                &[
+                    "proto/",
+                    "wit/",
+                    "src/fnv1/",
+                    "src/gen/",
+                    "src/structpb.",
+                    "src/wasmfn.",
+                ],
+                Options {
+                    lang: LANG_C.into(),
+                    name: "cert-rotator".into(),
                     ..Default::default()
                 },
             ),

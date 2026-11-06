@@ -83,7 +83,7 @@ async fn the_served_runtime_is_byte_transparent() {
         }),
         input: Some(resource::json_to_struct(
             serde_json::json!({
-                "apiVersion": "wasm.fn.crossplane.io/v1",
+                "apiVersion": "guestfn.crossplane.io/v1",
                 "kind": "Input",
                 "module": {"type": "Path", "path": "fn.wasm"},
             })
@@ -138,7 +138,7 @@ async fn the_served_runtime_is_byte_transparent() {
         ),
         ("grpc_method", "RunFunction"),
     ];
-    let sample = function_wasm_engine::metrics::sample;
+    let sample = function_wasm_engine_api::metrics::sample;
     assert_eq!(
         sample("grpc_server_started_total", &labels),
         Some(1.0),

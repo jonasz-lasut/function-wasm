@@ -53,7 +53,7 @@ Warnings never change the exit code. The runtime warns about:
 - A module that requires egress when the runtime can't verify signatures, under `--resolve`: `the module requires egress but is not signature-verified: neither --cosign-key nor --cosign-trusted-root was given`
 - A limit equal to its ceiling: `limits.timeout <value> equals --module-timeout: it narrows nothing`, and the same for `limits.memory` against `--module-memory-limit`
 - A field the runtime ignores: `unknown field "<name>" is ignored by the runtime`
-- The deprecated `v1beta1` `apiVersion`: `apiVersion wasm.fn.crossplane.io/v1beta1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: wasm.fn.crossplane.io/v1 (the same fields)`
+- The deprecated `v1beta1` `apiVersion`: `apiVersion guestfn.crossplane.io/v1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: guestfn.crossplane.io/v1 (the same fields)`
 
 The exit code is:
 

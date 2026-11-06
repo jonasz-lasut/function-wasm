@@ -47,7 +47,7 @@ system or a secret read from the environment. The grants below are for those.
 The ask is stated in the module's manifest, not in the Input:
 
 ```yaml
-# wasmfn.yaml
+# guestfn.yaml
 requires:
   filesystem:
     privateTmp: true             # a private, empty, writable /tmp for the duration of the request; nothing else is mountable

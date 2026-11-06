@@ -90,7 +90,7 @@ registry. The raw bytes also go to the `manifests/` store under their own
 digest, verified on read like every disk tier but the compiled one. A
 process that lost the memory tier reads the artifact's manifest once per
 digest, with the credential, to learn the layer's digest, and takes the
-layer from disk. A `wasmfn.yaml` under `--module-dir` is never cached: it's
+layer from disk. A `guestfn.yaml` under `--module-dir` is never cached: it's
 the development loop.
 
 The compiled store is namespaced by `engine::version()`

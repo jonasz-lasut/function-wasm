@@ -21,12 +21,28 @@ pub const MAX_SIZE: usize = 64 << 10;
 /// its module is refused by its binary format.
 pub const SUPPORTED_ABIS: [i64; 1] = [2];
 
+/// The kinds of module a manifest describes (docs/one-pager-oci-runtime.md):
+/// a WebAssembly component, which this package serves, and an OCI image,
+/// which the OCI runtime serves. Absent means `wasm`: every manifest written
+/// before the field is a WebAssembly one.
+pub const TYPE_WASM: &str = "wasm";
+pub const TYPE_OCI: &str = "oci";
+/// The process contract's version, the `abi` a `type: oci` manifest states
+/// (the OCI runtime's record versions it beside the component world's 2).
+pub const OCI_CONTRACT_ABI: i64 = 1;
+
 /// What a module declares about itself.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Manifest {
-    /// The ABI version the module implements; required, one of
-    /// SUPPORTED_ABIS.
+    /// `wasm` or `oci`; empty is `wasm`. Serialized only when set, so a
+    /// WebAssembly manifest's bytes, and the artifact digest over them, do
+    /// not move.
+    #[serde(rename = "type", skip_serializing_if = "String::is_empty")]
+    pub r#type: String,
+    /// The version of the contract the module's type names: the component
+    /// world for `wasm` (SUPPORTED_ABIS), the process contract for `oci`
+    /// (OCI_CONTRACT_ABI). Required.
     pub abi: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
@@ -191,7 +207,7 @@ pub struct Grants {
 /// (FUNCTION_WASM_VERSION, set by the release pipeline); empty for a
 /// development build, which passes every minRuntime rule.
 /// The manifest file a guest project carries.
-pub const FILE_NAME: &str = "wasmfn.yaml";
+pub const FILE_NAME: &str = "guestfn.yaml";
 
 pub fn runtime_version() -> &'static str {
     option_env!("FUNCTION_WASM_VERSION").unwrap_or("")
@@ -203,7 +219,7 @@ impl Manifest {
     /// still loads; an unknown field anywhere under requires is refused, so
     /// a requirement this runtime cannot honour fails closed. The result is
     /// validated.
-    /// Loads and validates a wasmfn.yaml file - what guestfn build and
+    /// Loads and validates a guestfn.yaml file - what guestfn build and
     /// push read. Unknown top-level fields are refused: a typo in the file
     /// the author is editing should not vanish silently.
     pub fn load(path: &std::path::Path) -> Result<Manifest, String> {
@@ -282,11 +298,26 @@ impl Manifest {
     /// Composition's rule passes, minRuntime is a semantic version, and
     /// config.schema is a JSON Schema.
     pub fn validate(&self) -> Result<(), String> {
-        if !SUPPORTED_ABIS.contains(&self.abi) {
-            return Err(format!(
-                "abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got {}",
-                self.abi
-            ));
+        match self.kind() {
+            TYPE_WASM => {
+                if !SUPPORTED_ABIS.contains(&self.abi) {
+                    return Err(format!(
+                        "abi must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got {}",
+                        self.abi
+                    ));
+                }
+            }
+            TYPE_OCI => {
+                if self.abi != OCI_CONTRACT_ABI {
+                    return Err(format!(
+                        "abi must be {OCI_CONTRACT_ABI} for type oci (the process contract), got {}",
+                        self.abi
+                    ));
+                }
+            }
+            other => {
+                return Err(format!("type must be wasm or oci, got {other}"));
+            }
         }
         if let Some(r) = &self.requires {
             if let Some(egress) = &r.egress {
@@ -361,6 +392,15 @@ impl Manifest {
 
     /// One line for a CLI: name and version, then what the module requires
     /// and whether it ships a config schema; empty parts are left out.
+    /// The module's type, `wasm` when the manifest leaves it out.
+    pub fn kind(&self) -> &str {
+        if self.r#type.is_empty() {
+            TYPE_WASM
+        } else {
+            &self.r#type
+        }
+    }
+
     pub fn summary(&self) -> String {
         let mut head = Vec::new();
         if !self.name.is_empty() {
@@ -373,6 +413,9 @@ impl Manifest {
         let h = head.join(" ");
         if !h.is_empty() {
             parts.push(h);
+        }
+        if self.kind() == TYPE_OCI {
+            parts.push("type oci".to_string());
         }
         if let Some(r) = &self.requires {
             if let Some(egress) = &r.egress
@@ -457,6 +500,13 @@ impl Manifest {
         config: Option<&Value>,
         runtime_version: &str,
     ) -> Result<(), String> {
+        // The OCI runtime's modules are its package's to serve: this one
+        // says which, rather than failing at the engine.
+        if self.kind() == TYPE_OCI {
+            return Err(
+                "is a type: oci module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)".to_string(),
+            );
+        }
         if !SUPPORTED_ABIS.contains(&self.abi) {
             return Err(format!(
                 "requires ABI v{}, this runtime implements ABI v2 only",
@@ -697,6 +747,39 @@ mod tests {
 
     fn manifest(raw: &str) -> Manifest {
         Manifest::parse(raw.as_bytes()).expect("parse")
+    }
+
+    /// `type` is `wasm` unless written, `oci` takes the process contract's
+    /// abi and nothing else, and this package serves `wasm` alone.
+    #[test]
+    fn the_type_selects_the_contract_and_the_package() {
+        let wasm = manifest(r#"{"abi":2,"name":"greeter"}"#);
+        assert_eq!(wasm.kind(), TYPE_WASM);
+        assert!(wasm.validate().is_ok());
+        let oci = manifest(r#"{"type":"oci","abi":1,"name":"tagger","version":"0.3.0"}"#);
+        assert_eq!(oci.kind(), TYPE_OCI);
+        assert!(oci.validate().is_ok());
+        assert_eq!(oci.summary(), "tagger 0.3.0, type oci");
+        assert_eq!(
+            oci.check(&Grants::default(), None, "1.0.0").unwrap_err(),
+            "is a type: oci module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)"
+        );
+        let err = |raw: &str| Manifest::parse(raw.as_bytes()).unwrap_err();
+        assert_eq!(
+            err(r#"{"type":"oci","abi":2}"#),
+            "abi must be 1 for type oci (the process contract), got 2"
+        );
+        assert_eq!(
+            err(r#"{"type":"jar","abi":2}"#),
+            "type must be wasm or oci, got jar"
+        );
+        assert!(err(r#"{"type":"wasm","abi":1}"#).starts_with("abi must be 2"));
+        // The field is absent from a WebAssembly manifest's bytes.
+        assert!(
+            !String::from_utf8(wasm.json().unwrap())
+                .unwrap()
+                .contains("type")
+        );
     }
 
     #[test]
