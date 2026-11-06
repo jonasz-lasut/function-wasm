@@ -223,9 +223,13 @@ same per-process key. The key check refuses a planted root filesystem
 before the VMM sees it. The guest kernel comes with the package, either
 built by the project from a microVM configuration or supplied by the VMM,
 and Renovate tracks it with the VMM. The first build takes the kernel
-Firecracker's CI publishes (6.1, with squashfs, overlayfs, virtio and
-vsock built in), pinned with Firecracker's release in `Dockerfile.oci` and
-the Makefile. `function_wasm_module_compile_duration_seconds` measures
+Firecracker's CI builds from Amazon Linux's microVM kernel (6.18, the
+guest kernel Firecracker supports since 1.16.1, with squashfs, overlayfs,
+cgroups, virtio and vsock built in), pinned by checksum with Firecracker's
+release in `Dockerfile.oci` and the Makefile. The artifacts are at a dated
+prefix of Firecracker's bucket, whose retention the project doesn't
+control. Building the kernel in the repository from that source and
+config is what the record calls the project's own kernel build. `function_wasm_module_compile_duration_seconds` measures
 the unpacking.
 
 **One VM per request.** The runtime starts the VM with the kernel, the
