@@ -976,7 +976,7 @@ mod tests {
     #[test]
     fn fetches_through_the_bearer_token_flow() {
         let (digest, addr) =
-            testregistry::wasm_artifact(b"fake wasm", Some(br#"{"contract":1}"#), true);
+            testregistry::wasm_artifact(b"fake wasm", Some(br#"{"contract":"wasm@1.0"}"#), true);
         let r = reference(&addr, &digest);
         let client = RegistryClient::new(&r, None);
         let m = client.manifest(&r).expect("manifest");
@@ -992,7 +992,7 @@ mod tests {
             client
                 .blob(&mlayer.digest, 1 << 20, "manifest layer")
                 .expect("blob"),
-            br#"{"contract":1}"#
+            br#"{"contract":"wasm@1.0"}"#
         );
     }
 

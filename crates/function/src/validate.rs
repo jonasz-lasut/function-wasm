@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use function_wasm_engine_api::{Config, duration};
+use function_wasm_engine::{Config, duration};
 
 use crate::engine::{self, Engine as _, Selected};
 
@@ -156,9 +156,10 @@ struct StepResult {
 struct Resolved {
     digest: String,
     size: usize,
-    /// The contract the module loads under: `v2` on function-wasm (a
-    /// module that loads is a v2 component), `process v1` on function-oci.
-    abi: String,
+    /// The contract the module loads under, the engine's: `wasm@1.0` on
+    /// function-wasm (a module that loads is a component of that world),
+    /// `oci@1.0` on function-oci.
+    contract: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     imports: Vec<String>,
     /// What else the engine read (an image's entrypoint, user, platform).
@@ -334,10 +335,10 @@ fn print_result(output: &str, r: &StepResult) -> Result<(), String> {
     }
     if let Some(resolved) = &r.resolved {
         let mut line = format!(
-            "  module: {}, {}, {}",
+            "  module: {}, {}, contract {}",
             resolved.digest,
             human_bytes(resolved.size),
-            contract_label(&resolved.abi)
+            resolved.contract
         );
         if !resolved.imports.is_empty() {
             line += &format!(", imports {}", resolved.imports.join(" "));
@@ -357,25 +358,6 @@ fn print_result(output: &str, r: &StepResult) -> Result<(), String> {
         println!("  warning: {warning}");
     }
     Ok(())
-}
-
-/// The `abi` value of the JSON output for the engine's contract: `v2` for
-/// the component world, as older output read, `process v1` for the OCI
-/// runtime.
-fn contract_value() -> String {
-    if Selected::KIND == crate::manifest::TYPE_OCI {
-        "process v1".to_string()
-    } else {
-        "v2".to_string()
-    }
-}
-
-/// The text output's label for it: `ABI v2`, `process contract v1`.
-fn contract_label(value: &str) -> String {
-    match value.strip_prefix("process ") {
-        Some(v) => format!("process contract {v}"),
-        None => format!("ABI {value}"),
-    }
 }
 
 /// Reads every YAML or JSON document of a file (- is stdin) as an
@@ -655,7 +637,7 @@ impl Validator {
         r.resolved = Some(Resolved {
             digest: resolved.digest.clone(),
             size: wasm.len(),
-            abi: contract_value(),
+            contract: Selected::CONTRACT.to_string(),
             imports: inspection.host_imports,
             details: inspection.details,
             manifest: None,

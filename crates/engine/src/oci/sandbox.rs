@@ -5,8 +5,8 @@
 use std::path::Path;
 use std::time::Instant;
 
-use function_wasm_engine_api::Error;
-use guestfn_init::{Description, Exit};
+use crate::Error;
+use crate::protocol::{Description, Exit};
 
 /// One VM to boot and drive through the init's protocol.
 pub struct VmSpec<'a> {

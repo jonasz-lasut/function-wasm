@@ -1,5 +1,5 @@
 exit 1
 --- stdout
-<DIR>/oci.yaml: Composition/oci pipeline[0] oci: refused: module oci <REGISTRY>/example/greeter@sha256:306a86bf3b82faf31ea60ca522385d12ebe91b2799abbb4a10c54bd7925d2e35 requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities
-  module: sha256:306a86bf3b82faf31ea60ca522385d12ebe91b2799abbb4a10c54bd7925d2e35, 255 B, ABI v2; manifest: greeter 0.1.0, private /tmp
+<DIR>/oci.yaml: Composition/oci pipeline[0] oci: refused: module oci <REGISTRY>/example/greeter@sha256:98cf591ea3fe44c575a52a65920021c359f57ba2b0d4cb961ab3ff77011103b8 requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities
+  module: sha256:98cf591ea3fe44c575a52a65920021c359f57ba2b0d4cb961ab3ff77011103b8, 255 B, contract wasm@1.0; manifest: greeter 0.1.0, private /tmp
 --- stderr

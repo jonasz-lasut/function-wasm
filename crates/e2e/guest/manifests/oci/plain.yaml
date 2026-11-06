@@ -1,10 +1,9 @@
 # The oci profile's variant: the same declaration around the test module as
 # a process (docs/one-pager-oci-runtime.md); guestfn push --image pins the
 # image, which setup does by hand.
-type: oci
 # The test module under the default sandbox: it requires nothing, so it runs
 # under any policy, and it is the module every signature case is pushed as.
-contract: 1
+contract: oci@1.0
 name: e2e-guest
 version: 0.1.0
 description: function-wasm's end-to-end test module, requiring nothing

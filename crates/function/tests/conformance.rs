@@ -368,7 +368,7 @@ fn validate_resolve_matches_the_goldens() {
     // A wasmtime compiled artifact (.cwasm) named as a module source: the
     // runtime refuses it by name rather than as malformed wasm.
     let artifact = {
-        let e = function_wasm::engine::Selected::new(function_wasm_engine_api::Config::default())
+        let e = function_wasm::engine::Selected::new(function_wasm_engine::Config::default())
             .expect("engine");
         let m = e.compile(&ok).expect("compile");
         e.serialize(&m).expect("serialize")
@@ -465,32 +465,38 @@ fn validate_resolve_manifest_matches_the_goldens() {
     let manifests: &[(&str, &str)] = &[
         (
             "tmp",
-            "contract: 2\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n",
+            "contract: wasm@1.0\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n",
         ),
         (
             "egress",
-            "contract: 2\nname: greeter\nversion: 0.1.0\nrequires:\n  egress:\n    http:\n    - host: api.example.com\n      methods: [GET]\n",
+            "contract: wasm@1.0\nname: greeter\nversion: 0.1.0\nrequires:\n  egress:\n    http:\n    - host: api.example.com\n      methods: [GET]\n",
         ),
         (
             "env",
-            "contract: 2\nname: greeter\nversion: 0.1.0\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n",
+            "contract: wasm@1.0\nname: greeter\nversion: 0.1.0\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n",
         ),
-        // The removed ABI's declaration: refused by the manifest before
-        // the module's binary format is looked at.
-        ("abiv1", "contract: 1\nname: greeter\nversion: 0.1.0\n"),
-        // An ABI this runtime does not implement at all.
-        ("abiunknown", "contract: 3\nname: greeter\nversion: 0.1.0\n"),
+        // The field as 0.6 wrote it, an integer: refused by the manifest
+        // before the module's binary format is looked at.
+        (
+            "contractint",
+            "contract: 1\nname: greeter\nversion: 0.1.0\n",
+        ),
+        // A contract version no engine implements.
+        (
+            "contractunknown",
+            "contract: wasm@2.0\nname: greeter\nversion: 0.1.0\n",
+        ),
         // The OCI runtime's module type (docs/one-pager-oci-runtime.md):
         // valid, and this package says which package serves it.
         (
-            "typeoci",
-            "type: oci\ncontract: 1\nname: greeter\nversion: 0.1.0\n",
+            "contractoci",
+            "contract: oci@1.0\nname: greeter\nversion: 0.1.0\n",
         ),
         // A config.schema reaching outside itself: refused at load, never
         // fetched (the port 1 URL would fail, which is not the point).
         (
             "schemaref",
-            "contract: 2\nname: greeter\nversion: 0.1.0\nconfig:\n  schema:\n    $ref: http://127.0.0.1:1/schema.json\n",
+            "contract: wasm@1.0\nname: greeter\nversion: 0.1.0\nconfig:\n  schema:\n    $ref: http://127.0.0.1:1/schema.json\n",
         ),
     ];
     let mut compositions = Vec::new();
@@ -639,7 +645,7 @@ fn validate_resolve_http_source_matches_the_goldens() {
     )
     .expect("wat");
     let manifest =
-        b"contract: 2\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n"
+        b"contract: wasm@1.0\nname: greeter\nversion: 0.1.0\nrequires:\n  filesystem:\n    privateTmp: true\n"
             .to_vec();
     let digest = |b: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)));
     let (wasm_digest, manifest_digest) = (digest(&wasm), digest(&manifest));
@@ -767,7 +773,7 @@ fn validate_resolve_oci_source_matches_the_goldens() {
     )
     .expect("wat");
     let module_manifest =
-        br#"{"contract":2,"name":"greeter","version":"0.1.0","requires":{"filesystem":{"privateTmp":true}}}"#;
+        br#"{"contract":"wasm@1.0","name":"greeter","version":"0.1.0","requires":{"filesystem":{"privateTmp":true}}}"#;
     let digest_of = |b: &[u8]| format!("sha256:{}", hex::encode(sha2::Sha256::digest(b)));
     let wasm_digest = digest_of(&wasm);
     let manifest_digest = digest_of(module_manifest);
@@ -1174,7 +1180,7 @@ fn validate_resolve_composes_matches_the_goldens() {
     std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
     std::fs::write(
         dir.path().join("manifest.yaml"),
-        "contract: 2\nname: pdb-addon\nversion: 0.1.1\ncomposes:\n  - kind: policy/PodDisruptionBudget\n    changes: [add]\n  - kind: core/Secret\n",
+        "contract: wasm@1.0\nname: pdb-addon\nversion: 0.1.1\ncomposes:\n  - kind: policy/PodDisruptionBudget\n    changes: [add]\n  - kind: core/Secret\n",
     )
     .expect("write manifest");
     let composition = |name: &str, policy: &str| {
@@ -1245,7 +1251,7 @@ fn validate_resolve_reads_matches_the_goldens() {
     std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
     std::fs::write(
         dir.path().join("manifest.yaml"),
-        "contract: 2\nname: policy-gate\nversion: 0.1.1\nrequires:\n  resources:\n    - kind: apiextensions.crossplane.io/EnvironmentConfig\n      by: [name]\n    - kind: core/Secret\n",
+        "contract: wasm@1.0\nname: policy-gate\nversion: 0.1.1\nrequires:\n  resources:\n    - kind: apiextensions.crossplane.io/EnvironmentConfig\n      by: [name]\n    - kind: core/Secret\n",
     )
     .expect("write manifest");
     let composition = |name: &str, policy: &str| {

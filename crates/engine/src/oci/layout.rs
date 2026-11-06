@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 
-use function_wasm_engine_api::Error;
+use crate::Error;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 
@@ -80,7 +80,7 @@ pub fn digest_of(bytes: &[u8]) -> String {
 
 /// Reads a layout tar for this host's platform.
 pub fn parse(bytes: &[u8]) -> Result<Layout, Error> {
-    parse_for(bytes, crate::image::host_architecture(), "linux")
+    parse_for(bytes, crate::oci::image::host_architecture(), "linux")
 }
 
 pub fn parse_for(bytes: &[u8], architecture: &str, os: &str) -> Result<Layout, Error> {

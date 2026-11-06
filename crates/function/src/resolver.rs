@@ -269,7 +269,7 @@ impl Resolver {
         };
         let start = std::time::Instant::now();
         let result = self.fetch_inner(resolved);
-        function_wasm_engine_api::metrics::FETCH_DURATION
+        function_wasm_engine::metrics::FETCH_DURATION
             .with_label_values(&[source])
             .observe(start.elapsed().as_secs_f64());
         result
@@ -314,7 +314,7 @@ impl Resolver {
     /// refused by name.
     #[cfg(feature = "oci")]
     fn fetch_image(&self, reference: &OciReference, auth: Option<Auth>) -> Result<Vec<u8>, String> {
-        use function_wasm_engine_oci::layout;
+        use function_wasm_engine::oci::layout;
         let client = RegistryClient::new(reference, auth.clone());
         let top = client.manifest_by_digest(&reference.digest, usize::MAX)?;
         let (image_client, image_digest) = if crate::oci::is_module_artifact(&top) {
@@ -368,7 +368,7 @@ impl Resolver {
         let mut raw = raw;
         let mut digest = image_digest;
         if manifest.is_index() {
-            let arch = function_wasm_engine_oci::image::host_architecture();
+            let arch = function_wasm_engine::oci::image::host_architecture();
             let entry = manifest
                 .index_entries()
                 .into_iter()
@@ -520,7 +520,7 @@ impl Resolver {
         digest: &str,
         fetch: impl FnOnce() -> Result<Vec<u8>, String>,
     ) -> Result<Vec<u8>, String> {
-        use function_wasm_engine_api::metrics::{self, CACHE_EVENTS};
+        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
         if let Some(blobs) = &self.blobs {
             if let Some(b) = blobs.get(digest) {
                 CACHE_EVENTS
@@ -725,7 +725,7 @@ mod tests {
         // The 1.0 audit's F-5 rule for the manifests store: verify-on-read,
         // keyed by the manifest's own digest, never by the artifact's.
         let wasm = b"not really wasm";
-        let module_manifest = br#"{"contract":2}"#;
+        let module_manifest = br#"{"contract":"wasm@1.0"}"#;
         let (pinning, addr) =
             crate::oci::testregistry::wasm_artifact(wasm, Some(module_manifest), false);
         let dir = tempfile::tempdir().expect("tempdir");

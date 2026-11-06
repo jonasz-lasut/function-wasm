@@ -47,7 +47,7 @@ pub struct WasmFunction {
     /// run may use it is the policy layers' grantEgress decision.
     pub egress: Arc<crate::egress::Egress>,
     /// Per-step run slots for limits.concurrency, keyed by module digest.
-    pub step_slots: Arc<function_wasm_engine_api::concurrency::StepSlots>,
+    pub step_slots: Arc<function_wasm_engine::concurrency::StepSlots>,
     /// The cosign verifier (--cosign-key); None serves unsigned modules
     /// except where the operator policy requires a signature, which then
     /// refuses.
@@ -70,7 +70,7 @@ impl WasmFunction {
         reason: String,
     ) -> RunFunctionResponse {
         tracing::info!(outcome, reason = %reason, "Request ended with a fatal result");
-        function_wasm_engine_api::metrics::REQUESTS
+        function_wasm_engine::metrics::REQUESTS
             .with_label_values(&[outcome])
             .inc();
         let mut rsp = response::to(req, self.ttl);
@@ -89,7 +89,7 @@ impl WasmFunction {
             from,
             "No module chosen by the composite resource, returning the desired state unchanged (module.allowEmpty)"
         );
-        function_wasm_engine_api::metrics::REQUESTS
+        function_wasm_engine::metrics::REQUESTS
             .with_label_values(&[OUTCOME_SKIPPED])
             .inc();
         crate::protowire::noop_response(raw, &self.response_meta(tag).encode_to_vec())
@@ -469,7 +469,7 @@ impl WasmFunction {
         // and digest attached.
         let http = caps.grant.map(|grant| {
             Arc::new(grant.client(resolved.description.clone(), resolved.digest.clone()))
-                as Arc<dyn function_wasm_engine_api::HttpRequester>
+                as Arc<dyn function_wasm_engine::HttpRequester>
         });
         let opts = RunOptions {
             timeout: admitted.timeout,
@@ -611,7 +611,7 @@ impl WasmFunction {
         // A guest that skipped the response meta (typically a guest not built on an SDK)
         // still gets a well-formed reply - appended to its own bytes, which
         // otherwise travel back exactly as produced.
-        function_wasm_engine_api::metrics::REQUESTS
+        function_wasm_engine::metrics::REQUESTS
             .with_label_values(&["ok"])
             .inc();
         if got.meta.is_some() {
@@ -732,7 +732,7 @@ mod tests {
         CredentialData, Credentials, RequestMeta, Severity, credentials,
     };
     use function_sdk_rust::resource;
-    use function_wasm_engine_api::Config;
+    use function_wasm_engine::Config;
 
     // A component implementing the world whose run returns an empty
     // response.
@@ -762,7 +762,7 @@ mod tests {
             ttl: Duration::from_secs(60),
             policy: None,
             egress: Arc::new(crate::egress::Egress::new(Default::default(), 0.0, 0)),
-            step_slots: Arc::new(function_wasm_engine_api::concurrency::StepSlots::new()),
+            step_slots: Arc::new(function_wasm_engine::concurrency::StepSlots::new()),
             verifier: None,
         }
     }
@@ -820,7 +820,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn runs_an_oci_module_with_its_manifest_granted() {
         let wasm = wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat");
-        let module_manifest = br#"{"contract":2,"requires":{"filesystem":{"privateTmp":true}}}"#;
+        let module_manifest =
+            br#"{"contract":"wasm@1.0","requires":{"filesystem":{"privateTmp":true}}}"#;
         let (digest, addr) =
             crate::oci::testregistry::wasm_artifact(&wasm, Some(module_manifest), true);
         let mut f = function(None);
@@ -914,7 +915,7 @@ mod tests {
         assert_eq!(meta.tag, "t");
         assert_eq!(meta.ttl.expect("ttl").seconds, 60);
         assert!(
-            function_wasm_engine_api::metrics::sample(
+            function_wasm_engine::metrics::sample(
                 "function_wasm_module_requests_total",
                 &[("outcome", "skipped")]
             )
@@ -955,7 +956,7 @@ mod tests {
         assert!(rsp.results.is_empty(), "{rsp:?}");
         // The wiring, not the values: other tests in this process share the
         // default registry.
-        let m = function_wasm_engine_api::metrics::sample;
+        let m = function_wasm_engine::metrics::sample;
         assert!(
             m("function_wasm_module_requests_total", &[("outcome", "ok")]).unwrap_or(0.0) >= 1.0
         );
@@ -1182,7 +1183,7 @@ mod tests {
         .expect("write");
         std::fs::write(
             dir.path().join("guestfn.yaml"),
-            "contract: 2\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n  credentials: [cmdb]\n",
+            "contract: wasm@1.0\nrequires:\n  env:\n  - name: API_TOKEN\n    fromCredential: {name: apikeys, key: token}\n  credentials: [cmdb]\n",
         )
         .expect("write");
         let f = granting_function(Some(dir.path()));
@@ -1351,7 +1352,7 @@ mod tests {
 
         let out = run_with_credentials(
             &f,
-            module(br#"{"contract":2,"requires":{"credentials":["cmdb"]}}"#),
+            module(br#"{"contract":"wasm@1.0","requires":{"credentials":["cmdb"]}}"#),
             &["registry", "cmdb", "other"],
         )
         .await;
@@ -1361,7 +1362,7 @@ mod tests {
         // run, as an env binding naming it is.
         let out = run_with_credentials(
             &f,
-            module(br#"{"contract":2,"requires":{"credentials":["registry"]}}"#),
+            module(br#"{"contract":"wasm@1.0","requires":{"credentials":["registry"]}}"#),
             &["registry", "cmdb"],
         )
         .await;
@@ -1571,7 +1572,7 @@ when { context.change == "add" };"#;
         };
         let (dir, _) = fenced_stage(&composed, &[]);
         let f = function(Some(dir.path().to_owned()));
-        let refused_before = function_wasm_engine_api::metrics::sample(
+        let refused_before = function_wasm_engine::metrics::sample(
             "function_wasm_module_requests_total",
             &[("outcome", "refused")],
         )
@@ -1593,7 +1594,7 @@ when { context.change == "add" };"#;
             !desired.resources.contains_key("db-password"),
             "nothing the module composed is returned"
         );
-        let refused_after = function_wasm_engine_api::metrics::sample(
+        let refused_after = function_wasm_engine::metrics::sample(
             "function_wasm_module_requests_total",
             &[("outcome", "refused")],
         )
@@ -1773,7 +1774,7 @@ when { context has name };"#;
         ]);
         let (dir, _) = fenced_stage(&rsp, &[]);
         let f = function(Some(dir.path().to_owned()));
-        let refused_before = function_wasm_engine_api::metrics::sample(
+        let refused_before = function_wasm_engine::metrics::sample(
             "function_wasm_module_requests_total",
             &[("outcome", "refused")],
         )
@@ -1794,7 +1795,7 @@ when { context has name };"#;
             rsp.requirements.is_none(),
             "the refused ask is not relayed: Crossplane fetches nothing"
         );
-        let refused_after = function_wasm_engine_api::metrics::sample(
+        let refused_after = function_wasm_engine::metrics::sample(
             "function_wasm_module_requests_total",
             &[("outcome", "refused")],
         )

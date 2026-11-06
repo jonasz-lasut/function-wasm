@@ -4,8 +4,8 @@
 
 use std::collections::BTreeMap;
 
-use function_wasm_engine_api::{Error, RunOptions};
-use guestfn_init::Description;
+use crate::protocol::Description;
+use crate::{Error, RunOptions};
 use serde::{Deserialize, Serialize};
 
 /// What the engine keeps of an OCI image config, plus what it resolved
@@ -197,7 +197,7 @@ impl ImageConfig {
             format!(
                 "{} ({})",
                 self.layers,
-                function_wasm_engine_api::concurrency::format_bytes(self.size)
+                crate::concurrency::format_bytes(self.size)
             ),
         ));
         out

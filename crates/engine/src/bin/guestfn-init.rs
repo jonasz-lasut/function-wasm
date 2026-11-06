@@ -20,7 +20,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use guestfn_init::{
+use function_wasm_engine::protocol::{
     Description, Exit, Hello, Kind, read_frame, read_json, write_frame, write_json,
 };
 
@@ -44,7 +44,7 @@ fn run() -> Result<(), String> {
         &mut sock,
         Kind::Hello,
         &Hello {
-            version: guestfn_init::VERSION,
+            version: function_wasm_engine::protocol::VERSION,
         },
     )
     .map_err(|e| format!("cannot greet the host: {e}"))?;
@@ -289,8 +289,8 @@ fn connect_host() -> Result<UnixStream, String> {
         // SAFETY: sockaddr_vm is plain data; zeroed is a valid value.
         let mut addr: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
         addr.svm_family = libc::AF_VSOCK as libc::sa_family_t;
-        addr.svm_cid = guestfn_init::HOST_CID;
-        addr.svm_port = guestfn_init::PORT;
+        addr.svm_cid = function_wasm_engine::protocol::HOST_CID;
+        addr.svm_port = function_wasm_engine::protocol::PORT;
         // SAFETY: a valid fd and address of the stated length.
         let rc = unsafe {
             libc::connect(

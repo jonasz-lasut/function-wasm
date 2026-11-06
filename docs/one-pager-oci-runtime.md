@@ -22,8 +22,8 @@ from the image's root filesystem. The VM has no network device. The
 process reads the request from its standard input and writes the response
 to its standard output. A small init program the runtime boots as the VM's
 first process provides the services the WebAssembly guest gets through its
-world. The manifest gains a `type` field, `wasm` or `oci`, and the
-artifact `guestfn push` publishes moves to generic media types. Both
+world. The manifest's contract states the engine, `wasm@1.0` or `oci@1.0`,
+and the artifact `guestfn push` publishes moves to generic media types. Both
 runtimes then share the manifest format, the artifact layout and the CLI.
 The operator installs the runtime they need. The WebAssembly package
 remains small and unprivileged. The OCI package needs `/dev/kvm` on its
@@ -89,9 +89,10 @@ layout and its contract verdict, for `guestfn` and `validate --resolve`.
 `run` serves one request under `RunOptions`, with the egress requester, the
 env, the private scratch and the deadline. `version` namespaces the
 compiled store, and the engine registers its own metric series. The
-Wasmtime engine in `crates/engine` keeps its behaviour behind the trait. A
-new `crates/engine-oci` drives the microVM behind the same trait, through
-a `Sandbox` trait of its own, one type per candidate in the evaluation. A
+Wasmtime engine in `crates/engine` keeps its behaviour behind the trait. An
+`oci` module of the same crate runs the microVM behind the same trait,
+through a `Sandbox` trait of its own, one type per candidate in the
+evaluation. A
 Cargo feature of the `function` crate selects the engine, and each package
 image builds the binary with its own:
 
@@ -113,7 +114,7 @@ flags have held through two minors.
 
 ### The process contract
 
-A module of `type: oci` is an OCI image. The runtime runs the image's
+A module of contract `oci@1.0` is an OCI image. The runtime runs the image's
 configured entrypoint and command once per request, as the image's
 configured user, in the image's configured working directory, with the
 image's configured environment plus the bindings the manifest requested.
@@ -132,12 +133,13 @@ the VM and returns the deadline fatal in the wording family the engine uses
 today. The process sees `/tmp` writable and the rest of its root
 filesystem writable through an overlay the VM discards on exit.
 `requires.filesystem.privateTmp` remains accepted and keeps its meaning, a
-scratch space private to the run. The manifest's `contract` field versions
-this contract for `type: oci` (`contract: 1`), the way it versions the
-component world for `type: wasm` (`contract: 2`). The runtime reads `type`
-first, then holds `contract` to the contract that type selects. The field
-was `abi` through 0.6. An OCI image has no ABI, so the owner renamed it
-with no alias (decision 10).
+scratch space private to the run. The manifest's `contract` field states
+this contract as `oci@1.0` and the component world as `wasm@1.0`: the
+engine kind, then the version of that engine's contract. A later minor
+extends a contract with new fields. The runtime reads the engine kind from
+the field and refuses a version its engine doesn't offer. The field
+was `abi`, an integer, through 0.6. An OCI image has no ABI, so the owner
+replaced it with no alias (decision 10).
 
 ### The artifact
 
@@ -146,7 +148,7 @@ with no alias (decision 10).
 `application/vnd.wasmfn.manifest.v1+json`, a WASM config that lists the
 layer digests, and the standard `org.opencontainers.image.*` annotations.
 An image's layers are its root filesystem, and a manifest layer would break
-every container runtime that pulls the image. The artifact for `type: oci`
+every container runtime that pulls the image. The artifact for an `oci@1.0` module
 wraps the image instead:
 
 - `artifactType: application/vnd.guestfn.module.v1`, the empty config
@@ -173,8 +175,7 @@ default sandbox, exactly as it runs a bare `application/wasm` layer today.
 ### The manifest
 
 ```yaml
-type: oci          # wasm (the default when absent) or oci
-contract: 1        # the process contract; 2 is the component world
+contract: oci@1.0  # the engine and its contract's version; wasm@1.0 is the component world
 name: tagger
 version: 0.3.0
 image: ghcr.io/acme/tagger@sha256:…   # written by guestfn push
@@ -361,9 +362,9 @@ entrypoint or a command, that the user resolves and that the platform
 exists. It
 prints the same admission verdicts as today.
 
-| command | `type: oci` |
+| command | `oci@1.0` |
 |---|---|
-| `guestfn init --type oci --lang go\|python\|rust\|ts` | a project with a `Dockerfile`, a `main` that reads stdin and writes stdout around the language's function SDK (function-sdk-go, function-sdk-python, function-sdk-rust, the TypeScript codec the ts scaffold vendors), the same greeting behaviour as the WebAssembly scaffolds, unit tests that run natively, and a `guestfn.yaml` with `type: oci` |
+| `guestfn init --type oci --lang go\|python\|rust\|ts` | a project with a `Dockerfile`, a `main` that reads stdin and writes stdout around the language's function SDK (function-sdk-go, function-sdk-python, function-sdk-rust, the TypeScript codec the ts scaffold vendors), the same greeting behaviour as the WebAssembly scaffolds, unit tests that run natively, and a `guestfn.yaml` with `contract: oci@1.0` |
 | `guestfn build` | `docker build` (or `buildx`) with the project's `Dockerfile`, then a contract check. The image runs once under the sandbox with an empty request, and the verdict says whether stdout decoded as a response |
 | `guestfn push` | pushes the image by digest when the project built it, or takes `--image <ref@sha256>`, then publishes the artifact with the manifest's `image` filled in, reproducible under `SOURCE_DATE_EPOCH` |
 | `guestfn inspect` | the image config (entrypoint, user, platform, size), the manifest summary and the contract verdict |
@@ -386,27 +387,27 @@ The `v1beta1` deprecation goes with the old group.
 
 ## Code shape
 
-- `crates/function`: an `Engine` trait and a `Module` associated type in a
-  new `engine.rs`. `runner.rs`, `cache.rs`, `validate.rs` and `ops.rs` take
-  the trait, and the `wasm` and `oci` Cargo features select the engine.
-  `manifest.rs` gains `type`, `image` and the per-type `contract` check.
-  `oci.rs` reads both manifest media types and the wrapping artifact.
-- `crates/engine`: the trait over Wasmtime, with its behaviour and its
-  tests unchanged.
-- `crates/engine-oci`: the `Sandbox` trait with the chosen VMM behind it
-  (`firecracker.rs` first: the machine config, the devices, the
-  lifecycle). Beside it, `rootfs.rs` unpacks the layers into the squashfs
-  root filesystem, `layout.rs` reads the image layout the runtime hands
-  over, `image.rs` holds the image config and the run description,
-  `initrd.rs` packs the initramfs around the init, `run.rs` applies the
-  bounds and words the fatals, and the egress bridge onto `HttpRequester`
-  comes later.
-- `crates/init` (the `guestfn-init` package): the guest init, a static
-  binary that depends on nothing in the image, and the protocol it speaks
-  with the host (`guestfn_init::{Description, Exit, Kind}`, framed over
-  vsock). It mounts, overlays, starts the process and relays the streams;
-  the proxy with its authority comes with the egress phase. A second
-  binary, the fixture process, is what the engine's VM tests run.
+- `crates/function`: `engine.rs` selects the engine by Cargo feature
+  (`wasm`, `oci`) and names it `Selected`; `runner.rs`, `cache.rs`,
+  `validate.rs` and `ops.rs` take the trait. `manifest.rs` gains the
+  `Contract` enum and `image`. `oci.rs` reads the wrapping artifact, and
+  `resolver.rs` fetches an image through it into a layout.
+- `crates/engine`, the one engine crate (the owner asked for few crates,
+  2026-11-06): the `Engine` trait and what every engine shares at its
+  root, the Wasmtime engine under the `wasm` feature, the OCI engine under
+  `oci` as the `oci` module - the `Sandbox` trait with the chosen VMM
+  behind it (`firecracker.rs` first: the machine config, the devices, the
+  lifecycle), `rootfs.rs` unpacking the layers into the squashfs root
+  filesystem, `layout.rs` reading the image layout the runtime hands over,
+  `image.rs` holding the image config and the run description,
+  `initrd.rs` packing the initramfs around the init, `run.rs` applying the
+  bounds and wording the fatals, with the egress bridge onto
+  `HttpRequester` to come - and, as the crate's two binaries built static
+  for musl with no feature on, the guest init (`guestfn-init`: it mounts,
+  overlays, starts the process and relays the streams; the proxy with its
+  authority comes with the egress phase) and the fixture process the VM
+  tests run. `protocol.rs` is what the init and the host say to each
+  other (`Description`, `Exit`, the frame kinds), framed over vsock.
 - `crates/guestfn`: `--type oci` through init, build, push and inspect, and
   the OCI template sets.
 - `package/oci/`: `crossplane.yaml` and the shared Input CRD.
@@ -421,9 +422,9 @@ The `v1beta1` deprecation goes with the old group.
 
 - Unit: the layer unpacking against fixtures with whiteouts and
   ownership, read back from the form the sandbox boots. The init protocol
-  framing. The manifest's `type`, `image` and per-type `contract` rules. The
+  framing. The manifest's `contract`, `image` and per-engine rules. The
   wrapping artifact in `push.rs`.
-- `crates/engine-oci` integration: a static test image built in the test
+- The engine's VM suite runs a static test image built in the test
   from a small binary that echoes a fixed response, unpacked and run under
   the sandbox on a KVM runner. The cases cover the deadline, the memory
   limit, a non-zero exit, stderr log lines and a proxied request against a
@@ -439,7 +440,7 @@ The `v1beta1` deprecation goes with the old group.
 
 An operators page for the OCI runtime (install, the device and the flags),
 a guests page for the process contract
-and the OCI scaffolds, the manifest page's `type` and `image` fields, the
+and the OCI scaffolds, the manifest page's `contract` and `image` fields, the
 artifact's media types on the trust model page, the Input reference's
 `apiVersion` note, and the troubleshooting entries for the new refusals.
 
@@ -447,7 +448,7 @@ artifact's media types on the trust model page, the Input reference's
 
 The project is at 0.6, and the owner accepts the breaks below before 1.0
 (2026-11-05). The WebAssembly runtime's admission, wording, flags and
-metrics don't change otherwise. The manifest's `type` defaults to `wasm`.
+metrics don't change otherwise.
 
 | today | after | who moves |
 |---|---|---|
@@ -521,11 +522,12 @@ The owner settled these on 2026-11-05:
 
 The owner decided this on 2026-11-06:
 
-10. **The contract field.** The manifest's `abi` becomes `contract`, with
-    no alias: an OCI image has no ABI, and the number versions the
-    contract the type selects either way (`2` the component world, `1`
-    the process contract). The runtime refuses the old name as an unknown
-    field.
+10. **The contract field.** The manifest's `abi` becomes `contract`, an
+    enum written `<engine>@<major>.<minor>` with no alias: `wasm@1.0` is
+    the component world, `oci@1.0` the process contract, and `type` goes,
+    since the contract states the engine. A minor adds fields a module may
+    use between versions; a major changes what the engine does with a
+    module. The runtime refuses the old name as an unknown field.
 
 Open:
 
@@ -538,19 +540,20 @@ Open:
 
 ## Phases
 
-1. Done (#247): the `Engine` trait in `function-wasm-engine-api`,
+1. Done (#247): the `Engine` trait (first in its own crate, folded back into
+   `crates/engine` on 2026-11-06 at the owner's ask),
    `crates/function` generic over it as `engine::Selected`, Wasmtime behind
    it with no behaviour change and the goldens unchanged.
 2. Done in part. #244 renamed the manifest file and the media type. #246
    moved the Input group and generated the CRD. #247 added the manifest's
    `type` with its per-type contract, with `type: oci` refused by name.
-   The next PR renamed `abi` to `contract`, added the manifest's `image`
+   The next PR made `abi` the `contract` enum, added the manifest's `image`
    and the wrapping artifact's `artifactType`, which the runtime reads and
    `guestfn push --image` writes, and taught `guestfn inspect` the
    artifact. Left: `guestfn init` and `guestfn build` for `type: oci` (the
    OCI scaffolds), with the contract check deferred to phase 3.
-3. Done in part, as the spike's Firecracker prototype: `crates/engine-oci`
-   behind the `Sandbox` trait, the init and its protocol, the layer
+3. Done in part, as the spike's Firecracker prototype: the engine crate's
+   `oci` module behind the `Sandbox` trait, the init and its protocol, the layer
    unpacking into squashfs, the VM lifecycle, the bounds, `function
    validate --resolve` for images, the `oci` Cargo feature of the
    `function` crate with its flags, the image fetch of the resolver through the

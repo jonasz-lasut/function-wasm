@@ -36,8 +36,7 @@ the request bytes, as for a component.
 ## The manifest
 
 ```yaml
-type: oci
-contract: 1
+contract: oci@1.0
 name: tagger
 version: 0.3.0
 requires:
@@ -47,7 +46,7 @@ config:
     type: object
 ```
 
-`type: oci` selects the process contract, whose version is `contract: 1`.
+`contract: oci@1.0` names the process contract and its version.
 `image` pins the image by digest; `guestfn push --image` writes it, so the
 file may leave it out. The other fields keep their meaning from
 [Module manifests](module-manifests.md). The runtime refuses

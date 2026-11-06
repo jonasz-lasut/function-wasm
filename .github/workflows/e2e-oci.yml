@@ -25,9 +25,7 @@ name: OCI Runtime
 on:
   push:
     paths:
-      - crates/engine-api/**
-      - crates/engine-oci/**
-      - crates/init/**
+      - crates/engine/**
       - crates/function/**
       - crates/e2e/**
       - Cargo.lock
@@ -90,7 +88,7 @@ jobs:
         run: |
           cargo build --locked --release -p function-wasm --no-default-features --features oci
           cargo build --locked --release -p guestfn
-          cargo build --locked --release -p guestfn-init --target x86_64-unknown-linux-musl
+          cargo build --locked --release -p function-wasm-engine --no-default-features --bins --target x86_64-unknown-linux-musl
 
       - name: Build the End-to-End Guest as a Process
         run: make e2e.oci.guest
@@ -157,7 +155,7 @@ jobs:
           export GUESTFN_KERNEL="${RUNNER_TEMP}/oci-tools/vmlinux"
           export GUESTFN_INIT="${RUNNER_TEMP}/oci-tools/init"
           export GUESTFN_FIXTURE="${RUNNER_TEMP}/oci-tools/fixture"
-          cargo test --locked -p function-wasm-engine-oci -p guestfn-init -- --nocapture
+          cargo test --locked -p function-wasm-engine --no-default-features --features oci -- --nocapture
 
   # The oci profile of the end-to-end suite: the function-oci package in
   # kind with /dev/kvm from the runner, driven through the Guest XR with

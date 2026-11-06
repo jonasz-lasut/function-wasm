@@ -113,10 +113,10 @@ Crossplane RunFunctionResponse (whatever the module produced)
 
 ```
 crates/function/            the runtime crate: a library (everything below) + the `function` binary
-  src/engine.rs               the engine behind the runtime, behind engine-api's Engine trait:
-                              a Cargo feature selects it (`wasm`, the default: Wasmtime from
-                              crates/engine; `oci`: the OCI engine from crates/engine-oci,
-                              built --no-default-features --features oci; both on, the lint's
+  src/engine.rs               the engine behind the runtime, behind the engine crate's Engine
+                              trait: a Cargo feature selects it (`wasm`, the default: Wasmtime;
+                              `oci`: the OCI engine, the engine crate's feature of the same
+                              name, built --no-default-features --features oci; both on, the lint's
                               --all-features, wasm serves) and the crate names it only as
                               `engine::Selected` and `engine::Module`, so a second engine is a
                               second feature and no other change here; `engine::EngineArgs`
@@ -235,13 +235,15 @@ crates/function/            the runtime crate: a library (everything below) + th
                               per hop, fixed budgets, the process-wide rate limit, one audit line
                               and http_requests_total per request
   src/manifest.rs             the module manifest: parse (artifact layer), load (guestfn.yaml,
-                              unknown top-level fields refused), validate (type wasm|oci, the
-                              contract the type takes - 2 the component world, 1 the process
-                              contract; `abi` through 0.6, renamed with no alias - and image,
-                              the digest-pinned image of a type: oci module alone), check (a
-                              type: oci manifest refused by name - the OCI runtime's package
-                              serves it; grants, config schema via jsonschema, minRuntime vs
-                              runtime_version()), summary, json
+                              unknown top-level fields refused), the Contract enum
+                              (`<engine>@<major>.<minor>`: wasm@1.0 the component world, oci@1.0
+                              the process contract, parsed as it is read, a version no engine
+                              implements refused; `abi`, an integer, through 0.6, replaced with
+                              no alias), validate (contract declared, image the digest-pinned
+                              image of an oci module alone), check_type (the other package's
+                              manifest refused by name; egress refused by name on function-oci
+                              until the proxy phase), check (grants, config schema via
+                              jsonschema, minRuntime vs runtime_version()), summary, json
   src/from.rs, input.rs,      module.from fencing, the Input types, egress rule, env binding and
   egress_rules.rs,            required-credential shapes, quantity/duration parsing, env
   sandboxenv.rs, quantity.rs  materialization and the required credentials held against the request
@@ -251,18 +253,27 @@ crates/function/            the runtime crate: a library (everything below) + th
   tests/raw_client.rs         a raw-codec gRPC client proving byte transparency end to end
   testdata/validate/          the validate fixture corpus (one file per refusal family, policies, XR)
   testdata/conformance/       the recorded goldens
-crates/engine-api/          what every engine shares and what the runtime holds one to (#239):
+crates/engine/              the engines, one crate (function-wasm-engine): what every engine
+                            shares and what the runtime holds one to at its root, always
+                            compiled; the Wasmtime engine under the `wasm` feature (the default,
+                            the only code in the workspace that imports wasmtime); the OCI
+                            engine under `oci` (src/oci/, below); and the OCI runtime's guest
+                            init and test fixture as the crate's two binaries, built static for
+                            musl with no feature on (make oci.init)
   src/lib.rs                  the Engine trait (compile, inspect, serialize, deserialize_file,
-                              run, version, config), Config (the ceilings), RunOptions (one run's
-                              narrowing and grants), Inspection and Extern, Error
+                              run, version, config; KIND the module type the engine serves,
+                              CONTRACT the manifest contract it implements), Config (the
+                              ceilings), RunOptions (one run's narrowing and grants), Inspection
+                              (with details, an image's config lines) and Extern, Error
   src/wire.rs,                the egress seam (HttpRequester, one send's request and response),
   concurrency.rs,             the fair run slots, the memory pool and the per-digest step slots,
   duration.rs, metrics.rs     Go-style durations, the Prometheus series (names, labels and
                               buckets are contract; see "Metrics"). No WebAssembly here
-crates/engine/              the Wasmtime engine - the only crate that imports wasmtime; it
-                            implements engine-api's Engine trait as `Wasmtime` and re-exports
-                            the api crate, so its users and tests read everything from it
-  src/lib.rs                  Wasmtime (compile + checkABI, inspect → the full module shape, leases,
+  src/protocol.rs             what the guest init and the host say to each other over vsock:
+                              Hello, Run with the Description (argv, env, cwd, uid, gid, groups,
+                              hostname), Stdin/StdinEnd, Stdout, Stderr, Exit (status, signal,
+                              oom, error); framed, feature-free
+  src/wasm.rs                 Wasmtime (compile + checkABI, inspect → the full module shape, leases,
                               fair scheduler, memory pool, on-demand epoch ticker), RunOptions
                               (limits + private tmp/env + HTTP + deadline), version() namespacing
                               the compiled cache (build.rs reads wasmtime's version from Cargo.lock)
@@ -530,36 +541,36 @@ examples/cert-rotator       the C++ use case (example only: no scaffold; guestfn
                             the operator's ceiling and example/required-resources.yaml the
                             Secret crossplane render supplies. Tests: src/rotator_test.cpp and
                             src/fn_test.c natively (zig build test); the build-cpp job. ~160 KB
-crates/engine-oci/          the OCI engine of the function-oci runtime (docs/one-pager-oci-runtime.md,
-                            docs/operators/oci-runtime.md): function-wasm-engine-oci implements
-                            engine-api's Engine trait as `Oci` over a `Sandbox` seam
-                            (sandbox.rs; firecracker.rs the first VMM, one process per run from
-                            a config file, no API, the init's vsock port on a Unix socket). A
-                            module is an OCI image layout tar (layout.rs: index, platform
-                            manifest, config and layers, every blob verified, plus the Writer
-                            the resolver assembles one with), compiled by applying the layers
-                            with their whiteouts into a tree and writing a squashfs (rootfs.rs,
-                            backhand, gzip, ownership from the tar headers, the image config
-                            with the user resolved inside it at /.guestfn/config.json) that is
-                            the compiled store's artifact and the VM's read-only block device;
-                            image.rs is the config, the contract check (a command, this
-                            platform) and the run's Description; initrd.rs the cpio around the
-                            init; run.rs the slot, the whole-VM memory reservation, the stderr
-                            lines logged (JSON level/msg typed) and the fatal wording
-                            (`process exited with status N: <last line>`, the deadline
-                            family, the memory limit). tests/vm.rs runs the fixture process in
-                            real VMs when GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set
-                            (make oci.test), skipping otherwise unless FUNCTION_WASM_REQUIRE_KVM
-crates/init/                the guestfn-init package: the guest init (src/main.rs, PID 1 of
-                            the VM: devtmpfs/proc/sys, the squashfs on /dev/vda under a tmpfs
-                            overlay, a fresh /tmp, vsock to the host, chroot, the process as
-                            the described user with the request on stdin, stdout/stderr
-                            relayed as frames, the exit with an OOM check of /dev/kmsg, then
-                            power off), the protocol library (src/lib.rs: Hello, Run with the
-                            Description, Stdin/StdinEnd, Stdout, Stderr, Exit; framed) and the
-                            fixture process the engine's VM tests run (src/bin/fixture.rs:
-                            echo, exit, stderr, spin, grow, env, cwd, id, tmp, hostname,
-                            silent). Built static for musl (make oci.init, Dockerfile.oci)
+  src/oci/                    the OCI engine of the function-oci runtime (docs/one-pager-oci-runtime.md,
+                              docs/operators/oci-runtime.md), feature `oci`: mod.rs implements
+                              the Engine trait as `Oci` over a `Sandbox` seam (sandbox.rs;
+                              firecracker.rs the first VMM, one process per run from a config
+                              file, no API, the init's vsock port on a Unix socket). A module
+                              is an OCI image layout tar (layout.rs: index, platform manifest,
+                              config and layers, every blob verified, plus the Writer the
+                              resolver assembles one with), compiled by applying the layers
+                              with their whiteouts into a tree and writing a squashfs
+                              (rootfs.rs, backhand, gzip, ownership from the tar headers, the
+                              image config with the user resolved inside it at
+                              /.guestfn/config.json) that is the compiled store's artifact and
+                              the VM's read-only block device; image.rs is the config, the
+                              contract check (a command, this platform) and the run's
+                              Description; initrd.rs the cpio around the init; run.rs the
+                              slot, the whole-VM memory reservation, the stderr lines logged
+                              (JSON level/msg typed) and the fatal wording (`process exited
+                              with status N: <last line>`, the deadline family, the memory
+                              limit); testing.rs the image fixtures and the fake sandbox.
+                              tests/vm.rs runs the fixture process in real VMs when
+                              GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set (make oci.test),
+                              skipping otherwise unless FUNCTION_WASM_REQUIRE_KVM
+  src/bin/guestfn-init.rs     the guest init, PID 1 of the VM: devtmpfs/proc/sys, the squashfs
+                              on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
+                              host, chroot, the process as the described user with the request
+                              on stdin, stdout/stderr relayed as frames, the exit with an OOM
+                              check of /dev/kmsg, then power off. Static (musl), depends on
+                              nothing in the image
+  src/bin/guestfn-guest-fixture.rs  the process the VM tests run: echo, exit, stderr, spin, grow,
+                              env, cwd, id, tmp, hostname, silent
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package function-wasm-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library

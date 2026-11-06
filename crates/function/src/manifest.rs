@@ -15,38 +15,141 @@ use crate::sandboxenv::{self, EnvBinding};
 /// Bounds the layer and the file: a manifest is a few lines of requirements
 /// and a schema, never a document.
 pub const MAX_SIZE: usize = 64 << 10;
-/// The contracts of `type: wasm` this runtime implements: ABI v2
-/// (docs/abi-v2.md, components) alone since function-wasm 1.0.0 removed v1
-/// (core modules). A manifest still declares its contract, so a v1 manifest
-/// is refused by its declaration before its module is refused by its binary
-/// format.
-pub const WASM_CONTRACTS: [i64; 1] = [2];
-
-/// The kinds of module a manifest describes (docs/one-pager-oci-runtime.md):
-/// a WebAssembly component, which this package serves, and an OCI image,
-/// which the OCI runtime serves. Absent means `wasm`: every manifest written
-/// before the field is a WebAssembly one.
+/// The kinds of module a manifest describes, the engines that serve them
+/// (docs/one-pager-oci-runtime.md): a WebAssembly component, which
+/// function-wasm serves, and an OCI image, which function-oci serves. The
+/// contract's prefix names the kind.
 pub const TYPE_WASM: &str = "wasm";
 pub const TYPE_OCI: &str = "oci";
-/// The process contract's version, the `contract` a `type: oci` manifest
-/// states (the OCI runtime's record versions it beside the component
-/// world's 2).
-pub const OCI_CONTRACT: i64 = 1;
+
+/// The contracts this workspace's engines implement, by kind: the
+/// component world of docs/abi-v2.md as `wasm@1.0` (the one WebAssembly
+/// contract since function-wasm 1.0.0 removed the core-module ABI), the
+/// process contract as `oci@1.0`. A minor adds what a module may use; a
+/// major changes what the engine does with a module.
+pub const WASM_CONTRACTS: [Version; 1] = [Version { major: 1, minor: 0 }];
+pub const OCI_CONTRACTS: [Version; 1] = [Version { major: 1, minor: 0 }];
+
+/// A contract's version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Version {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+/// The contract a module implements, `<engine>@<major>.<minor>`: the
+/// engine kind that serves it and the version of that engine's contract.
+/// `wasm@1.0` is the component world, `oci@1.0` the process contract.
+/// Required. Named `abi` (an integer) through 0.6, replaced with no alias
+/// (docs/one-pager-oci-runtime.md, decision 10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Contract {
+    Wasm(Version),
+    Oci(Version),
+}
+
+/// What a wrong contract says: the shape, and the two this workspace has.
+const CONTRACT_SHAPE: &str = "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@1.0 (the process contract)";
+
+impl Contract {
+    /// Parses `wasm@1.0`; a version this workspace's engines do not
+    /// implement is a parse error too, so a manifest never loads with a
+    /// contract nothing serves.
+    pub fn parse(s: &str) -> Result<Contract, String> {
+        let Some((engine, version)) = s.split_once('@') else {
+            return Err(format!("{CONTRACT_SHAPE}, got {s:?}"));
+        };
+        let Some((major, minor)) = version.split_once('.') else {
+            return Err(format!("{CONTRACT_SHAPE}, got {s:?}"));
+        };
+        let (Ok(major), Ok(minor)) = (major.parse::<u32>(), minor.parse::<u32>()) else {
+            return Err(format!("{CONTRACT_SHAPE}, got {s:?}"));
+        };
+        let v = Version { major, minor };
+        let (contract, known): (Contract, &[Version]) = match engine {
+            TYPE_WASM => (Contract::Wasm(v), &WASM_CONTRACTS),
+            TYPE_OCI => (Contract::Oci(v), &OCI_CONTRACTS),
+            other => {
+                return Err(format!(
+                    "contract names the engine {other:?}, and the engines are wasm and oci (got {s:?})"
+                ));
+            }
+        };
+        if !known.contains(&v) {
+            let versions: Vec<String> = known.iter().map(|k| format!("{engine}@{k}")).collect();
+            return Err(format!(
+                "contract {s} is not one the {engine} engine implements: {}",
+                versions.join(", ")
+            ));
+        }
+        Ok(contract)
+    }
+
+    /// The engine kind: `wasm` or `oci`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Contract::Wasm(_) => TYPE_WASM,
+            Contract::Oci(_) => TYPE_OCI,
+        }
+    }
+
+    pub fn version(&self) -> Version {
+        match self {
+            Contract::Wasm(v) | Contract::Oci(v) => *v,
+        }
+    }
+}
+
+impl std::fmt::Display for Contract {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.kind(), self.version())
+    }
+}
+
+impl Serialize for Contract {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Contract {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Contract, D::Error> {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = Contract;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a contract such as wasm@1.0")
+            }
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Contract, E> {
+                Contract::parse(s).map_err(E::custom)
+            }
+            fn visit_i64<E: serde::de::Error>(self, n: i64) -> Result<Contract, E> {
+                Err(E::custom(format!(
+                    "{CONTRACT_SHAPE}, got the number {n} (the field was abi, an integer, through function-wasm 0.6)"
+                )))
+            }
+            fn visit_u64<E: serde::de::Error>(self, n: u64) -> Result<Contract, E> {
+                self.visit_i64(n as i64)
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
 
 /// What a module declares about itself.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Manifest {
-    /// `wasm` or `oci`; empty is `wasm`. Serialized only when set, so a
-    /// WebAssembly manifest's bytes, and the artifact digest over them, do
-    /// not move.
-    #[serde(rename = "type", skip_serializing_if = "String::is_empty")]
-    pub r#type: String,
-    /// The version of the contract the module's type names: the component
-    /// world for `wasm` (WASM_CONTRACTS), the process contract for `oci`
-    /// (OCI_CONTRACT). Required. Named `abi` through 0.6; renamed with no
-    /// alias, since an OCI image has no ABI (docs/one-pager-oci-runtime.md).
-    pub contract: i64,
+    /// The contract the module implements (`Contract`); required, and
+    /// absent in a manifest that has not declared one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract: Option<Contract>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -237,8 +340,7 @@ impl Manifest {
         let value: serde_json::Value = serde_saphyr::from_slice(&raw)
             .map_err(|e| format!("{} is not valid YAML: {e}", path.display()))?;
         if let Some(map) = value.as_object() {
-            const KNOWN: [&str; 11] = [
-                "type",
+            const KNOWN: [&str; 10] = [
                 "contract",
                 "name",
                 "version",
@@ -284,6 +386,26 @@ impl Manifest {
                 MAX_SIZE
             ));
         }
+        // The contract first, on its own, so its refusal reads without
+        // serde's position suffix.
+        let value: Value =
+            serde_json::from_slice(raw).map_err(|e| format!("cannot parse manifest: {e}"))?;
+        match value.get("contract") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(c)) => {
+                Contract::parse(c).map_err(|e| format!("cannot parse manifest: {e}"))?;
+            }
+            Some(Value::Number(n)) => {
+                return Err(format!(
+                    "cannot parse manifest: {CONTRACT_SHAPE}, got the number {n} (the field was abi, an integer, through function-wasm 0.6)"
+                ));
+            }
+            Some(other) => {
+                return Err(format!(
+                    "cannot parse manifest: {CONTRACT_SHAPE}, got {other}"
+                ));
+            }
+        }
         let m: Manifest =
             serde_json::from_slice(raw).map_err(|e| format!("cannot parse manifest: {e}"))?;
         // The strict pass over requires alone, with unknown fields refused.
@@ -305,34 +427,25 @@ impl Manifest {
     }
 
     /// Checks the manifest's shape and compiles its schema: contract is
-    /// the one the type takes (WASM_CONTRACTS, OCI_CONTRACT), image is a
-    /// digest-pinned reference of a `type: oci` module alone, every
-    /// required egress rule passes the checks a Composition's rule passes,
+    /// declared (its value was checked as it was read), image is a
+    /// digest-pinned reference of an oci module alone, every required
+    /// egress rule passes the checks a Composition's rule passes,
     /// minRuntime is a semantic version, and config.schema is a JSON
     /// Schema.
     pub fn validate(&self) -> Result<(), String> {
-        match self.kind() {
-            TYPE_WASM => {
-                if !WASM_CONTRACTS.contains(&self.contract) {
-                    return Err(format!(
-                        "contract must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got {}",
-                        self.contract
-                    ));
-                }
+        let Some(contract) = self.contract else {
+            return Err(format!("{CONTRACT_SHAPE}; the manifest declares none"));
+        };
+        match contract {
+            Contract::Wasm(_) => {
                 if !self.image.is_empty() {
                     return Err(
-                        "image names an OCI image, which only a type: oci manifest carries"
+                        "image names an OCI image, which only an oci contract's manifest carries"
                             .to_string(),
                     );
                 }
             }
-            TYPE_OCI => {
-                if self.contract != OCI_CONTRACT {
-                    return Err(format!(
-                        "contract must be {OCI_CONTRACT} for type oci (the process contract), got {}",
-                        self.contract
-                    ));
-                }
+            Contract::Oci(_) => {
                 if !self.image.is_empty()
                     && let Err(e) = crate::location::parse_oci_reference(&self.image)
                 {
@@ -340,9 +453,6 @@ impl Manifest {
                         "image must be an OCI reference pinned by digest (registry/repository@sha256:…): {e}"
                     ));
                 }
-            }
-            other => {
-                return Err(format!("type must be wasm or oci, got {other}"));
             }
         }
         if let Some(r) = &self.requires {
@@ -418,13 +528,10 @@ impl Manifest {
 
     /// One line for a CLI: name and version, then what the module requires
     /// and whether it ships a config schema; empty parts are left out.
-    /// The module's type, `wasm` when the manifest leaves it out.
-    pub fn kind(&self) -> &str {
-        if self.r#type.is_empty() {
-            TYPE_WASM
-        } else {
-            &self.r#type
-        }
+    /// The engine kind the contract names; `wasm` for a manifest that
+    /// declares none, which validate refuses.
+    pub fn kind(&self) -> &'static str {
+        self.contract.map(|c| c.kind()).unwrap_or(TYPE_WASM)
     }
 
     pub fn summary(&self) -> String {
@@ -440,7 +547,7 @@ impl Manifest {
         if !h.is_empty() {
             parts.push(h);
         }
-        if self.kind() == TYPE_OCI {
+        if let Some(Contract::Oci(_)) = self.contract {
             parts.push("type oci".to_string());
             if !self.image.is_empty() {
                 parts.push(format!("image {}", self.image));
@@ -560,12 +667,6 @@ impl Manifest {
     ) -> Result<(), String> {
         if self.kind() == TYPE_OCI {
             return Ok(());
-        }
-        if !WASM_CONTRACTS.contains(&self.contract) {
-            return Err(format!(
-                "requires ABI v{}, this runtime implements ABI v2 only",
-                self.contract
-            ));
         }
         if let Some(r) = &self.requires {
             if let Some(egress) = &r.egress {
@@ -803,15 +904,23 @@ mod tests {
         Manifest::parse(raw.as_bytes()).expect("parse")
     }
 
-    /// `type` is `wasm` unless written, `oci` takes the process contract
-    /// and an image and nothing else, and this package serves `wasm` alone.
+    /// The contract names the engine and its version, an oci one takes an
+    /// image, and each package serves its own kind alone.
     #[test]
-    fn the_type_selects_the_contract_and_the_package() {
-        let wasm = manifest(r#"{"contract":2,"name":"greeter"}"#);
+    fn the_contract_selects_the_engine_and_the_package() {
+        let wasm = manifest(r#"{"contract":"wasm@1.0","name":"greeter"}"#);
         assert_eq!(wasm.kind(), TYPE_WASM);
+        assert_eq!(
+            wasm.contract,
+            Some(Contract::Wasm(Version { major: 1, minor: 0 }))
+        );
         assert!(wasm.validate().is_ok());
+        assert_eq!(
+            String::from_utf8(wasm.json().unwrap()).unwrap(),
+            r#"{"contract":"wasm@1.0","name":"greeter"}"#
+        );
         let oci = manifest(
-            r#"{"type":"oci","contract":1,"name":"tagger","version":"0.3.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#,
+            r#"{"contract":"oci@1.0","name":"tagger","version":"0.3.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#,
         );
         assert_eq!(oci.kind(), TYPE_OCI);
         assert!(oci.validate().is_ok());
@@ -830,45 +939,48 @@ mod tests {
         );
         assert!(wasm.check_type(TYPE_WASM).is_ok());
         let egress = manifest(
-            r#"{"type":"oci","contract":1,"requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
+            r#"{"contract":"oci@1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
         );
         assert!(egress.check_type(TYPE_OCI).unwrap_err().starts_with(
             "requires egress (requires.egress.http), which function-oci does not serve yet"
         ));
         let err = |raw: &str| Manifest::parse(raw.as_bytes()).unwrap_err();
         assert_eq!(
-            err(r#"{"type":"oci","contract":2}"#),
-            "contract must be 1 for type oci (the process contract), got 2"
+            err(r#"{"contract":"oci@2.0"}"#),
+            "cannot parse manifest: contract oci@2.0 is not one the oci engine implements: oci@1.0"
         );
         assert_eq!(
-            err(r#"{"type":"jar","contract":2}"#),
-            "type must be wasm or oci, got jar"
+            err(r#"{"contract":"wasm@0.9"}"#),
+            "cannot parse manifest: contract wasm@0.9 is not one the wasm engine implements: wasm@1.0"
         );
-        assert!(err(r#"{"type":"wasm","contract":1}"#).starts_with("contract must be 2"));
+        assert_eq!(
+            err(r#"{"contract":"jar@1.0"}"#),
+            "cannot parse manifest: contract names the engine \"jar\", and the engines are wasm and oci (got \"jar@1.0\")"
+        );
+        assert!(
+            err(r#"{"contract":"wasm"}"#)
+                .starts_with("cannot parse manifest: contract must be <engine>@<major>.<minor>")
+        );
+        assert!(err(r#"{"contract":2}"#).contains("got the number 2 (the field was abi"));
+        assert!(err(r#"{"name":"greeter"}"#).ends_with("; the manifest declares none"));
         // The image is the OCI module's, pinned, and no WebAssembly
         // module's.
         assert!(
-            err(r#"{"type":"oci","contract":1,"image":"ghcr.io/acme/tagger:v1"}"#)
+            err(r#"{"contract":"oci@1.0","image":"ghcr.io/acme/tagger:v1"}"#)
                 .starts_with("image must be an OCI reference pinned by digest")
         );
         assert_eq!(
             err(
-                r#"{"contract":2,"image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#
+                r#"{"contract":"wasm@1.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#
             ),
-            "image names an OCI image, which only a type: oci manifest carries"
-        );
-        // The field is absent from a WebAssembly manifest's bytes.
-        assert!(
-            !String::from_utf8(wasm.json().unwrap())
-                .unwrap()
-                .contains("type")
+            "image names an OCI image, which only an oci contract's manifest carries"
         );
     }
 
     #[test]
     fn parses_and_summarises() {
         let m = manifest(
-            r#"{"contract":2,"name":"greeter","version":"0.1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
+            r#"{"contract":"wasm@1.0","name":"greeter","version":"0.1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
         );
         assert_eq!(
             m.summary(),
@@ -880,22 +992,22 @@ mod tests {
     fn refuses_with_go_strings() {
         let cases: &[(&str, &str)] = &[
             (
-                r#"{"contract":3}"#,
-                "contract must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 3",
+                r#"{"contract":"wasm@3.0"}"#,
+                "cannot parse manifest: contract wasm@3.0 is not one the wasm engine implements: wasm@1.0",
             ),
-            // A manifest of the removed ABI: refused by its declaration, so
-            // a v1 artifact's author reads the fix before the module's own
-            // refusal.
+            // A manifest of the removed ABI, as 0.6 wrote it: refused by its
+            // declaration, so a v1 artifact's author reads the fix before
+            // the module's own refusal.
             (
-                r#"{"contract":1}"#,
-                "contract must be 2 (this runtime implements ABI v2 only; ABI v1 was removed in function-wasm 1.0.0), got 1",
+                r#"{"abi":1}"#,
+                "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@1.0 (the process contract); the manifest declares none",
             ),
             (
-                r#"{"contract":2,"requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,
+                r#"{"contract":"wasm@1.0","requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,
                 "requires.egress.http[0] must set exactly one of host and hostPattern",
             ),
             (
-                r#"{"contract":2,"minRuntime":"latest"}"#,
+                r#"{"contract":"wasm@1.0","minRuntime":"latest"}"#,
                 r#"minRuntime "latest" is not a semantic version (e.g. v0.2.0)"#,
             ),
         ];
@@ -909,14 +1021,14 @@ mod tests {
         // An unknown field under requires fails closed; an unknown top-level
         // field is forward compatibility.
         assert!(
-            Manifest::parse(br#"{"contract":2,"requires":{"sockets":true}}"#)
+            Manifest::parse(br#"{"contract":"wasm@1.0","requires":{"sockets":true}}"#)
                 .expect_err("strict requires")
                 .starts_with("cannot parse manifest requires:")
         );
-        assert!(Manifest::parse(br#"{"contract":2,"future":true}"#).is_ok());
+        assert!(Manifest::parse(br#"{"contract":"wasm@1.0","future":true}"#).is_ok());
         // composes is validated in shape, and read by summary.
         let composing = Manifest::parse(
-            br#"{"contract":2,"name":"pdb-addon","composes":[{"kind":"policy/PodDisruptionBudget","changes":["add"]},{"kind":"apps/Deployment"}]}"#,
+            br#"{"contract":"wasm@1.0","name":"pdb-addon","composes":[{"kind":"policy/PodDisruptionBudget","changes":["add"]},{"kind":"apps/Deployment"}]}"#,
         )
         .expect("composes");
         assert_eq!(
@@ -929,12 +1041,13 @@ mod tests {
             "no changes declared means every change"
         );
         assert_eq!(
-            Manifest::parse(br#"{"contract":2,"composes":[{"kind":"Deployment"}]}"#).unwrap_err(),
+            Manifest::parse(br#"{"contract":"wasm@1.0","composes":[{"kind":"Deployment"}]}"#)
+                .unwrap_err(),
             r#"composes[0].kind must be <group>/<Kind> (the core group spelled core), got "Deployment""#
         );
         assert_eq!(
             Manifest::parse(
-                br#"{"contract":2,"composes":[{"kind":"apps/Deployment","changes":["patch"]}]}"#
+                br#"{"contract":"wasm@1.0","composes":[{"kind":"apps/Deployment","changes":["patch"]}]}"#
             )
             .unwrap_err(),
             r#"composes[0].changes must be among add, modify and remove, got "patch""#
@@ -942,7 +1055,7 @@ mod tests {
         // requires.resources is validated in shape, strictly decoded like
         // the rest of requires, and read by summary.
         let requiring = Manifest::parse(
-            br#"{"contract":2,"name":"policy-gate","requires":{"resources":[{"kind":"apiextensions.crossplane.io/EnvironmentConfig","by":["name"]},{"kind":"core/ConfigMap"}]}}"#,
+            br#"{"contract":"wasm@1.0","name":"policy-gate","requires":{"resources":[{"kind":"apiextensions.crossplane.io/EnvironmentConfig","by":["name"]},{"kind":"core/ConfigMap"}]}}"#,
         )
         .expect("resources");
         assert_eq!(
@@ -955,20 +1068,22 @@ mod tests {
             "no by declared means both"
         );
         assert_eq!(
-            Manifest::parse(br#"{"contract":2,"requires":{"resources":[{"kind":"Secret"}]}}"#)
-                .unwrap_err(),
+            Manifest::parse(
+                br#"{"contract":"wasm@1.0","requires":{"resources":[{"kind":"Secret"}]}}"#
+            )
+            .unwrap_err(),
             r#"requires.resources[0].kind must be <group>/<Kind> (the core group spelled core), got "Secret""#
         );
         assert_eq!(
             Manifest::parse(
-                br#"{"contract":2,"requires":{"resources":[{"kind":"core/Secret","by":["uid"]}]}}"#
+                br#"{"contract":"wasm@1.0","requires":{"resources":[{"kind":"core/Secret","by":["uid"]}]}}"#
             )
             .unwrap_err(),
             r#"requires.resources[0].by must be among name and labels, got "uid""#
         );
         assert!(
             Manifest::parse(
-                br#"{"contract":2,"requires":{"resources":[{"kind":"core/Secret","namespace":"x"}]}}"#
+                br#"{"contract":"wasm@1.0","requires":{"resources":[{"kind":"core/Secret","namespace":"x"}]}}"#
             )
             .expect_err("strict resources")
             .starts_with("cannot parse manifest requires:")
@@ -978,7 +1093,7 @@ mod tests {
     #[test]
     fn check_holds_requirements_against_grants() {
         let m = manifest(
-            r#"{"contract":2,"requires":{"filesystem":{"privateTmp":true},"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
+            r#"{"contract":"wasm@1.0","requires":{"filesystem":{"privateTmp":true},"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
         );
         let full = Grants {
             private_tmp: true,
@@ -1000,7 +1115,7 @@ mod tests {
     #[test]
     fn required_credentials_parse_summarise_and_check() {
         let m = manifest(
-            r#"{"contract":2,"name":"team-tags","requires":{"env":[{"name":"API_TOKEN","fromCredential":{"name":"apikeys","key":"token"}}],"credentials":["cmdb","db"]}}"#,
+            r#"{"contract":"wasm@1.0","name":"team-tags","requires":{"env":[{"name":"API_TOKEN","fromCredential":{"name":"apikeys","key":"token"}}],"credentials":["cmdb","db"]}}"#,
         );
         assert_eq!(m.summary(), "team-tags, env API_TOKEN, credentials cmdb db");
         // Published and printed as declared.
@@ -1027,11 +1142,11 @@ mod tests {
         // required once.
         let cases: &[(&str, &str)] = &[
             (
-                r#"{"contract":2,"requires":{"credentials":[""]}}"#,
+                r#"{"contract":"wasm@1.0","requires":{"credentials":[""]}}"#,
                 "requires.credentials[0] must not be empty",
             ),
             (
-                r#"{"contract":2,"requires":{"credentials":["cmdb","cmdb"]}}"#,
+                r#"{"contract":"wasm@1.0","requires":{"credentials":["cmdb","cmdb"]}}"#,
                 r#"requires.credentials[1]: credential "cmdb" is already required by requires.credentials[0]"#,
             ),
         ];
@@ -1044,16 +1159,18 @@ mod tests {
         }
         // Not a list of names: the strict decode refuses it.
         assert!(
-            Manifest::parse(br#"{"contract":2,"requires":{"credentials":[{"name":"cmdb"}]}}"#)
-                .expect_err("strict requires")
-                .starts_with("cannot parse manifest")
+            Manifest::parse(
+                br#"{"contract":"wasm@1.0","requires":{"credentials":[{"name":"cmdb"}]}}"#
+            )
+            .expect_err("strict requires")
+            .starts_with("cannot parse manifest")
         );
     }
 
     #[test]
     fn config_schema_validates() {
         let m = manifest(
-            r#"{"contract":2,"config":{"schema":{"type":"object","properties":{"greeting":{"type":"string"}}}}}"#,
+            r#"{"contract":"wasm@1.0","config":{"schema":{"type":"object","properties":{"greeting":{"type":"string"}}}}}"#,
         );
         assert!(
             m.validate_config(Some(&serde_json::json!({"greeting": "hi"})))
@@ -1077,7 +1194,8 @@ mod tests {
             "https://example.com/schema.json",
         ] {
             let err = Manifest::parse(
-                format!(r#"{{"contract":2,"config":{{"schema":{{"$ref":"{uri}"}}}}}}"#).as_bytes(),
+                format!(r#"{{"contract":"wasm@1.0","config":{{"schema":{{"$ref":"{uri}"}}}}}}"#)
+                    .as_bytes(),
             )
             .expect_err("refuse");
             assert!(err.starts_with("config.schema: "), "{err}");
@@ -1090,7 +1208,7 @@ mod tests {
         }
         // A reference inside the schema never reaches the retriever.
         let m = manifest(
-            r##"{"contract":2,"config":{"schema":{"$defs":{"s":{"type":"string"}},"type":"object","properties":{"greeting":{"$ref":"#/$defs/s"}}}}}"##,
+            r##"{"contract":"wasm@1.0","config":{"schema":{"$defs":{"s":{"type":"string"}},"type":"object","properties":{"greeting":{"$ref":"#/$defs/s"}}}}}"##,
         );
         assert!(
             m.validate_config(Some(&serde_json::json!({"greeting": "hi"})))
@@ -1107,12 +1225,13 @@ mod tests {
         // The regex crate has no look-around or backreferences, so a
         // pattern that needs backtracking is refused at load rather than run.
         let err = Manifest::parse(
-            r#"{"contract":2,"config":{"schema":{"type":"string","pattern":"a(?=b)"}}}"#.as_bytes(),
+            r#"{"contract":"wasm@1.0","config":{"schema":{"type":"string","pattern":"a(?=b)"}}}"#
+                .as_bytes(),
         )
         .expect_err("refuse");
         assert!(err.starts_with("config.schema: "), "{err}");
         let m = manifest(
-            r#"{"contract":2,"config":{"schema":{"type":"string","pattern":"^[a-z]+$"}}}"#,
+            r#"{"contract":"wasm@1.0","config":{"schema":{"type":"string","pattern":"^[a-z]+$"}}}"#,
         );
         assert!(m.validate_config(Some(&serde_json::json!("hi"))).is_ok());
         assert!(m.validate_config(Some(&serde_json::json!("Hi"))).is_err());
@@ -1120,7 +1239,7 @@ mod tests {
 
     #[test]
     fn min_runtime_compares() {
-        let m = manifest(r#"{"contract":2,"minRuntime":"0.2.0"}"#);
+        let m = manifest(r#"{"contract":"wasm@1.0","minRuntime":"0.2.0"}"#);
         assert!(m.check(&Grants::default(), None, "(devel)").is_ok());
         assert!(m.check(&Grants::default(), None, "").is_ok());
         assert!(m.check(&Grants::default(), None, "v0.3.0").is_ok());

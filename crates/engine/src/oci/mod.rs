@@ -1,12 +1,11 @@
 //! The OCI engine of the `function-oci` runtime (docs/one-pager-oci-runtime.md),
-//! behind function-wasm-engine-api's `Engine` trait as the Wasmtime engine
-//! is: a module is an OCI image, handed over as an image layout tar
+//! behind the crate's `Engine` trait as the Wasmtime engine is: a module is an OCI image, handed over as an image layout tar
 //! (`layout.rs`), compiled by unpacking its layers into a squashfs root
 //! filesystem with the image config inside it (`rootfs.rs`, `image.rs`),
 //! stored and loaded as that one file, and run once per request in a
 //! microVM the `Sandbox` seam boots (`sandbox.rs`; Firecracker in
 //! `firecracker.rs`), where the init the engine packs into an initramfs
-//! (`initrd.rs`, the `guestfn-init` crate) runs the image's process under
+//! (`initrd.rs`, the `guestfn-init` binary) runs the image's process under
 //! the process contract: the request on stdin, the response on stdout,
 //! logs on stderr, the exit status the verdict (`run.rs`).
 
@@ -23,7 +22,7 @@ pub mod testing;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use function_wasm_engine_api::{
+pub use crate::{
     self as api, Config, Engine, Error, Extern, HttpRequester, Inspection, RunOptions, concurrency,
     duration, metrics, wire,
 };
@@ -216,7 +215,7 @@ impl Oci {
 
 impl Engine for Oci {
     const KIND: &'static str = "oci";
-    const CONTRACT: &'static str = "process contract v1";
+    const CONTRACT: &'static str = "oci@1.0";
     type Module = Module;
 
     fn config(&self) -> Config {
@@ -279,9 +278,9 @@ pub fn version() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::{Ended, Outcome, VmSpec};
-    use crate::testing::{FakeSandbox, fixture_image};
-    use guestfn_init::Exit;
+    use crate::oci::sandbox::{Ended, Outcome, VmSpec};
+    use crate::oci::testing::{FakeSandbox, fixture_image};
+    use crate::protocol::Exit;
 
     fn engine(sandbox: FakeSandbox) -> Oci {
         let dir = tempfile::tempdir().unwrap();

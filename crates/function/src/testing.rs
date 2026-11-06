@@ -199,8 +199,8 @@ pub mod runtime {
     use crate::egress::Egress;
     use crate::resolver::Resolver;
     use crate::runner::WasmFunction;
-    use function_wasm_engine_api::Config;
-    use function_wasm_engine_api::concurrency::StepSlots;
+    use function_wasm_engine::Config;
+    use function_wasm_engine::concurrency::StepSlots;
 
     use crate::engine::Selected;
 

@@ -187,15 +187,15 @@ $(OCI_TOOLS)/vmlinux:
 	@curl -fsSL -o $@ https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/$(GUEST_KERNEL_CI)/$(OCI_ARCH)/vmlinux-$(GUEST_KERNEL_VERSION)
 	@echo "$(GUEST_KERNEL_SHA256_$(OCI_ARCH))  $@" | sha256sum -c - >/dev/null
 
-oci.init: ## Build the guest init and the test fixture static for musl
+oci.init: ## Build the guest init and the test fixture (the engine crate's binaries) static for musl
 	@rustup target add $(MUSL_TARGET) >/dev/null
-	@cargo build --release -p guestfn-init --target $(MUSL_TARGET) || $(FAIL)
+	@cargo build --release -p function-wasm-engine --no-default-features --bins --target $(MUSL_TARGET) || $(FAIL)
 
 oci.test: oci.tools oci.init ## The OCI engine's suite over a real Firecracker VM (needs /dev/kvm)
 	@GUESTFN_FIRECRACKER=$(CURDIR)/$(OCI_TOOLS)/firecracker GUESTFN_KERNEL=$(CURDIR)/$(OCI_TOOLS)/vmlinux \
 	 GUESTFN_INIT=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-init \
 	 GUESTFN_FIXTURE=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-guest-fixture \
-	 cargo test -p function-wasm-engine-oci -p guestfn-init -- --nocapture || $(FAIL)
+	 cargo test -p function-wasm-engine --no-default-features --features oci -- --nocapture || $(FAIL)
 
 # The test module as a process, static for musl, on the guest's own pinned
 # toolchain (its rust-toolchain.toml).

@@ -465,7 +465,7 @@ mod tests {
     /// and reproducible.
     #[test]
     fn the_image_artifact_wraps_the_manifest_alone() {
-        let manifest = br#"{"type":"oci","contract":1,"image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#;
+        let manifest = br#"{"contract":"oci@1.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#;
         let (a, da) = image_artifact(manifest, None).expect("a");
         let (b, db) = image_artifact(manifest, None).expect("b");
         assert_eq!(a, b);

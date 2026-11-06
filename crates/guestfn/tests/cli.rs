@@ -17,7 +17,7 @@ const CORE_MODULE_WAT: &str = r#"(module
   (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
   (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#;
 
-const MANIFEST_YAML: &str = "contract: 2
+const MANIFEST_YAML: &str = "contract: wasm@1.0
 name: greeter
 version: v0.1.0
 description: Greets the composite resource
@@ -126,7 +126,7 @@ fn push_an_image_module_then_inspect_and_show() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("guestfn.yaml"),
-        "type: oci\ncontract: 1\nname: tagger\nversion: 0.3.0\nrequires:\n  credentials: [cmdb]\n",
+        "contract: oci@1.0\nname: tagger\nversion: 0.3.0\nrequires:\n  credentials: [cmdb]\n",
     )
     .expect("write");
     let addr = empty_registry();
@@ -184,14 +184,14 @@ fn push_an_image_module_then_inspect_and_show() {
     assert!(ok);
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("json");
     assert_eq!(v["reference"]["image"], image);
-    assert_eq!(v["reference"]["manifest"]["contract"], 1);
+    assert_eq!(v["reference"]["manifest"]["contract"], "oci@1.0");
     let (_, stderr, ok) = guestfn(dir.path(), &["inspect", &pinned, "--pull"]);
     assert!(!ok);
     assert!(stderr.contains("has no module layer to pull"), "{stderr}");
 
     let (stdout, stderr, ok) = guestfn(dir.path(), &["manifest", "show", &pinned]);
     assert!(ok, "manifest show failed: {stderr}");
-    assert!(stdout.contains("type: oci"), "{stdout}");
+    assert!(stdout.contains("contract: oci@1.0"), "{stdout}");
     // The emitter folds the long reference onto its own line.
     assert!(
         stdout.contains("image:") && stdout.contains(&image),
@@ -333,7 +333,11 @@ fn manifest_validate() {
         "{stdout}"
     );
 
-    std::fs::write(dir.path().join("bad.yaml"), "contract: 2\nverion: nope\n").expect("write");
+    std::fs::write(
+        dir.path().join("bad.yaml"),
+        "contract: wasm@1.0\nverion: nope\n",
+    )
+    .expect("write");
     let (_, stderr, ok) = guestfn(dir.path(), &["manifest", "validate", "bad.yaml"]);
     assert!(!ok);
     assert!(stderr.contains("unknown field \"verion\""), "{stderr}");
