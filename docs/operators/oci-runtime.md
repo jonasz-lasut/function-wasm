@@ -74,15 +74,34 @@ spec:
                 devic.es/kvm: "1"
 ```
 
-The container runs as the package's non-root user, which needs read and
-write access to the device: a `0666` mode on the node, or the `kvm`
-group's id among the pod's `supplementalGroups`. The pod needs no
-`privileged` flag and no capability. A `privileged: true` container is
-the other way to the device, since the kubelet admits every device of the
-node into it, at the cost of the boundary the pod keeps otherwise. The end-to-end
-suite's `oci` profile runs the plugin
-(`crates/e2e/profiles/oci/kvm-device-plugin.yaml`). The runtime refuses
-to start without the device and says so:
+The kubelet gives the container the node's device node unchanged, owner
+and mode included, `root:kvm 0660` on most node images, and the
+container runs as the package's non-root user, who isn't in that group.
+Put the node's `kvm` group among the pod's `supplementalGroups`:
+
+```yaml
+      template:
+        spec:
+          securityContext:
+            supplementalGroups: [108]
+```
+
+The gid is the node image's (108 on Ubuntu images; other images differ),
+so read it once per node pool, through the API alone:
+
+```shell
+kubectl debug node/<node> -it --image=busybox -- stat -c %g /host/dev/kvm
+```
+
+The pod doesn't need `privileged` or any capability. A privileged
+DaemonSet with the node's `/dev` mounted, which the device plugin already
+is, can set the device to `0666` in an init container instead, which is
+what KubeVirt does. A `privileged: true` function container gets every
+device of the node admitted, at the cost of the boundary the pod keeps
+otherwise. The end-to-end suite's `oci` profile
+runs the plugin and patches the kind node's gid into its runtime config
+(`crates/e2e/profiles/oci/`, `make e2e.oci.kvm`). The runtime refuses to
+start without the device and says so:
 
 ```text
 cannot open /dev/kvm: No such file or directory; the OCI runtime boots a microVM per request and needs the device granted to its pod
@@ -90,6 +109,8 @@ cannot open /dev/kvm: No such file or directory; the OCI runtime boots a microVM
 
 `Operation not permitted` in place of `No such file or directory` is the
 `hostPath` mount: the node is there, the device isn't admitted.
+`Permission denied` is the mode: the kubelet admitted the device, and
+the pod's user is neither its owner nor in its group.
 
 A VM's memory comes out of the pod's. The container's memory limit
 needs `--module-memory-limit` plus 32 MiB for each of

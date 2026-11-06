@@ -168,7 +168,7 @@ xpkg.build.function-wasm: $(CROSSPLANE_CLI) e2e.image
 local.xpkg.deploy.function.%: $(KIND) $(KUBECTL) local.xpkg.sync
 	@$(INFO) deploying function package $* $(VERSION)
 	@$(KIND) load docker-image $(FUNCTION_IMAGE) -n $(KIND_CLUSTER_NAME) || $(FAIL)
-	@for p in $(E2E_PROFILES) oci; do $(KUBECTL) apply -f crates/e2e/profiles/$$p/drc.yaml || exit 1; done
+	@for p in $(E2E_PROFILES); do $(KUBECTL) apply -f crates/e2e/profiles/$$p/drc.yaml || exit 1; done
 	@echo '{"apiVersion":"pkg.crossplane.io/v1","kind":"Function","metadata":{"name":"$*"},"spec":{"package":"xpkg.crossplane.internal/dev/$*@$(LOCAL_XPKG_DIGEST)","skipDependencyResolution":true,"packagePullPolicy":"Never","runtimeConfigRef":{"name":"$(FUNCTION_RUNTIME_CONFIG)"}}}' | $(KUBECTL) apply -f - || $(FAIL)
 	@$(OK) deploying function package $* $(VERSION)
 
@@ -244,15 +244,22 @@ local.xpkg.deploy.function.function-oci: FUNCTION_RUNTIME_CONFIG := e2e-oci
 # The device plugin that grants the node's /dev/kvm to function-oci's pod
 # (crates/e2e/profiles/oci/kvm-device-plugin.yaml), applied before the
 # Function so its pod, which requests one devic.es/kvm, can schedule. The
-# device node the kubelet puts in the container carries the node's mode,
-# and the kind node's copy of /dev/kvm is not world-writable whatever the
-# host's udev rule says, so the node's is opened first: the pod's user
-# is the package's, not a member of the node's kvm group. When the node
-# never allocates one, the plugin's log and the node's device say why.
+# device node the kubelet puts in the container carries the node's owner
+# and mode (root:kvm 0660 on the kind node, as on most node images), and
+# the pod's user is the package's, so the oci profile's runtime config is
+# applied here, with the node's kvm gid patched in as the pod's
+# supplemental group: the way an operator grants the device on a hosted
+# cluster, whose nodes nobody chmods (docs/operators/oci-runtime.md). The
+# gid is read from the kind node, since it is the node image's. When the
+# node never allocates a device, the plugin's log and the device say why.
 e2e.oci.kvm: $(KUBECTL)
 	@$(INFO) installing the kvm device plugin
-	@docker exec $(KIND_CLUSTER_NAME)-control-plane chmod 0666 /dev/kvm || $(FAIL)
-	@docker exec $(KIND_CLUSTER_NAME)-control-plane ls -l /dev/kvm
+	@docker exec $(KIND_CLUSTER_NAME)-control-plane ls -l /dev/kvm || $(FAIL)
+	@gid=$$(docker exec $(KIND_CLUSTER_NAME)-control-plane stat -c %g /dev/kvm) && [ -n "$$gid" ] || $(FAIL); \
+	$(KUBECTL) apply -f crates/e2e/profiles/oci/drc.yaml || $(FAIL); \
+	$(KUBECTL) patch deploymentruntimeconfig e2e-oci --type merge \
+		-p "{\"spec\":{\"deploymentTemplate\":{\"spec\":{\"template\":{\"spec\":{\"securityContext\":{\"supplementalGroups\":[$$gid]}}}}}}}" || $(FAIL); \
+	echo "the pod joins the node's kvm group, gid $$gid"
 	@$(KUBECTL) apply -f crates/e2e/profiles/oci/kvm-device-plugin.yaml || $(FAIL)
 	@$(KUBECTL) -n kube-system rollout status daemonset/generic-device-plugin --timeout=120s || $(FAIL)
 	@n=""; for i in $$(seq 1 60); do \
