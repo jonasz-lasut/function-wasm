@@ -94,7 +94,7 @@ Reference the module from a Composition step of function-wasm:
 directory (`--module-dir`) under `example/policy.cedar` and the fixture
 server `render.sh` starts; `make render-check` runs both xprin cases - the
 configured greeting, and the greeting fetched through the host's egress under
-`example/wasmfn.local.yaml`, a manifest that requires it:
+`example/guestfn.local.yaml`, a manifest that requires it:
 
 ```shell
 make render                         # crossplane render example/xr.yaml ...

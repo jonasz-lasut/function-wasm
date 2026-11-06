@@ -22,7 +22,7 @@ spec:
         # published artifact carries its own manifest.
         type: Path
         path: fn.wasm
-        manifestPath: example/wasmfn.local.yaml
+        manifestPath: example/guestfn.local.yaml
       config:
         # The fixture render.sh serves; leave ipsUrl out in a cluster to read
         # https://api.cloudflare.com/client/v4/ips.

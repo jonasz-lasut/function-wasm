@@ -66,7 +66,7 @@ describes a published artifact from its manifest without pulling it, and
 
 ## Manifest
 
-The scaffold includes a `wasmfn.yaml`, the module's manifest. It gives the
+The scaffold includes a `guestfn.yaml`, the module's manifest. It gives the
 module a name and version, declares the sandbox capabilities the module can't
 run without, and contains the JSON Schema of its `config`. `guestfn build`
 validates it and `guestfn push` publishes it beside the module. See
@@ -82,13 +82,13 @@ skeleton. The policy block is a commented starting point for narrowing.
 ## What `guestfn push` publishes
 
 `guestfn push` produces a CNCF Wasm OCI artifact: one `application/wasm`
-layer, the manifest as an `application/vnd.wasmfn.manifest.v1+json` layer
+layer, the manifest as an `application/vnd.guestfn.manifest.v1+json` layer
 when the project has one, a config object listing both digests in
 `layerDigests`, and the standard `org.opencontainers.image.*` annotations
 from the manifest.
 
 `oras push ghcr.io/example/greeter:v0.1.0 fn.wasm:application/wasm
-wasmfn.json:application/vnd.wasmfn.manifest.v1+json` gives the same result.
+guestfn.json:application/vnd.guestfn.manifest.v1+json` gives the same result.
 A `FROM scratch` image whose only layer copies the module to `/fn.wasm` works
 too, without a manifest. The runtime reads that exact path and doesn't search
 the archive.

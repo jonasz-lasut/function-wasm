@@ -22,4 +22,4 @@ spec:
         # published artifact carries its own manifest.
         type: Path
         path: fn.wasm
-        manifestPath: example/wasmfn.local.yaml
+        manifestPath: example/guestfn.local.yaml

@@ -263,7 +263,7 @@ mod tests {
     /// a scaffold builds on that scaffold's plumbing - the vendored ABI glue,
     /// the generated codecs, the proto and the WIT - and must carry it byte
     /// for byte, so a plumbing fix lands in the template and the example
-    /// together. Everything else (the function itself, wasmfn.yaml, the
+    /// together. Everything else (the function itself, guestfn.yaml, the
     /// README, the example manifests) is the example's own. hello-moonbit has
     /// no scaffold of its own: its wit/ is the c scaffold's (wit-bindgen's
     /// MoonBit generator reads the same world), and its proto copy is held

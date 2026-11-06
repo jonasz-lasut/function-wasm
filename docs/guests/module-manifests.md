@@ -1,6 +1,6 @@
 # Module manifests
 
-This page is for module authors deciding what to put in `wasmfn.yaml`. It
+This page is for module authors deciding what to put in `guestfn.yaml`. It
 covers its contents, how the runtime checks it, the refusals you can expect
 and the `composes` declaration. It assumes a scaffolded project
 ([Write a module](write-a-module.md)); what each policy layer permits is in
@@ -8,7 +8,7 @@ the [Cedar policy reference](../operators/cedar-policy.md).
 
 ## Manifest contents
 
-`guestfn init` writes a `wasmfn.yaml` like this one (the Go scaffold's):
+`guestfn init` writes a `guestfn.yaml` like this one (the Go scaffold's):
 
 ```yaml
 # The module manifest: what this module declares about itself. guestfn build
@@ -63,12 +63,12 @@ same way.
   ([below](#the-requiresresources-declaration)).
 
 `guestfn push` publishes the file as a second layer of the OCI artifact, with
-the media type `application/vnd.wasmfn.manifest.v1+json`. The layer is covered
+the media type `application/vnd.guestfn.manifest.v1+json`. The layer is covered
 by the manifest digest the Composition pins, and so by any cosign signature on
 it.
 
 A `path` or `http` source has no OCI manifest layer. It can reference its
-`wasmfn.yaml` instead, with `module.manifestPath` or `module.http.manifestURL`
+`guestfn.yaml` instead, with `module.manifestPath` or `module.http.manifestURL`
 and `manifestDigest` ([Input reference](../operators/input-reference.md)). A
 module with no manifest runs in the default sandbox: nothing but the request,
 and no step credential.

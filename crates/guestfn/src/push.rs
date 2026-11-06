@@ -1,5 +1,5 @@
 //! guestfn push: publish a module as an OCI artifact - the module layer
-//! and, when the project has a wasmfn.yaml, the manifest layer beside it -
+//! and, when the project has a guestfn.yaml, the manifest layer beside it -
 //! and print what a Composition needs: the reference pinned to the OCI
 //! manifest digest, and the requires block the module's manifest declares.
 
@@ -33,7 +33,7 @@ pub struct PushCmd {
     file: PathBuf,
 
     /// The module manifest to publish beside the module as the artifact's
-    /// second layer; by default the wasmfn.yaml next to the module file,
+    /// second layer; by default the guestfn.yaml next to the module file,
     /// when there is one.
     #[arg(long)]
     manifest: Option<PathBuf>,
@@ -96,7 +96,7 @@ impl PushCmd {
         Ok(())
     }
 
-    /// The manifest to publish: --manifest, or the wasmfn.yaml next to the
+    /// The manifest to publish: --manifest, or the guestfn.yaml next to the
     /// module file when there is one; None without either. The version
     /// override applies before it is published.
     fn load_manifest(&self) -> Result<Option<Manifest>, String> {

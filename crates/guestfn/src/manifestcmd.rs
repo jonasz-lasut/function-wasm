@@ -1,4 +1,4 @@
-//! guestfn manifest: the wasmfn.yaml guestfn push publishes beside the
+//! guestfn manifest: the guestfn.yaml guestfn push publishes beside the
 //! module, and the copy an artifact carries.
 
 use std::path::PathBuf;
@@ -9,7 +9,7 @@ use function_wasm::oci;
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ManifestCmd {
-    /// Check a manifest file (wasmfn.yaml) the way guestfn build and push
+    /// Check a manifest file (guestfn.yaml) the way guestfn build and push
     /// do, and print what it declares.
     Validate(ValidateCmd),
     /// Print the manifest an artifact carries as its manifest layer,
@@ -28,7 +28,7 @@ impl ManifestCmd {
 
 #[derive(clap::Args, Debug)]
 pub struct ValidateCmd {
-    /// The manifest file (default wasmfn.yaml).
+    /// The manifest file (default guestfn.yaml).
     #[arg(default_value = function_wasm::manifest::FILE_NAME)]
     file: PathBuf,
 }

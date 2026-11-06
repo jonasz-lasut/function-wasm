@@ -33,7 +33,7 @@ answer into resources. A function could, and here that function needs no
 package of its own, and no network beyond the one request it declares:
 
 - **The network access is requested, granted and audited.** The module
-  cannot open a socket. Its manifest (`wasmfn.yaml`) requests `GET` to
+  cannot open a socket. Its manifest (`guestfn.yaml`) requests `GET` to
   `api.cloudflare.com` under `/client/v4/ips`; the runtime makes the
   request on its behalf only if the Composition's `compositionPolicy` and
   the operator's Cedar policy both permit it, after checking the resolved
@@ -65,7 +65,7 @@ A local render needs no internet and no AWS account. `example/` holds:
 - `definition.yaml`: the `Origin` XRD (Crossplane v2, namespaced).
 - `xr.yaml` and `xr-private.yaml`: one origin of each exposure.
 - `composition.yaml`: one pipeline step, the module served from this
-  directory under `example/wasmfn.local.yaml`, a manifest that asks for the
+  directory under `example/guestfn.local.yaml`, a manifest that asks for the
   fixture server instead of `api.cloudflare.com`.
 - `fixtures/client/v4/ips`: a snapshot of Cloudflare's answer, which
   `../render.sh` serves on `127.0.0.1:9480`.
@@ -81,7 +81,7 @@ A local render needs no internet and no AWS account. `example/` holds:
 
 Each release publishes this example, signed keyless and attested, as
 `ghcr.io/jonasz-lasut/wasmfn/examples/cloudflare-origin:v<version>` (the version in
-`wasmfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
+`guestfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
 its reference pinned by digest. To run your own build instead, publish it
 with its manifest, then reference the digest `guestfn push` prints:
 

@@ -54,11 +54,11 @@ enum Source {
 #[derive(Clone, Debug)]
 enum ManifestSource {
     None,
-    /// A wasmfn.yaml under --module-dir, read fresh each request.
+    /// A guestfn.yaml under --module-dir, read fresh each request.
     PathFile {
         full: PathBuf,
     },
-    /// A wasmfn.yaml served beside the module, pinned by its own digest.
+    /// A guestfn.yaml served beside the module, pinned by its own digest.
     Http {
         url: String,
         digest: String,
@@ -90,7 +90,7 @@ pub struct Resolver {
     /// HTTP one) and by their own digest: the content behind a digest never
     /// changes, so a manifest read once is the manifest, and a warm request
     /// costs no registry round trip. A source with no manifest is remembered
-    /// as empty bytes, for the same reason. A wasmfn.yaml under --module-dir
+    /// as empty bytes, for the same reason. A guestfn.yaml under --module-dir
     /// is never cached: it is read fresh each request, by design.
     cached_manifests: Mutex<HashMap<String, Vec<u8>>>,
 }
@@ -306,7 +306,7 @@ impl Resolver {
     }
 
     /// The module's manifest as JSON bytes, empty when the source names
-    /// none: a wasmfn.yaml under --module-dir read fresh each request, or
+    /// none: a guestfn.yaml under --module-dir read fresh each request, or
     /// one served over HTTP, verified against its own digest.
     pub fn manifest(&self, resolved: &Resolved) -> Result<Vec<u8>, String> {
         match &resolved.manifest {
@@ -504,7 +504,7 @@ impl Resolver {
     }
 }
 
-/// Normalizes a wasmfn.yaml manifest (YAML) to the JSON bytes
+/// Normalizes a guestfn.yaml manifest (YAML) to the JSON bytes
 /// manifest::parse decodes - the format an OCI manifest layer already
 /// carries. JSON is valid YAML, so an already-JSON manifest passes through.
 fn manifest_json(raw: &[u8]) -> Result<Vec<u8>, String> {

@@ -25,7 +25,7 @@ module:                                   # what runs - required
   oci:                                    # exactly one of the typed object …
     ref: ghcr.io/example/greeter:v1@sha256:…
     credentials: registry
-  # http: {url, digest, manifestURL?, manifestDigest?}   # a manifest-less source may name its wasmfn.yaml
+  # http: {url, digest, manifestURL?, manifestDigest?}   # a manifest-less source may name its guestfn.yaml
   # path: fn.wasm                          # with, optionally, manifestPath: fn-manifest.yaml (under --module-dir)
   # from: status.module                   # … or the XR field holding it (an object of `type`)
   # allowEmpty: true                      # with from: an unset field runs nothing (desired state unchanged)

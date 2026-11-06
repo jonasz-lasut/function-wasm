@@ -18,7 +18,7 @@ for a rule that didn't exist before.
 - The wording of refusals and fatal results, as the conformance goldens pin
   it (`crates/function/testdata/conformance/`). Operators grep logs and XR
   conditions for these strings.
-- The module manifest (`wasmfn.yaml`): its fields and what each requests.
+- The module manifest (`guestfn.yaml`): its fields and what each requests.
 - The ABI v2 world, which has its own version (see [ABI v2](../abi-v2.md)).
 - The metric names and labels (`function_wasm_*`, `grpc_server_*`).
 - `function validate`: its exit codes (0 admitted, 1 refused, 2 the tool

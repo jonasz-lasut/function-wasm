@@ -131,7 +131,7 @@ as published as CNCF Wasm OCI artifacts, with their module manifests:
   world at `wasmfn/function`. A namespace per kind of artifact is the
   convention across OCI-distributed WebAssembly plugins (Kubewarden's
   `policies/`, wasmCloud's `components/`).
-- **Versions:** each example's own semver from its `wasmfn.yaml`, tagged
+- **Versions:** each example's own semver from its `guestfn.yaml`, tagged
   `v<version>`, independent of the runtime's. A version already published is
   never pushed again (the same registry probe as `publish-wit`), so a release
   publishes only the examples whose version moved, and a published tag remains
