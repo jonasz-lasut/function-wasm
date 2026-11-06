@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
 
-use function_wasm_engine_api::Error;
+use crate::Error;
 
 /// Where the engine keeps the image config inside the root filesystem.
 pub const CONFIG_PATH: &str = ".guestfn/config.json";
@@ -360,7 +360,7 @@ pub fn read_file(image: &Path, path: &str) -> Result<Vec<u8>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::tar_layer;
+    use crate::oci::testing::tar_layer;
 
     #[test]
     fn layers_apply_in_order_with_whiteouts() {
@@ -380,7 +380,7 @@ mod tests {
         .unwrap();
         t.apply_layer(
             "application/vnd.oci.image.layer.v1.tar+gzip",
-            &crate::testing::gzip(&tar_layer(&[
+            &crate::oci::testing::gzip(&tar_layer(&[
                 ("etc/.wh.old", Some(b"".as_slice()), 0o644),
                 ("opt/a/.wh..wh..opq", Some(b"".as_slice()), 0o644),
                 ("opt/a/z", Some(b"b".as_slice()), 0o600),

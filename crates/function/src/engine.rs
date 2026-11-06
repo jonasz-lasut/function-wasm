@@ -1,22 +1,22 @@
 //! The engine behind the runtime, behind the `Engine` trait of
-//! function-wasm-engine-api: what `runner.rs` compiles, inspects and runs
+//! function-wasm-engine: what `runner.rs` compiles, inspects and runs
 //! modules through, what `cache.rs` keeps and what `validate.rs` reads. A
 //! Cargo feature selects the one engine a package serves with (`wasm`:
-//! Wasmtime, in `function-wasm-engine`; `oci`: the OCI engine of
-//! docs/one-pager-oci-runtime.md, in `function-wasm-engine-oci`, built
-//! with --no-default-features --features oci), and the rest of the crate
+//! Wasmtime; `oci`: the OCI engine of docs/one-pager-oci-runtime.md, built
+//! with --no-default-features --features oci; each the engine crate's
+//! feature of the same name), and the rest of the crate
 //! names it only as `Selected`, so a second engine is a second feature and
 //! no other change here. With both features on, which is what the lint's
 //! --all-features does, wasm serves. The engine's own flags, if any, are
 //! `EngineArgs`, flattened into serve's and validate's.
 
-pub use function_wasm_engine_api::{Config, Engine, Error, Inspection, RunOptions};
+pub use function_wasm_engine::{Config, Engine, Error, Inspection, RunOptions};
 
 #[cfg(feature = "wasm")]
 pub use function_wasm_engine::Wasmtime as Selected;
 
 #[cfg(all(feature = "oci", not(feature = "wasm")))]
-pub use function_wasm_engine_oci::Oci as Selected;
+pub use function_wasm_engine::oci::Oci as Selected;
 
 #[cfg(not(any(feature = "wasm", feature = "oci")))]
 compile_error!("function-wasm serves with one engine: build with the `wasm` or the `oci` feature");
@@ -81,7 +81,7 @@ pub fn new(config: Config, _args: &EngineArgs) -> Result<Selected, Error> {
 pub fn new(config: Config, args: &EngineArgs) -> Result<Selected, Error> {
     Selected::new(
         config,
-        function_wasm_engine_oci::Options {
+        function_wasm_engine::oci::Options {
             vmm: args.vmm.clone(),
             kernel: args.guest_kernel.clone(),
             init: args.guest_init.clone(),

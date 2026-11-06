@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::sync::LazyLock;
 use std::task::{Context, Poll};
 
-use function_wasm_engine_api::metrics::LabeledCounter;
+use function_wasm_engine::metrics::LabeledCounter;
 
 const RUN_FUNCTION_SERVICE: &str = "apiextensions.fn.proto.v1.FunctionRunnerService";
 const HEALTH_SERVICE: &str = "grpc.health.v1.Health";
@@ -329,7 +329,7 @@ mod tests {
     fn a_dropped_reporter_is_a_canceled_call() {
         initialize();
         let canceled = || {
-            function_wasm_engine_api::metrics::sample(
+            function_wasm_engine::metrics::sample(
                 "grpc_server_handled_total",
                 &[
                     ("grpc_type", "unary"),

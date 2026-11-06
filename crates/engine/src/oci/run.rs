@@ -7,11 +7,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use function_wasm_engine_api::concurrency::{MemPool, format_bytes};
-use function_wasm_engine_api::{Error, RunOptions, duration, metrics};
+use crate::concurrency::{MemPool, format_bytes};
+use crate::{Error, RunOptions, duration, metrics};
 
-use crate::sandbox::{Ended, VmSpec};
-use crate::{Image, Oci};
+use crate::oci::sandbox::{Ended, VmSpec};
+use crate::oci::{Image, Oci};
 
 /// The least memory a VM gets: the kernel and the init need it before
 /// the process runs, whatever the step's limit.

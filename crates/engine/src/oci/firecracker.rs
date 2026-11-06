@@ -15,12 +15,12 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use function_wasm_engine_api::Error;
-use guestfn_init::{
+use crate::Error;
+use crate::protocol::{
     Exit, Hello, Kind, read_frame, read_json, write_chunked, write_frame, write_json,
 };
 
-use crate::sandbox::{Ended, Outcome, Sandbox, VmSpec};
+use crate::oci::sandbox::{Ended, Outcome, Sandbox, VmSpec};
 
 /// The guest's CID; the host is always 2.
 const GUEST_CID: u32 = 3;
@@ -57,7 +57,7 @@ impl Sandbox for Firecracker {
             .tempdir_in(spec.scratch)
             .map_err(|e| Error(format!("cannot create the VM's directory: {e}")))?;
         let uds = dir.path().join("v.sock");
-        let host_port = dir.path().join(format!("v.sock_{}", guestfn_init::PORT));
+        let host_port = dir.path().join(format!("v.sock_{}", crate::protocol::PORT));
         let listener = UnixListener::bind(&host_port).map_err(|e| {
             Error(format!(
                 "cannot listen for the guest on {}: {e}",
@@ -232,11 +232,11 @@ fn talk(
     arm(&stream, spec.deadline)?;
     let hello: Hello = read_json(&mut stream, Kind::Hello)
         .map_err(|e| io_err(e, "cannot read the init's hello"))?;
-    if hello.version != guestfn_init::VERSION {
+    if hello.version != crate::protocol::VERSION {
         return Err(Talk::Lost(format!(
             "the init speaks protocol version {}, this engine version {}",
             hello.version,
-            guestfn_init::VERSION
+            crate::protocol::VERSION
         )));
     }
     write_json(&mut stream, Kind::Run, spec.description)

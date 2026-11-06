@@ -2,15 +2,16 @@
 //! with the committed fixture process. Needs KVM, the Firecracker binary,
 //! a guest kernel and the init and fixture binaries built for musl, named
 //! by GUESTFN_FIRECRACKER, GUESTFN_KERNEL, GUESTFN_INIT and
-//! GUESTFN_FIXTURE (`make oci.tools` sets them up); without them every test
+//! GUESTFN_FIXTURE (`make oci.tools` and `make oci.init` set them up); without them every test
 //! is skipped, or fails under FUNCTION_WASM_REQUIRE_KVM=1, which the OCI
 //! workflow sets.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use function_wasm_engine_oci::testing::fixture_image;
-use function_wasm_engine_oci::{Config, Engine, Oci, Options, RunOptions};
+use function_wasm_engine::oci::testing::fixture_image;
+use function_wasm_engine::oci::{Oci, Options};
+use function_wasm_engine::{Config, Engine, RunOptions};
 
 struct Tools {
     firecracker: PathBuf,

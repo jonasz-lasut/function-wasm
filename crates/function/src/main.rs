@@ -15,7 +15,7 @@ use function_wasm::engine::{self, Engine as _, Selected};
 use function_wasm::{
     authz, cache, cosign, egress, grpc, logging, ops, resolver, runner, store, trustroot, validate,
 };
-use function_wasm_engine_api::{Config, duration};
+use function_wasm_engine::{Config, duration};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -382,7 +382,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             ..Default::default()
         },
     ));
-    let step_slots = Arc::new(function_wasm_engine_api::concurrency::StepSlots::new());
+    let step_slots = Arc::new(function_wasm_engine::concurrency::StepSlots::new());
     let function = runner::WasmFunction {
         engine: Arc::clone(&engine),
         cache: Arc::clone(&module_cache),
@@ -411,10 +411,10 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             if freed > 0 {
                 tracing::info!(freed_bytes = freed, "Swept the on-disk caches");
             }
-            let m = &function_wasm_engine_api::metrics::CACHE_BYTES;
-            m.with_label_values(&[function_wasm_engine_api::metrics::CACHE_BLOB])
+            let m = &function_wasm_engine::metrics::CACHE_BYTES;
+            m.with_label_values(&[function_wasm_engine::metrics::CACHE_BLOB])
                 .set(store::bytes(&stores[0]) as f64);
-            m.with_label_values(&[function_wasm_engine_api::metrics::CACHE_COMPILED_DISK])
+            m.with_label_values(&[function_wasm_engine::metrics::CACHE_COMPILED_DISK])
                 .set(store::bytes(&stores[1]) as f64);
         };
         sweep_stores();

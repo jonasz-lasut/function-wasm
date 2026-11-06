@@ -1559,8 +1559,6 @@ dependencies = [
  "function-sdk-rust",
  "function-wasm",
  "function-wasm-engine",
- "function-wasm-engine-api",
- "function-wasm-engine-oci",
  "getrandom 0.4.3",
  "hex",
  "hmac",
@@ -1624,17 +1622,22 @@ dependencies = [
 name = "function-wasm-engine"
 version = "0.1.0"
 dependencies = [
+ "backhand",
  "bytes",
+ "flate2",
  "function-sdk-rust",
  "function-wasm-engine",
- "function-wasm-engine-api",
+ "hex",
  "http",
  "http-body-util",
+ "libc",
  "pbjson-types",
  "prometheus-client",
  "prost",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
+ "tar",
  "tempfile",
  "thiserror",
  "tracing",
@@ -1646,32 +1649,6 @@ dependencies = [
  "wat",
  "wit-component 0.258.3",
  "wit-parser 0.258.3",
-]
-
-[[package]]
-name = "function-wasm-engine-api"
-version = "0.1.0"
-dependencies = [
- "prometheus-client",
- "thiserror",
-]
-
-[[package]]
-name = "function-wasm-engine-oci"
-version = "0.1.0"
-dependencies = [
- "backhand",
- "flate2",
- "function-wasm-engine-api",
- "function-wasm-engine-oci",
- "guestfn-init",
- "hex",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tar",
- "tempfile",
- "tracing",
 ]
 
 [[package]]
@@ -1864,15 +1841,6 @@ dependencies = [
  "sha2 0.11.1",
  "tempfile",
  "wat",
-]
-
-[[package]]
-name = "guestfn-init"
-version = "0.1.0"
-dependencies = [
- "libc",
- "serde",
- "serde_json",
 ]
 
 [[package]]
