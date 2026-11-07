@@ -1,0 +1,62 @@
+# The oci profile: the function-oci package (docs/one-pager-oci-runtime.md)
+# with /dev/kvm granted by the node's device plugin (kvm-device-plugin.yaml
+# beside this file: the pod requests one devic.es/kvm) and opened through
+# the node's kvm group, whose gid make e2e.oci.kvm reads from the node and
+# patches in as the pod's supplementalGroups, as the operator page
+# documents; the default profile's policy and verifiers; and the registry
+# CA trusted beside the image's bundle. A separate Function (function-oci)
+# runs under it, beside function-wasm; the suite composes with one or the
+# other by profile.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: e2e-oci
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      strategy: {}
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            image: function-oci-e2e:dev
+            args:
+            - --sandbox-policy-file=/etc/function-wasm/policy/policy.cedar
+            - --cosign-key=/etc/function-wasm/cosign/cosign.pub
+            - --cosign-trusted-root=/etc/function-wasm/trusted-root/trusted_root.json
+            - --debug
+            resources:
+              limits:
+                devic.es/kvm: "1"
+            env:
+            - name: SSL_CERT_FILE
+              value: /etc/function-wasm/registry-ca/ca.crt
+            - name: SSL_CERT_DIR
+              value: /etc/ssl/certs
+            volumeMounts:
+            - name: policy
+              mountPath: /etc/function-wasm/policy
+              readOnly: true
+            - name: cosign-key
+              mountPath: /etc/function-wasm/cosign
+              readOnly: true
+            - name: trusted-root
+              mountPath: /etc/function-wasm/trusted-root
+              readOnly: true
+            - name: registry-ca
+              mountPath: /etc/function-wasm/registry-ca
+              readOnly: true
+          volumes:
+          - name: policy
+            configMap:
+              name: e2e-policy-oci
+          - name: cosign-key
+            secret:
+              secretName: e2e-cosign-key
+          - name: trusted-root
+            configMap:
+              name: e2e-trusted-root
+          - name: registry-ca
+            configMap:
+              name: e2e-registry-ca

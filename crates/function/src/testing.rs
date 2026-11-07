@@ -103,6 +103,15 @@ pub mod registry {
             self.manifest(&manifest)
         }
 
+        /// The wrapping artifact of a type: oci module: the empty config and
+        /// the module manifest as its one layer. Returns its digest.
+        pub fn image_module(&mut self, module_manifest: &[u8], title: &str) -> String {
+            let manifest = image_module_artifact(module_manifest, title);
+            self.blob(crate::oci::EMPTY_CONFIG);
+            self.blob(module_manifest);
+            self.manifest(&manifest)
+        }
+
         /// Attaches a Sigstore bundle to subject as cosign 3 does; returns
         /// the referrer's digest.
         pub fn attach(&mut self, subject: &str, bundle: &[u8], shape: super::Shape) -> String {
@@ -152,8 +161,30 @@ pub mod registry {
         }
         serde_json::to_vec(&manifest).expect("manifest json")
     }
+
+    /// The OCI manifest of a type: oci module's wrapping artifact as
+    /// `guestfn push --image` shapes it (docs/one-pager-oci-runtime.md).
+    pub fn image_module_artifact(module_manifest: &[u8], title: &str) -> Vec<u8> {
+        let config = crate::oci::EMPTY_CONFIG;
+        let mut manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": OCI_MANIFEST_TYPE,
+            "artifactType": crate::oci::MODULE_ARTIFACT_TYPE,
+            "config": {"mediaType": crate::oci::EMPTY_CONFIG_TYPE, "digest": digest_of(config), "size": config.len()},
+            "layers": [{
+                "mediaType": MANIFEST_LAYER_TYPE,
+                "digest": digest_of(module_manifest),
+                "size": module_manifest.len(),
+            }],
+        });
+        if !title.is_empty() {
+            manifest["annotations"] = serde_json::json!({"org.opencontainers.image.title": title});
+        }
+        serde_json::to_vec(&manifest).expect("manifest json")
+    }
 }
 
+#[cfg(feature = "wasm")]
 pub mod runtime {
     //! The runtime in process, as `function serve` assembles it from its
     //! flags, with the defaults a test wants.
@@ -168,8 +199,8 @@ pub mod runtime {
     use crate::egress::Egress;
     use crate::resolver::Resolver;
     use crate::runner::WasmFunction;
-    use function_wasm_engine_api::Config;
-    use function_wasm_engine_api::concurrency::StepSlots;
+    use function_wasm_engine::Config;
+    use function_wasm_engine::concurrency::StepSlots;
 
     use crate::engine::Selected;
 

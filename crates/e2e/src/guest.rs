@@ -107,15 +107,71 @@ pub const VARIANTS: &[Variant] = &[
     },
 ];
 
+/// The oci profile's variants (docs/one-pager-oci-runtime.md): the same
+/// declarations around the test module as a process, each a wrapping
+/// artifact pinning the one image setup pushed. Their repositories live
+/// under REPOSITORY too, so the default policy's rules cover them.
+pub const OCI_VARIANTS: &[Variant] = &[
+    Variant {
+        name: "oci-plain",
+        manifest: include_str!("../guest/manifests/oci/plain.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    Variant {
+        name: "oci-env",
+        manifest: include_str!("../guest/manifests/oci/env.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    Variant {
+        name: "oci-credentials",
+        manifest: include_str!("../guest/manifests/oci/credentials.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    Variant {
+        name: "oci-tmp",
+        manifest: include_str!("../guest/manifests/oci/tmp.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    // Refused by name: function-oci serves no egress yet.
+    Variant {
+        name: "oci-egress",
+        manifest: include_str!("../guest/manifests/oci/egress.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    Variant {
+        name: "oci-unsigned",
+        manifest: include_str!("../guest/manifests/oci/plain.yaml"),
+        version_suffix: Some("unsigned"),
+        signature: Signature::None,
+    },
+];
+
+/// The test image's repository and the process's path inside it.
+pub const OCI_IMAGE_REPOSITORY: &str = "e2e/oci-image";
+pub const OCI_PROCESS_PATH: &str = "e2e-guest";
+
 impl Variant {
     /// The manifest layer: the YAML validated the way guestfn build does,
-    /// encoded the way guestfn push publishes it.
+    /// encoded the way guestfn push publishes it; an oci variant's `image`
+    /// is the reference given, as guestfn push --image writes it.
     pub fn manifest_json(&self) -> Result<Vec<u8>> {
+        self.manifest_json_for(None)
+    }
+
+    pub fn manifest_json_for(&self, image: Option<&str>) -> Result<Vec<u8>> {
         let mut value: serde_json::Value = serde_saphyr::from_str(self.manifest)
             .with_context(|| format!("{}: manifest yaml", self.name))?;
         if let Some(suffix) = self.version_suffix {
             let version = value["version"].as_str().unwrap_or("0.1.0").to_string();
             value["version"] = serde_json::Value::String(format!("{version}-{suffix}"));
+        }
+        if let Some(image) = image {
+            value["image"] = serde_json::Value::String(image.to_string());
         }
         let manifest = Manifest::parse(&serde_json::to_vec(&value)?)
             .map_err(|e| anyhow::anyhow!("{}: {e}", self.name))?;

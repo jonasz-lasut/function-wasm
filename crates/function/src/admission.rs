@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use function_wasm_engine_api::duration;
+use function_wasm_engine::duration;
 
 use crate::authz::{
     ACTION_COMPOSE_RESOURCE, ACTION_GRANT_EGRESS, ACTION_REQUIRE_RESOURCE, ACTION_SET_ENV,
@@ -36,10 +36,7 @@ pub struct Admitted {
     pub composition: Option<Arc<CompositionPolicy>>,
 }
 
-pub fn admit(
-    input: &Input,
-    ceilings: &function_wasm_engine_api::Config,
-) -> Result<Admitted, String> {
+pub fn admit(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<Admitted, String> {
     // The group the Input had before the OCI runtime is refused by name
     // rather than skipped: a Composition written for 0.6 fails with the
     // new name on its first request and under its step in validate.
@@ -454,10 +451,7 @@ fn admit_credentials(
     Ok(())
 }
 
-fn run_options(
-    input: &Input,
-    ceilings: &function_wasm_engine_api::Config,
-) -> Result<Admitted, String> {
+fn run_options(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<Admitted, String> {
     let mut out = Admitted::default();
     let Some(limits) = &input.limits else {
         return Ok(out);
@@ -630,8 +624,8 @@ mod tests {
         }
     }
 
-    fn ceilings() -> function_wasm_engine_api::Config {
-        function_wasm_engine_api::Config::default()
+    fn ceilings() -> function_wasm_engine::Config {
+        function_wasm_engine::Config::default()
     }
 
     #[test]

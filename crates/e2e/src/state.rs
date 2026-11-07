@@ -24,6 +24,14 @@ pub struct State {
     /// The published pdb-addon, pinned: the real keyless signature and the
     /// lifecycle profile's warm-up module.
     pub pdb_addon: String,
+    /// The oci profile's variants (docs/one-pager-oci-runtime.md): the
+    /// wrapping artifacts around the test module as a process, pushed when
+    /// setup had the image (E2E_OCI_GUEST); empty otherwise.
+    #[serde(default)]
+    pub oci_variants: BTreeMap<String, Pushed>,
+    /// The image those artifacts pin, as the cluster names it.
+    #[serde(default)]
+    pub oci_image: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +73,17 @@ impl State {
         self.variants
             .get(name)
             .unwrap_or_else(|| panic!("no variant {name:?} in {}", Self::path().display()))
+    }
+
+    /// An oci variant by name; one setup never pushed is a test bug, or a
+    /// setup run without E2E_OCI_GUEST.
+    pub fn oci_variant(&self, name: &str) -> &Pushed {
+        self.oci_variants.get(name).unwrap_or_else(|| {
+            panic!(
+                "no oci variant {name:?} in {}: run make e2e.oci.up (setup needs E2E_OCI_GUEST)",
+                Self::path().display()
+            )
+        })
     }
 
     /// The registry's `/v2/` endpoint, the target of every egress case.

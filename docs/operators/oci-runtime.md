@@ -1,0 +1,170 @@
+# The OCI runtime
+
+This page is for operators installing `function-oci`, the runtime that runs
+an OCI image as a composition function step
+([design record](../one-pager-oci-runtime.md)). It covers what the package
+needs from a node, its flags, and what it refuses. The Input, the policy
+layers, the caches and the signatures work as they do for function-wasm:
+the pages under Operators describe both packages unless they say
+otherwise. The package is alpha.
+
+## One microVM per request
+
+`function-oci` boots one microVM per request with Firecracker. The VM gets
+its own guest kernel, the image's root filesystem read-only under a tmpfs
+overlay, the step's `limits.memory` for the process (at least 16 MiB,
+held by a cgroup the init puts the process in, so the kernel's
+out-of-memory killer ends a process past it at once) plus 32 MiB for the
+kernel and the init, and no network device. Inside it, the runtime's init runs the image's
+configured command as the image's configured user, with the request on its
+standard input, and relays its standard output, standard error and exit
+status to the host ([the process contract](../guests/oci-modules.md)). The
+VM ends with the run, and the next request boots a fresh one.
+
+The runtime unpacks an image once per digest into a squashfs root
+filesystem, which the compiled store keeps beside function-wasm's
+artifacts, under the same key and the same LRU sweep. The module cache's
+`compile` metrics time the unpacking.
+
+## Node requirements
+
+The pod needs `/dev/kvm`. An unprivileged container opens only the
+devices its container runtime admitted into its device cgroup, and a
+`hostPath` mount of the device node admits nothing: the node appears in
+the container and every `open` of it fails with `Operation not permitted`.
+Kubernetes admits a device through a [device
+plugin](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/):
+the plugin advertises the node's `/dev/kvm` as a resource and the
+kubelet admits the device into the container of a pod that requests one.
+A plugin that advertises any device path is
+[generic-device-plugin](https://github.com/squat/generic-device-plugin);
+run it as a DaemonSet with the device named:
+
+```yaml
+args:
+- --device
+- |
+  name: kvm
+  groups:
+  - count: 64
+    paths:
+    - path: /dev/kvm
+```
+
+`count` is how many pods may hold the device at once, since every one of
+them shares the one `/dev/kvm`. Then request it through a
+`DeploymentRuntimeConfig`:
+
+```yaml
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: function-oci
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      strategy: {}
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            resources:
+              limits:
+                devic.es/kvm: "1"
+```
+
+The kubelet gives the container the node's device node unchanged, owner
+and mode included, `root:kvm 0660` on most node images, and the
+container runs as the package's non-root user, who isn't in that group.
+Put the node's `kvm` group among the pod's `supplementalGroups`:
+
+```yaml
+      template:
+        spec:
+          securityContext:
+            supplementalGroups: [994]
+```
+
+The gid is the node image's (994 on the end-to-end suite's kind node;
+images differ), so read it once per node pool, through the API alone:
+
+```shell
+kubectl debug node/<node> -it --image=busybox -- stat -c %g /host/dev/kvm
+```
+
+The pod doesn't need `privileged` or any capability. A privileged
+DaemonSet with the node's `/dev` mounted, which the device plugin already
+is, can set the device to `0666` in an init container instead, which is
+what KubeVirt does. A `privileged: true` function container gets every
+device of the node admitted, at the cost of the boundary the pod keeps
+otherwise. The end-to-end suite's `oci` profile
+runs the plugin and patches the kind node's gid into its runtime config
+(`crates/e2e/profiles/oci/`, `make e2e.oci.kvm`). The runtime refuses to
+start without the device and says so:
+
+```text
+cannot open /dev/kvm: No such file or directory; the OCI runtime boots a microVM per request and needs the device granted to its pod
+```
+
+`Operation not permitted` in place of `No such file or directory` is the
+`hostPath` mount: the node is there, the device isn't admitted.
+`Permission denied` is the mode: the kubelet admitted the device, and
+the pod's user is neither its owner nor in its group.
+
+A VM's memory comes out of the pod's. The container's memory limit
+needs `--module-memory-limit` plus 32 MiB for each of
+`--max-concurrent-runs`, and the runtime's own use on top.
+`--max-total-run-memory` bounds the VMs together. A VM reserves its whole
+memory before it boots.
+
+## Flags
+
+`function-oci` takes `function-wasm`'s flags
+([Runtime flags](runtime-flags.md)) with the same defaults, and these:
+
+| flag | default | what |
+|---|---|---|
+| `--vmm` | `/usr/lib/guestfn/firecracker` | the Firecracker binary |
+| `--guest-kernel` | `/usr/lib/guestfn/vmlinux` | the guest kernel, an uncompressed `vmlinux` |
+| `--guest-init` | `/usr/lib/guestfn/init` | the init the runtime boots as the VM's first process |
+| `--vm-vcpus` | `1` | vCPUs per VM |
+
+The package image includes the three files. `--module-stack-limit` has no
+meaning for a process and the runtime ignores it. `--module-timeout` and a
+step's `limits.timeout` bound the whole run, the boot included.
+
+## Refusals
+
+- A WebAssembly artifact: `module oci … is a WebAssembly module (type
+  wasm), which function-oci does not serve; function-wasm serves it`.
+  Install `function-wasm` beside `function-oci` and point the step at it.
+- An image for another platform: `cannot load module …: image is built for
+  linux/arm64, and this runtime runs on linux/amd64`.
+- An image without a command: `cannot load module …: image has neither an
+  entrypoint nor a command`.
+- A manifest that requires egress: `module … requires egress, which
+  function-oci does not serve yet`. The VM has no network device, and the
+  proxy the design record describes is a later phase.
+- A layer compressed with zstd: `cannot load module …: layer is compressed
+  with zstd, which the OCI runtime does not unpack yet`. Build the image
+  with gzip layers, the default of every builder.
+
+A process that exits with a non-zero status, or that exits without a
+response, is a fatal result on the step, as a component's error is:
+`module … failed: process exited with status 3: <the last line of its
+standard error>`. The deadline and the memory limit end the run the same
+way: `module … failed: run failed: module exceeded its execution deadline
+(30s)` and `module … failed: process was killed: the run's memory limit of
+512Mi was exceeded`.
+
+## The development loop
+
+`crossplane render` works with `function-oci` as it does with
+`function-wasm` ([Render locally](../guests/render-locally.md)), on a Linux
+machine with `/dev/kvm`: run the runtime with `--insecure` and the three VM
+flags pointing at a Firecracker binary, a guest kernel and the init `make
+oci.tools` fetches and builds. A `module.path` source accepts an image
+layout tar (`docker buildx build -o type=oci,dest=image.tar .`). The loop
+then runs without a registry. A machine without KVM has no loop yet. The
+design record keeps the question open.

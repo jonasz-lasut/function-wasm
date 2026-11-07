@@ -16,6 +16,8 @@ use crate::input::{self, Input};
 
 /// The CRD's path from the repository root.
 pub const FILE: &str = "package/input/guestfn.crossplane.io_inputs.yaml";
+/// The same file in the function-oci package (docs/one-pager-oci-runtime.md).
+pub const OCI_FILE: &str = "package/oci/input/guestfn.crossplane.io_inputs.yaml";
 
 /// Kubernetes' pattern for a quantity, as controller-gen writes it for a
 /// resource.Quantity field.

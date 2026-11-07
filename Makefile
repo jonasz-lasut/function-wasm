@@ -77,8 +77,40 @@ E2E_PROFILES := default strict lifecycle
 E2E_CARGO := cargo run -q -p function-wasm-e2e --features cluster
 E2E_GUEST_DIR := crates/e2e/guest
 FUNCTION_PKG_EXAMPLES := examples/pdb-addon/example
+# The image and the DeploymentRuntimeConfig local.xpkg.deploy.function.%
+# installs a Function with; the oci targets below set theirs.
+FUNCTION_IMAGE := $(E2E_IMAGE)
+FUNCTION_RUNTIME_CONFIG := e2e-default
+
+# The OCI runtime (docs/one-pager-oci-runtime.md, docs/operators/oci-runtime.md):
+# the VM pieces the engine boots from - the Firecracker release and the
+# guest kernel Firecracker's CI publishes, pinned here as in Dockerfile.oci
+# - the init and the fixture built static for musl, the engine's suite over
+# a real VM (make oci.test, under KVM), and the end-to-end suite's oci
+# profile: the function-oci package beside function-wasm's cluster
+# (make e2e.oci.up, then make e2e.test.oci). FUNCTION_OCI_TOOLS names a
+# directory of prebuilt function, init, firecracker and vmlinux (the OCI
+# workflow's build job hands one over); without it they are built here.
+FIRECRACKER_VERSION ?= v1.17.0
+# The guest kernel is the one Firecracker's CI builds from Amazon Linux's
+# microvm kernel (docs/kernel-policy.md there: 6.18 since Firecracker
+# 1.16.1, 6.1 past its support date), published under a dated prefix of
+# its artifact bucket.
+GUEST_KERNEL_CI ?= 20261105-6ea6634994fa-0
+GUEST_KERNEL_VERSION ?= 6.18.56
+OCI_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),aarch64,x86_64)
+# The checksums Dockerfile.oci pins, per architecture.
+FIRECRACKER_SHA256_x86_64 := 06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558
+FIRECRACKER_SHA256_aarch64 := e351ebe4f7a16b5873bbd51005d2e6767103cff4d5ebc829df2d3f95a93e2256
+GUEST_KERNEL_SHA256_x86_64 := af348226aa2a25b846156150d5cdb5dae3bf2a022f1db176e3a2b9a3249817bf
+GUEST_KERNEL_SHA256_aarch64 := 5e1990cd2f6e1c70196955b9405e32a5059f9f0a2c839478bc4f064a08f3a2ff
+MUSL_TARGET := $(OCI_ARCH)-unknown-linux-musl
+OCI_TOOLS := .cache/tools/oci
+E2E_OCI_IMAGE := function-oci-e2e:dev
+E2E_OCI_GUEST ?= $(E2E_GUEST_DIR)/target/$(MUSL_TARGET)/release/e2e-guest-oci
 
 .PHONY: e2e.up e2e.crossplane e2e.setup e2e.image e2e.test e2e.down e2e.guest e2e.dump xpkg.build.function-wasm print-crossplane-version
+.PHONY: oci.tools oci.init oci.test e2e.oci.guest e2e.oci.image e2e.oci.kvm e2e.oci.up e2e.test.oci e2e.pods xpkg.build.function-oci
 print-crossplane-version:
 	@echo $(CROSSPLANE_VERSION)
 
@@ -100,9 +132,11 @@ e2e.crossplane: $(KUBECTL)
 	@$(KUBECTL) wait --for=condition=Established --timeout=120s crd/providers.pkg.crossplane.io crd/functions.pkg.crossplane.io crd/deploymentruntimeconfigs.pkg.crossplane.io || $(FAIL)
 	@$(OK) waiting for crossplane and its package api
 
+# E2E_OCI_GUEST, when the file exists, adds the oci profile's image and
+# variants to what setup pushes (the oci targets build it first).
 e2e.setup:
 	@$(INFO) setting up the registry, provider-nop and the test module
-	@PROVIDER_NOP_VERSION=$(PROVIDER_NOP_VERSION) $(E2E_CARGO) --bin e2e-setup || $(FAIL)
+	@PROVIDER_NOP_VERSION=$(PROVIDER_NOP_VERSION) $(if $(wildcard $(E2E_OCI_GUEST)),E2E_OCI_GUEST=$(E2E_OCI_GUEST),) $(E2E_CARGO) --bin e2e-setup || $(FAIL)
 	@$(OK) setting up the registry, provider-nop and the test module
 
 e2e.image:
@@ -133,10 +167,121 @@ xpkg.build.function-wasm: $(CROSSPLANE_CLI) e2e.image
 # on the default profile.
 local.xpkg.deploy.function.%: $(KIND) $(KUBECTL) local.xpkg.sync
 	@$(INFO) deploying function package $* $(VERSION)
-	@$(KIND) load docker-image $(E2E_IMAGE) -n $(KIND_CLUSTER_NAME) || $(FAIL)
+	@$(KIND) load docker-image $(FUNCTION_IMAGE) -n $(KIND_CLUSTER_NAME) || $(FAIL)
 	@for p in $(E2E_PROFILES); do $(KUBECTL) apply -f crates/e2e/profiles/$$p/drc.yaml || exit 1; done
-	@echo '{"apiVersion":"pkg.crossplane.io/v1","kind":"Function","metadata":{"name":"$*"},"spec":{"package":"xpkg.crossplane.internal/dev/$*@$(LOCAL_XPKG_DIGEST)","skipDependencyResolution":true,"packagePullPolicy":"Never","runtimeConfigRef":{"name":"e2e-default"}}}' | $(KUBECTL) apply -f - || $(FAIL)
+	@echo '{"apiVersion":"pkg.crossplane.io/v1","kind":"Function","metadata":{"name":"$*"},"spec":{"package":"xpkg.crossplane.internal/dev/$*@$(LOCAL_XPKG_DIGEST)","skipDependencyResolution":true,"packagePullPolicy":"Never","runtimeConfigRef":{"name":"$(FUNCTION_RUNTIME_CONFIG)"}}}' | $(KUBECTL) apply -f - || $(FAIL)
 	@$(OK) deploying function package $* $(VERSION)
+
+# The OCI runtime's targets.
+oci.tools: $(OCI_TOOLS)/firecracker $(OCI_TOOLS)/vmlinux ## Fetch the pinned Firecracker release and guest kernel under .cache/tools/oci
+
+# The release tarball is unpacked beside the binary and left there, a cache.
+$(OCI_TOOLS)/firecracker:
+	@echo "fetching firecracker $(FIRECRACKER_VERSION) ($(OCI_ARCH))"
+	@mkdir -p $(OCI_TOOLS)/release
+	@curl -fsSL -o $(OCI_TOOLS)/release/firecracker.tgz https://github.com/firecracker-microvm/firecracker/releases/download/$(FIRECRACKER_VERSION)/firecracker-$(FIRECRACKER_VERSION)-$(OCI_ARCH).tgz
+	@echo "$(FIRECRACKER_SHA256_$(OCI_ARCH))  $(OCI_TOOLS)/release/firecracker.tgz" | sha256sum -c - >/dev/null
+	@tar -xzf $(OCI_TOOLS)/release/firecracker.tgz -C $(OCI_TOOLS)/release
+	@cp $(OCI_TOOLS)/release/release-$(FIRECRACKER_VERSION)-$(OCI_ARCH)/firecracker-$(FIRECRACKER_VERSION)-$(OCI_ARCH) $@
+	@chmod 0755 $@
+
+$(OCI_TOOLS)/vmlinux:
+	@echo "fetching the guest kernel $(GUEST_KERNEL_VERSION) ($(GUEST_KERNEL_CI), $(OCI_ARCH))"
+	@mkdir -p $(OCI_TOOLS)
+	@curl -fsSL -o $@ https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/$(GUEST_KERNEL_CI)/$(OCI_ARCH)/vmlinux-$(GUEST_KERNEL_VERSION)
+	@echo "$(GUEST_KERNEL_SHA256_$(OCI_ARCH))  $@" | sha256sum -c - >/dev/null
+
+oci.init: ## Build the guest init and the test fixture (the engine crate's binaries) static for musl
+	@rustup target add $(MUSL_TARGET) >/dev/null
+	@cargo build --release -p function-wasm-engine --no-default-features --bins --target $(MUSL_TARGET) || $(FAIL)
+
+oci.test: oci.tools oci.init ## The OCI engine's suite over a real Firecracker VM (needs /dev/kvm)
+	@GUESTFN_FIRECRACKER=$(CURDIR)/$(OCI_TOOLS)/firecracker GUESTFN_KERNEL=$(CURDIR)/$(OCI_TOOLS)/vmlinux \
+	 GUESTFN_INIT=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-init \
+	 GUESTFN_FIXTURE=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-guest-fixture GUESTFN_VM_CONSOLE=1 \
+	 cargo test -p function-wasm-engine --no-default-features --features oci -- --nocapture || $(FAIL)
+
+# The test module as a process, static for musl, on the guest's own pinned
+# toolchain (its rust-toolchain.toml).
+e2e.oci.guest:
+	@$(INFO) building $(E2E_OCI_GUEST)
+	@cd $(E2E_GUEST_DIR) && rustup target add $(MUSL_TARGET) >/dev/null && cargo build --release --features process --bin e2e-guest-oci --target $(MUSL_TARGET) || $(FAIL)
+	@$(OK) building $(E2E_OCI_GUEST)
+
+# The function-oci image: the four files from FUNCTION_OCI_TOOLS, or built
+# and fetched here, wrapped by Dockerfile.oci.dev.
+e2e.oci.image:
+	@$(INFO) building the runtime image $(E2E_OCI_IMAGE) for linux/$(TARGETARCH)
+	@mkdir -p $(E2E_DIR)/prebuilt-oci
+ifdef FUNCTION_OCI_TOOLS
+	@cp $(FUNCTION_OCI_TOOLS)/function $(FUNCTION_OCI_TOOLS)/init $(FUNCTION_OCI_TOOLS)/firecracker $(FUNCTION_OCI_TOOLS)/vmlinux $(E2E_DIR)/prebuilt-oci/
+else
+	@$(MAKE) oci.tools oci.init
+	@cargo build --release -p function-wasm --no-default-features --features oci || $(FAIL)
+	@cp target/release/function $(E2E_DIR)/prebuilt-oci/function
+	@cp target/$(MUSL_TARGET)/release/guestfn-init $(E2E_DIR)/prebuilt-oci/init
+	@cp $(OCI_TOOLS)/firecracker $(OCI_TOOLS)/vmlinux $(E2E_DIR)/prebuilt-oci/
+endif
+	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.oci.dev -t $(E2E_OCI_IMAGE) $(E2E_DIR)/prebuilt-oci || $(FAIL)
+	@$(OK) building the runtime image $(E2E_OCI_IMAGE)
+
+xpkg.build.function-oci: $(CROSSPLANE_CLI) e2e.oci.image
+	@$(INFO) building package function-oci-$(VERSION).xpkg
+	@mkdir -p $(XPKG_OUTPUT_DIR)/linux_$(TARGETARCH)
+	@$(CROSSPLANE_CLI) xpkg build --package-root package/oci --examples-root $(FUNCTION_PKG_EXAMPLES) \
+		--embed-runtime-image $(E2E_OCI_IMAGE) \
+		--package-file $(XPKG_OUTPUT_DIR)/linux_$(TARGETARCH)/function-oci-$(VERSION).xpkg || $(FAIL)
+	@$(OK) building package function-oci-$(VERSION).xpkg
+
+local.xpkg.deploy.function.function-oci: FUNCTION_IMAGE := $(E2E_OCI_IMAGE)
+local.xpkg.deploy.function.function-oci: FUNCTION_RUNTIME_CONFIG := e2e-oci
+
+# The oci profile's cluster: kind and Crossplane, the setup with the module
+# as a process pushed too, and function-oci installed under the e2e-oci
+# config (/dev/kvm from the node). make e2e.up adds function-wasm beside it.
+# The guest as a process is built unless E2E_OCI_GUEST already names one
+# (the OCI workflow's cluster job gets it from the build job).
+# The device plugin that grants the node's /dev/kvm to function-oci's pod
+# (crates/e2e/profiles/oci/kvm-device-plugin.yaml), applied before the
+# Function so its pod, which requests one devic.es/kvm, can schedule. The
+# device node the kubelet puts in the container carries the node's owner
+# and mode (root:kvm 0660 on the kind node, as on most node images), and
+# the pod's user is the package's, so the oci profile's runtime config is
+# applied here, with the node's kvm gid patched in as the pod's
+# supplemental group: the way an operator grants the device on a hosted
+# cluster, whose nodes nobody chmods (docs/operators/oci-runtime.md). The
+# gid is read from the kind node, since it is the node image's. When the
+# node never allocates a device, the plugin's log and the device say why.
+e2e.oci.kvm: $(KUBECTL)
+	@$(INFO) installing the kvm device plugin
+	@docker exec $(KIND_CLUSTER_NAME)-control-plane ls -l /dev/kvm || $(FAIL)
+	@gid=$$(docker exec $(KIND_CLUSTER_NAME)-control-plane stat -c %g /dev/kvm) && [ -n "$$gid" ] || $(FAIL); \
+	$(KUBECTL) apply -f crates/e2e/profiles/oci/drc.yaml || $(FAIL); \
+	$(KUBECTL) patch deploymentruntimeconfig e2e-oci --type merge \
+		-p "{\"spec\":{\"deploymentTemplate\":{\"spec\":{\"template\":{\"spec\":{\"securityContext\":{\"supplementalGroups\":[$$gid]}}}}}}}" || $(FAIL); \
+	echo "the pod joins the node's kvm group, gid $$gid"
+	@$(KUBECTL) apply -f crates/e2e/profiles/oci/kvm-device-plugin.yaml || $(FAIL)
+	@$(KUBECTL) -n kube-system rollout status daemonset/generic-device-plugin --timeout=120s || $(FAIL)
+	@n=""; for i in $$(seq 1 60); do \
+		n=$$($(KUBECTL) get nodes -o jsonpath='{.items[0].status.allocatable.devic\.es/kvm}'); \
+		if [ -n "$$n" ] && [ "$$n" != "0" ]; then break; fi; sleep 2; \
+	done; if [ -z "$$n" ] || [ "$$n" = "0" ]; then \
+		echo "the node allocates no devic.es/kvm"; \
+		$(KUBECTL) get nodes -o jsonpath='{.items[0].status.allocatable}'; echo; \
+		$(KUBECTL) -n kube-system logs daemonset/generic-device-plugin --tail=100; \
+		docker exec $(KIND_CLUSTER_NAME)-control-plane ls -l /dev/kvm; \
+		$(FAIL); fi
+	@$(OK) installing the kvm device plugin
+
+e2e.oci.up: $(if $(wildcard $(E2E_OCI_GUEST)),,e2e.oci.guest) controlplane.up e2e.crossplane e2e.oci.kvm e2e.setup xpkg.build.function-oci local.xpkg.deploy.function.function-oci
+	@$(INFO) waiting for function-oci to become healthy
+	@$(KUBECTL) wait function.pkg.crossplane.io/function-oci --for=condition=Healthy --timeout=300s || $(FAIL)
+	@$(OK) the oci profile cluster is up, run make e2e.test.oci
+
+e2e.test.oci:
+	@$(INFO) running the oci profile suite
+	@cargo test -p function-wasm-e2e --features cluster --test oci || $(FAIL)
+	@$(OK) running the oci profile suite
 
 e2e.test: $(addprefix e2e.test.,$(E2E_PROFILES))
 
@@ -156,6 +301,20 @@ e2e.down: controlplane.down
 # The cluster's state for a failed run (controlplane.dump plus the suite's
 # own logs under _output/e2e/logs); CI uploads the directory.
 e2e.dump: controlplane.dump
+
+# The pods and, for every function pod, its description and its logs (the
+# previous container's too), printed: what a failed run shows in its job
+# log, where the dump is an artifact.
+e2e.pods: $(KUBECTL)
+	@$(KUBECTL) get pods --all-namespaces -o wide || true
+	@for p in $$($(KUBECTL) -n crossplane-system get pods -l pkg.crossplane.io/function -o name); do \
+		echo "==== $$p"; \
+		$(KUBECTL) -n crossplane-system describe $$p || true; \
+		echo "---- $$p logs"; \
+		$(KUBECTL) -n crossplane-system logs $$p --all-containers --tail=200 || true; \
+		echo "---- $$p previous logs"; \
+		$(KUBECTL) -n crossplane-system logs $$p --all-containers --previous --tail=200 2>/dev/null || true; \
+	done
 
 # The committed test module. cargo builds it on the rust scaffold's pinned
 # toolchain (crates/e2e/guest/rust-toolchain.toml); guestfn inspect states

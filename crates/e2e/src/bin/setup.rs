@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use function_wasm_e2e::fixtures;
 use function_wasm_e2e::forward::Bridge;
-use function_wasm_e2e::guest::{self, VARIANTS};
+use function_wasm_e2e::guest::{self, OCI_VARIANTS, VARIANTS};
 use function_wasm_e2e::k8s::{self, CROSSPLANE_NAMESPACE, apply, condition_is, dynamic, wait_for};
 use function_wasm_e2e::profile::Profile;
 use function_wasm_e2e::registry::{self, Pusher};
@@ -160,10 +160,67 @@ async fn main() -> Result<()> {
             digest,
         },
     );
+    // The oci profile's image and artifacts, when the module as a process
+    // was built (make e2e.oci.guest); the suite's other profiles need none
+    // of it.
+    let mut oci_variants = std::collections::BTreeMap::new();
+    let mut oci_image = String::new();
+    if let Some(path) = std::env::var_os("E2E_OCI_GUEST") {
+        step("pushing the test module as an image and under every oci variant");
+        let binary = std::fs::read(&path)
+            .with_context(|| format!("reading E2E_OCI_GUEST {}", path.to_string_lossy()))?;
+        let image = registry::image(&binary, guest::OCI_PROCESS_PATH, "65532:65532");
+        let digest = pusher
+            .push(guest::OCI_IMAGE_REPOSITORY, guest::TAG, &image)
+            .await
+            .context("pushing the test image")?;
+        oci_image = format!(
+            "{registry_address}/{}@{digest}",
+            guest::OCI_IMAGE_REPOSITORY
+        );
+        println!("    {:<18} {oci_image}", "image");
+        for variant in OCI_VARIANTS {
+            let artifact =
+                registry::image_module_artifact(&variant.manifest_json_for(Some(&oci_image))?);
+            let digest = pusher
+                .push(&variant.repository(), guest::TAG, &artifact)
+                .await
+                .with_context(|| format!("pushing variant {}", variant.name))?;
+            if let Some(bundle) = guest::bundle(variant, &digest) {
+                pusher
+                    .attach(
+                        &variant.repository(),
+                        &digest,
+                        &registry::referrer(&digest, &bundle),
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("attaching the signature of variant {}", variant.name)
+                    })?;
+            }
+            println!(
+                "    {:<18} {registry_address}/{}@{digest}",
+                variant.name,
+                variant.repository()
+            );
+            oci_variants.insert(
+                variant.name.to_string(),
+                Pushed {
+                    repository: format!("{registry_address}/{}", variant.repository()),
+                    digest,
+                },
+            );
+        }
+    }
     drop(bridge);
 
     step("the profiles' policies, keys and volumes in crossplane-system");
-    for profile in [Profile::Default, Profile::Strict, Profile::Lifecycle] {
+    for profile in [
+        Profile::Default,
+        Profile::Strict,
+        Profile::Lifecycle,
+        Profile::Oci,
+    ] {
         if let Some(policy) = profile.policy() {
             apply_value(&client, &json!({
                 "apiVersion": "v1", "kind": "ConfigMap",
@@ -243,6 +300,8 @@ async fn main() -> Result<()> {
         trusted_identity: guest::TRUSTED_IDENTITY.to_string(),
         untrusted_identity: guest::UNTRUSTED_IDENTITY.to_string(),
         pdb_addon: PDB_ADDON.to_string(),
+        oci_variants,
+        oci_image,
     };
     state.save()?;
     println!("==> state written to {}", State::path().display());

@@ -93,6 +93,11 @@ pub struct Resolver {
     /// as empty bytes, for the same reason. A guestfn.yaml under --module-dir
     /// is never cached: it is read fresh each request, by design.
     cached_manifests: Mutex<HashMap<String, Vec<u8>>>,
+    /// The module type the runtime serves (the engine's kind): an OCI
+    /// source's fetch yields the WebAssembly layer on function-wasm and an
+    /// image layout, assembled from the image the artifact's manifest pins,
+    /// on function-oci.
+    serves: &'static str,
 }
 
 /// Most manifests the memory tier holds before it starts over; each is at
@@ -109,7 +114,14 @@ impl Resolver {
             http: std::sync::OnceLock::new(),
             manifests: None,
             cached_manifests: Mutex::new(HashMap::new()),
+            serves: crate::manifest::TYPE_WASM,
         }
+    }
+
+    /// Serves the engine's module type (`Selected::KIND`); wasm by default.
+    pub fn serving(mut self, kind: &'static str) -> Self {
+        self.serves = kind;
+        self
     }
 
     /// Keeps fetched manifests in store too, so a restart on a warm disk
@@ -257,7 +269,7 @@ impl Resolver {
         };
         let start = std::time::Instant::now();
         let result = self.fetch_inner(resolved);
-        function_wasm_engine_api::metrics::FETCH_DURATION
+        function_wasm_engine::metrics::FETCH_DURATION
             .with_label_values(&[source])
             .observe(start.elapsed().as_secs_f64());
         result
@@ -270,6 +282,9 @@ impl Resolver {
                 self.http_get(url, "module", self.max_size)
             }),
             Source::Oci { reference, auth } => {
+                if self.serves == crate::manifest::TYPE_OCI {
+                    return self.fetch_image(reference, auth.clone());
+                }
                 // The manifest is verified against the pinned digest, the
                 // layer against its own through the blob store, so a module
                 // whose compiled artifact is gone costs one manifest read
@@ -287,6 +302,141 @@ impl Resolver {
                 Ok(b)
             }
         }
+    }
+
+    /// The OCI runtime's fetch: the pinned reference is a wrapping artifact,
+    /// whose manifest layer names the image (the manifest remembered for
+    /// the read that follows), or a plain image or index, run as a
+    /// manifest-less module; the image's manifest for this platform, its
+    /// config and its layers come down through the blob store, verified
+    /// against their digests and bounded together by --max-module-size,
+    /// and go to the engine as one image layout. A WebAssembly artifact is
+    /// refused by name.
+    #[cfg(feature = "oci")]
+    fn fetch_image(&self, reference: &OciReference, auth: Option<Auth>) -> Result<Vec<u8>, String> {
+        use function_wasm_engine::oci::layout;
+        let client = RegistryClient::new(reference, auth.clone());
+        let top = client.manifest_by_digest(&reference.digest, usize::MAX)?;
+        let (image_client, image_digest) = if crate::oci::is_module_artifact(&top) {
+            let Some(layer) = crate::oci::manifest_layer(&top) else {
+                return Err("wraps an OCI image but has no manifest layer".to_string());
+            };
+            let raw = self.manifest_by_digest(&layer.digest, || {
+                self.verified("manifest layer", &layer.digest, || {
+                    client.blob(
+                        &layer.digest,
+                        crate::manifest::MAX_SIZE as u64,
+                        "manifest layer",
+                    )
+                })
+            })?;
+            self.remember(&reference.digest, &raw);
+            let mf = crate::manifest::Manifest::parse(&raw)
+                .map_err(|e| format!("has an invalid manifest: {e}"))?;
+            if mf.kind() != crate::manifest::TYPE_OCI {
+                return Err(format!(
+                    "is a type: {} module, which function-oci does not serve",
+                    mf.kind()
+                ));
+            }
+            if mf.image.is_empty() {
+                return Err("names no image: its manifest's image field is empty".to_string());
+            }
+            let image_ref = crate::location::parse_oci_reference(&mf.image)
+                .map_err(|e| format!("names an invalid image {:?}: {e}", mf.image))?;
+            let image_auth = crate::oci::pull_auth(&image_ref.registry, auth);
+            (
+                RegistryClient::new(&image_ref, image_auth),
+                image_ref.digest,
+            )
+        } else if top.is_image() || top.is_index() {
+            (client, reference.digest.clone())
+        } else {
+            return Err(
+                "is a WebAssembly module (type wasm), which function-oci does not serve; function-wasm serves it"
+                    .to_string(),
+            );
+        };
+        let (raw, got) = image_client.raw_manifest(&image_digest)?;
+        if got != image_digest {
+            return Err(format!(
+                "image manifest content is {got}, want {image_digest}"
+            ));
+        }
+        let mut manifest: crate::oci::OciManifest = serde_json::from_slice(&raw)
+            .map_err(|e| format!("cannot parse image manifest {image_digest}: {e}"))?;
+        let mut raw = raw;
+        let mut digest = image_digest;
+        if manifest.is_index() {
+            let arch = function_wasm_engine::oci::image::host_architecture();
+            let entry = manifest
+                .index_entries()
+                .into_iter()
+                .find(|e| {
+                    e.platform
+                        .as_ref()
+                        .is_some_and(|p| p.architecture == arch && p.os == "linux")
+                })
+                .ok_or_else(|| format!("image index {digest} has no manifest for linux/{arch}"))?;
+            let (entry_raw, entry_got) = image_client.raw_manifest(&entry.digest)?;
+            if entry_got != entry.digest {
+                return Err(format!(
+                    "image manifest content is {entry_got}, want {}",
+                    entry.digest
+                ));
+            }
+            manifest = serde_json::from_slice(&entry_raw)
+                .map_err(|e| format!("cannot parse image manifest {}: {e}", entry.digest))?;
+            raw = entry_raw;
+            digest = entry.digest;
+        }
+        if !manifest.is_image() {
+            return Err(format!(
+                "image manifest {digest} has no image config (its config is {})",
+                manifest
+                    .config
+                    .as_ref()
+                    .map(|c| c.media_type.as_str())
+                    .unwrap_or("absent")
+            ));
+        }
+        let config_desc = manifest.config.clone().expect("checked above");
+        let mut total = raw.len() as u64;
+        let mut w = layout::Writer::new();
+        let config = self.verified("image config", &config_desc.digest, || {
+            image_client.blob(&config_desc.digest, self.max_size, "image config")
+        })?;
+        total += config.len() as u64;
+        w.blob(&config);
+        for (i, l) in manifest.layers.iter().enumerate() {
+            let bytes = self.verified("image layer", &l.digest, || {
+                image_client.blob(&l.digest, self.max_size, &format!("image layer {i}"))
+            })?;
+            total += bytes.len() as u64;
+            if total > self.max_size {
+                return Err(format!(
+                    "image exceeds the size limit of {} bytes (--max-module-size)",
+                    self.max_size
+                ));
+            }
+            w.blob(&bytes);
+        }
+        let media_type = if manifest.media_type.is_empty() {
+            crate::oci::OCI_MANIFEST_TYPE
+        } else {
+            manifest.media_type.as_str()
+        };
+        w.manifest(&raw, media_type);
+        w.finish().map_err(|e| e.to_string())
+    }
+
+    #[cfg(not(feature = "oci"))]
+    fn fetch_image(
+        &self,
+        _reference: &OciReference,
+        _auth: Option<Auth>,
+    ) -> Result<Vec<u8>, String> {
+        Err("this runtime serves no OCI images".to_string())
     }
 
     fn fetch_path(&self, full: &Path, digest: &str) -> Result<Vec<u8>, String> {
@@ -370,7 +520,7 @@ impl Resolver {
         digest: &str,
         fetch: impl FnOnce() -> Result<Vec<u8>, String>,
     ) -> Result<Vec<u8>, String> {
-        use function_wasm_engine_api::metrics::{self, CACHE_EVENTS};
+        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
         if let Some(blobs) = &self.blobs {
             if let Some(b) = blobs.get(digest) {
                 CACHE_EVENTS
@@ -575,7 +725,7 @@ mod tests {
         // The 1.0 audit's F-5 rule for the manifests store: verify-on-read,
         // keyed by the manifest's own digest, never by the artifact's.
         let wasm = b"not really wasm";
-        let module_manifest = br#"{"abi":2}"#;
+        let module_manifest = br#"{"contract":"wasm@1.0"}"#;
         let (pinning, addr) =
             crate::oci::testregistry::wasm_artifact(wasm, Some(module_manifest), false);
         let dir = tempfile::tempdir().expect("tempdir");

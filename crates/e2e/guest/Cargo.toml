@@ -14,11 +14,23 @@ description = "function-wasm's end-to-end test module: an ABI v2 guest whose com
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# The same module as an OCI image's process (src/main.rs, the oci profile):
+# built natively for musl under the `process` feature, so the wasm build
+# never sees it.
+[[bin]]
+name = "e2e-guest-oci"
+path = "src/main.rs"
+required-features = ["process"]
+
+[features]
+process = ["dep:pollster"]
+
 [dependencies]
 prost = "0.14"
 prost-types = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+pollster = { version = "1", optional = true }
 
 # The component bindings (src/bindings.rs) exist only in the wasm build.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

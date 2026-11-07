@@ -28,6 +28,16 @@ const WASM_LAYER_TYPES: &[&str] = &[
 /// The media type of the artifact layer carrying the module manifest.
 pub const MANIFEST_LAYER_TYPE: &str = "application/vnd.guestfn.manifest.v1+json";
 
+/// The artifact that wraps an OCI image as a `type: oci` module
+/// (docs/one-pager-oci-runtime.md): this `artifactType`, OCI 1.1's empty
+/// config descriptor and the module manifest as its one layer, whose
+/// `image` pins the image by digest. The Input pins the artifact, the
+/// signature covers it, and the OCI runtime pulls the image it names.
+pub const MODULE_ARTIFACT_TYPE: &str = "application/vnd.guestfn.module.v1";
+/// OCI 1.1's empty descriptor: the config of an artifact that has none.
+pub const EMPTY_CONFIG_TYPE: &str = "application/vnd.oci.empty.v1+json";
+pub const EMPTY_CONFIG: &[u8] = b"{}";
+
 /// The media types of an OCI image manifest and image index.
 pub const OCI_MANIFEST_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
 pub const OCI_INDEX_TYPE: &str = "application/vnd.oci.image.index.v1+json";
@@ -49,6 +59,9 @@ pub struct Auth {
 pub struct OciManifest {
     #[serde(default, rename = "mediaType")]
     pub media_type: String,
+    /// OCI 1.1's artifact type: MODULE_ARTIFACT_TYPE on a wrapping artifact.
+    #[serde(default, rename = "artifactType")]
+    pub artifact_type: String,
     #[serde(default)]
     pub config: Option<Descriptor>,
     #[serde(default)]
@@ -79,6 +92,49 @@ pub struct Descriptor {
     pub size: i64,
     #[serde(default)]
     pub annotations: std::collections::BTreeMap<String, String>,
+    /// An index entry's platform.
+    #[serde(default)]
+    pub platform: Option<Platform>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Platform {
+    #[serde(default)]
+    pub architecture: String,
+    #[serde(default)]
+    pub os: String,
+}
+
+/// The media types of an image's config: what makes a manifest an image
+/// rather than an artifact.
+pub const IMAGE_CONFIG_TYPES: &[&str] = &[
+    "application/vnd.oci.image.config.v1+json",
+    "application/vnd.docker.container.image.v1+json",
+];
+
+impl OciManifest {
+    /// Whether this is an image index (a manifest list).
+    pub fn is_index(&self) -> bool {
+        self.media_type == OCI_INDEX_TYPE
+            || self.media_type.contains("manifest.list")
+            || (self.media_type.is_empty() && !self.manifests.is_empty())
+    }
+
+    /// An index's entries, with their platforms.
+    pub fn index_entries(&self) -> Vec<Descriptor> {
+        self.manifests
+            .iter()
+            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+            .collect()
+    }
+
+    /// Whether this is a container image: its config is an image config
+    /// (the OCI runtime runs it as a manifest-less module).
+    pub fn is_image(&self) -> bool {
+        self.config
+            .as_ref()
+            .is_some_and(|c| IMAGE_CONFIG_TYPES.contains(&c.media_type.as_str()))
+    }
 }
 
 /// A distribution-API client for one artifact's registry.
@@ -436,10 +492,33 @@ pub fn referrers_tag(digest: &str) -> String {
     digest.replacen(':', "-", 1)
 }
 
+/// Whether m is the wrapping artifact of a `type: oci` module: its
+/// artifactType says so (what guestfn push writes), or it has the empty
+/// config and the module manifest as its only layer (what another tool
+/// would push).
+pub fn is_module_artifact(m: &OciManifest) -> bool {
+    if m.artifact_type == MODULE_ARTIFACT_TYPE {
+        return true;
+    }
+    m.config
+        .as_ref()
+        .is_some_and(|c| c.media_type == EMPTY_CONFIG_TYPE)
+        && m.layers.len() == 1
+        && m.layers[0].media_type == MANIFEST_LAYER_TYPE
+}
+
+/// The refusal of a wrapping artifact by this package: the OCI runtime's
+/// module, named so the reader knows which package serves it.
+pub const MODULE_ARTIFACT_REFUSAL: &str = "wraps an OCI image (a type: oci module), which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)";
+
 /// Picks the layer of a manifest that holds the module: a wasm-typed layer
 /// if there is one, otherwise the only layer that is not the
-/// module-manifest layer.
+/// module-manifest layer. A wrapping artifact has none, and is refused by
+/// what it is rather than by its layer count.
 pub fn wasm_layer(m: &OciManifest) -> Result<Descriptor, String> {
+    if is_module_artifact(m) {
+        return Err(MODULE_ARTIFACT_REFUSAL.to_string());
+    }
     let mut candidates = Vec::new();
     for l in &m.layers {
         if WASM_LAYER_TYPES.contains(&l.media_type.as_str()) {
@@ -896,7 +975,8 @@ mod tests {
 
     #[test]
     fn fetches_through_the_bearer_token_flow() {
-        let (digest, addr) = testregistry::wasm_artifact(b"fake wasm", Some(br#"{"abi":1}"#), true);
+        let (digest, addr) =
+            testregistry::wasm_artifact(b"fake wasm", Some(br#"{"contract":"wasm@1.0"}"#), true);
         let r = reference(&addr, &digest);
         let client = RegistryClient::new(&r, None);
         let m = client.manifest(&r).expect("manifest");
@@ -912,8 +992,39 @@ mod tests {
             client
                 .blob(&mlayer.digest, 1 << 20, "manifest layer")
                 .expect("blob"),
-            br#"{"abi":1}"#
+            br#"{"contract":"wasm@1.0"}"#
         );
+    }
+
+    /// The wrapping artifact of a type: oci module has no wasm layer, by
+    /// design: this package names the package that serves it.
+    #[test]
+    fn a_wrapping_artifact_is_refused_by_name() {
+        let by_type: OciManifest = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": OCI_MANIFEST_TYPE,
+            "artifactType": MODULE_ARTIFACT_TYPE,
+            "config": {"mediaType": EMPTY_CONFIG_TYPE, "digest": testregistry::digest_of(EMPTY_CONFIG), "size": 2},
+            "layers": [{"mediaType": MANIFEST_LAYER_TYPE, "digest": testregistry::digest_of(b"{}"), "size": 2}],
+        }))
+        .expect("manifest");
+        assert!(is_module_artifact(&by_type));
+        assert_eq!(wasm_layer(&by_type).unwrap_err(), MODULE_ARTIFACT_REFUSAL);
+        let by_shape: OciManifest = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": OCI_MANIFEST_TYPE,
+            "config": {"mediaType": EMPTY_CONFIG_TYPE, "digest": testregistry::digest_of(EMPTY_CONFIG), "size": 2},
+            "layers": [{"mediaType": MANIFEST_LAYER_TYPE, "digest": testregistry::digest_of(b"{}"), "size": 2}],
+        }))
+        .expect("manifest");
+        assert!(is_module_artifact(&by_shape));
+        // A module artifact beside its manifest layer is a WebAssembly one.
+        let (digest, addr) = testregistry::wasm_artifact(b"fake wasm", Some(b"{}"), false);
+        let r = reference(&addr, &digest);
+        let m = RegistryClient::new(&r, None)
+            .manifest(&r)
+            .expect("manifest");
+        assert!(!is_module_artifact(&m));
     }
 
     #[test]

@@ -26,6 +26,7 @@ cluster = [
   "dep:serde-saphyr",
   "dep:sha2",
   "dep:sigstore-trust-root",
+  "dep:tar",
   "dep:tokio",
 ]
 
@@ -55,6 +56,8 @@ sha2 = { version = "0.11", optional = true }
 # The public-good trusted root the default profile merges with the test
 # instance's.
 sigstore-trust-root = { version = "0.15.1", default-features = false, features = ["aws-lc-rs"], optional = true }
+# The oci profile's test image: one tar layer around the module as a process.
+tar = { version = "0.4", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"], optional = true }
 
 [[bin]]
@@ -72,4 +75,8 @@ required-features = ["cluster"]
 
 [[test]]
 name = "lifecycle"
+required-features = ["cluster"]
+
+[[test]]
+name = "oci"
 required-features = ["cluster"]

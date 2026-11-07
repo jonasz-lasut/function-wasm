@@ -1,12 +1,14 @@
-//! guestfn push: publish a module as an OCI artifact - the module layer
-//! and, when the project has a guestfn.yaml, the manifest layer beside it -
+//! guestfn push: publish a module as an OCI artifact (the module layer
+//! and, when the project has a guestfn.yaml, the manifest layer beside it;
+//! for a `type: oci` manifest, the wrapping artifact whose one layer is the
+//! manifest and whose `image` pins the image, docs/one-pager-oci-runtime.md)
 //! and print what a Composition needs: the reference pinned to the OCI
 //! manifest digest, and the requires block the module's manifest declares.
 
 use std::path::PathBuf;
 
 use function_wasm::location::{AnyReference, parse_any_reference};
-use function_wasm::manifest::Manifest;
+use function_wasm::manifest::{Manifest, TYPE_OCI};
 use function_wasm::oci::{self, RegistryClient};
 use serde::Serialize;
 use sha2::Digest as _;
@@ -47,10 +49,20 @@ pub struct PushCmd {
     /// the artifact.
     #[arg(long)]
     revision: Option<String>,
+
+    /// For a type: oci manifest: the image the module is, pinned by digest
+    /// (registry/repository@sha256:...), written into the published
+    /// manifest's image field. The artifact then wraps the image - the
+    /// manifest is its one layer - and no module file is read.
+    #[arg(long)]
+    image: Option<String>,
 }
 
 impl PushCmd {
     pub fn run(&self) -> Result<(), String> {
+        if self.image.is_some() || self.manifest_is_oci()? {
+            return self.push_image_module();
+        }
         let wasm = std::fs::read(&self.file)
             .map_err(|e| format!("cannot read {}: {e}", self.file.display()))?;
         // A module the runtime would refuse at load is not published:
@@ -79,18 +91,74 @@ impl PushCmd {
             manifest_json.as_deref(),
             annotations(m.as_ref(), self.revision.as_deref()),
         )?;
-        push(
-            &reference,
-            &wasm,
-            manifest_json.as_deref(),
-            &raw_manifest,
-            &config,
-        )?;
+        let mut blobs: Vec<&[u8]> = vec![&config, &wasm];
+        if let Some(mj) = &manifest_json {
+            blobs.push(mj);
+        }
+        push(&reference, &blobs, &raw_manifest)?;
         let pinned = reference.pinned(&digest);
         println!("Pushed {pinned}\n\nmodule:\n  type: OCI\n  oci:\n    ref: {pinned}");
         if let Some(m) = &m
             && let Some(block) = requires_block(m)?
         {
+            print!("{block}");
+        }
+        Ok(())
+    }
+
+    /// Whether the project's manifest (--manifest, or the guestfn.yaml next
+    /// to the module file) declares a type: oci module.
+    fn manifest_is_oci(&self) -> Result<bool, String> {
+        Ok(self.load_manifest()?.is_some_and(|m| m.kind() == TYPE_OCI))
+    }
+
+    /// Publishes the wrapping artifact of a type: oci module: the manifest,
+    /// its image set from --image or the file, as the one layer under the
+    /// artifact type, over the empty config. The image itself is pushed by
+    /// its own build (docker push); the manifest pins it and the Input pins
+    /// the artifact.
+    fn push_image_module(&self) -> Result<(), String> {
+        let Some(mut m) = self.load_manifest()? else {
+            return Err(format!(
+                "--image needs a type: oci manifest: no {} next to {} and no --manifest",
+                function_wasm::manifest::FILE_NAME,
+                self.file.display()
+            ));
+        };
+        if m.kind() != TYPE_OCI {
+            return Err(
+                "--image is for a type: oci manifest; this manifest describes a WebAssembly module, which guestfn push publishes from its file".to_string(),
+            );
+        }
+        if let Some(image) = &self.image {
+            m.image = image.clone();
+        }
+        if m.image.is_empty() {
+            return Err(format!(
+                "a type: oci manifest names the image it wraps: set image in {} or pass --image registry/repository@sha256:...",
+                function_wasm::manifest::FILE_NAME
+            ));
+        }
+        // The pin is checked here, where the author can fix it, with the
+        // runtime's own rule.
+        m.validate()?;
+        let reference = parse_any_reference(&self.r#ref)?;
+        let manifest_json = m.json()?;
+        let (raw_manifest, digest) = image_artifact(
+            &manifest_json,
+            annotations(Some(&m), self.revision.as_deref()),
+        )?;
+        push(
+            &reference,
+            &[oci::EMPTY_CONFIG, &manifest_json],
+            &raw_manifest,
+        )?;
+        let pinned = reference.pinned(&digest);
+        println!(
+            "Pushed {pinned} (wrapping {})\n\nmodule:\n  type: OCI\n  oci:\n    ref: {pinned}",
+            m.image
+        );
+        if let Some(block) = requires_block(&m)? {
             print!("{block}");
         }
         Ok(())
@@ -129,15 +197,10 @@ impl PushCmd {
     }
 }
 
-/// Uploads the artifact's blobs and manifest through the runtime's own
-/// registry client, authenticated with the local Docker config.
-fn push(
-    reference: &AnyReference,
-    wasm: &[u8],
-    manifest_json: Option<&[u8]>,
-    raw_manifest: &[u8],
-    config: &[u8],
-) -> Result<(), String> {
+/// Uploads the artifact's blobs (its config and layers) and manifest
+/// through the runtime's own registry client, authenticated with the local
+/// Docker config.
+fn push(reference: &AnyReference, blobs: &[&[u8]], raw_manifest: &[u8]) -> Result<(), String> {
     let pinned = function_wasm::location::OciReference {
         registry: reference.registry.clone(),
         repository: reference.repository.clone(),
@@ -145,10 +208,8 @@ fn push(
     };
     let auth = oci::keychain_auth(&reference.registry);
     let client = RegistryClient::new(&pinned, auth);
-    client.push_blob(&digest_of(config), config)?;
-    client.push_blob(&digest_of(wasm), wasm)?;
-    if let Some(mj) = manifest_json {
-        client.push_blob(&digest_of(mj), mj)?;
+    for blob in blobs {
+        client.push_blob(&digest_of(blob), blob)?;
     }
     let target = reference.manifest_ref();
     client
@@ -186,6 +247,8 @@ struct ManifestOut {
     schema_version: i64,
     #[serde(rename = "mediaType")]
     media_type: String,
+    #[serde(rename = "artifactType", skip_serializing_if = "Option::is_none")]
+    artifact_type: Option<String>,
     config: DescriptorOut,
     layers: Vec<DescriptorOut>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -226,6 +289,7 @@ fn artifact(
     let manifest = ManifestOut {
         schema_version: 2,
         media_type: OCI_MANIFEST_MEDIA_TYPE.to_string(),
+        artifact_type: None,
         config: DescriptorOut {
             media_type: WASM_CONFIG_MEDIA_TYPE.to_string(),
             size: config.len(),
@@ -237,6 +301,35 @@ fn artifact(
     let raw = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
     let digest = digest_of(&raw);
     Ok((raw, digest, config))
+}
+
+/// Wraps a type: oci module's manifest in the artifact the OCI runtime
+/// reads: the artifact type, OCI 1.1's empty config and the manifest as the
+/// one layer, plus the annotations. No creation time goes in, so the digest
+/// is a function of the manifest bytes and the annotations alone.
+fn image_artifact(
+    manifest_json: &[u8],
+    annotations: Option<std::collections::BTreeMap<String, String>>,
+) -> Result<(Vec<u8>, String), String> {
+    let manifest = ManifestOut {
+        schema_version: 2,
+        media_type: OCI_MANIFEST_MEDIA_TYPE.to_string(),
+        artifact_type: Some(oci::MODULE_ARTIFACT_TYPE.to_string()),
+        config: DescriptorOut {
+            media_type: oci::EMPTY_CONFIG_TYPE.to_string(),
+            size: oci::EMPTY_CONFIG.len(),
+            digest: digest_of(oci::EMPTY_CONFIG),
+        },
+        layers: vec![DescriptorOut {
+            media_type: oci::MANIFEST_LAYER_TYPE.to_string(),
+            size: manifest_json.len(),
+            digest: digest_of(manifest_json),
+        }],
+        annotations,
+    };
+    let raw = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
+    let digest = digest_of(&raw);
+    Ok((raw, digest))
 }
 
 /// Maps the manifest onto the standard OCI image annotations of the
@@ -366,6 +459,25 @@ mod tests {
         assert_eq!(v["layers"][0]["mediaType"], "application/wasm");
         assert_eq!(v["layers"][1]["mediaType"], oci::MANIFEST_LAYER_TYPE);
         assert_eq!(v["config"]["mediaType"], WASM_CONFIG_MEDIA_TYPE);
+    }
+
+    /// The wrapping artifact is what oci::is_module_artifact recognises,
+    /// and reproducible.
+    #[test]
+    fn the_image_artifact_wraps_the_manifest_alone() {
+        let manifest = br#"{"contract":"oci@1.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#;
+        let (a, da) = image_artifact(manifest, None).expect("a");
+        let (b, db) = image_artifact(manifest, None).expect("b");
+        assert_eq!(a, b);
+        assert_eq!(da, db);
+        let parsed: oci::OciManifest = serde_json::from_slice(&a).expect("json");
+        assert!(oci::is_module_artifact(&parsed));
+        assert_eq!(parsed.layers.len(), 1);
+        assert_eq!(parsed.layers[0].media_type, oci::MANIFEST_LAYER_TYPE);
+        assert_eq!(
+            parsed.config.expect("config").media_type,
+            oci::EMPTY_CONFIG_TYPE
+        );
     }
 
     #[test]

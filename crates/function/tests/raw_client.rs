@@ -138,7 +138,7 @@ async fn the_served_runtime_is_byte_transparent() {
         ),
         ("grpc_method", "RunFunction"),
     ];
-    let sample = function_wasm_engine_api::metrics::sample;
+    let sample = function_wasm_engine::metrics::sample;
     assert_eq!(
         sample("grpc_server_started_total", &labels),
         Some(1.0),

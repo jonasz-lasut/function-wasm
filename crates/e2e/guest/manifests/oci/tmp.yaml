@@ -1,0 +1,11 @@
+# The oci profile's variant: the same declaration around the test module as
+# a process (docs/one-pager-oci-runtime.md); guestfn push --image pins the
+# image, which setup does by hand.
+# The test module requiring a private /tmp.
+contract: oci@1.0
+name: e2e-guest
+version: 0.1.0-tmp
+description: function-wasm's end-to-end test module, requiring a private /tmp
+requires:
+  filesystem:
+    privateTmp: true
