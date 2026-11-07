@@ -18,9 +18,10 @@ replaces the value with a reference: `config` becomes an object that says
 where in the composite resource the module's configuration is, and the
 runtime reads it, checks it against the chosen module's schema and hands the
 module the result. Static configuration goes. The record targets the
-WebAssembly runtime on `main`; the OCI runtime (the [OCI
-runtime](one-pager-oci-runtime.md) record) adopts it once its code has
-merged and its process contract has settled. Jonasz decided to drop the
+WebAssembly runtime on `main`; the OCI runtime (its record is in
+[#240](https://github.com/jonasz-lasut/function-wasm/pull/240), its code
+in [#251](https://github.com/jonasz-lasut/function-wasm/pull/251)) adopts
+it once that code has merged and its process contract has settled. Jonasz decided to drop the
 static value on 2026-11-07.
 
 ## Who knows what about a configuration
