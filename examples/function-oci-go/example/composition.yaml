@@ -22,4 +22,6 @@ spec:
         oci:
           ref: 127.0.0.1:5000/function-oci-go@sha256:0000000000000000000000000000000000000000000000000000000000000000
       config:
-        greeting: hi
+        # The module's configuration lives in the composite resource, in the
+        # field named here (example/xr.yaml sets spec.config.greeting).
+        from: spec.config

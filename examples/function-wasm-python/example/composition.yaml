@@ -70,6 +70,8 @@ spec:
         permit (principal, action == Action::"grantEgress", resource == HostPattern::"127.0.0.1")
         when { context.method == "GET" && context.path like "/teams/*" };
       config:
-        # The fixture server render.sh starts; in a cluster, the CMDB the
-        # module's manifest names.
-        cmdbUrl: http://127.0.0.1:9480
+        # The Bucket's spec.config holds the module's configuration: the
+        # CMDB's URL, the fixture server render.sh starts for the render
+        # (example/xr.yaml) and the host the module's manifest names in a
+        # cluster.
+        from: spec.config

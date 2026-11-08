@@ -34,6 +34,16 @@ spec:
                 type: object
                 additionalProperties:
                   type: string
+              config:
+                description: >-
+                  The module's configuration, the schema its manifest
+                  declares: the CMDB's URL.
+                type: object
+                properties:
+                  cmdbUrl:
+                    type: string
+                    format: uri
+                additionalProperties: false
           status:
             type: object
             properties:

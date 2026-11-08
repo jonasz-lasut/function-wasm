@@ -164,7 +164,7 @@ stringData:
         permit (principal, action == Action::"grantEgress", resource == HostPattern::"cmdb.example.org")
         when { context.method == "GET" && context.path like "/teams/*" };
       config:
-        cmdbUrl: https://cmdb.example.org
+        from: spec.config      # the Bucket's {cmdbUrl: https://cmdb.example.org}
 ```
 
 The operator grants the credential and the request in the runtime's

@@ -69,6 +69,12 @@ spec:
         type: Path
         from: spec.addOn
         allowEmpty: true
+      # The add-on's configuration, from the WebApp too (spec.addOnConfig),
+      # held to the add-on's own schema; a WebApp that sets none runs it
+      # unconfigured.
+      config:
+        from: spec.addOnConfig
+        allowEmpty: true
       # Which add-ons a WebApp may name: an OCI reference only under this
       # repository, default-deny. A Path source has no host to fence: an XR
       # can name only a file the operator put under --module-dir (a path

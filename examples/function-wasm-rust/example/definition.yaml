@@ -42,6 +42,17 @@ spec:
                 type: string
                 enum: [cloudflare, private]
                 default: private
+              config:
+                description: >-
+                  The module's configuration, the schema its manifest
+                  declares: ipsUrl replaces the Cloudflare IP list's URL,
+                  for a mirror or a fixture.
+                type: object
+                properties:
+                  ipsUrl:
+                    type: string
+                    format: uri
+                additionalProperties: false
           status:
             type: object
             properties:

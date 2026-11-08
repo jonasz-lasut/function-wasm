@@ -8,3 +8,7 @@ spec:
   vpcId: vpc-0a1b2c3d4e5f60718
   port: 443
   exposure: cloudflare
+  # The module's configuration (the step's config.from): the IP list the
+  # fixture server render.sh starts serves; leave it out in a cluster.
+  config:
+    ipsUrl: http://127.0.0.1:9480/client/v4/ips
