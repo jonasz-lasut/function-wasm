@@ -219,7 +219,8 @@ oci.test: oci.tools oci.init ## The OCI engine's suite over a real Firecracker V
 # toolchain (its rust-toolchain.toml). A Linux host builds it natively. Any
 # other host builds it in a rust container over the whole tree, since the
 # guest reads the rust scaffold's proto in place and prost-build shells out
-# to protoc. The cargo registry and the whole rustup home stay in named
+# to protoc (Debian keeps the well-known types' .proto files in
+# libprotobuf-dev, apart from the compiler). The cargo registry and the whole rustup home stay in named
 # volumes, so the second build is warm; rustup unpacks a toolchain under
 # its home's tmp and renames it into place, which has to be one filesystem,
 # so the volume holds the home entire and the pinned toolchain is installed
@@ -232,7 +233,7 @@ else
 	@docker run --rm -v $(CURDIR):/src -w /src/$(E2E_GUEST_DIR) \
 		-v guestfn-cargo-registry:/usr/local/cargo/registry -v guestfn-rustup:/usr/local/rustup \
 		-e CARGO_TARGET_DIR=/src/$(E2E_GUEST_DIR)/target/linux -e RUSTUP_AUTO_INSTALL=1 -e DEBIAN_FRONTEND=noninteractive rust:1 \
-		sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends protobuf-compiler >/dev/null && rustup target add $(MUSL_TARGET) && cargo build --release --features process --bin e2e-guest-oci --target $(MUSL_TARGET)' || $(FAIL)
+		sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev >/dev/null && rustup target add $(MUSL_TARGET) && cargo build --release --features process --bin e2e-guest-oci --target $(MUSL_TARGET)' || $(FAIL)
 endif
 	@$(OK) building $(E2E_OCI_GUEST)
 
