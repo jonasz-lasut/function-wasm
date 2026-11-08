@@ -17,7 +17,7 @@ links and wraps that into the component - no wasm-tools, no adapter
   restated in a `local:guest` package with `run` declared sync (a sync-lifted
   `run` satisfies the runtime's async world) and
   `wasi:http/outgoing-handler@0.2.12` imported for the greeting fetch;
-  `wit/deps/` carries the WASI 0.2.12 packages. It is the `c` scaffold's
+  `wit/deps/` carries the WASI 0.2.12 packages. It is `examples/function-wasm-c`'s
   `wit/`, byte for byte. `make gen-bindings` runs
   [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s MoonBit
   generator (`wit-bindgen-cli` 0.62.0) over it into `src/`: `gen/` (the

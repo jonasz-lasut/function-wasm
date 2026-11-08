@@ -2,15 +2,16 @@
 
 This page is for a module author. It takes you from `guestfn init` to a module
 published as an OCI artifact, using the Go scaffold as the worked example. The
-other scaffolds (`--lang rust`, `zig`, `c`, `ts` or `python`) use the same
-commands. See [Other languages](other-languages.md) for what differs.
+other scaffolds (`--lang rust`, `ts` or `python`) use the same commands. See
+[Other languages](other-languages.md) for what differs, and for the languages
+that exist as examples alone.
 
 Install the CLI and scaffold a project:
 
 ```shell
 cargo install --git https://github.com/jonasz-lasut/guestfn guestfn
 
-guestfn init greeter --module github.com/example/greeter   # --lang go (default), rust, zig, c, ts or python
+guestfn init greeter --module github.com/example/greeter   # --lang go (default), rust, ts or python
 cd greeter
 ```
 

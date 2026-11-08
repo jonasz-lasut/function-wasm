@@ -22,8 +22,9 @@ wasi-sdk, no wasm-tools, no adapter download. There is no `guestfn init
   flavour's, checked in; `make gen-bindings` regenerates it.
 - `proto/` and `src/fnv1` are the vendored crossplane proto and the nanopb
   codec the `c` flavour generates from it, byte for byte (`make gen-proto`
-  regenerates it); the plumbing test in this repository holds all four
-  directories identical to the `c` template. `src/fnv1.odin` declares the
+  regenerates it); the `c` flavour is `examples/function-wasm-c`, an example
+  too since its scaffold retired (#264), and the pinned generators keep the
+  four directories matching. `src/fnv1.odin` declares the
   generated structs again in Odin with the same layout, and holds every
   size and offset it relies on with `#assert`s against what `zig cc`
   computes for wasm32, so a drift fails the build.

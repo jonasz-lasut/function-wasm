@@ -90,13 +90,15 @@ no separate SDK version to bump.
 `sdk_version` in `scaffold.rs`'s tests), the go `go.mod.tmpl`
 (its grpc floor too, dropped once a function-sdk-go release
 requires grpc v1.83 or newer),
-the rust `Cargo.toml.tmpl`, the zig and c `build.zig.zon.tmpl`
-(`zig fetch --save <url>` writes url and hash), the ts
+the rust `Cargo.toml.tmpl`, the ts
 `package.json.tmpl`'s devDependency ranges (then `npm install` in
 `examples/function-wasm-ts` so its lockfile, which the template does not carry,
 satisfies them), and the python `requirements.txt` (componentize-py and
 protobuf; the protobuf runtime refuses a codec from a newer protoc, so its
 `7.X.Y` must not fall behind the root `Makefile`'s `PROTOC_VERSION` `X.Y`).
+The zig, c, cpp and odin examples' `build.zig.zon` (`zig fetch --save <url>`
+writes url and hash), which no Renovate manager reads either, move in the
+same pass (the zig and c templates retired in #264).
 Mirror each change into its example (`render_matches_the_examples` fails on
 drift), run `UPDATE_GOLDENS=1 cargo test -p guestfn`, and merge the PR to
 `main` once CI and `/e2e` (comment it on the PR) are green.
