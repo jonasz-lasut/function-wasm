@@ -1,6 +1,6 @@
 //! The Input's CRD, generated from input.rs. Crossplane never installs a
 //! function's Input CRD, and the runtime enforces every rule itself; the
-//! document under package/input/ rides in the package for `crossplane beta
+//! document under package/wasm/input/ rides in the package for `crossplane beta
 //! validate` and editors, which read a Composition's inputs against it.
 //! It used to be hand-maintained beside the types. Now `document` builds
 //! it from the types' schema (schemars, the doc comments as descriptions,
@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use crate::input::{self, Input};
 
 /// The CRD's path from the repository root.
-pub const FILE: &str = "package/input/guestfn.crossplane.io_inputs.yaml";
+pub const FILE: &str = "package/wasm/input/guestfn.crossplane.io_inputs.yaml";
 /// The same file in the function-oci package (docs/one-pager-oci-runtime.md).
 pub const OCI_FILE: &str = "package/oci/input/guestfn.crossplane.io_inputs.yaml";
 
@@ -95,7 +95,7 @@ pub fn document() -> Value {
     })
 }
 
-/// The CRD as the YAML file under package/input/.
+/// The CRD as the YAML file under package/wasm/input/.
 pub fn yaml() -> String {
     serde_saphyr::to_string(&document()).expect("a CRD serializes")
 }

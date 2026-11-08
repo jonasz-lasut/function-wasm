@@ -186,7 +186,7 @@ endif
 xpkg.build.function-wasm: $(CROSSPLANE_CLI) e2e.image
 	@$(INFO) building package function-wasm-$(VERSION).xpkg
 	@mkdir -p $(XPKG_OUTPUT_DIR)/linux_$(TARGETARCH)
-	@$(CROSSPLANE_CLI) xpkg build --package-root package --examples-root $(FUNCTION_PKG_EXAMPLES) \
+	@$(CROSSPLANE_CLI) xpkg build --package-root package/wasm --examples-root $(FUNCTION_PKG_EXAMPLES) \
 		--embed-runtime-image $(E2E_IMAGE) \
 		--package-file $(XPKG_OUTPUT_DIR)/linux_$(TARGETARCH)/function-wasm-$(VERSION).xpkg || $(FAIL)
 	@$(OK) building package function-wasm-$(VERSION).xpkg

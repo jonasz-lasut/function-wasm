@@ -85,7 +85,7 @@ jobs:
         # (./examples) recurses into the guest projects and their guestfn.yaml
         # module manifests (no Kind), so the package takes one guest's
         # example/ directory, which holds nothing else.
-        run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/ --examples-root=examples/pdb-addon/example --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
+        run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/wasm/ --examples-root=examples/pdb-addon/example --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
 
       - name: Upload Single-Platform Package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

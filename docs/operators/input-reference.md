@@ -5,7 +5,7 @@ operators who need to predict what the runtime admits. It lists every field
 of the step's Input and what the runtime enforces for each. Crossplane never
 installs the Input's CRD, so the runtime is the only enforcement: it checks
 every rule on every request, and `function validate` applies the same checks
-offline. The CRD under `package/input/` is for tooling and IDEs only, and
+offline. The CRD under `package/wasm/input/` is for tooling and IDEs only, and
 the runtime generates it from its own types.
 
 The Input is `apiVersion: guestfn.crossplane.io/v1`, `kind: Input`. A step

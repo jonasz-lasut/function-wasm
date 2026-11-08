@@ -642,9 +642,9 @@ Dockerfile.oci.dev          --features oci, the init for musl, the pinned Firecr
                             and the kernel Firecracker's CI publishes under /usr/lib/guestfn
                             (the engine flags' defaults); the .dev one wraps prebuilt files
                             (make e2e.oci.image, FUNCTION_OCI_TOOLS)
-package/oci/                function-oci's crossplane.yaml and its copy of the Input CRD,
-                            held equal to package/input's by tests/crd.rs
-package/                    crossplane.yaml + the Input CRD (documentation for tooling and
+package/wasm/, package/oci/ one package root per runtime, each a crossplane.yaml and the Input
+                            CRD (function-oci's copy held equal to function-wasm's by tests/crd.rs;
+                            documentation for tooling and
                             crossplane beta validate; Crossplane never installs a function's
                             Input CRD), generated from input.rs by crd.rs and held to it by
                             tests/crd.rs (UPDATE_GOLDENS=1 re-records it)
@@ -671,7 +671,7 @@ The function receives an `Input` (`guestfn.crossplane.io/v1`; the group of 0.6 a
 - `limits` — `timeout`, `memory`, `concurrency`, each ≤ the runtime's ceiling flag (concurrency silently capped)
 - `config` — opaque; the guest reads it via `GetConfig` - non-secret module configuration lives here
 
-There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), and what it asks Crossplane for through the response's `requirements` through a tenth, `requireResource` (#208), both judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` and `requires.resources` declare them for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs`; the CRD under `package/input/` follows `input.rs` by generation.
+There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), and what it asks Crossplane for through the response's `requirements` through a tenth, `requireResource` (#208), both judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` and `requires.resources` declare them for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs`; the CRD under `package/wasm/input/` follows `input.rs` by generation.
 
 ### ABI v2
 

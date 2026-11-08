@@ -397,7 +397,7 @@ The `module` block, `compositionPolicy`, `limits` and `config` keep their
 schema. Both packages serve the Input as `guestfn.crossplane.io/v1`, which
 replaces `wasm.fn.crossplane.io/v1` outright: the WebAssembly runtime
 refuses the old group with a sentence that states the new one, `function
-validate` prints the same sentence, and the CRD under `package/input/`,
+validate` prints the same sentence, and the CRD under `package/wasm/input/`,
 the scaffolds' compositions, the examples and the goldens move with it.
 The `v1beta1` deprecation goes with the old group.
 
@@ -426,7 +426,8 @@ The `v1beta1` deprecation goes with the old group.
   other (`Description`, `Exit`, the frame kinds), framed over vsock.
 - `crates/guestfn`: `--type oci` through init, build, push and inspect, and
   the OCI template sets.
-- `package/oci/`: `crossplane.yaml` and the shared Input CRD.
+- `package/oci/` beside `package/wasm/`: one package root per runtime, each
+  with its `crossplane.yaml` and a copy of the Input CRD.
   `Dockerfile.oci` adds the VMM and the kernel, and a `kernel/` directory
   holds the kernel configuration and the build the release workflow runs
   where the project builds its own.
@@ -470,7 +471,7 @@ metrics don't change otherwise.
 |---|---|---|
 | `wasmfn.yaml` | `guestfn.yaml` | the scaffolds, the examples, the goldens, `module.manifestPath` users |
 | `application/vnd.wasmfn.manifest.v1+json` | `application/vnd.guestfn.manifest.v1+json` | every published artifact, by a new push |
-| `wasm.fn.crossplane.io/v1` (and `v1beta1`) | `guestfn.crossplane.io/v1` | every Composition's Input, the CRD under `package/input/` |
+| `wasm.fn.crossplane.io/v1` (and `v1beta1`) | `guestfn.crossplane.io/v1` | every Composition's Input, the CRD under `package/wasm/input/` |
 
 The runtime refuses the old names with a sentence that states the new one,
 and `function validate` prints the same sentence. The `function-oci`

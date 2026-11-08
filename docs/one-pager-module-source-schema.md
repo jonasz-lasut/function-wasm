@@ -75,7 +75,7 @@ switch on it:
   and its two siblings. Crossplane never installs a function's Input CRD (an
   Input is a fragment of a Composition), so the runtime is the
   only gate that always runs: `admission::admit` and `from::from_composite`
-  apply every rule the CRD under `package/input/` states.
+  apply every rule the CRD under `package/wasm/input/` states.
 - The Composition-owned rules are top-level siblings of `module`, never read
   from the XR. The CRD's CEL requires a non-empty `compositionPolicy` when
   `module.from` names an OCI or HTTP source.

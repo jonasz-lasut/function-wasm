@@ -2,7 +2,7 @@
 //! request's input struct. The runtime enforces every rule itself
 //! (Crossplane never installs a function's Input CRD), in admission.rs; the
 //! shape is the contract (README, "Compatibility"). The CRD under
-//! package/input/ is generated from these types (crd.rs) for crossplane
+//! package/wasm/input/ is generated from these types (crd.rs) for crossplane
 //! beta validate and editors, so a field's doc comment is its description
 //! there.
 
