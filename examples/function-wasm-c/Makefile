@@ -3,9 +3,9 @@
 # this repository (cargo run) and wraps the core module zig links into the
 # component the runtime loads (no wasm-tools, no adapter download).
 # wit-bindgen 0.62.0 is only needed to regenerate the checked-in bindings
-# (make gen-bindings; the root Makefile's gen-bindings installs it pinned and
-# mirrors the result into the c template) and nanopb_generator (pip install
-# nanopb) the checked-in codec (make gen-proto). Render needs the crossplane
+# (make gen-bindings; the root Makefile's gen-bindings installs it pinned)
+# and nanopb_generator (pip install nanopb) the checked-in codec (make
+# gen-proto). Render needs the crossplane
 # CLI and Docker. GUESTFN and FUNCTION_BIN (read by ../render.sh) can name
 # prebuilt binaries instead.
 ROOT := $(abspath ../..)
