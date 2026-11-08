@@ -14,7 +14,6 @@ record fails the prose job until both say the same.
 | [Compiled-artifact cache key](../one-pager-cache-key.md) | Implemented, revision 1.0 |
 | [Module and compiled artifacts cache](../one-pager-cache.md) | Implemented, revision 2.7 |
 | [Module configuration from the composite resource](../one-pager-module-config.md) | Draft |
-||||||| parent of 3963b5b (feat(manifest): contract and the wrapping artifact)
 | [Module manifest](../one-pager-module-manifest.md) | Implemented, revision 1.7 |
 | [Module source schema](../one-pager-module-source-schema.md) | Implemented, revision 2.4 |
 | [OCI runtime](../one-pager-oci-runtime.md) | Draft |
