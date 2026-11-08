@@ -169,36 +169,31 @@ A `/e2e` comment on a pull request runs `e2e.yml`:
   toolchain fails instead of skipping
 - one build job per example toolchain: build, unit tests, lint, and codec and
   bindings drift
-- the cluster job, which runs the three profiles one after another on one kind
-  cluster at the Makefile's `CROSSPLANE_VERSION` and uploads `make e2e.dump` on
-  failure
+- the `wasm` cluster job, which runs the three `wasm` profiles one after another
+  on one kind cluster at the Makefile's `CROSSPLANE_VERSION` with
+  `function-oci` left out (`E2E_OCI=0`), and uploads `make e2e.dump` on failure
+- the OCI jobs: a build job that compiles the runtime with the `oci` engine,
+  the init and the test module as a process (musl) and fetches the pinned
+  Firecracker and kernel (`make oci.tools`), an engine job that runs the OCI
+  engine's suite in real VMs under the runner's KVM (`FUNCTION_WASM_REQUIRE_KVM=1`,
+  so a missing tool fails instead of skipping), and a second cluster job that
+  installs both runtimes (`E2E_OCI=1`) and runs the `oci` profiles
 
 The jobs cache under `e2e-` keys that no trusted workflow restores, and the
 workflow sets `cache-mode: write` because a comment-started run gets a
 read-only cache token.
 
-The `oci` profile has its own workflow, `e2e-oci.yml`, which runs on every
-push that touches the runtime's crates, the suite, the Makefile or the OCI
-package's files, and by hand. A comment-started run reads `e2e.yml` from
-`main`, so a new job there is proved only after it merges; a push-started
-run reads the branch's own file, which is what lets a branch prove the OCI
-runtime before it merges. Its jobs build the runtime with the `oci` engine,
-the init and the test module as a process, fetch the pinned Firecracker
-and kernel (`make oci.tools`), run the engine's suite over real VMs (`make
-oci.test`, with `FUNCTION_WASM_REQUIRE_KVM=1` so a missing tool fails
-instead of skipping) and bring up the profile's cluster (`make e2e.oci.up`,
-then `make e2e.test.oci`). GitHub's Linux runners expose `/dev/kvm` to a
-udev rule the jobs install. The profile's Function is `function-oci`,
-installed beside `function-wasm` under the `e2e-oci` runtime config, which
-requests the node's `/dev/kvm` from the device plugin `make e2e.oci.up`
-installs first (`crates/e2e/profiles/oci/kvm-device-plugin.yaml`; the
-operator page says why a `hostPath` mount of the device isn't enough).
-The kind node's device is `root:kvm 0660` whatever the runner's udev rule
-says, and the pod's user is the package's. The target reads the node's
-`kvm` gid and patches it into the profile's runtime config as the pod's
-supplemental group, the operator page's recipe for a hosted cluster.
-A failed run prints every function pod's description and logs into the
-job log (`make e2e.pods`) before it uploads the dump.
+GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs
+install, and the kind node inherits it. The node's device is `root:kvm 0660`
+whatever the rule says, and the pod's user is the package's. The suite's
+setup installs the device plugin
+(`crates/e2e/cluster/kvm-device-plugin.yaml`), reads the node's `kvm`
+gid and puts it into the `oci` runtime config as the pod's supplemental
+group: the operator page's recipe for a hosted cluster. The same page says
+why a `hostPath` mount of the device isn't enough. A comment-started run reads
+`e2e.yml` from `main`, so a new job there is proved only after it merges.
+A failed cluster job prints every function pod's description and logs into
+the job log (`make e2e.dump` does that before the dump itself).
 
 ### The release matrix
 

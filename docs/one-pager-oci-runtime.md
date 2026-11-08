@@ -576,10 +576,11 @@ Open:
    wrapping artifact, and the env bindings and the credentials through the
    init. Left: the libkrun prototype and the measurements, the contract
    check in `guestfn build`, and the OCI scaffolds in the guest suite.
-4. Done: the `oci` e2e profile on a GitHub runner with KVM, in its own
-   workflow (`e2e-oci.yml`, on every push that touches the runtime, which
-   tests a branch before it merges), with the published kernel. The
-   kernel build, where the project builds its own, remains open.
+4. Done: the `oci` e2e profile on a GitHub runner with KVM, as jobs of the
+   `/e2e` workflow beside the `wasm` ones (a build job, the engine's VM suite
+   and a cluster job with both runtimes installed), with the published
+   kernel. The kernel build, where the project builds its own, remains
+   open.
 5. The egress bridge (the TLS-decrypting proxy in the init) with audit and
    metrics parity; until then `function-oci` refuses a manifest that
    requires egress, by name.
