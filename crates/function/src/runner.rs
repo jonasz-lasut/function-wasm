@@ -916,7 +916,7 @@ mod tests {
         assert_eq!(meta.ttl.expect("ttl").seconds, 60);
         assert!(
             guestfn_engine::metrics::sample(
-                "function_wasm_module_requests_total",
+                "guestfn_module_requests_total",
                 &[("outcome", "skipped")]
             )
             .unwrap_or(0.0)
@@ -957,21 +957,14 @@ mod tests {
         // The wiring, not the values: other tests in this process share the
         // default registry.
         let m = guestfn_engine::metrics::sample;
+        assert!(m("guestfn_module_requests_total", &[("outcome", "ok")]).unwrap_or(0.0) >= 1.0);
         assert!(
-            m("function_wasm_module_requests_total", &[("outcome", "ok")]).unwrap_or(0.0) >= 1.0
+            m("guestfn_module_run_duration_seconds", &[("outcome", "ok")]).unwrap_or(0.0) >= 1.0
         );
+        assert!(m("guestfn_module_compile_duration_seconds", &[]).unwrap_or(0.0) >= 1.0);
         assert!(
             m(
-                "function_wasm_module_run_duration_seconds",
-                &[("outcome", "ok")]
-            )
-            .unwrap_or(0.0)
-                >= 1.0
-        );
-        assert!(m("function_wasm_module_compile_duration_seconds", &[]).unwrap_or(0.0) >= 1.0);
-        assert!(
-            m(
-                "function_wasm_module_fetch_duration_seconds",
+                "guestfn_module_fetch_duration_seconds",
                 &[("source", "path")]
             )
             .unwrap_or(0.0)
@@ -979,7 +972,7 @@ mod tests {
         );
         assert!(
             m(
-                "function_wasm_module_cache_events_total",
+                "guestfn_module_cache_events_total",
                 &[("cache", "compiled"), ("event", "miss")]
             )
             .unwrap_or(0.0)
@@ -1573,7 +1566,7 @@ when { context.change == "add" };"#;
         let (dir, _) = fenced_stage(&composed, &[]);
         let f = function(Some(dir.path().to_owned()));
         let refused_before = guestfn_engine::metrics::sample(
-            "function_wasm_module_requests_total",
+            "guestfn_module_requests_total",
             &[("outcome", "refused")],
         )
         .unwrap_or_default();
@@ -1595,7 +1588,7 @@ when { context.change == "add" };"#;
             "nothing the module composed is returned"
         );
         let refused_after = guestfn_engine::metrics::sample(
-            "function_wasm_module_requests_total",
+            "guestfn_module_requests_total",
             &[("outcome", "refused")],
         )
         .unwrap_or_default();
@@ -1775,7 +1768,7 @@ when { context has name };"#;
         let (dir, _) = fenced_stage(&rsp, &[]);
         let f = function(Some(dir.path().to_owned()));
         let refused_before = guestfn_engine::metrics::sample(
-            "function_wasm_module_requests_total",
+            "guestfn_module_requests_total",
             &[("outcome", "refused")],
         )
         .unwrap_or_default();
@@ -1796,7 +1789,7 @@ when { context has name };"#;
             "the refused ask is not relayed: Crossplane fetches nothing"
         );
         let refused_after = guestfn_engine::metrics::sample(
-            "function_wasm_module_requests_total",
+            "guestfn_module_requests_total",
             &[("outcome", "refused")],
         )
         .unwrap_or_default();

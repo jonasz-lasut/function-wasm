@@ -7,7 +7,7 @@
 //! methods (reflection, health Watch) are not counted, and like its
 //! InitializeMetrics, every method the server carries starts as a zero
 //! series. No handling-time histogram: function-sdk-go never enabled one,
-//! and `function_wasm_module_run_duration_seconds` covers latency.
+//! and `guestfn_module_run_duration_seconds` covers latency.
 
 use std::pin::Pin;
 use std::sync::LazyLock;

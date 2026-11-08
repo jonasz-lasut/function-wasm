@@ -128,7 +128,7 @@ async fn egress_reaches_the_registry_through_the_host() -> Result<()> {
         let scraped = metrics::scrape(&ns.client).await?;
         let ok = metrics::sample(
             &scraped,
-            "function_wasm_module_http_requests_total",
+            "guestfn_module_http_requests_total",
             &[("outcome", "ok")],
         );
         ensure!(
@@ -439,7 +439,7 @@ async fn module_from_unset_skips_the_step() -> Result<()> {
         ns.ensure_profile(Profile::WasmDefault).await?;
         let before = metrics::sample(
             &metrics::scrape(&ns.client).await?,
-            "function_wasm_module_requests_total",
+            "guestfn_module_requests_total",
             &[("outcome", "skipped")],
         )
         .unwrap_or_default();
@@ -449,7 +449,7 @@ async fn module_from_unset_skips_the_step() -> Result<()> {
         assert_eq!(guest.composed_nops().await?.len(), 0);
         let after = metrics::sample(
             &metrics::scrape(&ns.client).await?,
-            "function_wasm_module_requests_total",
+            "guestfn_module_requests_total",
             &[("outcome", "skipped")],
         )
         .unwrap_or_default();

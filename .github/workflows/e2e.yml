@@ -156,7 +156,7 @@ jobs:
   # by the cluster job, which serves the test module through an x86-64
   # runtime.
   #
-  # FUNCTION_WASM_REQUIRE_TOOLCHAINS: a guest whose toolchain is missing
+  # GUESTFN_REQUIRE_TOOLCHAINS: a guest whose toolchain is missing
   # fails here instead of skipping, so a runner that lost a toolchain cannot
   # shrink the suite and stay green.
   guest-suite:
@@ -238,7 +238,7 @@ jobs:
 
       - name: Run the Guest Suite
         env:
-          FUNCTION_WASM_REQUIRE_TOOLCHAINS: '1'
+          GUESTFN_REQUIRE_TOOLCHAINS: '1'
         run: cargo test --locked --release -p guestfn-runtime --test guests
 
   # Each example guest, built with its own toolchain, unit-tested and linted,
@@ -1190,7 +1190,7 @@ jobs:
 
       - name: Run the Engine Suite in VMs
         env:
-          FUNCTION_WASM_REQUIRE_KVM: "1"
+          GUESTFN_REQUIRE_KVM: "1"
           GUESTFN_VM_CONSOLE: "1"
         run: |
           chmod +x "${RUNNER_TEMP}/e2e-oci-tools/firecracker" "${RUNNER_TEMP}/e2e-oci-tools/init" "${RUNNER_TEMP}/e2e-oci-tools/fixture"

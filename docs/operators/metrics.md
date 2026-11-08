@@ -9,18 +9,18 @@ only ([the side ports](install.md#the-side-ports)). Probes are on
 
 | metric | labels | meaning |
 |---|---|---|
-| `function_wasm_module_requests_total` | `outcome` = `ok`, `refused`, `error`, `skipped` | requests by outcome |
-| `function_wasm_module_run_duration_seconds` | `outcome` = `ok`, `error`, `timeout` | histogram of one guest run, instantiate to response; a wait for a run slot isn't part of it, and a request cut short while waiting for one isn't counted |
-| `function_wasm_module_runs_in_flight` | | gauge of guest runs executing now, at most `--max-concurrent-runs`; a gauge held at that value means requests are queuing for a slot |
-| `function_wasm_module_hostcall_duration_seconds` | | histogram of the time a run spent inside host imports (the `log` import, HTTP egress over `wasi:http`, and WASI); the rest of `run_duration_seconds` is guest compute |
-| `function_wasm_module_compile_duration_seconds` | | histogram of Wasmtime compile time on compiled-cache misses |
-| `function_wasm_module_fetch_duration_seconds` | `source` = `oci`, `http`, `path` | histogram of fetch and verify time, blob-cache hits and served-file reads included |
-| `function_wasm_module_cache_events_total` | `cache` = `compiled` (memory), `compiled-disk`, `blob`; `event` = `hit`, `miss`, `stale`, `timeout` | cache lookups; `timeout` is a cold load cut short by `--module-compile-timeout`; `stale` is an artifact on disk that Wasmtime refused, and appears for `compiled-disk` only |
-| `function_wasm_module_cache_bytes` | `cache` = `compiled-disk`, `blob` | bytes on disk per store, measured every ten minutes |
-| `function_wasm_module_http_requests_total` | `outcome` = `ok`, `refused`, `budget`, `error` | HTTP requests modules made through the host (`requires.egress.http`) |
-| `function_wasm_module_memory_denials_total` | `reason` = `limit`, `pool` | guest memory and table growths denied; the guest sees `memory.grow` or `table.grow` fail |
-| `function_wasm_trusted_root_refreshes_total` | `outcome` = `updated`, `unchanged`, `error` | refreshes of the Sigstore trusted root |
-| `function_wasm_trusted_root_last_refresh_timestamp_seconds` | | Unix time of the last successful refresh of the trusted root, 0 until the first; `time()` minus this value is the root's age |
+| `guestfn_module_requests_total` | `outcome` = `ok`, `refused`, `error`, `skipped` | requests by outcome |
+| `guestfn_module_run_duration_seconds` | `outcome` = `ok`, `error`, `timeout` | histogram of one guest run, instantiate to response; a wait for a run slot isn't part of it, and a request cut short while waiting for one isn't counted |
+| `guestfn_module_runs_in_flight` | | gauge of guest runs executing now, at most `--max-concurrent-runs`; a gauge held at that value means requests are queuing for a slot |
+| `guestfn_module_hostcall_duration_seconds` | | histogram of the time a run spent inside host imports (the `log` import, HTTP egress over `wasi:http`, and WASI); the rest of `run_duration_seconds` is guest compute |
+| `guestfn_module_compile_duration_seconds` | | histogram of Wasmtime compile time on compiled-cache misses |
+| `guestfn_module_fetch_duration_seconds` | `source` = `oci`, `http`, `path` | histogram of fetch and verify time, blob-cache hits and served-file reads included |
+| `guestfn_module_cache_events_total` | `cache` = `compiled` (memory), `compiled-disk`, `blob`; `event` = `hit`, `miss`, `stale`, `timeout` | cache lookups; `timeout` is a cold load cut short by `--module-compile-timeout`; `stale` is an artifact on disk that Wasmtime refused, and appears for `compiled-disk` only |
+| `guestfn_module_cache_bytes` | `cache` = `compiled-disk`, `blob` | bytes on disk per store, measured every ten minutes |
+| `guestfn_module_http_requests_total` | `outcome` = `ok`, `refused`, `budget`, `error` | HTTP requests modules made through the host (`requires.egress.http`) |
+| `guestfn_module_memory_denials_total` | `reason` = `limit`, `pool` | guest memory and table growths denied; the guest sees `memory.grow` or `table.grow` fail |
+| `guestfn_trusted_root_refreshes_total` | `outcome` = `updated`, `unchanged`, `error` | refreshes of the Sigstore trusted root |
+| `guestfn_trusted_root_last_refresh_timestamp_seconds` | | Unix time of the last successful refresh of the trusted root, 0 until the first; `time()` minus this value is the root's age |
 
 The `requests_total` outcomes:
 
@@ -71,4 +71,4 @@ Each is labelled `grpc_type`, `grpc_service` and `grpc_method`.
 
 Only unary calls (`RunFunction`, health `Check`) are counted. Streaming methods (reflection, health `Watch`) exist from startup, at zero until the first call.
 
-For latency, use `function_wasm_module_run_duration_seconds`.
+For latency, use `guestfn_module_run_duration_seconds`.

@@ -35,7 +35,7 @@ The first line tests the Go example and its vendored `internal/wasmfn` glue. The
 
 ## Guest toolchains
 
-The workspace tests build every scaffold (what `guestfn init` writes) to WebAssembly and run each through the host. The tests skip a scaffold whose toolchain isn't on `PATH`, so an all-green run can mean a guest never ran. The toolchains are `go`, `cargo` and `rustup` for the `rust` scaffold's pinned toolchain (which also needs `protoc`), `zig`, `npm` and `python3`. Set `FUNCTION_WASM_REQUIRE_TOOLCHAINS=1` to make a missing toolchain a failure.
+The workspace tests build every scaffold (what `guestfn init` writes) to WebAssembly and run each through the host. The tests skip a scaffold whose toolchain isn't on `PATH`, so an all-green run can mean a guest never ran. The toolchains are `go`, `cargo` and `rustup` for the `rust` scaffold's pinned toolchain (which also needs `protoc`), `zig`, `npm` and `python3`. Set `GUESTFN_REQUIRE_TOOLCHAINS=1` to make a missing toolchain a failure.
 
 ## Where to go next
 

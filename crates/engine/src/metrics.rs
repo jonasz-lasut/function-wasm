@@ -153,7 +153,7 @@ fn plain_histogram(name: &str, help: &str, buckets: &'static [f64]) -> Histogram
 /// How long compiling a module took, on cache misses.
 pub static COMPILE_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
     plain_histogram(
-        "function_wasm_module_compile_duration_seconds",
+        "guestfn_module_compile_duration_seconds",
         "Time spent compiling a module with wasmtime (compiled-module cache misses only).",
         &[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
     )
@@ -162,7 +162,7 @@ pub static COMPILE_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
 /// How long fetching module bytes took, by source kind.
 pub static FETCH_DURATION: LazyLock<LabeledHistogram> = LazyLock::new(|| {
     LabeledHistogram::new(
-        "function_wasm_module_fetch_duration_seconds",
+        "guestfn_module_fetch_duration_seconds",
         "Time spent fetching and verifying module bytes, by source (oci, http, path); blob-cache hits included.",
         &["source"],
         &[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
@@ -172,7 +172,7 @@ pub static FETCH_DURATION: LazyLock<LabeledHistogram> = LazyLock::new(|| {
 /// How long one guest run took, by outcome.
 pub static RUN_DURATION: LazyLock<LabeledHistogram> = LazyLock::new(|| {
     LabeledHistogram::new(
-        "function_wasm_module_run_duration_seconds",
+        "guestfn_module_run_duration_seconds",
         "Time spent instantiating and running a module for one request, by outcome (ok, error, timeout).",
         &["outcome"],
         &[
@@ -185,7 +185,7 @@ pub static RUN_DURATION: LazyLock<LabeledHistogram> = LazyLock::new(|| {
 /// is guest compute.
 pub static HOSTCALL_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
     plain_histogram(
-        "function_wasm_module_hostcall_duration_seconds",
+        "guestfn_module_hostcall_duration_seconds",
         "Time one run spent inside host imports (the log import, wasi:http and WASI); the rest of run_duration_seconds is guest compute.",
         &[
             0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
@@ -197,7 +197,7 @@ pub static HOSTCALL_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
 /// --max-concurrent-runs, it says the bound is what requests wait on.
 pub static RUNS_IN_FLIGHT: LazyLock<PlainGauge> = LazyLock::new(|| {
     plain_gauge(
-        "function_wasm_module_runs_in_flight",
+        "guestfn_module_runs_in_flight",
         "Module runs executing at this moment (a run holding a slot when --max-concurrent-runs bounds them).",
     )
 });
@@ -205,7 +205,7 @@ pub static RUNS_IN_FLIGHT: LazyLock<PlainGauge> = LazyLock::new(|| {
 /// Hits and misses of the compiled-module and blob caches.
 pub static CACHE_EVENTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
-        "function_wasm_module_cache_events",
+        "guestfn_module_cache_events",
         "Cache lookups by cache (compiled = in-memory modules, compiled-disk = wasmtime artifacts on disk, blob = fetched modules on disk) and event (hit, miss, stale, timeout: a cold load cut short by --module-compile-timeout).",
         &["cache", "event"],
     )
@@ -214,7 +214,7 @@ pub static CACHE_EVENTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
 /// The HTTP requests modules made through the host.
 pub static HTTP_REQUESTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
-        "function_wasm_module_http_requests",
+        "guestfn_module_http_requests",
         "HTTP requests modules made through the host (wasi:http), by outcome (ok = the server answered, refused = outside the grant or the egress policy, budget = over a per-run budget or the request timeout, error = the request failed).",
         &["outcome"],
     )
@@ -223,7 +223,7 @@ pub static HTTP_REQUESTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
 /// Memory growths the run limiter denied.
 pub static MEMORY_DENIALS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
-        "function_wasm_module_memory_denials",
+        "guestfn_module_memory_denials",
         "Guest memory and table growths denied, by reason (limit = the run's memory ceiling over its memories and tables together, pool = --max-total-run-memory exhausted before the run's deadline). The guest sees memory.grow or table.grow fail.",
         &["reason"],
     )
@@ -232,7 +232,7 @@ pub static MEMORY_DENIALS: LazyLock<LabeledCounter> = LazyLock::new(|| {
 /// Requests by outcome.
 pub static REQUESTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
-        "function_wasm_module_requests",
+        "guestfn_module_requests",
         "Requests by outcome: ok, refused (declined before the module ran, or its output refused by the policy layers), error (load or run failed), skipped (the composite resource chose no module and module.allowEmpty allowed it; nothing ran).",
         &["outcome"],
     )
@@ -241,7 +241,7 @@ pub static REQUESTS: LazyLock<LabeledCounter> = LazyLock::new(|| {
 /// The size of each on-disk store, as of the last sweep.
 pub static CACHE_BYTES: LazyLock<LabeledGauge> = LazyLock::new(|| {
     LabeledGauge::new(
-        "function_wasm_module_cache_bytes",
+        "guestfn_module_cache_bytes",
         "Bytes held by each on-disk store (compiled-disk = wasmtime artifacts, blob = fetched modules), measured by the periodic sweep.",
         &["cache"],
     )
@@ -363,28 +363,27 @@ mod tests {
         let om = render_openmetrics();
         assert!(om.ends_with("# EOF\n"), "OpenMetrics must end with EOF");
         assert!(
-            om.contains("# TYPE function_wasm_module_cache_events counter"),
+            om.contains("# TYPE guestfn_module_cache_events counter"),
             "counter family named without _total:\n{om}"
         );
         assert!(
-            om.contains("function_wasm_module_cache_events_total{cache=\"blob\",event=\"hit\"}"),
+            om.contains("guestfn_module_cache_events_total{cache=\"blob\",event=\"hit\"}"),
             "counter samples keep _total:\n{om}"
         );
-        assert!(om.contains("# TYPE function_wasm_module_runs_in_flight gauge"));
-        assert!(om.contains("# TYPE function_wasm_module_compile_duration_seconds histogram"));
-        assert!(om.contains("function_wasm_module_compile_duration_seconds_bucket{le=\"+Inf\"}"));
+        assert!(om.contains("# TYPE guestfn_module_runs_in_flight gauge"));
+        assert!(om.contains("# TYPE guestfn_module_compile_duration_seconds histogram"));
+        assert!(om.contains("guestfn_module_compile_duration_seconds_bucket{le=\"+Inf\"}"));
         // The help strings carry a single trailing period
         // included (prometheus-client appends one; register strips ours).
         assert!(om.contains("bounds them)."), "help text:\n{om}");
         assert!(!om.contains("bounds them).."), "double period:\n{om}");
 
         let classic = render();
-        assert!(classic.contains("# TYPE function_wasm_module_cache_events_total counter"));
-        assert!(classic.contains("# HELP function_wasm_module_cache_events_total "));
+        assert!(classic.contains("# TYPE guestfn_module_cache_events_total counter"));
+        assert!(classic.contains("# HELP guestfn_module_cache_events_total "));
         assert!(!classic.contains("# EOF"));
         assert!(
-            classic
-                .contains("function_wasm_module_cache_events_total{cache=\"blob\",event=\"hit\"}"),
+            classic.contains("guestfn_module_cache_events_total{cache=\"blob\",event=\"hit\"}"),
             "samples identical in both renderings:\n{classic}"
         );
     }
@@ -395,20 +394,16 @@ mod tests {
             .with_label_values(&[CACHE_COMPILED, EVENT_MISS])
             .inc();
         let got = sample(
-            "function_wasm_module_cache_events_total",
+            "guestfn_module_cache_events_total",
             &[("cache", CACHE_COMPILED), ("event", EVENT_MISS)],
         )
         .expect("counter");
         assert!(got >= 1.0);
         COMPILE_DURATION.observe(0.2);
-        let count =
-            sample("function_wasm_module_compile_duration_seconds", &[]).expect("histogram");
+        let count = sample("guestfn_module_compile_duration_seconds", &[]).expect("histogram");
         assert!(count >= 1.0);
         assert_eq!(
-            sample(
-                "function_wasm_module_cache_events_total",
-                &[("cache", "no")]
-            ),
+            sample("guestfn_module_cache_events_total", &[("cache", "no")]),
             None
         );
     }

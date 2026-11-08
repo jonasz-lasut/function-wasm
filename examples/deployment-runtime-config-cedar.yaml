@@ -109,11 +109,11 @@ spec:
                 - --max-module-size=128          # MB
                 - --max-concurrent-runs=8
                 # Signatures: keys here, per-repository requirement in the policy.
-                - --cosign-key=/etc/function-wasm/cosign/cosign.pub
+                - --cosign-key=/etc/guestfn/cosign/cosign.pub
                 # Operator grant policy (Cedar): the sole enabler of every
                 # sandbox capability, plus per-tenant rules, requireSignature, and
                 # the SSRF CIDR rules. With no policy the sandbox grants nothing.
-                - --sandbox-policy-file=/etc/function-wasm/policy/policy.cedar
+                - --sandbox-policy-file=/etc/guestfn/policy/policy.cedar
                 # Egress budgets are fixed defaults (timeout 10s, maxRequests 16,
                 # maxResponseBytes 4Mi, maxRedirects 5); only the rate limit is
                 # tunable. Optional - omit to leave egress unrated.
@@ -125,13 +125,13 @@ spec:
                 # --health-address.
               volumeMounts:
                 - name: policy
-                  mountPath: /etc/function-wasm/policy
+                  mountPath: /etc/guestfn/policy
                   readOnly: true
                 - name: cosign
-                  mountPath: /etc/function-wasm/cosign
+                  mountPath: /etc/guestfn/cosign
                   readOnly: true
                 - name: tmp
-                  # The private /tmp and the module cache (/tmp/function-wasm-cache)
+                  # The private /tmp and the module cache (/tmp/guestfn-cache)
                   # both live here; the root filesystem is read-only.
                   mountPath: /tmp
               securityContext:

@@ -230,7 +230,7 @@ cgroups, virtio and vsock built in), pinned by checksum with Firecracker's
 release in `Dockerfile.oci` and the Makefile. The artifacts are at a dated
 prefix of Firecracker's bucket, whose retention the project doesn't
 control. Building the kernel in the repository from that source and
-config is what the record calls the project's own kernel build. `function_wasm_module_compile_duration_seconds` measures
+config is what the record calls the project's own kernel build. `guestfn_module_compile_duration_seconds` measures
 the unpacking.
 
 **One VM per request.** The runtime starts the VM with the kernel, the

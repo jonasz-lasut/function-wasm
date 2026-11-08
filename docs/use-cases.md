@@ -33,7 +33,7 @@ logic someone other than the Composition's author maintains.
 - **Restricted networks.** Modules can come from an internal registry, an
   internal HTTP server (`http`) or a volume mounted into the runtime (`path`).
   The runtime keeps fetched modules and compiled code on disk, so with a
-  volume at `/tmp/function-wasm-cache` a module it has already fetched keeps
+  volume at `/tmp/guestfn-cache` a module it has already fetched keeps
   running across restarts while the registry is down, unless a signature is
   required: the runtime verifies that over the registry once per process. A
   module it has never fetched can't be loaded.

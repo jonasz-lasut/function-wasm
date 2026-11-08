@@ -15,8 +15,8 @@ when {
 permit (principal, action == Action::"trustSigner", resource)
 when {
   resource in Repository::"registry.e2e.svc:5000/e2e" &&
-  context.issuer == "https://e2e.function-wasm.io" &&
-  context.identity == "https://e2e.function-wasm.io/release"
+  context.issuer == "https://e2e.guestfn.io" &&
+  context.identity == "https://e2e.guestfn.io/release"
 };
 
 permit (principal, action == Action::"trustSigner", resource)

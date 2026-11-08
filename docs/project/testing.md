@@ -168,7 +168,7 @@ push, and on a pull request unless it touches only Markdown, JSON or SVG files.
 
 A `/e2e` comment on a pull request runs `e2e.yml`:
 
-- the guest suite, with `FUNCTION_WASM_REQUIRE_TOOLCHAINS=1` so a missing
+- the guest suite, with `GUESTFN_REQUIRE_TOOLCHAINS=1` so a missing
   toolchain fails instead of skipping
 - one build job per example toolchain: build, unit tests, lint, and codec and
   bindings drift
@@ -178,7 +178,7 @@ A `/e2e` comment on a pull request runs `e2e.yml`:
 - the OCI jobs: a build job that compiles the runtime with the `oci` engine,
   the init and the test module as a process (musl) and fetches the pinned
   Firecracker and kernel (`make oci.tools`), an engine job that runs the OCI
-  engine's suite in real VMs under the runner's KVM (`FUNCTION_WASM_REQUIRE_KVM=1`,
+  engine's suite in real VMs under the runner's KVM (`GUESTFN_REQUIRE_KVM=1`,
   so a missing tool fails instead of skipping), and a second cluster job that
   installs both runtimes (`E2E_OCI=1`) and runs the `oci` profiles
 

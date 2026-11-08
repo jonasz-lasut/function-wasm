@@ -51,7 +51,7 @@ async fn egress_to_a_blocked_address_is_refused_in_band() -> Result<()> {
         let scraped = metrics::scrape(&ns.client).await?;
         let refused = metrics::sample(
             &scraped,
-            "function_wasm_module_http_requests_total",
+            "guestfn_module_http_requests_total",
             &[("outcome", "refused")],
         );
         ensure!(

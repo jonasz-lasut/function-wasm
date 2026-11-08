@@ -68,8 +68,8 @@ async fn readiness_waits_for_the_warm_up() -> Result<()> {
         assert_eq!(metrics::health(&ns.client, &pod, "/readyz").await?, 200);
         let scraped = metrics::scrape(&ns.client).await?;
         for series in [
-            "function_wasm_module_fetch_duration_seconds_count",
-            "function_wasm_module_compile_duration_seconds_count",
+            "guestfn_module_fetch_duration_seconds_count",
+            "guestfn_module_compile_duration_seconds_count",
         ] {
             let count = metrics::sample(&scraped, series, &[]).unwrap_or_default();
             ensure!(
@@ -102,26 +102,26 @@ async fn the_volume_keeps_fetched_modules_and_the_sweep_bounds_them() -> Result<
 
         let pod = restart_function(&ns.client).await?;
         let scraped = metrics::scrape(&ns.client).await?;
-        let fetched = metrics::sample(&scraped, "function_wasm_module_fetch_duration_seconds_count", &[]);
+        let fetched = metrics::sample(&scraped, "guestfn_module_fetch_duration_seconds_count", &[]);
         ensure!(
             fetched.unwrap_or_default() >= 1.0,
             "after the restart the warm-up should have fetched the swept module again: {fetched:?}\n{scraped}"
         );
         let blob_hits_before =
-            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "blob"), ("event", "hit")])
+            metrics::sample(&scraped, "guestfn_module_cache_events_total", &[("cache", "blob"), ("event", "hit")])
                 .unwrap_or_default();
         let stale_before =
-            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "stale")])
+            metrics::sample(&scraped, "guestfn_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "stale")])
                 .unwrap_or_default();
 
         let second = ns.guest("second", &step, json!({})).await?;
         second.wait_ready(WAIT).await?;
         let scraped = metrics::scrape(&ns.client).await?;
         let blob_hits_after =
-            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "blob"), ("event", "hit")])
+            metrics::sample(&scraped, "guestfn_module_cache_events_total", &[("cache", "blob"), ("event", "hit")])
                 .unwrap_or_default();
         let stale_after =
-            metrics::sample(&scraped, "function_wasm_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "stale")])
+            metrics::sample(&scraped, "guestfn_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "stale")])
                 .unwrap_or_default();
         ensure!(
             blob_hits_after > blob_hits_before,
@@ -151,7 +151,7 @@ async fn the_trusted_root_is_fetched_over_tuf() -> Result<()> {
         let refreshed = |scraped: &str| -> Result<()> {
             let updated = metrics::sample(
                 scraped,
-                "function_wasm_trusted_root_refreshes_total",
+                "guestfn_trusted_root_refreshes_total",
                 &[("outcome", "updated")],
             )
             .unwrap_or_default();
@@ -161,7 +161,7 @@ async fn the_trusted_root_is_fetched_over_tuf() -> Result<()> {
             );
             let errors = metrics::sample(
                 scraped,
-                "function_wasm_trusted_root_refreshes_total",
+                "guestfn_trusted_root_refreshes_total",
                 &[("outcome", "error")],
             )
             .unwrap_or_default();
@@ -171,7 +171,7 @@ async fn the_trusted_root_is_fetched_over_tuf() -> Result<()> {
             );
             let last = metrics::sample(
                 scraped,
-                "function_wasm_trusted_root_last_refresh_timestamp_seconds",
+                "guestfn_trusted_root_last_refresh_timestamp_seconds",
                 &[],
             )
             .unwrap_or_default();

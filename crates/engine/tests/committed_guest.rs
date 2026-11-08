@@ -28,7 +28,7 @@ fn guest(e: &Wasmtime) -> Module {
 /// A request whose composite resource asks the guest to GET url.
 fn request(url: &str) -> Vec<u8> {
     let xr = serde_json::json!({
-        "apiVersion": "e2e.function-wasm.io/v1alpha1",
+        "apiVersion": "e2e.guestfn.io/v1alpha1",
         "kind": "Guest",
         "metadata": {"name": "probe", "namespace": "e2e"},
         "spec": {"nopResources": 0, "egress": {"url": url}},

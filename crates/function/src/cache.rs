@@ -320,7 +320,7 @@ mod tests {
             "the planted artifact must not be served: the module is fetched and compiled"
         );
         let stale = guestfn_engine::metrics::sample(
-            "function_wasm_module_cache_events_total",
+            "guestfn_module_cache_events_total",
             &[("cache", "compiled-disk"), ("event", "stale")],
         )
         .unwrap_or(0.0);
@@ -386,7 +386,7 @@ mod tests {
             .expect_err("cut short");
         assert_eq!(err, "compile exceeded --module-compile-timeout 50ms");
         let timeouts = guestfn_engine::metrics::sample(
-            "function_wasm_module_cache_events_total",
+            "guestfn_module_cache_events_total",
             &[("cache", "compiled"), ("event", "timeout")],
         )
         .unwrap_or(0.0);

@@ -4,7 +4,7 @@
 * Reviewers: function-wasm maintainers
 * Status: implemented, revision 1.0 (a key drawn per process and no flag, for finding F-2 of the 1.0 security audit)
 
-The compiled tier of the cache, `/tmp/function-wasm-cache/compiled/<version>/`,
+The compiled tier of the cache, `/tmp/guestfn-cache/compiled/<version>/`,
 contains Wasmtime artifacts: native code the runtime maps and runs through
 `Engine::deserialize_file`, whose soundness rests on the file being the
 runtime's own output. The fetched-module and manifest stores verify what

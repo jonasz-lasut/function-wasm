@@ -48,7 +48,7 @@ pub const OUTCOME_ERROR: &str = "error";
 
 static REFRESHES: LazyLock<LabeledCounter> = LazyLock::new(|| {
     LabeledCounter::new(
-        "function_wasm_trusted_root_refreshes",
+        "guestfn_trusted_root_refreshes",
         "Refreshes of the Sigstore trusted root over TUF by outcome: updated (a root put in use, the first one included), unchanged (the same root fetched again), error (the last good root kept).",
         &["outcome"],
     )
@@ -56,7 +56,7 @@ static REFRESHES: LazyLock<LabeledCounter> = LazyLock::new(|| {
 
 static LAST_REFRESH: LazyLock<PlainGauge> = LazyLock::new(|| {
     plain_gauge(
-        "function_wasm_trusted_root_last_refresh_timestamp_seconds",
+        "guestfn_trusted_root_last_refresh_timestamp_seconds",
         "Unix time of the last successful refresh of the Sigstore trusted root over TUF; 0 until the first.",
     )
 });
@@ -444,7 +444,7 @@ mod tests {
     fn the_instances_name_their_cache_directories() {
         assert_eq!(
             Instance::PublicGood.cache_dir(),
-            Path::new("/tmp/function-wasm-cache/tuf/public-good")
+            Path::new("/tmp/guestfn-cache/tuf/public-good")
         );
         assert_eq!(Instance::GitHub.cache_dir().file_name().unwrap(), "github");
         assert_eq!(Instance::Staging.source().name(), "staging");

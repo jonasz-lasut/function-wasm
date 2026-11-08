@@ -28,7 +28,7 @@ By default nothing is bounded: concurrency is the caller's, set by Crossplane's 
 | `--max-concurrent-compiles` | `MAX_CONCURRENT_COMPILES` | `1` | no | modules compiled at once; a compile is heavy on CPU and memory, so further first requests wait their turn |
 | `--module-compile-timeout` | `MODULE_COMPILE_TIMEOUT` | `0s` (unbounded) | no | wall-clock bound on a cold load, the fetch and compile of a module that isn't cached yet. Past it the request fails with `cannot load module …: compile exceeded --module-compile-timeout <duration>`; the compile runs to its end, keeps its compile slot until then and stores its artifact for the next request. The syntax of `--module-timeout` |
 
-A component reserves nothing up front. The runtime charges each memory or table growth, the initial memory included, to the `--max-total-run-memory` pool as the guest claims it, and a run waits under its deadline while the pool is full. A growth the pool can't serve before the deadline fails inside the guest as a failed `memory.grow`, counted in `function_wasm_module_memory_denials_total`. See [Sizing](sizing.md) for what these bounds cost.
+A component reserves nothing up front. The runtime charges each memory or table growth, the initial memory included, to the `--max-total-run-memory` pool as the guest claims it, and a run waits under its deadline while the pool is full. A growth the pool can't serve before the deadline fails inside the guest as a failed `memory.grow`, counted in `guestfn_module_memory_denials_total`. See [Sizing](sizing.md) for what these bounds cost.
 
 ## Caches
 
@@ -79,7 +79,7 @@ The SDK's flags `--insecure`, `--debug`, `--tls-certs-dir`, `--address` and `--m
 
 ## Cache storage
 
-The caches live under `/tmp/function-wasm-cache`, which isn't configurable. Mount an `emptyDir` there if the pod's root filesystem is read-only, or a volume to keep the fetched modules and manifests across pod restarts:
+The caches live under `/tmp/guestfn-cache`, which isn't configurable. Mount an `emptyDir` there if the pod's root filesystem is read-only, or a volume to keep the fetched modules and manifests across pod restarts:
 
 ```yaml
 spec:
@@ -91,11 +91,11 @@ spec:
           - name: package-runtime
             volumeMounts:
             - name: cache
-              mountPath: /tmp/function-wasm-cache
+              mountPath: /tmp/guestfn-cache
           volumes:
           - name: cache
             persistentVolumeClaim:
-              claimName: function-wasm-cache
+              claimName: guestfn-cache
 ```
 
 A volume keeps the fetched modules and the manifests, which the runtime verifies against their digest on every read. It doesn't keep the compiled code. Each process signs the artifacts it writes under a key drawn at startup and refuses every other ([trust model](trust-model.md#the-cache-directory)). A restarted pod compiles its modules again. Pods must not share a volume, because each would refuse and overwrite the other's artifacts. Give each pod its own volume, with the runtime as its only writer. The runtime removes the compiled directories of other Wasmtime versions after a day without writes.
@@ -113,12 +113,12 @@ spec:
           containers:
           - name: package-runtime
             args:
-            - --sandbox-policy-file=/etc/function-wasm/policy.cedar
+            - --sandbox-policy-file=/etc/guestfn/policy.cedar
             env:
             - name: TMPDIR
               value: /scratch
             volumeMounts:
-            - {name: policy, mountPath: /etc/function-wasm, readOnly: true}
+            - {name: policy, mountPath: /etc/guestfn, readOnly: true}
             - {name: scratch, mountPath: /scratch}
           volumes:
           - name: policy

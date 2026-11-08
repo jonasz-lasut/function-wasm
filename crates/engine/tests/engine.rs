@@ -95,7 +95,7 @@ fn a_core_module_is_refused_by_name() {
 fn a_run_observes_the_hostcall_split() {
     let e = engine();
     let m = compile(&e, &fixed_component(&response_bytes()));
-    let name = "function_wasm_module_hostcall_duration_seconds";
+    let name = "guestfn_module_hostcall_duration_seconds";
     let before = guestfn_engine::metrics::sample(name, &[]).unwrap_or(0.0);
     e.run(&m, b"", RunOptions::default()).expect("run");
     // Other tests' runs share the process-global registry, so the count is
@@ -241,7 +241,7 @@ fn the_memory_limit_denies_growth() {
     let out = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(out.len(), 0, "growth past the ceiling should be denied");
     let denied = guestfn_engine::metrics::sample(
-        "function_wasm_module_memory_denials_total",
+        "guestfn_module_memory_denials_total",
         &[("reason", "limit")],
     )
     .unwrap_or(0.0);
@@ -288,7 +288,7 @@ fn the_pool_denies_growth_it_cannot_serve() {
     );
     blocking.join().expect("join");
     let denied = guestfn_engine::metrics::sample(
-        "function_wasm_module_memory_denials_total",
+        "guestfn_module_memory_denials_total",
         &[("reason", "pool")],
     )
     .unwrap_or(0.0);
@@ -613,7 +613,7 @@ fn the_memory_limit_denies_table_growth() {
         "table growth past the ceiling should be denied"
     );
     let denied = guestfn_engine::metrics::sample(
-        "function_wasm_module_memory_denials_total",
+        "guestfn_module_memory_denials_total",
         &[("reason", "limit")],
     )
     .unwrap_or(0.0);
@@ -655,7 +655,7 @@ fn the_pool_denies_table_growth_it_cannot_serve() {
     );
     blocking.join().expect("join");
     let denied = guestfn_engine::metrics::sample(
-        "function_wasm_module_memory_denials_total",
+        "guestfn_module_memory_denials_total",
         &[("reason", "pool")],
     )
     .unwrap_or(0.0);

@@ -56,9 +56,9 @@ spec:
           containers:
           - name: package-runtime
             args:
-            - --sandbox-policy-file=/etc/function-wasm/policy.cedar
+            - --sandbox-policy-file=/etc/guestfn/policy.cedar
             volumeMounts:
-            - {name: policy, mountPath: /etc/function-wasm, readOnly: true}
+            - {name: policy, mountPath: /etc/guestfn, readOnly: true}
           volumes:
           - name: policy
             configMap: {name: function-wasm-policy}

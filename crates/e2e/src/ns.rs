@@ -47,7 +47,7 @@ where
             &serde_json::from_value(json!({
                 "apiVersion": "v1",
                 "kind": "Namespace",
-                "metadata": {"name": name, "labels": {"e2e.function-wasm.io/suite": "true"}},
+                "metadata": {"name": name, "labels": {"e2e.guestfn.io/suite": "true"}},
             }))?,
         )
         .await

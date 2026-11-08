@@ -91,7 +91,7 @@ struct ServeArgs {
     /// (public-good, staging or github) and refresh it while serving,
     /// instead of reading --cosign-trusted-root's file. The verified TUF
     /// metadata and the root are cached under
-    /// /tmp/function-wasm-cache/tuf/<instance>; a keyless signature is
+    /// /tmp/guestfn-cache/tuf/<instance>; a keyless signature is
     /// refused until the first fetch, or that cache, yields a root.
     #[arg(long, env = "COSIGN_TRUST_INSTANCE", value_enum)]
     cosign_trust_instance: Option<trustroot::Instance>,

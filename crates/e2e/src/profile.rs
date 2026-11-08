@@ -173,7 +173,7 @@ async fn switch(client: &kube::Client, profile: Profile) -> Result<()> {
             function,
             &PatchParams::apply(k8s::FIELD_MANAGER),
             &Patch::Merge(json!({
-                "metadata": {"labels": {"e2e.function-wasm.io/profile": profile.name()}},
+                "metadata": {"labels": {"e2e.guestfn.io/profile": profile.name()}},
                 "spec": {"runtimeConfigRef": {"name": profile.runtime_config()}},
             })),
         )

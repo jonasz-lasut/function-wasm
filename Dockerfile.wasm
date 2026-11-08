@@ -25,8 +25,8 @@ WORKDIR /fn
 
 # The runtime's release version, stamped into the binary for minRuntime
 # checks; a local build stays a development build (empty).
-ARG FUNCTION_WASM_VERSION=
-ENV FUNCTION_WASM_VERSION=${FUNCTION_WASM_VERSION}
+ARG GUESTFN_VERSION=
+ENV GUESTFN_VERSION=${GUESTFN_VERSION}
 
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc

@@ -86,7 +86,7 @@ jobs:
           # The release version is stamped into the binary: what minRuntime
           # rules in module manifests are checked against.
           build-args:
-            FUNCTION_WASM_VERSION=${{ inputs.version }}
+            GUESTFN_VERSION=${{ inputs.version }}
           outputs: type=docker,dest=runtime-${{ matrix.arch }}.tar
 
       - name: Setup the Crossplane CLI

@@ -9,14 +9,14 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-pub const GROUP: &str = "e2e.function-wasm.io";
-pub const API_VERSION: &str = "e2e.function-wasm.io/v1alpha1";
+pub const GROUP: &str = "e2e.guestfn.io";
+pub const API_VERSION: &str = "e2e.guestfn.io/v1alpha1";
 pub const KIND: &str = "Guest";
 pub const PLURAL: &str = "guests";
-pub const XRD_NAME: &str = "guests.e2e.function-wasm.io";
+pub const XRD_NAME: &str = "guests.e2e.guestfn.io";
 /// The label a test's cluster-scoped objects carry, naming its namespace,
 /// so the namespace's teardown finds them.
-pub const NAMESPACE_LABEL: &str = "e2e.function-wasm.io/namespace";
+pub const NAMESPACE_LABEL: &str = "e2e.guestfn.io/namespace";
 /// The step credential every Composition names for the module pull, and the
 /// Secret in the test's namespace that backs it.
 pub const PULL_CREDENTIAL: &str = "registry";

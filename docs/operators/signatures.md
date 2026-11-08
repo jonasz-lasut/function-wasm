@@ -132,7 +132,7 @@ serving. You can't set both flags. The refresh interval,
 
 The runtime verifies the metadata chain starting from the TUF root built into
 the runtime. It caches the verified
-metadata and the root under `/tmp/function-wasm-cache/tuf/<instance>`, outside
+metadata and the root under `/tmp/guestfn-cache/tuf/<instance>`, outside
 the `--max-cache-size` sweep. A volume under the cache root preserves it
 across restarts.
 
@@ -153,8 +153,8 @@ verified-digest memo, so a module whose signer the new root no longer vouches
 for is verified again on its next request. A failed refresh keeps the last
 good root. Verification never touches the network: a failed refresh makes the
 root older and never slows a request. The metrics
-`function_wasm_trusted_root_refreshes_total{outcome}` and
-`function_wasm_trusted_root_last_refresh_timestamp_seconds` show the refreshes
+`guestfn_trusted_root_refreshes_total{outcome}` and
+`guestfn_trusted_root_last_refresh_timestamp_seconds` show the refreshes
 and the root's age (see [metrics](metrics.md)).
 
 `function validate --resolve --cosign-trust-instance public-good …` runs the

@@ -603,7 +603,7 @@ mod tests {
             observed: Some(fnv1::State {
                 composite: Some(fnv1::Resource {
                     resource: Some(json_to_struct(&serde_json::json!({
-                        "apiVersion": "e2e.function-wasm.io/v1alpha1",
+                        "apiVersion": "e2e.guestfn.io/v1alpha1",
                         "kind": "Guest",
                         "metadata": {"name": "probe", "namespace": "e2e"},
                         "spec": spec,

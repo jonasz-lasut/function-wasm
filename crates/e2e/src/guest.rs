@@ -24,9 +24,9 @@ pub const TAG: &str = "v0.1.0";
 pub const KEY_SEED: u8 = 7;
 /// The identities the keyless variants are signed under; the default
 /// profile's policy trusts the first for the suite's repository.
-pub const TRUSTED_ISSUER: &str = "https://e2e.function-wasm.io";
-pub const TRUSTED_IDENTITY: &str = "https://e2e.function-wasm.io/release";
-pub const UNTRUSTED_IDENTITY: &str = "https://e2e.function-wasm.io/intruder";
+pub const TRUSTED_ISSUER: &str = "https://e2e.guestfn.io";
+pub const TRUSTED_IDENTITY: &str = "https://e2e.guestfn.io/release";
+pub const UNTRUSTED_IDENTITY: &str = "https://e2e.guestfn.io/intruder";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signature {

@@ -16,7 +16,7 @@
 //! checked by their render jobs.
 //!
 //! A guest whose toolchain is not on PATH is skipped, naming the guest,
-//! unless FUNCTION_WASM_REQUIRE_TOOLCHAINS
+//! unless GUESTFN_REQUIRE_TOOLCHAINS
 //! is set, as the /e2e workflow's guest-suite job sets it, when a missing
 //! toolchain fails the guest instead: a runner that lost a toolchain would
 //! otherwise shrink the suite and stay green.
@@ -116,12 +116,10 @@ fn on_path(name: &str) -> bool {
 }
 
 /// Skips a guest for a missing toolchain, naming it - or fails, where
-/// FUNCTION_WASM_REQUIRE_TOOLCHAINS says every guest must build.
+/// GUESTFN_REQUIRE_TOOLCHAINS says every guest must build.
 fn skip(guest: &str, reason: &str) -> Option<Vec<u8>> {
-    if std::env::var_os("FUNCTION_WASM_REQUIRE_TOOLCHAINS").is_some() {
-        panic!(
-            "the {guest} guest cannot build ({reason}) and FUNCTION_WASM_REQUIRE_TOOLCHAINS is set"
-        );
+    if std::env::var_os("GUESTFN_REQUIRE_TOOLCHAINS").is_some() {
+        panic!("the {guest} guest cannot build ({reason}) and GUESTFN_REQUIRE_TOOLCHAINS is set");
     }
     eprintln!("skipping the {guest} guest: {reason}");
     None

@@ -82,7 +82,7 @@ fn awaiting_verifier() -> Arc<Verifier> {
 
 fn refreshes(outcome: &str) -> f64 {
     metrics::sample(
-        "function_wasm_trusted_root_refreshes_total",
+        "guestfn_trusted_root_refreshes_total",
         &[("outcome", outcome)],
     )
     .unwrap_or_default()
