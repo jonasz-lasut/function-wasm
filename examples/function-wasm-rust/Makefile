@@ -10,7 +10,7 @@ TARGET := wasm32-wasip3
 
 build: ## Compile the guest to fn.wasm (a component)
 	cargo build --release --target $(TARGET)
-	cp target/$(TARGET)/release/cloudflare_origin.wasm fn.wasm
+	cp target/$(TARGET)/release/function_wasm_rust.wasm fn.wasm
 
 lint: ## Check formatting, run clippy natively and for the wasm target
 	cargo fmt --check
