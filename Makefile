@@ -59,8 +59,8 @@ include build/makelib/local.xpkg.mk
 #                     the kvm device plugin when the node has /dev/kvm, the
 #                     XRD), function-wasm's image and package installed from
 #                     it, and function-oci beside it when the kind node has
-#                     /dev/kvm and E2E_OCI asks for it (auto by the node, 1
-#                     required; the default 0 leaves it out)
+#                     /dev/kvm (E2E_OCI=auto, the default; 1 requires it, 0
+#                     leaves it out, what CI's two cluster jobs set)
 # make e2e.wasm-profile.<p>
 #                     one wasm profile's suite (default, strict, lifecycle):
 #                     cargo test --test wasm_<p>, which switches function-wasm
@@ -79,7 +79,8 @@ include build/makelib/local.xpkg.mk
 # make oci.tools      fetch the pinned Firecracker and guest kernel
 #                     (hack/oci-tools.sh, the pins read from Dockerfile.oci)
 # make oci.init       build the guest init and the fixture static for musl
-# make oci.test       the OCI engine's suite over a real Firecracker VM (KVM)
+# make oci.test       the OCI engine's suite over a real Firecracker VM (KVM,
+#                     a Linux host: the test process spawns Firecracker)
 # make print-crossplane-version
 #                     the CROSSPLANE_VERSION in effect (the release matrix
 #                     reads the default this way)
@@ -105,13 +106,12 @@ FUNCTION_PKG_EXAMPLES := examples/pdb-addon/example
 # Function with; the function-oci target sets its own below.
 FUNCTION_IMAGE := $(E2E_IMAGE)
 FUNCTION_RUNTIME_CONFIG := e2e-wasm-default
-# Whether function-oci is part of the cluster: 0 (the default) leaves it
-# out; `auto` installs it when the kind node has /dev/kvm, which the pod
-# opens there and the node inherits from the host (a Linux host with KVM
-# has it, Docker Desktop has not); 1 requires it (CI's oci cluster job).
-# The oci half needs protoc and the musl target for the test module as a
-# process, so it is asked for rather than assumed.
-E2E_OCI ?= 0
+# Whether function-oci is part of the cluster: `auto` (the default)
+# installs it when the kind node has /dev/kvm, which the pod opens there
+# and the node inherits from the host (a Linux host with KVM has it, and
+# so does Colima with nested virtualization; Docker Desktop has not); 1
+# requires it and 0 leaves it out, which CI's two cluster jobs set.
+E2E_OCI ?= auto
 E2E_NODE_HAS_KVM := docker exec $(KIND_CLUSTER_NAME)-control-plane test -c /dev/kvm
 e2e_oci_wanted = { [ "$(E2E_OCI)" = "1" ] || { [ "$(E2E_OCI)" = "auto" ] && $(E2E_NODE_HAS_KVM) 2>/dev/null; }; }
 
@@ -119,11 +119,17 @@ e2e_oci_wanted = { [ "$(E2E_OCI)" = "1" ] || { [ "$(E2E_OCI)" = "auto" ] && $(E2
 # release and the guest kernel its CI publishes, fetched by hack/oci-tools.sh
 # at the versions and checksums Dockerfile.oci pins (the one place they are
 # written), and the engine crate's two binaries, the init and the test
-# fixture, built static for musl.
+# fixture, built static for musl. Every one of them is a Linux binary: a
+# Linux host builds them natively, any other host through Docker (the
+# image from Dockerfile.oci, the test module as a process in a rust
+# container), and oci.test runs on Linux alone.
 OCI_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),aarch64,x86_64)
 MUSL_TARGET := $(OCI_ARCH)-unknown-linux-musl
 OCI_TOOLS := .cache/tools/oci
-E2E_OCI_GUEST ?= $(E2E_GUEST_DIR)/target/$(MUSL_TARGET)/release/e2e-guest-oci
+HOST_IS_LINUX := $(filter Linux,$(shell uname -s))
+# The guest built in a container lands under its own target directory, so
+# the host's own builds of the guest never mix with Linux ones.
+E2E_OCI_GUEST ?= $(E2E_GUEST_DIR)/$(if $(HOST_IS_LINUX),target,target/linux)/$(MUSL_TARGET)/release/e2e-guest-oci
 
 .PHONY: e2e.up e2e.crossplane e2e.setup e2e.image e2e.test e2e.test.wasm e2e.test.oci e2e.down e2e.guest e2e.dump xpkg.build.function-wasm print-crossplane-version
 .PHONY: oci.tools oci.init oci.test e2e.oci.guest e2e.oci.image e2e.oci.install xpkg.build.function-oci
@@ -210,27 +216,37 @@ oci.test: oci.tools oci.init ## The OCI engine's suite over a real Firecracker V
 	 cargo test -p function-wasm-engine --no-default-features --features oci -- --nocapture || $(FAIL)
 
 # The test module as a process, static for musl, on the guest's own pinned
-# toolchain (its rust-toolchain.toml).
+# toolchain (its rust-toolchain.toml). A Linux host builds it natively. Any
+# other host builds it in a rust container over the whole tree, since the
+# guest reads the rust scaffold's proto in place and prost-build shells out
+# to protoc; the registry and the toolchains stay in named volumes, so the
+# second build is warm.
 e2e.oci.guest:
 	@$(INFO) building $(E2E_OCI_GUEST)
+ifneq ($(HOST_IS_LINUX),)
 	@cd $(E2E_GUEST_DIR) && rustup target add $(MUSL_TARGET) >/dev/null && cargo build --release --features process --bin e2e-guest-oci --target $(MUSL_TARGET) || $(FAIL)
+else
+	@docker run --rm -v $(CURDIR):/src -w /src/$(E2E_GUEST_DIR) \
+		-v guestfn-cargo-registry:/usr/local/cargo/registry -v guestfn-rustup-toolchains:/usr/local/rustup/toolchains \
+		-e CARGO_TARGET_DIR=/src/$(E2E_GUEST_DIR)/target/linux -e RUSTUP_AUTO_INSTALL=1 rust:1 \
+		sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends protobuf-compiler >/dev/null && rustup target add $(MUSL_TARGET) && cargo build --release --features process --bin e2e-guest-oci --target $(MUSL_TARGET)' || $(FAIL)
+endif
 	@$(OK) building $(E2E_OCI_GUEST)
 
-# The function-oci image: the four files from FUNCTION_OCI_TOOLS, or built
-# and fetched here, wrapped by Dockerfile.oci.dev.
+# The function-oci image: Dockerfile.oci.dev around the four files
+# FUNCTION_OCI_TOOLS names (CI's build job hands them over), or
+# Dockerfile.oci built in Docker, which compiles the runtime and the init
+# and fetches Firecracker and the kernel at its own pins - the same default
+# as e2e.image, so no host builds a Linux binary itself.
 e2e.oci.image:
 	@$(INFO) building the runtime image $(E2E_OCI_IMAGE) for linux/$(TARGETARCH)
-	@mkdir -p $(E2E_DIR)/prebuilt-oci
 ifdef FUNCTION_OCI_TOOLS
+	@mkdir -p $(E2E_DIR)/prebuilt-oci
 	@cp $(FUNCTION_OCI_TOOLS)/function $(FUNCTION_OCI_TOOLS)/init $(FUNCTION_OCI_TOOLS)/firecracker $(FUNCTION_OCI_TOOLS)/vmlinux $(E2E_DIR)/prebuilt-oci/
-else
-	@$(MAKE) oci.tools oci.init
-	@cargo build --release -p function-wasm --no-default-features --features oci || $(FAIL)
-	@cp target/release/function $(E2E_DIR)/prebuilt-oci/function
-	@cp target/$(MUSL_TARGET)/release/guestfn-init $(E2E_DIR)/prebuilt-oci/init
-	@cp $(OCI_TOOLS)/firecracker $(OCI_TOOLS)/vmlinux $(E2E_DIR)/prebuilt-oci/
-endif
 	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.oci.dev -t $(E2E_OCI_IMAGE) $(E2E_DIR)/prebuilt-oci || $(FAIL)
+else
+	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.oci --target image -t $(E2E_OCI_IMAGE) . || $(FAIL)
+endif
 	@$(OK) building the runtime image $(E2E_OCI_IMAGE)
 
 xpkg.build.function-oci: $(CROSSPLANE_CLI) e2e.oci.image
