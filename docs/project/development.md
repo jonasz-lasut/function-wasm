@@ -31,7 +31,7 @@ make -C examples/pdb-addon render
 make e2e
 ```
 
-The first line tests the Go example and its vendored `internal/wasmfn` glue. The second is the [development loop](../guests/render-locally.md). The third runs the end-to-end suite in a kind cluster. [Testing](testing.md) explains the two tiers and the `/e2e` comment that runs them on a pull request.
+The first line tests the Go example and its vendored `internal/wasmfn` glue. The second is the [development loop](../wasm/render-locally.md). The third runs the end-to-end suite in a kind cluster. [Testing](testing.md) explains the two tiers and the `/e2e` comment that runs them on a pull request.
 
 ## Guest toolchains
 

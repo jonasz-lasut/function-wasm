@@ -32,7 +32,7 @@ use serde_json::json;
 const PDB_ADDON: &str = "ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon@sha256:f80a8364a61555f02d1429a17af9feaf0e9e8505c8fbb0d64589f84b05b14346";
 const REGISTRY_IMAGE: &str = "registry:3";
 /// The device plugin that admits the node's /dev/kvm into function-oci's
-/// pod (docs/operators/oci-runtime.md, "Node requirements"), and the
+/// pod (docs/oci/install.md, "Node requirements"), and the
 /// resource it advertises.
 const KVM_DEVICE_PLUGIN: &str = include_str!("../../cluster/kvm-device-plugin.yaml");
 const KVM_RESOURCE: &str = "devic.es/kvm";

@@ -1,4 +1,4 @@
-# The OCI runtime
+# Install function-oci
 
 This page is for operators installing `function-oci`, the runtime that runs
 an OCI image as a composition function step
@@ -18,7 +18,7 @@ out-of-memory killer ends a process past it at once) plus 32 MiB for the
 kernel and the init, and no network device. Inside it, the runtime's init runs the image's
 configured command as the image's configured user, with the request on its
 standard input, and relays its standard output, standard error and exit
-status to the host ([the process contract](../guests/oci-modules.md)). The
+status to the host ([the process contract](modules.md)). The
 VM ends with the run, and the next request boots a fresh one.
 
 The runtime unpacks an image once per digest into a squashfs root
@@ -122,7 +122,7 @@ memory before it boots.
 ## Flags
 
 `function-oci` takes `function-wasm`'s flags
-([Runtime flags](runtime-flags.md)) with the same defaults, and these:
+([Runtime flags](../operators/runtime-flags.md)) with the same defaults, and these:
 
 | flag | default | what |
 |---|---|---|
@@ -162,7 +162,7 @@ way: `module … failed: run failed: module exceeded its execution deadline
 ## The development loop
 
 `crossplane render` works with `function-oci` as it does with
-`function-wasm` ([Render locally](../guests/render-locally.md)), on a Linux
+`function-wasm` ([Render locally](../wasm/render-locally.md)), on a Linux
 machine with `/dev/kvm`: run the runtime with `--insecure` and the three VM
 flags pointing at a Firecracker binary, a guest kernel and the init that
 `make oci.tools` fetches and `make oci.init` builds. The loop needs a

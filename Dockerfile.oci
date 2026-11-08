@@ -4,7 +4,7 @@
 # runtime built with its `oci` engine, the guest init built static for
 # musl, and the microVM pieces the engine boots a VM from - the Firecracker
 # binary from its release and the guest kernel Firecracker's CI publishes,
-# both pinned by checksum. The pod needs /dev/kvm (docs/operators/oci-runtime.md).
+# both pinned by checksum. The pod needs /dev/kvm (docs/oci/install.md).
 ARG RUST_VERSION=1
 ARG FIRECRACKER_VERSION=v1.17.0
 # The checksums of firecracker-${FIRECRACKER_VERSION}-<arch>.tgz.

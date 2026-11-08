@@ -266,7 +266,7 @@ local.xpkg.deploy.function.function-oci: FUNCTION_RUNTIME_CONFIG := e2e-oci-defa
 
 # function-oci beside function-wasm, on a node with /dev/kvm: setup installed
 # the device plugin and put the node's kvm group into the oci runtime config
-# (docs/operators/oci-runtime.md, "Node requirements").
+# (docs/oci/install.md, "Node requirements").
 e2e.oci.install: xpkg.build.function-oci local.xpkg.deploy.function.function-oci
 	@$(INFO) waiting for function-oci to become healthy
 	@$(KUBECTL) wait function.pkg.crossplane.io/function-oci --for=condition=Healthy --timeout=300s || $(FAIL)

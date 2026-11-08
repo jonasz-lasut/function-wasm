@@ -3,7 +3,7 @@
 This page is for module authors deciding what to put in `guestfn.yaml`. It
 covers its contents, how the runtime checks it, the refusals you can expect
 and the `composes` declaration. It assumes a scaffolded project
-([Write a module](write-a-module.md)); what each policy layer permits is in
+([Write a module](../wasm/write-a-module.md)); what each policy layer permits is in
 the [Cedar policy reference](../operators/cedar-policy.md).
 
 ## Manifest contents
@@ -41,7 +41,7 @@ The fields:
   Required. `wasm@1.0` is the component world of a WebAssembly module,
   which `function-wasm` serves; `oci@1.0` the process contract of an OCI
   image, which the OCI runtime serves
-  ([OCI modules](oci-modules.md)). A minor adds what a module may use, a
+  ([OCI modules](../oci/modules.md)). A minor adds what a module may use, a
   major changes what the engine does with a module, and the runtime
   refuses a version its engine doesn't offer. The field was `abi`, an
   integer, through 0.6, and the old name is refused as unknown.

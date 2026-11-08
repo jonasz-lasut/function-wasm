@@ -27,7 +27,7 @@ logic someone other than the Composition's author maintains.
   forward or back is a digest change in that Composition; nothing is
   reinstalled.
 - **Many small functions, one runtime.** Each team maintains its own modules,
-  in any of the [supported languages](guests/other-languages.md). The cluster
+  in any of the [supported languages](wasm/other-languages.md). The cluster
   runs one function-wasm, which compiles each module once per digest and caches
   it.
 - **Restricted networks.** Modules can come from an internal registry, an

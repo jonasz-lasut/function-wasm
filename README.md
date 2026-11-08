@@ -94,7 +94,7 @@ For Go, `guestfn init` writes a plain function-sdk-go `RunFunction`, a
 vendored `internal/wasmfn` glue the project owns and a `guestfn.yaml` manifest
 declaring what the module needs. `guestfn push` prints the `module:` block to
 paste into a Composition step. The
-[Guest authors](https://jonasz-lasut.github.io/guestfn/guests/write-a-module.html) pages cover the full
+[function-wasm](https://jonasz-lasut.github.io/guestfn/wasm/write-a-module.html) pages cover the full
 walk-through, local rendering and `function validate`.
 
 Each scaffold produces an [ABI v2](docs/abi-v2.md) component with the same
@@ -116,7 +116,7 @@ C#, C++, Odin and MoonBit exist as examples only
 [`examples/hello-odin`](examples/hello-odin),
 [`examples/hello-moonbit`](examples/hello-moonbit)). Any toolchain that
 produces a component for the world can target the runtime.
-[Other languages](https://jonasz-lasut.github.io/guestfn/guests/other-languages.html) lists what each needs.
+[Other languages](https://jonasz-lasut.github.io/guestfn/wasm/other-languages.html) lists what each needs.
 
 ## Documentation
 
@@ -124,8 +124,9 @@ The manual at <https://jonasz-lasut.github.io/guestfn/> comes from [`docs/`](doc
 for your role:
 
 - Evaluators - [Introduction](https://jonasz-lasut.github.io/guestfn/introduction.html), [Use cases](https://jonasz-lasut.github.io/guestfn/use-cases.html) and [A request, step by step](https://jonasz-lasut.github.io/guestfn/how-a-request-runs.html).
-- Guest authors - [Write a module](https://jonasz-lasut.github.io/guestfn/guests/write-a-module.html).
-- Operators - [Install](https://jonasz-lasut.github.io/guestfn/operators/install.html) and [Troubleshooting](https://jonasz-lasut.github.io/guestfn/operators/troubleshooting.html).
+- function-wasm - [Install](https://jonasz-lasut.github.io/guestfn/wasm/install.html), [Write a module](https://jonasz-lasut.github.io/guestfn/wasm/write-a-module.html) and [Other languages](https://jonasz-lasut.github.io/guestfn/wasm/other-languages.html).
+- function-oci - [Install](https://jonasz-lasut.github.io/guestfn/oci/install.html) and [OCI modules](https://jonasz-lasut.github.io/guestfn/oci/modules.html).
+- Operators, for both runtimes - [Input reference](https://jonasz-lasut.github.io/guestfn/operators/input-reference.html), [Runtime flags](https://jonasz-lasut.github.io/guestfn/operators/runtime-flags.html) and [Troubleshooting](https://jonasz-lasut.github.io/guestfn/operators/troubleshooting.html).
 - Anyone depending on a release - [Compatibility](https://jonasz-lasut.github.io/guestfn/contract/compatibility.html).
 - Contributors - [Development](https://jonasz-lasut.github.io/guestfn/project/development.html) and [Security policy](https://jonasz-lasut.github.io/guestfn/project/security.html).
 

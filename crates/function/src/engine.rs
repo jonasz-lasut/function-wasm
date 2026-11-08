@@ -30,7 +30,7 @@ pub type Module = <Selected as Engine>::Module;
 pub struct EngineArgs {}
 
 /// The OCI engine's flags: the VM pieces the package image puts under
-/// /usr/lib/guestfn, and the vCPUs per VM (docs/operators/oci-runtime.md).
+/// /usr/lib/guestfn, and the vCPUs per VM (docs/oci/install.md).
 #[cfg(all(feature = "oci", not(feature = "wasm")))]
 #[derive(clap::Args, Debug, Clone)]
 pub struct EngineArgs {

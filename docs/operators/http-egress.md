@@ -4,7 +4,7 @@ This page is for operators who let modules make HTTP and HTTPS requests. It
 covers what to enable, the budgets, the block list and CIDR rules, and what
 the runtime refuses and logs. It assumes a runtime started with a Cedar
 `--sandbox-policy-file` (see [operator grant policy](grant-policy.md)); the
-guest-side client is covered in [write a module](../guests/write-a-module.md).
+guest-side client is covered in [write a module](../wasm/write-a-module.md).
 
 A module never opens a socket. The runtime resolves the name and checks the
 address against its block list, then sends the request over TLS with its own

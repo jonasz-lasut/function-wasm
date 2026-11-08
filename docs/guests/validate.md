@@ -61,4 +61,4 @@ The exit code is:
 - 1 when at least one step is refused.
 - 2 when the tool itself failed: an unreadable file, unparsable YAML or a bad flag.
 
-To run it as part of the development loop, see [Render locally](render-locally.md).
+To run it as part of the development loop, see [Render locally](../wasm/render-locally.md).

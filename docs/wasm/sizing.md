@@ -21,7 +21,7 @@ compile's input, `--max-concurrent-compiles` how many run at once (each
 about 1 GB at peak for a large Go module, per Measurements) and
 `--module-compile-timeout` how long one may take. The request's own deadline
 doesn't cut a compile short, so leave `--max-concurrent-compiles` times that
-peak in the pod's memory limit. Every process compiles its modules again, with or without a volume. A volume under `/tmp/guestfn-cache` keeps the fetched modules, and a restart pulls nothing. The compiled code is signed per process ([cache storage](runtime-flags.md#cache-storage)). `--warm-modules` moves the compile ahead of readiness, as [readiness](readiness.md) describes.
+peak in the pod's memory limit. Every process compiles its modules again, with or without a volume. A volume under `/tmp/guestfn-cache` keeps the fetched modules, and a restart pulls nothing. The compiled code is signed per process ([cache storage](../operators/runtime-flags.md#cache-storage)). `--warm-modules` moves the compile ahead of readiness, as [readiness](../operators/readiness.md) describes.
 
 ## Disk
 
@@ -29,7 +29,7 @@ Disk grows by one module and one compiled artifact per digest ever served, until
 
 ## Throughput
 
-Runs execute in parallel up to `--max-concurrent-runs` and a step's `limits.concurrency`. The `--max-total-run-memory` pool bounds how many can hold their memory at once, as [runtime flags](runtime-flags.md) describes. A large observed state costs on every request whatever the guest is.
+Runs execute in parallel up to `--max-concurrent-runs` and a step's `limits.concurrency`. The `--max-total-run-memory` pool bounds how many can hold their memory at once, as [runtime flags](../operators/runtime-flags.md) describes. A large observed state costs on every request whatever the guest is.
 
 ## Measurements
 

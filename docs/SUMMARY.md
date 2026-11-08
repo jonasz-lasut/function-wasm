@@ -5,26 +5,32 @@
 - [Use cases](use-cases.md)
 - [A request, step by step](how-a-request-runs.md)
 
+# function-wasm
+
+- [Install function-wasm](wasm/install.md)
+- [Write a module](wasm/write-a-module.md)
+- [Other languages](wasm/other-languages.md)
+- [Render locally](wasm/render-locally.md)
+- [Sizing](wasm/sizing.md)
+
+# function-oci
+
+- [Install function-oci](oci/install.md)
+- [OCI modules](oci/modules.md)
+
 # Guest authors
 
-- [Write a module](guests/write-a-module.md)
-- [Other languages](guests/other-languages.md)
 - [Module manifests](guests/module-manifests.md)
-- [OCI modules](guests/oci-modules.md)
-- [Render locally](guests/render-locally.md)
 - [Check a composition](guests/validate.md)
 
 # Operators
 
-- [Install](operators/install.md)
-- [The OCI runtime](operators/oci-runtime.md)
 - [Input reference](operators/input-reference.md)
 - [Runtime flags](operators/runtime-flags.md)
 - [Operator grant policy](operators/grant-policy.md)
 - [Cedar policy reference](operators/cedar-policy.md)
 - [HTTP egress](operators/http-egress.md)
 - [Readiness and warm-up](operators/readiness.md)
-- [Sizing](operators/sizing.md)
 - [Metrics](operators/metrics.md)
 - [Trust model](operators/trust-model.md)
 - [Signatures](operators/signatures.md)

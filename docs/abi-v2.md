@@ -1,6 +1,6 @@
 # Guest ABI v2
 
-This page is for people who write a guest toolchain or its glue. It states what the runtime requires of a module and what it provides, so you can build to the contract exactly. It assumes you know WIT and the component model; to write a function, start at [Write a module](guests/write-a-module.md). Grants are on [Cedar policy](operators/cedar-policy.md), the Input on the [Input reference](operators/input-reference.md) and the manifest on [Module manifests](guests/module-manifests.md).
+This page is for people who write a guest toolchain or its glue. It states what the runtime requires of a module and what it provides, so you can build to the contract exactly. It assumes you know WIT and the component model; to write a function, start at [Write a module](wasm/write-a-module.md). Grants are on [Cedar policy](operators/cedar-policy.md), the Input on the [Input reference](operators/input-reference.md) and the manifest on [Module manifests](guests/module-manifests.md).
 
 A guest is a WebAssembly component targeting the WIT world `wasmfn:function@2.0.0` ([`wit/wasmfn-function.wit`](https://github.com/jonasz-lasut/guestfn/blob/main/wit/wasmfn-function.wit)). The payload is Protobuf: `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out. The canonical ABI moves memory, so a guest has no allocator export. ABI v2 is the only ABI the runtime serves.
 

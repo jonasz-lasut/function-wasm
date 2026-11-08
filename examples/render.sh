@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The development loop of an example (docs/guests/render-locally.md): renders
+# The development loop of an example (docs/wasm/render-locally.md): renders
 # <example dir>/example/ with the function-wasm runtime from this repository
 # serving that directory (module.type: Path, path: fn.wasm), the way the
 # scaffold README describes. The guest must already be built to fn.wasm:

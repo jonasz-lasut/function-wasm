@@ -24,7 +24,7 @@ capped to `--max-concurrent-runs` without a message.
 ## Background
 
 A first request for a large guest costs seconds of CPU and about a gigabyte of
-peak memory to compile ([sizing](operators/sizing.md) has the measurements),
+peak memory to compile ([sizing](wasm/sizing.md) has the measurements),
 and the run itself costs far less. Without bounds, N cold requests would run N
 compiles at once and every module used within ten minutes would stay resident.
 Every version ever served would also stay on disk. A pod with a core or two serving
@@ -142,7 +142,7 @@ idle buckets. The operator sets the rate, and a Composition can't change it.
 
 ## Sizing
 
-The [sizing page](operators/sizing.md) has the measurements. The terms are:
+The [sizing page](wasm/sizing.md) has the measurements. The terms are:
 
 - **Memory** is the resident compiled modules, plus `--max-concurrent-compiles`
   times the peak of compiling the largest module, plus concurrent runs times the

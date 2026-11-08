@@ -6,7 +6,7 @@ machine. It assumes a Rust toolchain for the first tier and Docker for the
 second.
 
 `crossplane render` belongs to the
-[development loop](../guests/render-locally.md) and isn't part of either tier.
+[development loop](../wasm/render-locally.md) and isn't part of either tier.
 
 | Tier | Runs | What it covers |
 |---|---|---|
@@ -92,7 +92,7 @@ before its first test and waits for the rollout. Each binary uses one profile.
 | `wasm/default` | every case a runtime admits, under both signature verifiers |
 | `wasm/strict` | the refusals of a narrow operator layer, the read fence's ceiling among them |
 | `wasm/lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
-| `oci/default` | the `function-oci` package ([the OCI runtime](../operators/oci-runtime.md)) beside `function-wasm`, running the test module as a process in a Firecracker VM. Its runtime config mounts the `wasm/default` policy |
+| `oci/default` | the `function-oci` package ([the OCI runtime](../oci/install.md)) beside `function-wasm`, running the test module as a process in a Firecracker VM. Its runtime config mounts the `wasm/default` policy |
 
 The `default` profile runs the runtime with `--cosign-key` (the suite's key)
 and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with

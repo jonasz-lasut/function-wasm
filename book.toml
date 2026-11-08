@@ -5,8 +5,8 @@
 # renders only the pages listed there. .github/workflows/docs.yml builds
 # it on every pull request that touches it and deploys main to GitHub Pages.
 [book]
-title = "function-wasm"
-description = "A Crossplane composition function that runs a WebAssembly module in a wasmtime sandbox"
+title = "guestfn"
+description = "Crossplane composition functions that run a WebAssembly module in a Wasmtime sandbox (function-wasm) or an OCI image in a microVM (function-oci)"
 authors = ["The guestfn Authors"]
 language = "en"
 src = "docs"
@@ -29,3 +29,14 @@ additional-js = ["docs/theme/cedar.js"]
 
 [output.html.search]
 limit-results = 20
+
+# The pages that moved when the book got a path per runtime (#252): their
+# old URLs, linked from release notes and published READMEs, redirect.
+[output.html.redirect]
+"/guests/write-a-module.html" = "../wasm/write-a-module.html"
+"/guests/other-languages.html" = "../wasm/other-languages.html"
+"/guests/render-locally.html" = "../wasm/render-locally.html"
+"/guests/oci-modules.html" = "../oci/modules.html"
+"/operators/install.html" = "../wasm/install.html"
+"/operators/sizing.html" = "../wasm/sizing.html"
+"/operators/oci-runtime.html" = "../oci/install.html"

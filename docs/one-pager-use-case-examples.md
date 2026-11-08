@@ -91,7 +91,7 @@ detects the MoonBit one by its `moon.mod`
 ([#155](https://github.com/jonasz-lasut/guestfn/issues/155)). Rust,
 Python, TypeScript and Go are covered by the use-case examples in the table.
 C# has only `dashboard-bundle`, C++ only `cert-rotator`. The language matrix is in
-[other languages](guests/other-languages.md).
+[other languages](wasm/other-languages.md).
 
 ## Testing
 
@@ -120,7 +120,7 @@ C# has only `dashboard-bundle`, C++ only `cert-rotator`. The language matrix is 
   runs `function validate` over every `example/xr*.yaml`, then serves the
   directory with `example/policy.cedar` as the operator policy and
   `example/fixtures/` on a local HTTP server for `crossplane render`
-  ([render locally](guests/render-locally.md)).
+  ([render locally](wasm/render-locally.md)).
 
 ## Publishing
 
