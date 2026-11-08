@@ -21,4 +21,6 @@ spec:
         type: Path
         path: fn.wasm
       config:
-        greeting: hi
+        # The module's configuration lives in the composite resource, in the
+        # field named here (example/xr.yaml sets spec.config.greeting).
+        from: spec.config

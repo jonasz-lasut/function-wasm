@@ -2,4 +2,7 @@ apiVersion: example.crossplane.io/v1
 kind: XR
 metadata:
   name: example-xr
-spec: {}
+spec:
+  # The module's configuration, read through the step's config.from.
+  config:
+    greeting: hi

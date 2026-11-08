@@ -1,6 +1,7 @@
 //! guestfn scaffold composition: a Composition step for a module, from its
-//! manifest - the module source, a config skeleton from the manifest's
-//! schema, and a commented compositionPolicy skeleton derived from the
+//! manifest - the module source, a config reference into the composite
+//! resource with the definition fragment the manifest's schema gives, and
+//! a commented compositionPolicy skeleton derived from the
 //! manifest's requires (its resources included) and composes.
 
 use std::path::{Path, PathBuf};
@@ -137,15 +138,13 @@ fn composition_step(
     };
     b += &indent(&module_yaml, "    ");
     b += "    # limits: {timeout: 5s, memory: 128Mi}\n";
-    if let Some(m) = m
-        && let Some(config) = config_skeleton(m)?
-    {
-        #[derive(serde::Serialize)]
-        struct Block {
-            config: std::collections::BTreeMap<String, serde_json::Value>,
-        }
-        let yaml = serde_saphyr::to_string(&Block { config }).map_err(|e| e.to_string())?;
-        b += &indent(&yaml, "    ");
+    // The module's configuration lives in the composite resource
+    // (docs/one-pager-module-config.md): the step names the field, and the
+    // commented fragment is the definition's property for it, with the
+    // manifest's schema transplanted.
+    b += "    config:\n      from: spec.config\n";
+    if let Some(m) = m {
+        b += &indent(&definition_fragment(m)?, "    ");
     }
     if let Some(skeleton) = composition_policy_skeleton(src, m) {
         b += &indent(&skeleton, "    ");
@@ -313,47 +312,30 @@ fn credential_names(bindings: &[guestfn_runtime::sandboxenv::EnvBinding]) -> Vec
     out
 }
 
-/// Derives a config block from the manifest's schema: every top-level
-/// property, its default where the schema has one, otherwise a placeholder
-/// of its type. None without a schema or without properties.
-fn config_skeleton(
-    m: &Manifest,
-) -> Result<Option<std::collections::BTreeMap<String, serde_json::Value>>, String> {
-    let Some(schema) = m.config.as_ref().and_then(|c| c.schema.as_ref()) else {
-        return Ok(None);
+/// The composite resource definition's property for the module's
+/// configuration, as a commented YAML fragment to paste under
+/// spec.properties: the manifest's config.schema transplanted (a JSON
+/// Schema is an OpenAPI v3 schema for what a scaffold declares), or an
+/// open object where the manifest has none.
+fn definition_fragment(m: &Manifest) -> Result<String, String> {
+    let schema = match m.config.as_ref().and_then(|c| c.schema.as_ref()) {
+        Some(schema) => schema.clone(),
+        None => serde_json::json!({"type": "object", "x-kubernetes-preserve-unknown-fields": true}),
     };
-    let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) else {
-        return Ok(None);
-    };
-    if properties.is_empty() {
-        return Ok(None);
+    #[derive(serde::Serialize)]
+    struct Property {
+        config: serde_json::Value,
     }
-    let mut out = std::collections::BTreeMap::new();
-    for (k, p) in properties {
-        let value = match p.get("default") {
-            Some(d) if !d.is_null() => d.clone(),
-            _ => placeholder(p.get("type")),
-        };
-        out.insert(k.clone(), value);
+    let yaml = serde_saphyr::to_string(&Property { config: schema }).map_err(|e| e.to_string())?;
+    let mut out = String::from(
+        "# In the composite resource definition, spec.config holds the module's\n# configuration; its schema is the manifest's config.schema:\n#   spec:\n#     properties:\n",
+    );
+    for line in yaml.trim_end_matches('\n').split('\n') {
+        out += "#       ";
+        out += line;
+        out += "\n";
     }
-    Ok(Some(out))
-}
-
-/// The empty value of a JSON Schema type ("string", or a list whose first
-/// entry decides).
-fn placeholder(t: Option<&serde_json::Value>) -> serde_json::Value {
-    let t = match t {
-        Some(serde_json::Value::Array(list)) if !list.is_empty() => &list[0],
-        Some(v) => v,
-        None => &serde_json::Value::Null,
-    };
-    match t.as_str() {
-        Some("number") | Some("integer") => serde_json::json!(0),
-        Some("boolean") => serde_json::json!(false),
-        Some("object") => serde_json::json!({}),
-        Some("array") => serde_json::json!([]),
-        _ => serde_json::json!(""),
-    }
+    Ok(out)
 }
 
 /// Prefixes every non-empty line.
