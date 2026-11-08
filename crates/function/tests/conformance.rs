@@ -57,6 +57,23 @@ fn cases() -> Vec<Case> {
             args: &["testdata/validate/from.yaml"],
             stdin: "",
         },
+        // config.from (docs/one-pager-module-config.md): the shape of the
+        // config object is admission's, with or without a composite
+        // resource; the read, its three refusals and allowEmpty need --xr.
+        Case {
+            name: "ConfigWithoutXR",
+            args: &["testdata/validate/config.yaml"],
+            stdin: "",
+        },
+        Case {
+            name: "ConfigWithXR",
+            args: &[
+                "testdata/validate/config.yaml",
+                "--xr",
+                "testdata/validate/xr.yaml",
+            ],
+            stdin: "",
+        },
         // The output fence (composeResource, #174): a step whose
         // compositionPolicy scopes it is marked on its OK line; the operator
         // ceiling compiles and changes no verdict offline, since only a run

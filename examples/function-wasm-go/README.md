@@ -140,11 +140,13 @@ runtime's `--module-dir` (a path that leaves it is refused), so the
 the organisation's key, start the runtime with `--cosign-key` (with a
 `--sandbox-policy-file`, a `requireSignature` rule for the repository).
 
-The step's config tunes the budget, checked against the manifest's schema:
+The WebApp tunes the budget through `spec.addOnConfig`, which the step reads
+(`config.from`) and the runtime checks against the manifest's schema:
 
 ```yaml
       config:
-        maxUnavailable: 2    # an integer of at least 1; default 1
+        from: spec.addOnConfig    # {maxUnavailable: 2}: an integer of at least 1; default 1
+        allowEmpty: true          # a WebApp that sets none runs the add-on unconfigured
 ```
 
 ## Layout

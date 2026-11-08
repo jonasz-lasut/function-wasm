@@ -60,7 +60,7 @@ Reference the module from a Composition step of function-wasm:
       oci:                     # printed by guestfn push
         ref: ghcr.io/example/my-fn:v0.1.0@sha256:<manifest digest>
     config:
-      greeting: hi
+      from: spec.config        # the composite resource field holding {greeting: hi}
 ```
 
 `example/` renders locally with the function-wasm runtime serving this

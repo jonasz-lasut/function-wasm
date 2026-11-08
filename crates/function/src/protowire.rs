@@ -1,14 +1,23 @@
 //! Minimal protobuf wire surgery over raw request/response bytes - what
 //! keeps the transparent proxy honest: the guest receives the caller's
 //! bytes (unknown fields included, which prost cannot retain through a
-//! decode), with exactly two edits the runtime is entitled to make - the
+//! decode), with exactly three edits the runtime is entitled to make - the
 //! step credentials the module was not granted (the pull credential among
-//! them, always) removed from the forwarded request, and a meta field
-//! appended to a response that lacks one (valid protobuf: last value wins
-//! for a singular field) - and one response it produces itself, the no-op
+//! them, always) removed from the forwarded request, the Input's config
+//! entry replaced by the configuration the runtime read from the composite
+//! resource (the Input is the one field whose schema is the runtime's
+//! own), and a meta field appended to a response that lacks one (valid
+//! protobuf: last value wins for a singular field) - and one response it
+//! produces itself, the no-op
 //! of a step with no module to run, built from the caller's own desired
 //! state and context bytes.
 
+/// RunFunctionRequest.input (google.protobuf.Struct).
+const REQUEST_INPUT_FIELD: u64 = 4;
+/// google.protobuf.Struct.fields (map<string, Value>).
+const STRUCT_FIELDS_FIELD: u64 = 1;
+/// The key of the Input's config entry, which the runtime resolves.
+const CONFIG_KEY: &str = "config";
 /// RunFunctionRequest.desired (State).
 const REQUEST_DESIRED_FIELD: u64 = 3;
 /// RunFunctionRequest.context (google.protobuf.Struct).
@@ -55,6 +64,73 @@ pub fn retain_credentials(raw: &[u8], forward: impl Fn(&str) -> bool) -> Option<
         }
         out.extend_from_slice(&raw[start..value_end]);
         i = value_end;
+    }
+    Some(out)
+}
+
+/// Replaces the Input's config entry: the request's input Struct (field 4)
+/// loses every `config` entry the caller wrote - the `{from: …}` reference
+/// the runtime has read - and gains entry, the encoded Struct entry of the
+/// resolved value, when there is one (none under config.allowEmpty with an
+/// unset field, so the module reads an unconfigured Input). Every other
+/// byte of the request, the Struct's other entries included, is the
+/// caller's. Bytes that do not parse yield None; the typed decode has
+/// already succeeded by the time this runs, so that is defensive only.
+pub fn replace_input_config(raw: &[u8], entry: Option<&[u8]>) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(raw.len() + entry.map_or(0, <[u8]>::len));
+    let mut i = 0;
+    let mut replaced = false;
+    while i < raw.len() {
+        let start = i;
+        let (tag, n) = varint(raw, i)?;
+        i += n;
+        let wire = tag & 0x7;
+        let value_end = skip_value(raw, i, wire)?;
+        if tag >> 3 == REQUEST_INPUT_FIELD && wire == 2 {
+            // A decoder merges repeated occurrences of a singular message
+            // field, so every occurrence loses its config entries and the
+            // first gains the resolved one.
+            let (_, n) = varint(raw, i)?;
+            let input =
+                without_config(&raw[i + n..value_end], if replaced { None } else { entry })?;
+            replaced = true;
+            out.push((REQUEST_INPUT_FIELD << 3) as u8 | 2);
+            push_varint(&mut out, input.len() as u64);
+            out.extend_from_slice(&input);
+        } else {
+            out.extend_from_slice(&raw[start..value_end]);
+        }
+        i = value_end;
+    }
+    if !replaced && let Some(entry) = entry {
+        out.push((REQUEST_INPUT_FIELD << 3) as u8 | 2);
+        push_varint(&mut out, entry.len() as u64);
+        out.extend_from_slice(entry);
+    }
+    Some(out)
+}
+
+/// A Struct's bytes without its `config` entries, plus entry at the end.
+fn without_config(input: &[u8], entry: Option<&[u8]>) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        let start = i;
+        let (tag, n) = varint(input, i)?;
+        i += n;
+        let wire = tag & 0x7;
+        let value_end = skip_value(input, i, wire)?;
+        let is_config = tag >> 3 == STRUCT_FIELDS_FIELD && wire == 2 && {
+            let (_, n) = varint(input, i)?;
+            map_entry_key(&input[i + n..value_end]).is_some_and(|key| key == CONFIG_KEY)
+        };
+        if !is_config {
+            out.extend_from_slice(&input[start..value_end]);
+        }
+        i = value_end;
+    }
+    if let Some(entry) = entry {
+        out.extend_from_slice(entry);
     }
     Some(out)
 }
@@ -373,6 +449,63 @@ mod tests {
         assert_eq!(
             noop_response(&[0xff], &meta),
             append_meta(Vec::new(), &meta)
+        );
+    }
+
+    /// The resolved configuration replaces the Input's config entry and
+    /// nothing else: the Input's other keys and the rest of the request
+    /// (an unknown field included) are the caller's bytes.
+    #[test]
+    fn replaces_the_input_config_entry_and_keeps_every_other_byte() {
+        use function_sdk_rust::resource::{json_to_struct, struct_to_json};
+        let input = serde_json::json!({
+            "apiVersion": "guestfn.crossplane.io/v1",
+            "kind": "Input",
+            "module": {"type": "Path", "path": "fn.wasm"},
+            "config": {"from": "spec.config"},
+        });
+        let req = RunFunctionRequest {
+            meta: Some(RequestMeta {
+                tag: "t".into(),
+                ..Default::default()
+            }),
+            input: Some(json_to_struct(input.as_object().unwrap())),
+            ..Default::default()
+        };
+        let mut raw = req.encode_to_vec();
+        // An unknown field after the input: it must survive the edit.
+        let unknown = [(99 << 3) | 2, 1, 0x7a];
+        raw.extend_from_slice(&unknown);
+        let resolved = serde_json::json!({"config": {"greeting": "hi"}});
+        let entry = json_to_struct(resolved.as_object().unwrap()).encode_to_vec();
+
+        let out = replace_input_config(&raw, Some(&entry)).expect("parses");
+        assert_eq!(
+            &out[out.len() - 3..],
+            &unknown,
+            "the unknown field survives"
+        );
+        let decoded = RunFunctionRequest::decode(&out[..out.len() - 3]).expect("decodes");
+        let mut want = input.clone();
+        want["config"] = serde_json::json!({"greeting": "hi"});
+        assert_eq!(struct_to_json(&decoded.input.unwrap()), want);
+        assert_eq!(
+            decoded.meta, req.meta,
+            "the rest of the request is untouched"
+        );
+
+        // Under allowEmpty with an unset field the entry goes and nothing
+        // replaces it: the module reads an unconfigured Input.
+        let out = replace_input_config(&raw, None).expect("parses");
+        let decoded = RunFunctionRequest::decode(&out[..out.len() - 3]).expect("decodes");
+        let mut want = input.clone();
+        want.as_object_mut().unwrap().remove("config");
+        assert_eq!(struct_to_json(&decoded.input.unwrap()), want);
+
+        assert_eq!(
+            replace_input_config(&[0xff, 0xff], None),
+            None,
+            "bytes that do not parse"
         );
     }
 

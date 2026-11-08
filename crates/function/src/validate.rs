@@ -519,6 +519,30 @@ impl Validator {
         };
         r.details = describe_admitted(&input, &admitted);
 
+        // The module's configuration: read from the XR when one is given,
+        // as the runtime does on every request, with its refusals; without
+        // one the reference is reported and the value stays unchecked.
+        let config = match (&input.config, &self.xr) {
+            (None, _) => None,
+            (Some(c), Some(xr)) => match crate::from::config_from_composite(c, Some(xr)) {
+                Ok(Some(value)) => {
+                    r.details.push(format!("config from {}", c.from));
+                    Some(value)
+                }
+                Ok(None) => {
+                    r.details
+                        .push(format!("config from {} (unset, allowEmpty)", c.from));
+                    None
+                }
+                Err(e) => refuse!(e),
+            },
+            (Some(c), None) => {
+                r.details
+                    .push(format!("config from {} (not read without --xr)", c.from));
+                None
+            }
+        };
+
         // The module: materialised against the XR when one is given, as the
         // runtime does on every request; otherwise checked for the fence a
         // composite-chosen source requires and reported as such.
@@ -698,10 +722,21 @@ impl Validator {
         };
         if let Err(e) = m.check(
             &caps.grants(),
-            input.config.as_ref(),
+            config.as_ref(),
             crate::manifest::runtime_version(),
         ) {
             refuse!(format!("module {} {e}", resolved.description));
+        }
+        // A configuration the tool could not read is a schema check it
+        // could not make: said once, where the module has a schema.
+        if input.config.is_some()
+            && self.xr.is_none()
+            && m.config.as_ref().is_some_and(|c| c.schema.is_some())
+        {
+            r.warnings.push(
+                "config.from is not read without --xr, so the configuration is not checked against the module's config.schema"
+                    .to_string(),
+            );
         }
         // What the manifest declares the module composes, held against the
         // policy layers' composeResource rules: advisory, since only a run
@@ -851,8 +886,9 @@ fn unknown_fields(
     path: &str,
     warnings: &mut Vec<String>,
 ) {
-    // Object-valued fields with a schema recurse; metadata and config are
-    // opaque to the runtime.
+    // Object-valued fields with a schema recurse; metadata is opaque to the
+    // runtime, and config's keys are admission's business: a key other than
+    // from and allowEmpty is a refusal there, not a warning here.
     let known: &[&str] = match path {
         "" => &[
             "apiVersion",

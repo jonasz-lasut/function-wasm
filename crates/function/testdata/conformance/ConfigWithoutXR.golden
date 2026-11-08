@@ -1,0 +1,17 @@
+exit 1
+--- stdout
+testdata/validate/config.yaml: Composition/config pipeline[0] static-value: refused: config.greeting is not a field of config, which has from and allowEmpty only: the module's configuration is written in the composite resource, in the field config.from names
+testdata/validate/config.yaml: Composition/config pipeline[1] allow-empty-alone: refused: config.allowEmpty is set but config.from is not: only a configuration the composite resource holds can be left unset
+testdata/validate/config.yaml: Composition/config pipeline[2] empty-object: refused: config.from is required: it names the field of the composite resource that holds the module's configuration, e.g. spec.config
+testdata/validate/config.yaml: Composition/config pipeline[3] outside-spec: refused: config.from "metadata.annotations" must be a field under spec or status of the composite resource, e.g. spec.config
+testdata/validate/config.yaml: Composition/config pipeline[4] from-spec: OK (path fn.wasm, config from spec.config (not read without --xr))
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+testdata/validate/config.yaml: Composition/config pipeline[5] from-missing: OK (path fn.wasm, config from spec.absent (not read without --xr))
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+testdata/validate/config.yaml: Composition/config pipeline[6] from-missing-allowed: OK (path fn.wasm, config from spec.absent (not read without --xr))
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+testdata/validate/config.yaml: Composition/config pipeline[7] from-null-allowed: OK (path fn.wasm, config from status.empty (not read without --xr))
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+testdata/validate/config.yaml: Composition/config pipeline[8] from-scalar: OK (path fn.wasm, config from spec.scalar (not read without --xr))
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+--- stderr

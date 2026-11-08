@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use crate::admission;
 use crate::authz::{CompositionPolicy, Principal};
-use crate::input::{HttpSource, ModuleSource, OciSource};
+use crate::input::{Config, HttpSource, ModuleSource, OciSource};
 use crate::location::{http_location, oci_location};
 
 /// Materialises src.from: the named field of the composite resource (its
@@ -68,6 +68,56 @@ pub fn from_composite(
         .map_err(|e| format!("module.from: {from} of the composite resource: {e}"))?;
     admit(&from, &src, comp, &principal_from_composite(composite))?;
     Ok(Some(src))
+}
+
+/// Reads config.from: the named field of the composite resource holds the
+/// module's configuration, an object, which the runtime checks against the
+/// module manifest's config.schema once the manifest is read and forwards
+/// to the module as input.config (docs/one-pager-module-config.md). The
+/// shape of the config object was validated by admission already; this is
+/// the read, under module.from's rules and with its wording.
+///
+/// None is the one non-error way out: the field is unset (absent, or
+/// null) and config.allowEmpty says the composite resource may leave the
+/// module unconfigured. Without allowEmpty an unset field is an error that
+/// names it, as a static configuration's absence never was: the
+/// Composition author said where the configuration comes from.
+pub fn config_from_composite(
+    config: &Config,
+    composite: Option<&serde_json::Value>,
+) -> Result<Option<serde_json::Value>, String> {
+    let from = config.from.as_str();
+    let Some(composite) = composite else {
+        if config.allow_empty {
+            return Ok(None);
+        }
+        return Err(format!(
+            "config.from {from}: no observed composite resource to read it from"
+        ));
+    };
+    let value = match field_value(composite, from) {
+        Ok(value) => value,
+        Err(e) => {
+            if config.allow_empty {
+                return Ok(None);
+            }
+            return Err(format!(
+                "config.from: cannot read {from} from the composite resource: {e}"
+            ));
+        }
+    };
+    if config.allow_empty && value.is_null() {
+        return Ok(None);
+    }
+    // Objects only: every scaffold's schema declares one, and a scalar or
+    // a list would reach the module as a shape no GetConfig expects
+    // (the record's open question, settled for the first build).
+    if !value.is_object() {
+        return Err(format!(
+            "config.from: {from} of the composite resource is not an object"
+        ));
+    }
+    Ok(Some(value.clone()))
 }
 
 /// Checks what can be known of a from source without the composite
@@ -359,6 +409,59 @@ mod tests {
         assert!(
             err.contains("but the Input has no compositionPolicy"),
             "{err}"
+        );
+    }
+
+    /// config.from reads an object, leaves an unset field to allowEmpty
+    /// and words its refusals as module.from does.
+    #[test]
+    fn reads_the_configuration_from_the_composite_resource() {
+        let xr = serde_json::json!({
+            "apiVersion": "example.crossplane.io/v1",
+            "kind": "XR",
+            "metadata": {"name": "my-xr"},
+            "spec": {"config": {"greeting": "hi"}, "scalar": 7, "empty": null},
+        });
+        let config = |from: &str, allow_empty: bool| Config {
+            from: from.to_string(),
+            allow_empty,
+            ..Default::default()
+        };
+        assert_eq!(
+            config_from_composite(&config("spec.config", false), Some(&xr)),
+            Ok(Some(serde_json::json!({"greeting": "hi"})))
+        );
+        assert_eq!(
+            config_from_composite(&config("spec.absent", false), Some(&xr)),
+            Err("config.from: cannot read spec.absent from the composite resource: absent: no such field".to_string())
+        );
+        assert_eq!(
+            config_from_composite(&config("spec.absent", true), Some(&xr)),
+            Ok(None)
+        );
+        assert_eq!(
+            config_from_composite(&config("spec.empty", true), Some(&xr)),
+            Ok(None)
+        );
+        assert_eq!(
+            config_from_composite(&config("spec.scalar", false), Some(&xr)),
+            Err("config.from: spec.scalar of the composite resource is not an object".to_string())
+        );
+        assert_eq!(
+            config_from_composite(&config("spec.scalar", true), Some(&xr)),
+            Err("config.from: spec.scalar of the composite resource is not an object".to_string()),
+            "allowEmpty forgives an unset field, never a wrong shape"
+        );
+        assert_eq!(
+            config_from_composite(&config("spec.config", false), None),
+            Err(
+                "config.from spec.config: no observed composite resource to read it from"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            config_from_composite(&config("spec.config", true), None),
+            Ok(None)
         );
     }
 

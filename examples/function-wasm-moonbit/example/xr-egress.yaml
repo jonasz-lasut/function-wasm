@@ -1,0 +1,9 @@
+# The egress case's composite resource (composition-egress.yaml): the
+# greeting comes from the fixture server render.sh starts.
+apiVersion: example.crossplane.io/v1
+kind: XR
+metadata:
+  name: example-xr
+spec:
+  config:
+    greetingUrl: http://127.0.0.1:9480/response.txt

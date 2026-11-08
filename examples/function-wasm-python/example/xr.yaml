@@ -6,3 +6,7 @@ metadata:
   namespace: payments
 spec:
   region: eu-central-1
+  # The module's configuration (the step's config.from): the CMDB the
+  # fixture server render.sh starts stands in for.
+  config:
+    cmdbUrl: http://127.0.0.1:9480

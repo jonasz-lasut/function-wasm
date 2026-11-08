@@ -236,13 +236,38 @@ spec:
             nullable: true
           config:
             type: object
-            x-kubernetes-preserve-unknown-fields: true
+            properties:
+              from:
+                type: string
+                description: |-
+                  A field of the observed composite resource, under spec or status,
+                  that holds the module's configuration as an object, for example
+                  "spec.addOnConfig". Required. The value is read on every request,
+                  checked against the module manifest's config.schema and forwarded
+                  to the module as input.config; the rest of the request passes
+                  unchanged.
+                pattern: ^(spec|status)\..+
+              allowEmpty:
+                type: boolean
+                description: |-
+                  Lets the composite resource leave the field unset (absent or null):
+                  the module then runs unconfigured, as for an Input without config,
+                  instead of a fatal result naming the field. Refused without from.
             description: |-
-              Passed to the module verbatim as part of its request input. The
-              runtime does not interpret it; it only ever holds it against the
-              module manifest's config.schema. Non-secret module configuration
-              belongs here: the module's environment is its manifest's
-              requires.env credential bindings, never Input-authored values.
+              Where the module's configuration comes from: a field of the observed
+              composite resource, named by config.from. The runtime reads it on
+              every request, holds it against the module manifest's config.schema
+              and hands it to the module as input.config, where every guest reads
+              its configuration. An Input without config runs the module
+              unconfigured. Non-secret settings belong there: the module's
+              environment is its manifest's requires.env credential bindings,
+              never Input-authored values.
+            x-kubernetes-validations:
+            - message: allowEmpty is only allowed with from
+              rule: "!has(self.allowEmpty) || !self.allowEmpty || has(self.from)"
+            nullable: true
+            required:
+            - from
           kind:
             description: Input, the one kind of the group.
             type: string

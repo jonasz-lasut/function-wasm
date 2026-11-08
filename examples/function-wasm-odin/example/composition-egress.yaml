@@ -24,5 +24,6 @@ spec:
         path: fn.wasm
         manifestPath: example/guestfn.local.yaml
       config:
-        # The fixture server render.sh starts, serving example/fixtures/.
-        greetingUrl: http://127.0.0.1:9480/response.txt
+        # example/xr-egress.yaml sets spec.config.greetingUrl to the fixture
+        # server render.sh starts, serving example/fixtures/.
+        from: spec.config

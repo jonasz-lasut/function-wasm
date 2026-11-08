@@ -56,11 +56,13 @@ keyless. The step is a `function-oci` step with the published reference:
       oci:
         ref: ghcr.io/jonasz-lasut/wasmfn/examples/function-oci-go@sha256:<the digest guestfn push printed>
     config:
-      greeting: hi
+      from: spec.config        # the composite resource field holding {greeting: hi}
 ```
 
 The manifest requires nothing: the process gets the request and nothing
-else. The runtime holds `config` to the manifest's schema before the run.
+else. The runtime reads the configuration from the composite resource,
+holds it to the manifest's schema before the run and hands it to the
+process as `input.config`.
 
 ## Layout
 

@@ -468,7 +468,12 @@ fn scaffold_composition_from_a_file() {
     assert!(stdout.contains("- step: greeter"), "{stdout}");
     assert!(stdout.contains("type: Path"), "{stdout}");
     assert!(stdout.contains("path: fn.wasm"), "{stdout}");
-    assert!(stdout.contains("greeting: hello"), "{stdout}");
+    assert!(
+        stdout.contains("config:\n      from: spec.config"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("#           greeting:"), "{stdout}");
+    assert!(stdout.contains("#             default: hello"), "{stdout}");
     assert!(
         stdout.contains("#   permit (principal, action == Action::\"grantEgress\", resource in HostPattern::\"example.com\");"),
         "{stdout}"

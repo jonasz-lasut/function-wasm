@@ -49,3 +49,10 @@ spec:
                   function-wasm decodes it strictly and refuses any other
                   shape with a fatal result naming spec.addOn.
                 x-kubernetes-preserve-unknown-fields: true
+              addOnConfig:
+                description: >-
+                  The add-on's configuration, in the shape the add-on's own
+                  manifest declares; function-wasm holds it to that schema
+                  before the run. Unset, the add-on runs unconfigured.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true

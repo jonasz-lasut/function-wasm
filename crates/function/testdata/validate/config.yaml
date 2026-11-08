@@ -1,0 +1,119 @@
+# The Input's config: an object naming the composite resource field that
+# holds the module's configuration (docs/one-pager-module-config.md). The
+# steps that need the composite resource read testdata/validate/xr.yaml
+# under --xr; without it their reference is reported and left unread.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: config
+spec:
+  compositeTypeRef:
+    apiVersion: example.crossplane.io/v1
+    kind: XR
+  mode: Pipeline
+  pipeline:
+  # A value where the reference belongs: how 0.6 wrote config.
+  - step: static-value
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      config:
+        greeting: hi
+  - step: allow-empty-alone
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      config:
+        allowEmpty: true
+  - step: empty-object
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      config: {}
+  - step: outside-spec
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      config:
+        from: metadata.annotations
+  # The reference, read from spec.config of the composite resource.
+  - step: from-spec
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      config:
+        from: spec.config
+  # A field the composite resource does not have: a refusal, unless
+  # allowEmpty says the module may run unconfigured.
+  - step: from-missing
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      config:
+        from: spec.absent
+  - step: from-missing-allowed
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      config:
+        from: spec.absent
+        allowEmpty: true
+  - step: from-null-allowed
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      config:
+        from: status.empty
+        allowEmpty: true
+  # A field that holds a scalar: the configuration must be an object.
+  - step: from-scalar
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+      config:
+        from: spec.scalar
