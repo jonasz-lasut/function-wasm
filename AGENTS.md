@@ -563,7 +563,9 @@ examples/cert-rotator       the C++ use case (example only: no scaffold; guestfn
                               tests/vm.rs runs the fixture process in real VMs when
                               GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set (make oci.test),
                               skipping otherwise unless FUNCTION_WASM_REQUIRE_KVM
-  src/bin/guestfn-init.rs     the guest init, PID 1 of the VM: devtmpfs/proc/sys, the squashfs
+  src/bin/guestfn-init.rs     the guest init's entry point; guestfn-init/linux.rs is the init,
+                              Linux alone (elsewhere the binary says so and exits, so the
+                              workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
                               on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
                               host, chroot, the process as the described user with the request
                               on stdin, stdout/stderr relayed as frames, the exit with an OOM
