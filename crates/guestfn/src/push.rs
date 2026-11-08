@@ -1,13 +1,13 @@
 //! guestfn push: publish a module as an OCI artifact (the module layer
 //! and, when the project has a guestfn.yaml, the manifest layer beside it;
-//! for a `type: oci` manifest, the wrapping artifact whose one layer is the
-//! manifest and whose `image` pins the image, docs/one-pager-oci-runtime.md)
-//! and print what a Composition needs: the reference pinned to the OCI
-//! manifest digest, and the requires block the module's manifest declares.
+//! for an `oci@1.0` manifest, the image named by --image with the manifest
+//! appended to it as one more layer, docs/one-pager-oci-runtime.md) and
+//! print what a Composition needs: the reference pinned to the OCI manifest
+//! digest, and the requires block the module's manifest declares.
 
 use std::path::PathBuf;
 
-use function_wasm::location::{AnyReference, parse_any_reference};
+use function_wasm::location::{AnyReference, parse_any_reference, parse_oci_reference};
 use function_wasm::manifest::{Manifest, TYPE_OCI};
 use function_wasm::oci::{self, RegistryClient};
 use serde::Serialize;
@@ -50,10 +50,12 @@ pub struct PushCmd {
     #[arg(long)]
     revision: Option<String>,
 
-    /// For a type: oci manifest: the image the module is, pinned by digest
-    /// (registry/repository@sha256:...), written into the published
-    /// manifest's image field. The artifact then wraps the image - the
-    /// manifest is its one layer - and no module file is read.
+    /// For an oci@1.0 manifest: the image the module is built from, pinned
+    /// by digest (registry/repository@sha256:...). guestfn push appends the
+    /// manifest to it as one more layer and pushes the result into the
+    /// image's repository under the reference given; no module file is
+    /// read, and the image's digest goes into the published manifest's
+    /// image field.
     #[arg(long)]
     image: Option<String>,
 }
@@ -61,7 +63,7 @@ pub struct PushCmd {
 impl PushCmd {
     pub fn run(&self) -> Result<(), String> {
         if self.image.is_some() || self.manifest_is_oci()? {
-            return self.push_image_module();
+            return self.push_module_image();
         }
         let wasm = std::fs::read(&self.file)
             .map_err(|e| format!("cannot read {}: {e}", self.file.display()))?;
@@ -107,27 +109,32 @@ impl PushCmd {
     }
 
     /// Whether the project's manifest (--manifest, or the guestfn.yaml next
-    /// to the module file) declares a type: oci module.
+    /// to the module file) declares an oci@1.0 module.
     fn manifest_is_oci(&self) -> Result<bool, String> {
         Ok(self.load_manifest()?.is_some_and(|m| m.kind() == TYPE_OCI))
     }
 
-    /// Publishes the wrapping artifact of a type: oci module: the manifest,
-    /// its image set from --image or the file, as the one layer under the
-    /// artifact type, over the empty config. The image itself is pushed by
-    /// its own build (docker push); the manifest pins it and the Input pins
-    /// the artifact.
-    fn push_image_module(&self) -> Result<(), String> {
+    /// Publishes an oci@1.0 module: the image named by --image (or the
+    /// manifest's image field) with the manifest appended as one more
+    /// layer (docs/one-pager-oci-runtime.md, "The artifact"): a gzip tar
+    /// holding /.guestfn/manifest.json, its diff_id in the image config
+    /// like any other layer's, its descriptor annotated so the runtime
+    /// reads it before the rest. The image keeps running under every
+    /// container runtime; the Input pins the result and one signature
+    /// covers image and manifest. An index gets the layer in each of its
+    /// platform manifests. The result goes into the image's repository,
+    /// where its layers already are, under the reference given.
+    fn push_module_image(&self) -> Result<(), String> {
         let Some(mut m) = self.load_manifest()? else {
             return Err(format!(
-                "--image needs a type: oci manifest: no {} next to {} and no --manifest",
+                "--image needs an oci@1.0 manifest: no {} next to {} and no --manifest",
                 function_wasm::manifest::FILE_NAME,
                 self.file.display()
             ));
         };
         if m.kind() != TYPE_OCI {
             return Err(
-                "--image is for a type: oci manifest; this manifest describes a WebAssembly module, which guestfn push publishes from its file".to_string(),
+                "--image is for an oci@1.0 manifest; this manifest describes a WebAssembly module, which guestfn push publishes from its file".to_string(),
             );
         }
         if let Some(image) = &self.image {
@@ -135,27 +142,73 @@ impl PushCmd {
         }
         if m.image.is_empty() {
             return Err(format!(
-                "a type: oci manifest names the image it wraps: set image in {} or pass --image registry/repository@sha256:...",
+                "an oci@1.0 manifest names the image it is built from: set image in {} or pass --image registry/repository@sha256:...",
                 function_wasm::manifest::FILE_NAME
             ));
         }
         // The pin is checked here, where the author can fix it, with the
         // runtime's own rule.
         m.validate()?;
-        let reference = parse_any_reference(&self.r#ref)?;
-        let manifest_json = m.json()?;
-        let (raw_manifest, digest) = image_artifact(
-            &manifest_json,
-            annotations(Some(&m), self.revision.as_deref()),
-        )?;
-        push(
-            &reference,
-            &[oci::EMPTY_CONFIG, &manifest_json],
-            &raw_manifest,
-        )?;
-        let pinned = reference.pinned(&digest);
+        let image =
+            parse_oci_reference(&m.image).map_err(|e| format!("image {:?}: {e}", m.image))?;
+        let target = parse_any_reference(&self.r#ref)?;
+        if target.registry != image.registry || target.repository != image.repository {
+            return Err(format!(
+                "{} is not in the image's repository {}/{}: the module is the image with its manifest layer appended, and is pushed where the image's layers already are",
+                self.r#ref, image.registry, image.repository
+            ));
+        }
+        let client = RegistryClient::new(&image, oci::keychain_auth(&image.registry));
+        let created = creation_time();
+        let layer = ManifestLayer::new(&m.json()?, created);
+        let (top_raw, got) = client.raw_manifest(&image.digest)?;
+        if got != image.digest {
+            return Err(format!(
+                "image manifest content is {got}, want {}",
+                image.digest
+            ));
+        }
+        let mut top: serde_json::Value = serde_json::from_slice(&top_raw)
+            .map_err(|e| format!("cannot parse the image manifest: {e}"))?;
+        let (raw, media_type) =
+            if let Some(entries) = top.get_mut("manifests").and_then(|v| v.as_array_mut()) {
+                // An index: every platform manifest gets the layer, pushed by
+                // digest, and a new index names the results.
+                for entry in entries.iter_mut() {
+                    let digest = entry["digest"]
+                        .as_str()
+                        .ok_or("the image index has an entry without a digest")?
+                        .to_string();
+                    let (entry_raw, entry_got) = client.raw_manifest(&digest)?;
+                    if entry_got != digest {
+                        return Err(format!(
+                            "image manifest content is {entry_got}, want {digest}"
+                        ));
+                    }
+                    let (new_raw, entry_type) = append_layer(&client, &entry_raw, &layer, created)?;
+                    let new_digest = digest_of(&new_raw);
+                    client.push_manifest(&new_digest, &entry_type, &new_raw)?;
+                    entry["digest"] = serde_json::Value::String(new_digest);
+                    entry["size"] = serde_json::Value::from(new_raw.len());
+                }
+                let media_type = top["mediaType"]
+                    .as_str()
+                    .unwrap_or(oci::OCI_INDEX_TYPE)
+                    .to_string();
+                (
+                    serde_json::to_vec(&top).map_err(|e| e.to_string())?,
+                    media_type,
+                )
+            } else {
+                append_layer(&client, &top_raw, &layer, created)?
+            };
+        let digest = digest_of(&raw);
+        client
+            .push_manifest(&target.manifest_ref(), &media_type, &raw)
+            .map_err(|e| format!("cannot push {}: {e}", target.pinned(&digest)))?;
+        let pinned = target.pinned(&digest);
         println!(
-            "Pushed {pinned} (wrapping {})\n\nmodule:\n  type: OCI\n  oci:\n    ref: {pinned}",
+            "Pushed {pinned} (the image {} with its manifest layer)\n\nmodule:\n  type: OCI\n  oci:\n    ref: {pinned}",
             m.image
         );
         if let Some(block) = requires_block(&m)? {
@@ -303,33 +356,146 @@ fn artifact(
     Ok((raw, digest, config))
 }
 
-/// Wraps a type: oci module's manifest in the artifact the OCI runtime
-/// reads: the artifact type, OCI 1.1's empty config and the manifest as the
-/// one layer, plus the annotations. No creation time goes in, so the digest
-/// is a function of the manifest bytes and the annotations alone.
-fn image_artifact(
-    manifest_json: &[u8],
-    annotations: Option<std::collections::BTreeMap<String, String>>,
+/// The layer `guestfn push --image` appends to an image: a gzip tar with
+/// the module manifest at /.guestfn/manifest.json, owned by root, read
+/// only, stamped with the creation time, so the same manifest and time
+/// give the same bytes. diff_id is the uncompressed tar's digest, what the
+/// image config lists.
+struct ManifestLayer {
+    compressed: Vec<u8>,
+    diff_id: String,
+}
+
+impl ManifestLayer {
+    fn new(manifest_json: &[u8], created: std::time::SystemTime) -> ManifestLayer {
+        let mut tar = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mode(0o444);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(
+            created
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        header.set_size(manifest_json.len() as u64);
+        header.set_cksum();
+        tar.append_data(
+            &mut header,
+            oci::MANIFEST_LAYER_PATH.trim_start_matches('/'),
+            manifest_json,
+        )
+        .expect("a tar in memory");
+        let plain = tar.into_inner().expect("a tar in memory");
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &plain).expect("gzip in memory");
+        ManifestLayer {
+            compressed: gz.finish().expect("gzip in memory"),
+            diff_id: digest_of(&plain),
+        }
+    }
+
+    fn digest(&self) -> String {
+        digest_of(&self.compressed)
+    }
+}
+
+const OCI_LAYER_GZIP_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
+const DOCKER_LAYER_GZIP_TYPE: &str = "application/vnd.docker.image.rootfs.diff.tar.gzip";
+
+/// Appends the manifest layer to one image manifest in the registry: the
+/// config comes down, gains the layer's diff_id and a history entry and
+/// goes back up under its new digest with the layer blob, and the new
+/// manifest (its bytes and media type) is returned for the caller to push
+/// under the reference it chooses.
+fn append_layer(
+    client: &RegistryClient,
+    raw_manifest: &[u8],
+    layer: &ManifestLayer,
+    created: std::time::SystemTime,
 ) -> Result<(Vec<u8>, String), String> {
-    let manifest = ManifestOut {
-        schema_version: 2,
-        media_type: OCI_MANIFEST_MEDIA_TYPE.to_string(),
-        artifact_type: Some(oci::MODULE_ARTIFACT_TYPE.to_string()),
-        config: DescriptorOut {
-            media_type: oci::EMPTY_CONFIG_TYPE.to_string(),
-            size: oci::EMPTY_CONFIG.len(),
-            digest: digest_of(oci::EMPTY_CONFIG),
-        },
-        layers: vec![DescriptorOut {
-            media_type: oci::MANIFEST_LAYER_TYPE.to_string(),
-            size: manifest_json.len(),
-            digest: digest_of(manifest_json),
-        }],
-        annotations,
+    let manifest: serde_json::Value = serde_json::from_slice(raw_manifest)
+        .map_err(|e| format!("cannot parse the image manifest: {e}"))?;
+    let config_type = manifest["config"]["mediaType"].as_str().unwrap_or_default();
+    if !oci::IMAGE_CONFIG_TYPES.contains(&config_type) {
+        return Err(format!(
+            "the manifest's config is {config_type:?}, not an image config: --image names an OCI image, which a WebAssembly artifact is not"
+        ));
+    }
+    let config_digest = manifest["config"]["digest"]
+        .as_str()
+        .ok_or("the image manifest's config has no digest")?;
+    let raw_config = client.blob(config_digest, 16 << 20, "image config")?;
+    let (new_manifest, new_config) = with_manifest_layer(&manifest, &raw_config, layer, created)?;
+    client.push_blob(&digest_of(&new_config), &new_config)?;
+    client.push_blob(&layer.digest(), &layer.compressed)?;
+    let media_type = manifest["mediaType"]
+        .as_str()
+        .unwrap_or(OCI_MANIFEST_MEDIA_TYPE)
+        .to_string();
+    Ok((new_manifest, media_type))
+}
+
+/// The image manifest and config with the manifest layer appended: one
+/// more diff_id and history entry in the config, one more layer descriptor
+/// (annotated, in the manifest's own media type family) and the new config
+/// descriptor in the manifest. Pure: what append_layer pushes.
+fn with_manifest_layer(
+    manifest: &serde_json::Value,
+    raw_config: &[u8],
+    layer: &ManifestLayer,
+    created: std::time::SystemTime,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let mut config: serde_json::Value = serde_json::from_slice(raw_config)
+        .map_err(|e| format!("cannot parse the image config: {e}"))?;
+    let diff_ids = config
+        .pointer_mut("/rootfs/diff_ids")
+        .and_then(|v| v.as_array_mut())
+        .ok_or("the image config has no rootfs.diff_ids")?;
+    diff_ids.push(serde_json::Value::String(layer.diff_id.clone()));
+    let history = config
+        .as_object_mut()
+        .ok_or("the image config is not an object")?
+        .entry("history")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    history
+        .as_array_mut()
+        .ok_or("the image config's history is not a list")?
+        .push(serde_json::json!({
+            "created": rfc3339(created),
+            "created_by": "guestfn push --image",
+            "comment": format!("the module manifest at {}", oci::MANIFEST_LAYER_PATH),
+        }));
+    let new_config = serde_json::to_vec(&config).map_err(|e| e.to_string())?;
+    let mut manifest = manifest.clone();
+    let layer_type = if manifest["mediaType"]
+        .as_str()
+        .is_some_and(|t| t.contains("docker"))
+    {
+        DOCKER_LAYER_GZIP_TYPE
+    } else {
+        OCI_LAYER_GZIP_TYPE
     };
-    let raw = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
-    let digest = digest_of(&raw);
-    Ok((raw, digest))
+    manifest["config"]["digest"] = serde_json::Value::String(digest_of(&new_config));
+    manifest["config"]["size"] = serde_json::Value::from(new_config.len());
+    manifest["layers"]
+        .as_array_mut()
+        .ok_or("the image manifest has no layers")?
+        .push(serde_json::json!({
+            "mediaType": layer_type,
+            "digest": layer.digest(),
+            "size": layer.compressed.len(),
+            "annotations": {
+                oci::MANIFEST_LAYER_ANNOTATION: oci::MANIFEST_LAYER_ANNOTATION_VALUE,
+                ANNOTATION_TITLE: oci::MANIFEST_LAYER_PATH.trim_start_matches('/'),
+            },
+        }));
+    Ok((
+        serde_json::to_vec(&manifest).map_err(|e| e.to_string())?,
+        new_config,
+    ))
 }
 
 /// Maps the manifest onto the standard OCI image annotations of the
@@ -461,23 +627,85 @@ mod tests {
         assert_eq!(v["config"]["mediaType"], WASM_CONFIG_MEDIA_TYPE);
     }
 
-    /// The wrapping artifact is what oci::is_module_artifact recognises,
-    /// and reproducible.
+    /// The manifest layer is reproducible, and the runtime reads the
+    /// manifest back out of it the way it reads an image's.
     #[test]
-    fn the_image_artifact_wraps_the_manifest_alone() {
-        let manifest = br#"{"contract":"oci@1.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#;
-        let (a, da) = image_artifact(manifest, None).expect("a");
-        let (b, db) = image_artifact(manifest, None).expect("b");
-        assert_eq!(a, b);
-        assert_eq!(da, db);
-        let parsed: oci::OciManifest = serde_json::from_slice(&a).expect("json");
-        assert!(oci::is_module_artifact(&parsed));
-        assert_eq!(parsed.layers.len(), 1);
-        assert_eq!(parsed.layers[0].media_type, oci::MANIFEST_LAYER_TYPE);
+    fn the_manifest_layer_is_reproducible_and_readable() {
+        let manifest = br#"{"contract":"oci@1.0","name":"tagger"}"#;
+        let a = ManifestLayer::new(manifest, std::time::UNIX_EPOCH);
+        let b = ManifestLayer::new(manifest, std::time::UNIX_EPOCH);
+        assert_eq!(a.compressed, b.compressed);
+        assert_eq!(a.diff_id, b.diff_id);
+        assert_ne!(a.digest(), a.diff_id);
+        let descriptor: oci::Descriptor = serde_json::from_value(serde_json::json!({
+            "mediaType": OCI_LAYER_GZIP_TYPE,
+            "digest": a.digest(),
+            "size": a.compressed.len(),
+            "annotations": {oci::MANIFEST_LAYER_ANNOTATION: oci::MANIFEST_LAYER_ANNOTATION_VALUE},
+        }))
+        .expect("descriptor");
+        assert!(oci::is_manifest_layer(&descriptor));
         assert_eq!(
-            parsed.config.expect("config").media_type,
-            oci::EMPTY_CONFIG_TYPE
+            oci::manifest_from_layer(&descriptor, &a.compressed, 1 << 16).expect("manifest"),
+            manifest
         );
+    }
+
+    /// Appending the layer keeps the image an image: one more diff_id and
+    /// history entry in the config, one more annotated layer in the
+    /// manifest, the config descriptor moved to the new config, the layer
+    /// in the manifest's own media type family.
+    #[test]
+    fn the_appended_layer_moves_the_config_with_it() {
+        let layer = ManifestLayer::new(b"{}", std::time::UNIX_EPOCH);
+        let config = serde_json::to_vec(&serde_json::json!({
+            "architecture": "amd64", "os": "linux",
+            "config": {"Entrypoint": ["/tagger"]},
+            "rootfs": {"type": "layers", "diff_ids": ["sha256:aaaa"]},
+        }))
+        .expect("config");
+        for (manifest_type, want_layer_type) in [
+            (OCI_MANIFEST_MEDIA_TYPE, OCI_LAYER_GZIP_TYPE),
+            (
+                "application/vnd.docker.distribution.manifest.v2+json",
+                DOCKER_LAYER_GZIP_TYPE,
+            ),
+        ] {
+            let manifest = serde_json::json!({
+                "schemaVersion": 2,
+                "mediaType": manifest_type,
+                "config": {"mediaType": oci::IMAGE_CONFIG_TYPES[0], "digest": digest_of(&config), "size": config.len()},
+                "layers": [{"mediaType": OCI_LAYER_GZIP_TYPE, "digest": "sha256:bbbb", "size": 4}],
+            });
+            let (new_manifest, new_config) =
+                with_manifest_layer(&manifest, &config, &layer, std::time::UNIX_EPOCH)
+                    .expect("appended");
+            let c: serde_json::Value = serde_json::from_slice(&new_config).expect("config json");
+            assert_eq!(
+                c["rootfs"]["diff_ids"].as_array().expect("diff_ids").len(),
+                2
+            );
+            assert_eq!(c["rootfs"]["diff_ids"][1], layer.diff_id);
+            assert_eq!(c["history"][0]["created_by"], "guestfn push --image");
+            assert_eq!(c["history"][0]["created"], "1970-01-01T00:00:00Z");
+            assert_eq!(c["config"]["Entrypoint"][0], "/tagger");
+            let m: oci::OciManifest = serde_json::from_slice(&new_manifest).expect("manifest json");
+            assert!(oci::is_module_image(&m));
+            assert_eq!(m.layers.len(), 2);
+            assert_eq!(m.layers[1].media_type, want_layer_type);
+            assert_eq!(m.layers[1].digest, layer.digest());
+            assert_eq!(oci::wasm_layer(&m).unwrap_err(), oci::MODULE_IMAGE_REFUSAL);
+            assert_eq!(m.config.expect("config").digest, digest_of(&new_config));
+        }
+        let not_an_image = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": OCI_MANIFEST_MEDIA_TYPE,
+            "config": {"mediaType": WASM_CONFIG_MEDIA_TYPE, "digest": digest_of(&config), "size": config.len()},
+            "layers": [],
+        });
+        // with_manifest_layer trusts its caller; append_layer refuses a
+        // non-image before it gets here, which the CLI test covers.
+        assert!(with_manifest_layer(&not_an_image, &config, &layer, std::time::UNIX_EPOCH).is_ok());
     }
 
     #[test]

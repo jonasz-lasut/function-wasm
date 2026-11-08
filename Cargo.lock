@@ -1831,6 +1831,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "crc32fast",
+ "flate2",
  "function-wasm",
  "function-wasm-engine",
  "hex",
@@ -1839,6 +1840,7 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "sha2 0.11.1",
+ "tar",
  "tempfile",
  "wat",
 ]

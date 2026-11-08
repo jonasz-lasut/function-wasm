@@ -108,9 +108,10 @@ pub const VARIANTS: &[Variant] = &[
 ];
 
 /// The oci profile's variants (docs/one-pager-oci-runtime.md): the same
-/// declarations around the test module as a process, each a wrapping
-/// artifact pinning the one image setup pushed. Their repositories live
-/// under REPOSITORY too, so the default policy's rules cover them.
+/// declarations around the test module as a process, each the one image
+/// setup pushed with that manifest appended as a layer, so each has a
+/// digest of its own. Their repositories live under REPOSITORY too, so the
+/// default policy's rules cover them.
 pub const OCI_VARIANTS: &[Variant] = &[
     Variant {
         name: "oci-plain",
@@ -158,7 +159,7 @@ pub const OCI_PROCESS_PATH: &str = "e2e-guest";
 impl Variant {
     /// The manifest layer: the YAML validated the way guestfn build does,
     /// encoded the way guestfn push publishes it; an oci variant's `image`
-    /// is the reference given, as guestfn push --image writes it.
+    /// is the image it was appended to, as guestfn push --image writes it.
     pub fn manifest_json(&self) -> Result<Vec<u8>> {
         self.manifest_json_for(None)
     }

@@ -332,12 +332,14 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
                               the example-config warning
   src/push.rs                 the CNCF wasm OCI artifact (wasm layer, manifest layer, layerDigests
                               config, OCI annotations, SOURCE_DATE_EPOCH-reproducible), upload;
-                              for a type: oci manifest (--image, or the file's image) the
-                              wrapping artifact instead: artifactType
-                              application/vnd.guestfn.module.v1, the empty config, the manifest
-                              as the one layer with its image pinned, no module file read
-                              (oci::is_module_artifact recognises it, wasm_layer refuses it by
-                              name, inspect names the image it pins and refuses --pull)
+                              for an oci@1.0 manifest (--image, or the file's image) the image
+                              with the manifest appended as one more layer: a gzip tar at
+                              /.guestfn/manifest.json, its diff_id and a history entry in the
+                              image config, the descriptor annotated io.crossplane.guestfn=
+                              manifest, pushed into the image's repository (each platform
+                              manifest of an index), no module file read; oci::is_module_image
+                              recognises it, wasm_layer refuses it by name, inspect names the
+                              image it was built from and refuses --pull
   src/inspect.rs              file → engine.inspect; reference → manifest, layers, annotations, the
                               module-layer rule, the manifest summary; --pull; text/json
   src/manifestcmd.rs          manifest validate <file> / manifest show <ref>

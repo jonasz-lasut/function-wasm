@@ -56,8 +56,8 @@ struct ReferenceInfo {
     module_layer: Option<DescriptorInfo>,
     #[serde(rename = "moduleLayerError", skip_serializing_if = "String::is_empty")]
     module_layer_error: String,
-    /// The image a wrapping artifact's manifest pins: the module of a
-    /// `type: oci` artifact, which has no module layer.
+    /// For an OCI module image: the image its manifest says it was built
+    /// from (the manifest's image field).
     #[serde(skip_serializing_if = "Option::is_none")]
     image: Option<String>,
     /// The module manifest the artifact carries as its manifest layer, read
@@ -139,8 +139,9 @@ impl InspectCmd {
             manifest: None,
             manifest_error: String::new(),
         };
-        let wrapping = oci::is_module_artifact(&m);
-        let layer = if wrapping {
+        let module_image = oci::is_module_image(&m);
+        let layer = if module_image {
+            info.module_layer_error = oci::MODULE_IMAGE_REFUSAL.to_string();
             None
         } else {
             match oci::wasm_layer(&m) {
@@ -157,7 +158,7 @@ impl InspectCmd {
         if let Some(ml) = oci::manifest_layer(&m) {
             match fetch_manifest(&client, &ml) {
                 Ok(parsed) => {
-                    if wrapping {
+                    if module_image && !parsed.image.is_empty() {
                         info.image = Some(parsed.image.clone());
                     }
                     info.manifest = Some(parsed);
@@ -165,14 +166,10 @@ impl InspectCmd {
                 Err(e) => info.manifest_error = e,
             }
         }
-        if wrapping && info.image.is_none() {
-            info.module_layer_error =
-                "wraps an OCI image, but its manifest layer does not say which".to_string();
-        }
         out.reference = Some(info);
-        if self.pull && wrapping {
+        if self.pull && module_image {
             return Err(format!(
-                "{} wraps an OCI image (a type: oci module) and has no module layer to pull; the OCI runtime pulls the image its manifest pins",
+                "{} is an OCI image (an oci@1.0 module) and has no module file to pull; the OCI runtime, function-oci, pulls and boots it",
                 self.target
             ));
         }
@@ -227,7 +224,7 @@ impl InspectCmd {
                     crate::human_bytes(l.size as u64)
                 ),
                 (None, Some(image)) => println!(
-                    "  image: {image} (a type: oci module, which the OCI runtime, function-oci, serves)"
+                    "  module: an OCI image (oci@1.0), which the OCI runtime, function-oci, boots; built from {image}"
                 ),
                 (None, None) => println!(
                     "  module layer: none - the runtime would refuse it: {}",
@@ -281,13 +278,12 @@ pub(crate) fn fetch_manifest(
     client: &RegistryClient,
     layer: &Descriptor,
 ) -> Result<Manifest, String> {
-    let raw = client
-        .blob(
-            &layer.digest,
-            function_wasm::manifest::MAX_SIZE as u64,
-            "manifest layer",
-        )
+    let limit = function_wasm::manifest::MAX_SIZE as u64;
+    let blob = client
+        .blob(&layer.digest, 2 * limit, "manifest layer")
         .map_err(|e| format!("cannot fetch the manifest layer: {e}"))?;
+    let raw = oci::manifest_from_layer(layer, &blob, limit)
+        .map_err(|e| format!("the manifest layer is invalid: {e}"))?;
     Manifest::parse(&raw).map_err(|e| format!("the manifest layer is invalid: {e}"))
 }
 

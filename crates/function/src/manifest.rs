@@ -154,10 +154,10 @@ pub struct Manifest {
     pub name: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub version: String,
-    /// The image a `type: oci` module is, pinned by digest
-    /// (`ghcr.io/acme/tagger@sha256:…`): what the OCI runtime pulls and
-    /// boots. `guestfn push --image` writes it into the published manifest;
-    /// a `type: wasm` manifest must not carry it.
+    /// The image an `oci@1.0` module was built from, pinned by digest
+    /// (`ghcr.io/acme/tagger@sha256:…`): the one `guestfn push --image`
+    /// appended the manifest layer to, written into the published manifest
+    /// as provenance. A `wasm@1.0` manifest must not carry it.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub image: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -547,8 +547,8 @@ impl Manifest {
         if !h.is_empty() {
             parts.push(h);
         }
-        if let Some(Contract::Oci(_)) = self.contract {
-            parts.push("type oci".to_string());
+        if let Some(c @ Contract::Oci(_)) = self.contract {
+            parts.push(format!("contract {c}"));
             if !self.image.is_empty() {
                 parts.push(format!("image {}", self.image));
             }
@@ -639,10 +639,10 @@ impl Manifest {
     pub fn check_type(&self, served: &str) -> Result<(), String> {
         match (self.kind(), served) {
             (TYPE_OCI, TYPE_WASM) => Err(
-                "is a type: oci module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)".to_string(),
+                "is an oci@1.0 module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)".to_string(),
             ),
             (TYPE_WASM, TYPE_OCI) => Err(
-                "is a WebAssembly module (type wasm), which function-oci does not serve; function-wasm serves it".to_string(),
+                "is a WebAssembly module (wasm@1.0), which function-oci does not serve; function-wasm serves it".to_string(),
             ),
             (TYPE_OCI, TYPE_OCI)
                 if self
@@ -926,16 +926,16 @@ mod tests {
         assert!(oci.validate().is_ok());
         assert_eq!(
             oci.summary(),
-            "tagger 0.3.0, type oci, image ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"
+            "tagger 0.3.0, contract oci@1.0, image ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"
         );
         assert_eq!(
             oci.check_type(TYPE_WASM).unwrap_err(),
-            "is a type: oci module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)"
+            "is an oci@1.0 module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)"
         );
         assert!(oci.check_type(TYPE_OCI).is_ok());
         assert_eq!(
             wasm.check_type(TYPE_OCI).unwrap_err(),
-            "is a WebAssembly module (type wasm), which function-oci does not serve; function-wasm serves it"
+            "is a WebAssembly module (wasm@1.0), which function-oci does not serve; function-wasm serves it"
         );
         assert!(wasm.check_type(TYPE_WASM).is_ok());
         let egress = manifest(

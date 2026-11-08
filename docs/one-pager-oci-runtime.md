@@ -143,34 +143,36 @@ replaced it with no alias (decision 10).
 
 ### The artifact
 
-`guestfn push` publishes one artifact per module today. It has an
-`application/wasm` layer, the manifest as a second layer of media type
-`application/vnd.wasmfn.manifest.v1+json`, a WASM config that lists the
-layer digests, and the standard `org.opencontainers.image.*` annotations.
-An image's layers are its root filesystem, and a manifest layer would break
-every container runtime that pulls the image. The artifact for an `oci@1.0` module
-wraps the image instead:
+`guestfn push` publishes one artifact per WebAssembly module: the
+`application/wasm` layer and the manifest as a second layer of media type
+`application/vnd.guestfn.manifest.v1+json`, under a WASM config that lists
+the layer digests and the standard `org.opencontainers.image.*`
+annotations. `guestfn push` publishes an OCI module the same way, as the
+image plus one layer. `guestfn push <ref> --image <image@sha256:…>`
+appends a gzip tar layer holding the manifest at `/.guestfn/manifest.json`
+to the image's manifest. The layer's `diff_id` and a history entry go into
+the image config, and the annotation `io.crossplane.guestfn: manifest`
+onto the layer's descriptor, the way Crossplane's `xpkg append` adds a
+package's extensions. The result goes into the image's repository under
+the reference given. An index gets the layer in each of its platform
+manifests.
 
-- `artifactType: application/vnd.guestfn.module.v1`, the empty config
-  descriptor OCI 1.1 defines for artifacts, and one layer, the manifest,
-  under the generic media type `application/vnd.guestfn.manifest.v1+json`.
-- The manifest's `image` field references the image by digest:
-  `ghcr.io/acme/tagger@sha256:…`. `guestfn push` fills it in from the image
-  it pushed or from the digest the user passed.
+The appended layer is an ordinary filesystem layer. The image remains a
+valid OCI image that every container runtime pulls and runs. The Input
+pins the module's digest, which covers the image and the manifest, so one
+cosign signature covers both and the trust model doesn't change. The
+runtime finds the annotated layer in
+the manifest and reads that one small blob before it pulls the rest, so
+admission refuses before any layer comes down. An image with no such layer
+runs as a manifest-less module in the default sandbox, exactly as a bare
+`application/wasm` layer does. function-wasm refuses a module image by
+name, since the OCI runtime's package serves it.
 
-The Input pins the artifact's digest. The signature covers the artifact and
-the artifact covers the manifest. The manifest pins the image, and the
-runtime pulls the image by that digest with the step's pull credential. The
-trust chain the trust model record describes extends to the image without
-a second signature. An image index under the pinned image digest resolves
-to the node's platform.
-
-The generic media type replaces `application/vnd.wasmfn.manifest.v1+json`
-outright, for WebAssembly artifacts too, and the runtime reads the old one
-no longer. A WebAssembly artifact pushed by an older `guestfn` runs again
-after a push by the new one. When the Input references a plain image, with
-no wrapping artifact, the runtime runs it as a manifest-less module in the
-default sandbox, exactly as it runs a bare `application/wasm` layer today.
+The generic media type `application/vnd.guestfn.manifest.v1+json` replaced
+`application/vnd.wasmfn.manifest.v1+json` outright for WebAssembly
+artifacts, and the runtime reads the old one no longer. A WebAssembly
+artifact pushed by an older `guestfn` runs again after a push by the new
+one.
 
 ### The manifest
 
@@ -192,11 +194,13 @@ config:
 
 The other fields keep their meaning and their validation. `guestfn manifest
 validate` holds `image` to a digest-pinned reference and refuses it in a
-`type: wasm` manifest. `guestfn push --image <ref@sha256:…>` writes the pin
-into the published manifest and publishes the wrapping artifact, with no
-module file read. `guestfn inspect` names the image a wrapping artifact
-pins in place of a module layer, and `--pull` refuses it: the OCI runtime
-pulls the image. The file is `guestfn.yaml` for both types. The
+`wasm@1.0` manifest. `guestfn push --image <ref@sha256:…>` writes the
+image's digest into the published manifest as the module's provenance and
+appends the manifest to that image, with no module file read. `guestfn
+inspect` says that a module image is one and which image the manifest
+records as its origin, and `--pull` refuses it: the OCI runtime pulls and
+boots the image.
+The file is `guestfn.yaml` for both contracts. The
 rename from `wasmfn.yaml` goes through the scaffolds, the examples, the
 goldens, `module.manifestPath`'s documentation and the guests' pages in
 one change, with no alias.
@@ -506,10 +510,19 @@ package starts alpha on the shared release train.
 - **The manifest as an OCI 1.1 referrer of the image.** Standard, but the
   signature on the image wouldn't cover the manifest, the manifest would
   need its own signature, and the Input would pin the image rather than
-  the manifest. The wrapping artifact keeps one pinned digest and one
+  the manifest. The appended layer keeps one pinned digest and one
   signature.
-- **The manifest as a file inside the image.** Reading it needs a pull, and
-  admission couldn't refuse before the fetch. Rejected.
+- **A wrapping artifact beside the image.** The first build published the
+  manifest as the one layer of an artifact of its own (`artifactType`
+  `application/vnd.guestfn.module.v1` over the empty config) whose
+  manifest pinned the image. One pinned digest and one signature too, but
+  a second repository to name and sign and a second pull on every cold
+  load, and no container runtime could run the artifact. The owner chose
+  the appended layer on 2026-11-08 (decision 11).
+- **The manifest as a plain file inside the image.** Reading it needs a
+  pull of the layers, and admission couldn't refuse before the fetch. The
+  annotated layer is that file, found through the manifest and read on
+  its own.
 - **Snapshot and restore per image digest.** Firecracker restores a booted
   VM in tens of milliseconds, and libkrun has no snapshots. Deferred until
   cold boot measurements ask for it. The `Sandbox` trait leaves room.
@@ -527,8 +540,8 @@ The owner settled these on 2026-11-05:
    VM is under Alternatives.
 3. **Egress.** A TLS-decrypting proxy in the init with a per-run
    authority, for full rule parity on method and path.
-4. **The manifest's placement.** A wrapping artifact whose manifest pins
-   the image by digest.
+4. **The manifest's placement.** A layer of the image, found by its
+   annotation (first a wrapping artifact, revised by decision 11).
 5. **Names.** The `guestfn` namespace: `guestfn.yaml`, the media types
    under `vnd.guestfn`, the Input group `guestfn.crossplane.io/v1`, with
    no alias for the old names (the project is at 0.x).
@@ -545,6 +558,14 @@ The owner decided this on 2026-11-06:
     since the contract states the engine. A minor adds fields a module may
     use between versions; a major changes what the engine does with a
     module. The runtime refuses the old name as an unknown field.
+
+The owner decided this on 2026-11-08:
+
+11. **The appended layer.** `guestfn push --image` appends the manifest to
+    the image as one more layer, the way Crossplane's `xpkg append` adds a
+    package's extensions, instead of publishing a wrapping artifact beside
+    it. The image remains runnable and the module's digest covers image
+    and manifest, with one repository to name and sign.
 
 Open:
 
@@ -564,18 +585,19 @@ Open:
 2. Done in part. #244 renamed the manifest file and the media type. #246
    moved the Input group and generated the CRD. #247 added the manifest's
    `type` with its per-type contract, with `type: oci` refused by name.
-   The next PR made `abi` the `contract` enum, added the manifest's `image`
-   and the wrapping artifact's `artifactType`, which the runtime reads and
-   `guestfn push --image` writes, and taught `guestfn inspect` the
-   artifact. Left: `guestfn init` and `guestfn build` for `type: oci` (the
-   OCI scaffolds), with the contract check deferred to phase 3.
+   The next PR made `abi` the `contract` enum and added the manifest's
+   `image` with `guestfn push --image`, which first published a wrapping
+   artifact and now appends the manifest to the image as a layer (decision
+   11), read back by `guestfn inspect`. Left: `guestfn init` and `guestfn
+   build` for `oci@1.0` (the OCI scaffolds), with the contract check
+   deferred to phase 3.
 3. Done in part, as the spike's Firecracker prototype: the engine crate's
    `oci` module behind the `Sandbox` trait, the init and its protocol, the layer
    unpacking into squashfs, the VM lifecycle, the bounds, `function
    validate --resolve` for images, the `oci` Cargo feature of the
-   `function` crate with its flags, the image fetch of the resolver through the
-   wrapping artifact, and the env bindings and the credentials through the
-   init. Left: the libkrun prototype and the measurements, the contract
+   `function` crate with its flags, the image fetch of the resolver with the
+   manifest read out of the image's annotated layer, and the env bindings
+   and the credentials through the init. Left: the libkrun prototype and the measurements, the contract
    check in `guestfn build`, and the OCI scaffolds in the guest suite.
 4. Done: the `oci` e2e profile on a GitHub runner with KVM, as jobs of the
    `/e2e` workflow beside the `wasm` ones (a build job, the engine's VM suite

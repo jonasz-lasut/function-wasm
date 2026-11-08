@@ -78,14 +78,16 @@ by the manifest digest the Composition pins, and so by any cosign signature on
 it.
 
 For an `oci@1.0` manifest, `guestfn push <ref> --image <image@sha256:…>`
-publishes the wrapping artifact instead. Its one layer is the manifest with
-`image` set, under the artifact type `application/vnd.guestfn.module.v1`
-and OCI 1.1's empty config. The image itself is built and pushed by its own
-toolchain. The Composition pins the artifact, a signature covers it, and the
-manifest pins the image. The OCI runtime then pulls an image the signed
-manifest names. `guestfn inspect` names that image in place of a module
-layer. function-wasm refuses the artifact by name, since the OCI runtime's
-package serves it.
+appends the file to the image instead, as one more layer. The layer is a
+gzip tar holding `/.guestfn/manifest.json`, with its `diff_id` in the
+image config and its descriptor annotated `io.crossplane.guestfn:
+manifest`, and the result goes into the image's repository under the
+reference given. The image is built and pushed by its own toolchain first
+and remains runnable afterward. The Composition pins the result, a
+signature covers image and manifest together, and the runtime reads the
+manifest out of that one layer before it pulls the rest. `guestfn inspect`
+says that a module image is one. function-wasm refuses it by name, since
+the OCI runtime's package serves it.
 
 A `path` or `http` source has no OCI manifest layer. It can reference its
 `guestfn.yaml` instead, with `module.manifestPath` or `module.http.manifestURL`

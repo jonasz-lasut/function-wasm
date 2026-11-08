@@ -63,26 +63,31 @@ docker push ghcr.io/acme/tagger:v0.3.0
 # the digest: docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/acme/tagger:v0.3.0
 ```
 
-Then publish the module, the artifact that wraps the image:
+Then publish the module, the image with the manifest appended as one more
+layer, into the image's repository:
 
 ```sh
-guestfn push ghcr.io/acme/tagger-module:v0.3.0 --image ghcr.io/acme/tagger@sha256:…
+guestfn push ghcr.io/acme/tagger:v0.3.0-module --image ghcr.io/acme/tagger@sha256:…
 ```
 
-`guestfn push` reads `guestfn.yaml`, sets its `image`, and publishes the
-manifest as the one layer of an artifact under the type
-`application/vnd.guestfn.module.v1`. It prints the `module:` block for
-the Composition, pinned to the artifact's digest. Sign the artifact with
-cosign as you sign a WebAssembly module; the signature covers the manifest,
-and the manifest pins the image. An OCI module comes from a registry alone:
-the step's `module.type` is `OCI`, and `function-oci` refuses a `Path` or
-`HTTP` source by name.
+`guestfn push` reads `guestfn.yaml` and records the image's digest in its
+`image` field. It appends a gzip tar layer holding the manifest at
+`/.guestfn/manifest.json` to the image: the layer's `diff_id` goes into
+the image config and the annotation `io.crossplane.guestfn: manifest` onto
+its descriptor, the way Crossplane's `xpkg append` adds a package's
+extensions. The result is an image Docker still runs, and the command
+prints the `module:` block for the Composition, pinned to the new digest.
+Sign that digest with cosign as you sign a WebAssembly module: one
+signature covers the image and the manifest. An OCI module comes from a
+registry alone: the step's `module.type` is `OCI`, and `function-oci`
+refuses a `Path` or `HTTP` source by name.
 
-`guestfn inspect <ref>` describes the artifact and prints the image it
-pins. `function validate --resolve` pulls the image and prints the
-contract's verdict, as it does for a component. A plain image, with no
-wrapping artifact, runs too, in the default sandbox, as a bare
-`application/wasm` layer does.
+`guestfn inspect <ref>` says that a module image is one and which image
+the manifest records as its origin, and prints the manifest out of the
+layer. `function
+validate --resolve` pulls the image and prints the contract's verdict, as
+it does for a component. A plain image, with no manifest layer, runs too,
+in the default sandbox, as a bare `application/wasm` layer does.
 
 Images must use gzip or uncompressed layers (every builder's default) and
 target the node's platform. A multi-platform index resolves to the node's.

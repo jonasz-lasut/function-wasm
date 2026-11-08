@@ -66,9 +66,8 @@ impl ShowCmd {
             .map_err(|e| format!("cannot parse manifest {digest}: {e}"))?;
         let Some(ml) = oci::manifest_layer(&om) else {
             return Err(format!(
-                "{} carries no {} layer: it was pushed without a {} (guestfn push publishes the manifest beside the module)",
+                "{} carries no module manifest layer: it was pushed without a {} (guestfn push publishes the manifest beside a module, or as a layer of an image)",
                 self.r#ref,
-                oci::MANIFEST_LAYER_TYPE,
                 function_wasm::manifest::FILE_NAME
             ));
         };

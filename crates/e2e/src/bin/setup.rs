@@ -174,7 +174,9 @@ async fn main() -> Result<()> {
     let mut oci_variants = std::collections::BTreeMap::new();
     let mut oci_image = String::new();
     if let Some(path) = std::env::var_os("E2E_OCI_GUEST") {
-        step("pushing the test module as an image and under every oci variant");
+        step(
+            "pushing the test module as an image, then with every oci variant's manifest appended",
+        );
         let binary = std::fs::read(&path)
             .with_context(|| format!("reading E2E_OCI_GUEST {}", path.to_string_lossy()))?;
         let image = registry::image(&binary, guest::OCI_PROCESS_PATH, "65532:65532");
@@ -189,7 +191,7 @@ async fn main() -> Result<()> {
         println!("    {:<18} {oci_image}", "image");
         for variant in OCI_VARIANTS {
             let artifact =
-                registry::image_module_artifact(&variant.manifest_json_for(Some(&oci_image))?);
+                registry::module_image(&image, &variant.manifest_json_for(Some(&oci_image))?);
             let digest = pusher
                 .push(&variant.repository(), guest::TAG, &artifact)
                 .await

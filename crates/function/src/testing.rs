@@ -103,12 +103,25 @@ pub mod registry {
             self.manifest(&manifest)
         }
 
-        /// The wrapping artifact of a type: oci module: the empty config and
-        /// the module manifest as its one layer. Returns its digest.
-        pub fn image_module(&mut self, module_manifest: &[u8], title: &str) -> String {
-            let manifest = image_module_artifact(module_manifest, title);
-            self.blob(crate::oci::EMPTY_CONFIG);
-            self.blob(module_manifest);
+        /// An OCI module image as `guestfn push --image` publishes it: a
+        /// one-layer linux image for this host's architecture around a
+        /// placeholder command, plus the module manifest as an annotated
+        /// tar layer (docs/one-pager-oci-runtime.md). Returns its digest.
+        pub fn module_image(&mut self, module_manifest: &[u8], title: &str) -> String {
+            let (manifest, blobs) = module_image_blobs(module_manifest, title);
+            for b in &blobs {
+                self.blob(b);
+            }
+            self.manifest(&manifest)
+        }
+
+        /// A plain one-layer linux image, no manifest layer: what the OCI
+        /// runtime runs in the default sandbox. Returns its digest.
+        pub fn plain_image(&mut self, title: &str) -> String {
+            let (manifest, blobs) = plain_image_blobs(title);
+            for b in &blobs {
+                self.blob(b);
+            }
             self.manifest(&manifest)
         }
 
@@ -162,25 +175,77 @@ pub mod registry {
         serde_json::to_vec(&manifest).expect("manifest json")
     }
 
-    /// The OCI manifest of a type: oci module's wrapping artifact as
-    /// `guestfn push --image` shapes it (docs/one-pager-oci-runtime.md).
-    pub fn image_module_artifact(module_manifest: &[u8], title: &str) -> Vec<u8> {
-        let config = crate::oci::EMPTY_CONFIG;
+    /// A tar layer holding one regular file.
+    fn tar_layer(path: &str, content: &[u8], mode: u32) -> Vec<u8> {
+        let mut tar = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mode(mode);
+        header.set_mtime(0);
+        header.set_size(content.len() as u64);
+        header.set_cksum();
+        tar.append_data(&mut header, path.trim_start_matches('/'), content)
+            .expect("tar");
+        tar.into_inner().expect("tar")
+    }
+
+    const IMAGE_LAYER_TYPE: &str = "application/vnd.oci.image.layer.v1.tar";
+
+    /// The manifest and blobs (config, then layers) of a one-layer linux
+    /// image for this host around a placeholder command at /bin/guest,
+    /// with the module manifest appended as the annotated tar layer when
+    /// given, as `guestfn push --image` does.
+    fn image_blobs(module_manifest: Option<&[u8]>, title: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => "amd64",
+            "aarch64" => "arm64",
+            other => other,
+        };
+        let mut layers = vec![tar_layer("/bin/guest", b"#!/bin/sh\nexit 0\n", 0o755)];
+        let mut descriptors = vec![serde_json::json!({
+            "mediaType": IMAGE_LAYER_TYPE, "digest": digest_of(&layers[0]), "size": layers[0].len(),
+        })];
+        let mut history = vec![serde_json::json!({"created_by": "the test image"})];
+        if let Some(m) = module_manifest {
+            let layer = tar_layer(crate::oci::MANIFEST_LAYER_PATH, m, 0o444);
+            descriptors.push(serde_json::json!({
+                "mediaType": IMAGE_LAYER_TYPE, "digest": digest_of(&layer), "size": layer.len(),
+                "annotations": {crate::oci::MANIFEST_LAYER_ANNOTATION: crate::oci::MANIFEST_LAYER_ANNOTATION_VALUE},
+            }));
+            history.push(serde_json::json!({"created_by": "guestfn push --image", "comment": "the module manifest"}));
+            layers.push(layer);
+        }
+        let config = serde_json::to_vec(&serde_json::json!({
+            "architecture": arch,
+            "os": "linux",
+            "config": {"Entrypoint": ["/bin/guest"], "User": "65532:65532", "WorkingDir": "/"},
+            "rootfs": {"type": "layers", "diff_ids": layers.iter().map(|l| digest_of(l)).collect::<Vec<_>>()},
+            "history": history,
+        }))
+        .expect("config json");
         let mut manifest = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": OCI_MANIFEST_TYPE,
-            "artifactType": crate::oci::MODULE_ARTIFACT_TYPE,
-            "config": {"mediaType": crate::oci::EMPTY_CONFIG_TYPE, "digest": digest_of(config), "size": config.len()},
-            "layers": [{
-                "mediaType": MANIFEST_LAYER_TYPE,
-                "digest": digest_of(module_manifest),
-                "size": module_manifest.len(),
-            }],
+            "config": {"mediaType": crate::oci::IMAGE_CONFIG_TYPES[0], "digest": digest_of(&config), "size": config.len()},
+            "layers": descriptors,
         });
         if !title.is_empty() {
             manifest["annotations"] = serde_json::json!({"org.opencontainers.image.title": title});
         }
-        serde_json::to_vec(&manifest).expect("manifest json")
+        let mut blobs = vec![config];
+        blobs.extend(layers);
+        (serde_json::to_vec(&manifest).expect("manifest json"), blobs)
+    }
+
+    /// The manifest and blobs of an OCI module image: the test image with
+    /// the module manifest as its annotated layer.
+    pub fn module_image_blobs(module_manifest: &[u8], title: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
+        image_blobs(Some(module_manifest), title)
+    }
+
+    /// The manifest and blobs of the plain test image.
+    pub fn plain_image_blobs(title: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
+        image_blobs(None, title)
     }
 }
 

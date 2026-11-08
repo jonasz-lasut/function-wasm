@@ -51,7 +51,7 @@ async fn an_unsigned_image_module_is_refused() -> Result<()> {
 }
 
 /// A WebAssembly artifact pointed at function-oci: refused by name, with
-/// the package that serves it.
+/// the package that serves it, before anything is pulled.
 #[tokio::test]
 async fn a_wasm_module_is_refused_by_name() -> Result<()> {
     with_temp_ns("oci-wasm", |ns| async move {
@@ -60,7 +60,7 @@ async fn a_wasm_module_is_refused_by_name() -> Result<()> {
         let guest = ns.guest("probe", &step, json!({})).await?;
         let message = guest.wait_fatal(WAIT).await?;
         ensure!(
-            message.contains("is a WebAssembly module (type wasm), which function-oci does not serve; function-wasm serves it"),
+            message.contains("is a WebAssembly artifact, which function-oci does not serve; function-wasm serves it"),
             "{message}"
         );
         Ok(())
