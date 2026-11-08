@@ -1,5 +1,5 @@
 # The read fence (requireResource): the first step's compositionPolicy
-# scopes it (the policy-gate rule: the module may read the EnvironmentConfig
+# scopes it (the function-wasm-ts rule: the module may read the EnvironmentConfig
 # its XR names and nothing else), so validate marks the step; the second
 # scopes nothing. Only a run can judge a module's resource selectors, so both
 # steps are admitted.

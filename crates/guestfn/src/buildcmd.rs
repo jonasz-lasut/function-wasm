@@ -357,7 +357,7 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
             }
         }
         scaffold::LANG_PYTHON => {
-            // The layout the python scaffold writes (examples/team-tags):
+            // The layout the python scaffold writes (examples/function-wasm-python):
             // the app module under src/, the generated codec under src/gen,
             // the world in wit/, componentize-py pinned in requirements.txt.
             which("python3", "install Python from https://www.python.org")?;

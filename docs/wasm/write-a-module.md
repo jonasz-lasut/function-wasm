@@ -35,7 +35,7 @@ calls your `RunFunction` and encodes the response. It also provides a
 bindings under `internal/bindings` are written by
 [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) and checked in.
 
-[`examples/pdb-addon`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/pdb-addon)
+[`examples/function-wasm-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-go)
 is a Go module built on what `guestfn init` writes. Its `internal/wasmfn`,
 `wit/` and `internal/bindings` are the scaffold's, byte for byte.
 

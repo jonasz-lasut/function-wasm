@@ -28,7 +28,10 @@ use serde_json::json;
 
 /// The published pdb-addon: signed keyless by this repository's release
 /// workflow (the real keyless signature) and large enough for the
-/// lifecycle profile's warm-up and cache cases to be observable.
+/// lifecycle profile's warm-up and cache cases to be observable. The
+/// example is `examples/function-wasm-go` since #263; the pin moves to the
+/// repository of that name with the first `Publish Examples` run after the
+/// rename, and keeps the published name until then.
 const PDB_ADDON: &str = "ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon@sha256:f80a8364a61555f02d1429a17af9feaf0e9e8505c8fbb0d64589f84b05b14346";
 const REGISTRY_IMAGE: &str = "registry:3";
 /// The device plugin that admits the node's /dev/kvm into function-oci's

@@ -1,0 +1,6 @@
+{
+  "warn-list": "-44-implicit_impl_as_method-deprecated_syntax-deprecated",
+  "import": [
+    { "path": "jonasz-lasut/function-wasm-moonbit/wasmfn", "alias": "wasmfn" }
+  ]
+}

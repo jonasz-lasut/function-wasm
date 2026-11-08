@@ -1,5 +1,5 @@
 # The output fence (composeResource): the first step's compositionPolicy
-# scopes it (the pdb-addon rule: the module may add disruption budgets and
+# scopes it (the function-wasm-go rule: the module may add disruption budgets and
 # touch nothing else), so validate marks the step; the second scopes nothing.
 # Only a run can judge a module's output, so both steps are admitted.
 apiVersion: apiextensions.crossplane.io/v1

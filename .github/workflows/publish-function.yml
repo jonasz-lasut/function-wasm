@@ -101,7 +101,7 @@ jobs:
         # same directory, as its Makefile target does: the package needs a
         # root of example objects and the examples belong to the project, not
         # to one runtime.
-        run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=${{ env.PACKAGE_ROOT }} --examples-root=examples/pdb-addon/example --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
+        run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=${{ env.PACKAGE_ROOT }} --examples-root=examples/function-wasm-go/example --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
 
       - name: Upload Single-Platform Package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

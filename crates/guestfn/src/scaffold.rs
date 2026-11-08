@@ -264,16 +264,16 @@ mod tests {
     /// the generated codecs, the proto and the WIT - and must carry it byte
     /// for byte, so a plumbing fix lands in the template and the example
     /// together. Everything else (the function itself, guestfn.yaml, the
-    /// README, the example manifests) is the example's own. hello-moonbit has
+    /// README, the example manifests) is the example's own. function-wasm-moonbit has
     /// no scaffold of its own: its wit/ is the c scaffold's (wit-bindgen's
     /// MoonBit generator reads the same world), and its proto copy is held
     /// by the root Makefile's glob and Renovate's header rule under its own
-    /// header, like dashboard-bundle's.
+    /// header, like function-wasm-csharp's.
     #[test]
     fn examples_share_the_scaffold_plumbing() {
         let examples: [(&str, &[&str], Options); 9] = [
             (
-                "pdb-addon",
+                "function-wasm-go",
                 &[
                     "internal/wasmfn/",
                     "internal/bindings/",
@@ -282,22 +282,22 @@ mod tests {
                 ],
                 Options {
                     lang: LANG_GO.into(),
-                    module: "github.com/jonasz-lasut/guestfn/examples/pdb-addon".into(),
+                    module: "github.com/jonasz-lasut/guestfn/examples/function-wasm-go".into(),
                     go_version: "1.26.6".into(),
                     ..Default::default()
                 },
             ),
             (
-                "cloudflare-origin",
+                "function-wasm-rust",
                 &["proto/", "wit/deps/", "build.rs", "rust-toolchain.toml"],
                 Options {
                     lang: LANG_RUST.into(),
-                    name: "cloudflare-origin".into(),
+                    name: "function-wasm-rust".into(),
                     ..Default::default()
                 },
             ),
             (
-                "hello-zig",
+                "function-wasm-zig",
                 &[
                     "proto/",
                     "wit/",
@@ -309,12 +309,12 @@ mod tests {
                 ],
                 Options {
                     lang: LANG_ZIG.into(),
-                    name: "hello-zig".into(),
+                    name: "function-wasm-zig".into(),
                     ..Default::default()
                 },
             ),
             (
-                "hello-c",
+                "function-wasm-c",
                 &[
                     "proto/",
                     "wit/",
@@ -326,7 +326,7 @@ mod tests {
                 ],
                 Options {
                     lang: LANG_C.into(),
-                    name: "hello-c".into(),
+                    name: "function-wasm-c".into(),
                     ..Default::default()
                 },
             ),
@@ -334,7 +334,7 @@ mod tests {
             // adapter and glue are the c flavour's byte for byte, its
             // logic is its own.
             (
-                "cert-rotator",
+                "function-wasm-cpp",
                 &[
                     "proto/",
                     "wit/",
@@ -345,7 +345,7 @@ mod tests {
                 ],
                 Options {
                     lang: LANG_C.into(),
-                    name: "cert-rotator".into(),
+                    name: "function-wasm-cpp".into(),
                     ..Default::default()
                 },
             ),
@@ -353,38 +353,38 @@ mod tests {
             // the world through the c flavour's bindings and codec, which
             // it carries byte for byte; its glue and build are its own.
             (
-                "hello-odin",
+                "function-wasm-odin",
                 &["proto/", "wit/", "src/fnv1/", "src/gen/"],
                 Options {
                     lang: LANG_C.into(),
-                    name: "hello-odin".into(),
+                    name: "function-wasm-odin".into(),
                     ..Default::default()
                 },
             ),
             (
-                "hello-moonbit",
+                "function-wasm-moonbit",
                 &["wit/"],
                 Options {
                     lang: LANG_C.into(),
-                    name: "hello-moonbit".into(),
+                    name: "function-wasm-moonbit".into(),
                     ..Default::default()
                 },
             ),
             (
-                "policy-gate",
+                "function-wasm-ts",
                 &["proto/", "src/gen/", "src/log.d.ts"],
                 Options {
                     lang: LANG_TS.into(),
-                    name: "policy-gate".into(),
+                    name: "function-wasm-ts".into(),
                     ..Default::default()
                 },
             ),
             (
-                "team-tags",
+                "function-wasm-python",
                 &["proto/", "src/gen/", "wit/deps/"],
                 Options {
                     lang: LANG_PYTHON.into(),
-                    name: "team-tags".into(),
+                    name: "function-wasm-python".into(),
                     ..Default::default()
                 },
             ),

@@ -26,8 +26,8 @@ make vale
 These need Go, Docker or kind on your machine:
 
 ```shell
-(cd examples/pdb-addon && go test ./...)
-make -C examples/pdb-addon render
+(cd examples/function-wasm-go && go test ./...)
+make -C examples/function-wasm-go render
 make e2e
 ```
 

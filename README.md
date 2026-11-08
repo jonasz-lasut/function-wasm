@@ -103,18 +103,18 @@ the toolchain, the scaffolded module's size and an example.
 
 | `guestfn init --lang` | toolchain | module size | example |
 |---|---|---|---|
-| `go` (default) | Go + function-sdk-go | ~75 MB | [`examples/pdb-addon`](examples/pdb-addon) |
-| `rust` | Rust 1.100+, `wasm32-wasip3` | ~240 KB | [`examples/cloudflare-origin`](examples/cloudflare-origin) |
-| `zig` | Zig 0.16 | ~60 KB | [`examples/hello-zig`](examples/hello-zig) |
-| `c` | C via `zig cc` | ~62 KB | [`examples/hello-c`](examples/hello-c) |
-| `ts` | node + npm (esbuild, jco) | ~14 MB | [`examples/policy-gate`](examples/policy-gate) |
-| `python` | `python3` (componentize-py) | ~21 MB | [`examples/team-tags`](examples/team-tags) |
+| `go` (default) | Go + function-sdk-go | ~75 MB | [`examples/function-wasm-go`](examples/function-wasm-go) |
+| `rust` | Rust 1.100+, `wasm32-wasip3` | ~240 KB | [`examples/function-wasm-rust`](examples/function-wasm-rust) |
+| `zig` | Zig 0.16 | ~60 KB | [`examples/function-wasm-zig`](examples/function-wasm-zig) |
+| `c` | C via `zig cc` | ~62 KB | [`examples/function-wasm-c`](examples/function-wasm-c) |
+| `ts` | node + npm (esbuild, jco) | ~14 MB | [`examples/function-wasm-ts`](examples/function-wasm-ts) |
+| `python` | `python3` (componentize-py) | ~21 MB | [`examples/function-wasm-python`](examples/function-wasm-python) |
 
 C#, C++, Odin and MoonBit exist as examples only
-([`examples/dashboard-bundle`](examples/dashboard-bundle),
-[`examples/cert-rotator`](examples/cert-rotator),
-[`examples/hello-odin`](examples/hello-odin),
-[`examples/hello-moonbit`](examples/hello-moonbit)). Any toolchain that
+([`examples/function-wasm-csharp`](examples/function-wasm-csharp),
+[`examples/function-wasm-cpp`](examples/function-wasm-cpp),
+[`examples/function-wasm-odin`](examples/function-wasm-odin),
+[`examples/function-wasm-moonbit`](examples/function-wasm-moonbit)). Any toolchain that
 produces a component for the world can target the runtime.
 [Other languages](https://jonasz-lasut.github.io/guestfn/wasm/other-languages.html) lists what each needs.
 

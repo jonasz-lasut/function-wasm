@@ -180,7 +180,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           cache: false
-          go-version-file: examples/pdb-addon/go.mod
+          go-version-file: examples/function-wasm-go/go.mod
 
       # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
       # below: the setup action picks a community mirror and has hung for
@@ -246,7 +246,7 @@ jobs:
   # composes is asserted by nothing here: the cluster job below drives the
   # suite's own module through Crossplane.
   #
-  # The Go guest, an ABI v2 component: the pdb-addon use case. go build
+  # The Go guest, an ABI v2 component: the function-wasm-go use case. go build
   # emits the wasip1 core module and guestfn embeds its world and wraps it
   # (no componentize-go, no wasm-tools); wit-bindgen is only needed to
   # regenerate the checked-in Go bindings, which this job does to catch
@@ -286,7 +286,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           cache: false
-          go-version-file: examples/pdb-addon/go.mod
+          go-version-file: examples/function-wasm-go/go.mod
 
       - name: Cache the Go Modules and Build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -294,7 +294,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: e2e-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/pdb-addon/go.sum') }}
+          key: e2e-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-go/go.sum') }}
           restore-keys: |
             e2e-go-${{ runner.os }}-${{ runner.arch }}-
 
@@ -307,11 +307,11 @@ jobs:
           echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
-        working-directory: examples/pdb-addon
+        working-directory: examples/function-wasm-go
         run: |
           make gen-bindings
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/pdb-addon/internal/bindings is not up to date with its wit; commit the result of make gen-bindings (at the root, which also mirrors it into the go template):"
+            echo "examples/function-wasm-go/internal/bindings is not up to date with its wit; commit the result of make gen-bindings (at the root, which also mirrors it into the go template):"
             git status --porcelain
             git diff
             exit 1
@@ -321,14 +321,14 @@ jobs:
       # output, whose pointer arithmetic over the wasm linear memory is what
       # vet's unsafeptr check flags.
       - name: Build, Vet and Test the Example Guest
-        working-directory: examples/pdb-addon
+        working-directory: examples/function-wasm-go
         run: |
           make build
           go vet $(go list ./... | grep -v /internal/bindings/)
           go test -race ./...
 
   # The Rust guest, an ABI v2 component (wasm32-wasip3 on the toolchain its
-  # rust-toolchain.toml pins): the cloudflare-origin use case.
+  # rust-toolchain.toml pins): the function-wasm-rust use case.
   build-rust:
     name: build (rust)
     runs-on: ubuntu-26.04
@@ -373,9 +373,9 @@ jobs:
         with:
           prefix-key: e2e-rust
           cache-on-failure: true
-          workspaces: examples/cloudflare-origin
+          workspaces: examples/function-wasm-rust
       - name: Build, Lint and Test the ABI v2 Rust Guest
-        run: make -C examples/cloudflare-origin build lint test
+        run: make -C examples/function-wasm-rust build lint test
 
   # The same guest in Zig, an ABI v2 component: zig-protobuf over the
   # vendored proto and wit-bindgen's C bindings over its world (the c
@@ -440,16 +440,16 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/zig
-          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/hello-zig/build.zig.zon', 'examples/hello-c/build.zig.zon', 'examples/hello-odin/build.zig.zon', 'examples/cert-rotator/build.zig.zon') }}
+          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/function-wasm-zig/build.zig.zon', 'examples/function-wasm-c/build.zig.zon', 'examples/function-wasm-odin/build.zig.zon', 'examples/function-wasm-cpp/build.zig.zon') }}
           restore-keys: |
             e2e-zig-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check Generated Codec
-        working-directory: examples/hello-zig
+        working-directory: examples/function-wasm-zig
         run: |
           zig build gen-proto
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/hello-zig/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            echo "examples/function-wasm-zig/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
             git status --porcelain
             git diff
             exit 1
@@ -464,18 +464,18 @@ jobs:
           echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
-        working-directory: examples/hello-zig
+        working-directory: examples/function-wasm-zig
         run: |
           zig build gen-bindings
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/hello-zig/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
+            echo "examples/function-wasm-zig/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
             git status --porcelain
             git diff
             exit 1
           fi
 
       - name: Build, Lint and Test the Zig Guest
-        run: make -C examples/hello-zig lint test build
+        run: make -C examples/function-wasm-zig lint test build
 
   # The same guest in C, an ABI v2 component: nanopb over the vendored proto
   # and wit-bindgen's C bindings over its world, compiled by zig cc behind
@@ -554,16 +554,16 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/zig
-          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/hello-zig/build.zig.zon', 'examples/hello-c/build.zig.zon', 'examples/hello-odin/build.zig.zon', 'examples/cert-rotator/build.zig.zon') }}
+          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/function-wasm-zig/build.zig.zon', 'examples/function-wasm-c/build.zig.zon', 'examples/function-wasm-odin/build.zig.zon', 'examples/function-wasm-cpp/build.zig.zon') }}
           restore-keys: |
             e2e-zig-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check Generated Codec
-        working-directory: examples/hello-c
+        working-directory: examples/function-wasm-c
         run: |
           zig build gen-proto
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/hello-c/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            echo "examples/function-wasm-c/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
             git status --porcelain
             git diff
             exit 1
@@ -578,20 +578,20 @@ jobs:
           echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
-        working-directory: examples/hello-c
+        working-directory: examples/function-wasm-c
         run: |
           zig build gen-bindings
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/hello-c/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
+            echo "examples/function-wasm-c/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
             git status --porcelain
             git diff
             exit 1
           fi
 
       - name: Build, Lint and Test the C Guest
-        run: make -C examples/hello-c lint test build
+        run: make -C examples/function-wasm-c lint test build
 
-  # The cert-rotator example in C++, an ABI v2 component on the c flavour's
+  # The function-wasm-cpp example in C++, an ABI v2 component on the c flavour's
   # plumbing (its C bindings, nanopb codec, WIT and proto byte for byte):
   # zig c++ compiles the logic over mbedTLS, zig cc the C adapter and the
   # glue, build.zig fetches both libraries, and guestfn wraps the core
@@ -668,16 +668,16 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/zig
-          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/hello-zig/build.zig.zon', 'examples/cert-rotator/build.zig.zon', 'examples/hello-odin/build.zig.zon', 'examples/cert-rotator/build.zig.zon') }}
+          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/function-wasm-zig/build.zig.zon', 'examples/function-wasm-cpp/build.zig.zon', 'examples/function-wasm-odin/build.zig.zon', 'examples/function-wasm-cpp/build.zig.zon') }}
           restore-keys: |
             e2e-zig-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check Generated Codec
-        working-directory: examples/cert-rotator
+        working-directory: examples/function-wasm-cpp
         run: |
           zig build gen-proto
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/cert-rotator/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            echo "examples/function-wasm-cpp/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
             git status --porcelain
             git diff
             exit 1
@@ -692,18 +692,18 @@ jobs:
           echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
-        working-directory: examples/cert-rotator
+        working-directory: examples/function-wasm-cpp
         run: |
           zig build gen-bindings
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/cert-rotator/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
+            echo "examples/function-wasm-cpp/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
             git status --porcelain
             git diff
             exit 1
           fi
 
       - name: Build, Lint and Test the C++ Guest
-        run: make -C examples/cert-rotator lint test build
+        run: make -C examples/function-wasm-cpp lint test build
 
   # The same guest in Odin, an ABI v2 component on the c flavour's plumbing
   # (its C bindings, nanopb codec, WIT and proto byte for byte): odin
@@ -787,16 +787,16 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/zig
-          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/hello-zig/build.zig.zon', 'examples/hello-c/build.zig.zon', 'examples/hello-odin/build.zig.zon', 'examples/cert-rotator/build.zig.zon') }}
+          key: e2e-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/function-wasm-zig/build.zig.zon', 'examples/function-wasm-c/build.zig.zon', 'examples/function-wasm-odin/build.zig.zon', 'examples/function-wasm-cpp/build.zig.zon') }}
           restore-keys: |
             e2e-zig-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check Generated Codec
-        working-directory: examples/hello-odin
+        working-directory: examples/function-wasm-odin
         run: |
           zig build gen-proto
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/hello-odin/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            echo "examples/function-wasm-odin/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
             git status --porcelain
             git diff
             exit 1
@@ -811,11 +811,11 @@ jobs:
           echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
-        working-directory: examples/hello-odin
+        working-directory: examples/function-wasm-odin
         run: |
           zig build gen-bindings
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/hello-odin/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
+            echo "examples/function-wasm-odin/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
             git status --porcelain
             git diff
             exit 1
@@ -832,7 +832,7 @@ jobs:
           "${RUNNER_TEMP}/odin/odin" version
 
       - name: Build, Lint and Test the Odin Guest
-        working-directory: examples/hello-odin
+        working-directory: examples/function-wasm-odin
         run: |
           zig fmt --check build.zig
           zig build lint
@@ -923,11 +923,11 @@ jobs:
       # protoc-gen-mbt is not installed: the Makefile runs the pinned release
       # through moonx, which fetches it into ~/.moon's registry.
       - name: Check Generated Codec
-        working-directory: examples/hello-moonbit
+        working-directory: examples/function-wasm-moonbit
         run: |
           make gen-proto
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/hello-moonbit/src/fnv1 is not up to date with its proto; commit the result of make gen-proto:"
+            echo "examples/function-wasm-moonbit/src/fnv1 is not up to date with its proto; commit the result of make gen-proto:"
             git status --porcelain
             git diff
             exit 1
@@ -942,20 +942,20 @@ jobs:
           echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
-        working-directory: examples/hello-moonbit
+        working-directory: examples/function-wasm-moonbit
         run: |
           make gen-bindings
           if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/hello-moonbit/src bindings are not up to date with its wit; commit the result of make gen-bindings:"
+            echo "examples/function-wasm-moonbit/src bindings are not up to date with its wit; commit the result of make gen-bindings:"
             git status --porcelain
             git diff
             exit 1
           fi
 
       - name: Build, Lint and Test the MoonBit Guest
-        run: make -C examples/hello-moonbit build lint test
+        run: make -C examples/function-wasm-moonbit build lint test
 
-  # The TypeScript guest, an ABI v2 component (jco): the policy-gate use
+  # The TypeScript guest, an ABI v2 component (jco): the function-wasm-ts use
   # case.
   build-ts:
     name: build (ts)
@@ -992,14 +992,14 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.npm
-          key: e2e-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/policy-gate/package-lock.json') }}
+          key: e2e-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-ts/package-lock.json') }}
           restore-keys: |
             e2e-npm-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build and Test the TypeScript Guest
-        run: make -C examples/policy-gate build test
+        run: make -C examples/function-wasm-ts build test
 
-  # The Python guest, an ABI v2 component (componentize-py): the team-tags
+  # The Python guest, an ABI v2 component (componentize-py): the function-wasm-python
   # use case.
   build-python:
     name: build (python)
@@ -1031,15 +1031,15 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pip
-          key: e2e-pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/team-tags/requirements.txt') }}
+          key: e2e-pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-python/requirements.txt') }}
           restore-keys: |
             e2e-pip-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build and Test the Python Guest
-        run: make -C examples/team-tags build test
+        run: make -C examples/function-wasm-python build test
 
   # The C# guest, an ABI v2 component from componentize-dotnet: the
-  # dashboard-bundle use case.
+  # function-wasm-csharp use case.
   build-dotnet:
     name: build (dotnet)
     runs-on: ubuntu-26.04
@@ -1078,12 +1078,12 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
-          key: e2e-nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/dashboard-bundle/Directory.Packages.props', 'examples/dashboard-bundle/**/*.csproj') }}
+          key: e2e-nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-csharp/Directory.Packages.props', 'examples/function-wasm-csharp/**/*.csproj') }}
           restore-keys: |
             e2e-nuget-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build, Lint and Test the C# Guest
-        run: make -C examples/dashboard-bundle build lint test
+        run: make -C examples/function-wasm-csharp build lint test
 
   # The OCI runtime's pieces (docs/one-pager-oci-runtime.md), built once
   # and handed to the two jobs below as one artifact: the runtime with its

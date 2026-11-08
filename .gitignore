@@ -6,7 +6,7 @@
 !/crates/e2e/guest/fn.wasm
 # Native builds of the example guests (`go build` in their directories names
 # the binary after the directory); only their fn.wasm is meaningful.
-/examples/pdb-addon/pdb-addon
+/examples/function-wasm-go/function-wasm-go
 .zig-cache
 zig-out
 zig-pkg

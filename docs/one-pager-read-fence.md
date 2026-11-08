@@ -96,7 +96,7 @@ Both layers judge the action as they judge `composeResource`:
 The operator layer keeps the scoped default-permit here for the reason the
 output fence recorded. No rule judged the selectors before this change. A
 default-deny would refuse, on upgrade, every module that requests an
-EnvironmentConfig, the policy-gate example included. A runtime with no
+EnvironmentConfig, the function-wasm-ts example included. A runtime with no
 policy file and a Composition with no rule for the action pay one boolean
 per response.
 
@@ -161,7 +161,7 @@ three places that read `composes`:
 `guestfn build` and `guestfn manifest validate` refuse a `kind` that isn't
 `<group>/<Kind>`, a `by` entry other than `name` and `labels`, and an
 unknown field inside an entry, the strict decode the rest of `requires`
-gets. The policy-gate
+gets. The function-wasm-ts
 example and the end-to-end guest declare their EnvironmentConfig read, the
 example's version bumped so the published artifact contains it.
 
@@ -281,7 +281,7 @@ reads on upgrade, which is what its author wrote.
   that forwards the caller's bytes.
 - Default-deny in the operator layer. Rejected for the reason recorded for
   the output fence. The modules that read an EnvironmentConfig today, the
-  policy-gate example and the end-to-end guest, would stop on upgrade.
+  function-wasm-ts example and the end-to-end guest, would stop on upgrade.
 - Labels as a set of `key=value` strings. Rejected. A record keeps `has`
   and equality natural, and a set would make a rule parse strings.
 - Skipping a response with a fatal result, as the output fence does.

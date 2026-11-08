@@ -61,7 +61,7 @@ jobs:
   # in its guestfn.yaml, independent of the runtime's: a version already
   # published is never pushed again, so a run publishes only the examples
   # whose version moved, and a published tag stays immutable. Only the
-  # examples that work as published are here: team-tags and dashboard-bundle
+  # examples that work as published are here: function-wasm-python and function-wasm-csharp
   # request egress to placeholder hosts their users replace before
   # publishing their own.
   publish-examples:
@@ -77,11 +77,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: cloudflare-origin
+          - name: function-wasm-rust
             toolchain: rust
-          - name: policy-gate
+          - name: function-wasm-ts
             toolchain: node
-          - name: pdb-addon
+          - name: function-wasm-go
             toolchain: go
     env:
       REPOSITORY: jonasz-lasut/wasmfn/examples/${{ matrix.name }}
@@ -145,14 +145,14 @@ jobs:
           name: guestfn
           path: ${{ runner.temp }}/guestfn
 
-      # pdb-addon's Makefile builds through guestfn; the push below uses it too.
+      # function-wasm-go's Makefile builds through guestfn; the push below uses it too.
       - name: Use the Prebuilt guestfn
         if: steps.registry.outputs.publish == 'true'
         run: |
           chmod +x "${RUNNER_TEMP}/guestfn/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/guestfn/guestfn" >> "$GITHUB_ENV"
 
-      # cloudflare-origin's rust-toolchain.toml brings its own toolchain and
+      # function-wasm-rust's rust-toolchain.toml brings its own toolchain and
       # target; prost-build needs protoc.
       - name: Setup Rust
         if: steps.registry.outputs.publish == 'true' && matrix.toolchain == 'rust'

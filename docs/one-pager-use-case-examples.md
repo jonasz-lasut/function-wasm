@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.8 (the examples publish on their own, by hand, apart from the release, #245; rewritten in the present tense over the Rust workspace; the cluster-tier E2E question answered)
+* Status: implemented, revision 1.9 (the examples named `function-<runtime>-<lang>` and the `function-oci-go` example, #263; the examples publish on their own, by hand, apart from the release, #245)
 * Tracking: https://github.com/jonasz-lasut/guestfn/issues/112
 
 ## Context
@@ -58,23 +58,23 @@ An example belongs here when its use case needs at least one of these.
 
 | Example | Language | Use case | What it shows | Demand |
 |---|---|---|---|---|
-| [`cloudflare-origin`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/cloudflare-origin) | Rust (async, `wasi:http` 0.3) | Only Cloudflare may connect to an origin: a security group plus one ingress rule per range Cloudflare publishes, read at reconcile time | Egress through the host under both policy layers, the block list, conditional resources | [`crossplane#2712`](https://github.com/crossplane/crossplane/issues/2712) (conditional resources); Terraform's `data "http"` over Cloudflare's lists |
-| [`policy-gate`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/policy-gate) | TypeScript | The organisation's policy as the last step: mandatory tags, allowed regions and instance classes per environment | `requirements` through the wire-level proxy, fatal versus warning results | [`crossplane#1225`](https://github.com/crossplane/crossplane/issues/1225), [discussion #2617](https://github.com/crossplane/crossplane/discussions/2617), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
-| [`pdb-addon`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/pdb-addon) | Go (function-sdk-go) | A tenant add-on hook: a `WebApp` Composition's last step runs the module the XR names; this add-on derives a PodDisruptionBudget from the desired Deployment | `module.from`, `allowEmpty`, the `pullModule` fence, the default sandbox | [`function-go-templating#24`](https://github.com/crossplane-contrib/function-go-templating/issues/24), [`crossplane#6139`](https://github.com/crossplane/crossplane/issues/6139) (staggered rollout), [`crossplane#2524`](https://github.com/crossplane/crossplane/issues/2524) |
-| [`team-tags`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/team-tags) | Python | Team metadata from a CMDB, looked up with that team's own token from one shared Secret keyed by the XR's namespace | Step credentials, egress with an Authorization header, the composition layer fencing where tokens may go | [`crossplane#2099`](https://github.com/crossplane/crossplane/issues/2099), [`crossplane#7343`](https://github.com/crossplane/crossplane/issues/7343), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
-| [`dashboard-bundle`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/dashboard-bundle) | C# | Dashboards as code: a sha256-pinned zip of Grafana dashboards unpacked into one sidecar-labelled ConfigMap per dashboard | The private `/tmp`, egress, integrity pinning, refusing archive entries that escape | Grafana's dashboard sidecar, delivered as a versioned bundle |
-| [`cert-rotator`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/cert-rotator) | C++ (mbedTLS) | A TLS Secret's self-signed certificate kept fresh: read through the response's `requirements`, reissued with a fresh P-256 key once fewer than `renewBeforeDays` remain | The read fence and the output fence scoped together, `requires.resources` and `composes` in the manifest, a C adapter over the generated structs | Self-signed certificates for internal services, rotated without cert-manager |
+| [`function-wasm-rust`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-rust) | Rust (async, `wasi:http` 0.3) | Only Cloudflare may connect to an origin: a security group plus one ingress rule per range Cloudflare publishes, read at reconcile time | Egress through the host under both policy layers, the block list, conditional resources | [`crossplane#2712`](https://github.com/crossplane/crossplane/issues/2712) (conditional resources); Terraform's `data "http"` over Cloudflare's lists |
+| [`function-wasm-ts`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-ts) | TypeScript | The organisation's policy as the last step: mandatory tags, allowed regions and instance classes per environment | `requirements` through the wire-level proxy, fatal versus warning results | [`crossplane#1225`](https://github.com/crossplane/crossplane/issues/1225), [discussion #2617](https://github.com/crossplane/crossplane/discussions/2617), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
+| [`function-wasm-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-go) | Go (function-sdk-go) | A tenant add-on hook: a `WebApp` Composition's last step runs the module the XR names; this add-on derives a PodDisruptionBudget from the desired Deployment | `module.from`, `allowEmpty`, the `pullModule` fence, the default sandbox | [`function-go-templating#24`](https://github.com/crossplane-contrib/function-go-templating/issues/24), [`crossplane#6139`](https://github.com/crossplane/crossplane/issues/6139) (staggered rollout), [`crossplane#2524`](https://github.com/crossplane/crossplane/issues/2524) |
+| [`function-wasm-python`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-python) | Python | Team metadata from a CMDB, looked up with that team's own token from one shared Secret keyed by the XR's namespace | Step credentials, egress with an Authorization header, the composition layer fencing where tokens may go | [`crossplane#2099`](https://github.com/crossplane/crossplane/issues/2099), [`crossplane#7343`](https://github.com/crossplane/crossplane/issues/7343), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
+| [`function-wasm-csharp`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-csharp) | C# | Dashboards as code: a sha256-pinned zip of Grafana dashboards unpacked into one sidecar-labelled ConfigMap per dashboard | The private `/tmp`, egress, integrity pinning, refusing archive entries that escape | Grafana's dashboard sidecar, delivered as a versioned bundle |
+| [`function-wasm-cpp`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-cpp) | C++ (mbedTLS) | A TLS Secret's self-signed certificate kept fresh: read through the response's `requirements`, reissued with a fresh P-256 key once fewer than `renewBeforeDays` remain | The read fence and the output fence scoped together, `requires.resources` and `composes` in the manifest, a C adapter over the generated structs | Self-signed certificates for internal services, rotated without cert-manager |
 
 Design choices to keep:
 
 - **A failed external read is a fatal result, never an empty answer.**
-  Crossplane applies nothing from a fatal pipeline, so `cloudflare-origin`'s
+  Crossplane applies nothing from a fatal pipeline, so `function-wasm-rust`'s
   rules from the last reconcile stay in place while the module can't read
   Cloudflare's list (an empty answer would have deleted them).
-- **Tenancy comes from the namespace, never from the `spec`.** `team-tags` keys
+- **Tenancy comes from the namespace, never from the `spec`.** `function-wasm-python` keys
   the shared Secret by the XR's namespace, which cluster RBAC sets. Keying by a
   `spec` field would let an XR in team A's namespace spend team B's token.
-- **A module sees only the credentials its manifest names.** `team-tags`
+- **A module sees only the credentials its manifest names.** `function-wasm-python`
   declares `requires.credentials: [cmdb]`, and the runtime forwards that
   credential only where both policy layers permit `spendCredential`; the pull
   credential and every other step credential, which the runtime edits out of
@@ -84,13 +84,13 @@ Design choices to keep:
 
 ### Unpublished hello examples
 
-`hello-zig`, `hello-c`, `hello-odin` and `hello-moonbit` are the same greeting
+`function-wasm-zig`, `function-wasm-c`, `function-wasm-odin` and `function-wasm-moonbit` are the same greeting
 guest in four more languages, each an ABI v2 component. Zig and C share their
 scaffolds' plumbing; Odin and MoonBit have no scaffold, and `guestfn build`
 detects the MoonBit one by its `moon.mod`
 ([#155](https://github.com/jonasz-lasut/guestfn/issues/155)). Rust,
 Python, TypeScript and Go are covered by the use-case examples in the table.
-C# has only `dashboard-bundle`, C++ only `cert-rotator`. The language matrix is in
+C# has only `function-wasm-csharp`, C++ only `function-wasm-cpp`. The language matrix is in
 [other languages](wasm/other-languages.md).
 
 ## Testing
@@ -151,8 +151,8 @@ published as CNCF Wasm OCI artifacts, with their module manifests:
 - **References:** the registry's: `repo:v<version>` for people, the digest
   `guestfn inspect` prints for a Composition's `module.oci.ref`. The workflow
   commits nothing back and attaches nothing to a release.
-- **Which:** `cloudflare-origin`, `policy-gate` and `pdb-addon`. `team-tags` and
-  `dashboard-bundle` request egress to placeholder hosts (`cmdb.example.org`,
+- **Which:** `function-wasm-rust`, `function-wasm-ts` and `function-wasm-go`. `function-wasm-python` and
+  `function-wasm-csharp` request egress to placeholder hosts (`cmdb.example.org`,
   `artifacts.example.com`) that their users replace before publishing their
   own.
 
@@ -175,7 +175,7 @@ AssemblyScript has no component-model path, and #114's spike showed that
 hand-written canonical-ABI glue covers `run` and `log` but makes `wasi:http` a
 hand-maintained cost. TinyGo builds the world on its own `wasip2` target, but
 its bindings generator is unmaintained and the Go flavour can't share it. The
-`go` scaffold and `pdb-addon` instead build a wasip1 reactor that `guestfn
+`go` scaffold and `function-wasm-go` instead build a wasip1 reactor that `guestfn
 build` embeds the world into and wraps.
 
 ## Open questions
