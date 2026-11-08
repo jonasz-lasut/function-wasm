@@ -59,30 +59,30 @@ builds, tests and lints them, but nothing in CI asserts what an example
 composes. The [use-case examples design record](one-pager-use-case-examples.md)
 explains why these were chosen and how they're published.
 
-A release publishes `cloudflare-origin`, `policy-gate` and `pdb-addon` to
+`Publish Examples` publishes `function-wasm-rust`, `function-wasm-ts`,
+`function-wasm-go` and `function-oci-go` to
 `ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, signed and attested, when the
-version in the example's `guestfn.yaml` isn't in the registry yet. The
-digest-pinned references are in the release's
-`function-wasm-examples-<release>.yaml`.
+version in the example's `guestfn.yaml` isn't in the registry yet. `guestfn
+inspect <ref>` prints the digest-pinned reference for a Composition.
 
-- [`examples/cloudflare-origin`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/cloudflare-origin) (Rust): only
+- [`examples/function-wasm-rust`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-rust) (Rust): only
   Cloudflare may connect to an origin. The module composes the origin's AWS
   security group and one ingress rule per range Cloudflare publishes, read
   at reconcile time through the host's egress - a capability its manifest
   requests and both policy layers must grant.
-- [`examples/policy-gate`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/policy-gate) (TypeScript): the
+- [`examples/function-wasm-ts`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-ts) (TypeScript): the
   organisation's policy as the last pipeline step. The module asks Crossplane
   for the environment's EnvironmentConfig through `requirements`, adds its
   mandatory tags to every composed resource without overwriting the team's,
   and refuses a region or instance class the environment doesn't allow -
   one digest-pinned module the platform team rolls out on its own.
-- [`examples/pdb-addon`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/pdb-addon) (Go): a customization hook at
+- [`examples/function-wasm-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-go) (Go): a customization hook at
   the end of a pipeline. A `WebApp` Composition reserves its last step for
   the add-on each `WebApp` names in `spec.addOn` (`module.from`, skipped while
   unset), fenced to one repository by the `compositionPolicy`; this add-on
   gives every Deployment the platform composed a PodDisruptionBudget, in the
   default sandbox, with no capability at all.
-- [`examples/team-tags`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/team-tags) (Python): a team's owner and
+- [`examples/function-wasm-python`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-python) (Python): a team's owner and
   cost center come from the CMDB, never from the composite resource. After
   function-go-templating composes an S3 bucket, the module reads the record
   of the team the composite resource's namespace belongs to, with that
@@ -90,7 +90,7 @@ digest-pinned references are in the release's
   `team`, `owner` and `cost-center` tags on every composed managed
   resource. The module receives that credential only where its manifest
   requires it and both policy layers permit it.
-- [`examples/cert-rotator`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/cert-rotator) (C++): a TLS
+- [`examples/function-wasm-cpp`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-cpp) (C++): a TLS
   Secret's self-signed certificate, kept fresh. A `ServerCertificate` names
   the Secret, the DNS names and the validity; the module asks Crossplane for
   the Secret through the response's `requirements`, reads the certificate
@@ -99,9 +99,16 @@ digest-pinned references are in the release's
   Composition scopes both fences a response meets: the module may read
   Secrets of its own namespace by name and compose Secrets, and any other
   ask or kind is refused.
-- [`examples/dashboard-bundle`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/dashboard-bundle) (C#): dashboards
+- [`examples/function-wasm-csharp`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-csharp) (C#): dashboards
   as code, delivered as a bundle. A composite resource pins a team's zip of
   Grafana dashboards by sha256; the module fetches it through the host's
   egress, refuses any other content, unpacks it into its private `/tmp` and
   composes one ConfigMap per dashboard for Grafana's sidecar - the two
   capabilities its manifest requests.
+- [`examples/function-oci-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go) (Go, an OCI
+  module): the hello function as an image that `function-oci`, the OCI
+  runtime, boots in a microVM once per request. `main.go` is the process
+  contract, the request on standard input and the response on standard
+  output, around an ordinary function-sdk-go function, and `guestfn push
+  --image` appends the manifest to the image
+  ([OCI modules](oci/modules.md)).

@@ -612,7 +612,11 @@ Open:
 5. The egress bridge (the TLS-decrypting proxy in the init) with audit and
    metrics parity; until then `function-oci` refuses a manifest that
    requires egress, by name.
-6. One use-case example. The `function-oci` package's publish workflow
-   (`Publish Function`, with `function-oci` chosen), its image
+6. Done in part ([#263](https://github.com/jonasz-lasut/function-wasm/issues/263)):
+   `examples/function-oci-go`, the hello function as an image on the
+   process contract, published by `publish-examples.yml` through `docker
+   buildx` and `guestfn push --image`. The `function-oci` package's publish
+   workflow (`Publish Function`, with `function-oci` chosen), its image
    (`Dockerfile.oci`), its package root (`package/oci`) and its operators
-   page are in the tree.
+   page are in the tree. Left: the `oci` e2e case that pulls the published
+   example from `ghcr.io`, after the first publish.

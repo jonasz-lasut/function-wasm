@@ -17,12 +17,12 @@ the built module.
 
 | `--lang` | example | toolchain | Protobuf codec | module size |
 |---|---|---|---|---|
-| `go` (default) | [`examples/pdb-addon`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/pdb-addon) | Go | function-sdk-go's `request`/`response`/`resource` helpers | ~75 MB |
-| `rust` | [`examples/cloudflare-origin`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/cloudflare-origin) | Rust 1.100+, target `wasm32-wasip3`, `cargo` and `protoc` | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
-| `zig` | [`examples/hello-zig`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/hello-zig) | [Zig](https://ziglang.org) 0.16 | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto | ~60 KB |
-| `c` | [`examples/hello-c`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/hello-c) | C compiled by `zig cc` | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto | ~62 KB |
-| `ts` | [`examples/policy-gate`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/policy-gate) | node and npm | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto | ~14 MB (SpiderMonkey) |
-| `python` | [`examples/team-tags`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/team-tags) | `python3` | protoc's Python codec on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
+| `go` (default) | [`examples/function-wasm-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-go) | Go | function-sdk-go's `request`/`response`/`resource` helpers | ~75 MB |
+| `rust` | [`examples/function-wasm-rust`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-rust) | Rust 1.100+, target `wasm32-wasip3`, `cargo` and `protoc` | [prost](https://github.com/tokio-rs/prost) over the vendored proto | ~240 KB scaffolded, ~315 KB for the example |
+| `zig` | [`examples/function-wasm-zig`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-zig) | [Zig](https://ziglang.org) 0.16 | [zig-protobuf](https://github.com/Arwalk/zig-protobuf) over the vendored proto | ~60 KB |
+| `c` | [`examples/function-wasm-c`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-c) | C compiled by `zig cc` | [nanopb](https://jpa.kapsi.fi/nanopb/) over the vendored proto | ~62 KB |
+| `ts` | [`examples/function-wasm-ts`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-ts) | node and npm | [protobuf-es](https://github.com/bufbuild/protobuf-es) over the vendored proto | ~14 MB (SpiderMonkey) |
+| `python` | [`examples/function-wasm-python`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-python) | `python3` | protoc's Python codec on the pure-Python `protobuf` runtime | ~21 MB (CPython) |
 
 Each flavour keeps its ABI glue in the project, so you own and can edit it. The
 sections below give each toolchain and how `guestfn build` finishes the
@@ -100,20 +100,20 @@ tests in its language and a build job that checks its generated code for drift.
 C++ (as `c` projects) and MoonBit.
 
 - **C#**:
-  [`examples/dashboard-bundle`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/dashboard-bundle),
+  [`examples/function-wasm-csharp`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-csharp),
   ~4.5 MB, needs the .NET 10 SDK. `make build` compiles it with NativeAOT-LLVM
   and
   [componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet),
   in the .NET SDK container on macOS, which has no NativeAOT-LLVM compiler.
 - **Odin**:
-  [`examples/hello-odin`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/hello-odin),
+  [`examples/function-wasm-odin`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-odin),
   ~71 KB, built with Odin dev-2026-10 and Zig 0.16 by `make build`. It reuses
   the `c` flavour's bindings, nanopb codec, WIT and proto. Odin compiles the
   guest to an object, `zig cc` links it with the C half, and `guestfn build`
   treats the project as a `c` one and wraps it without an adapter. `make test`
   runs the unit tests natively.
 - **C++**:
-  [`examples/cert-rotator`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/cert-rotator),
+  [`examples/function-wasm-cpp`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-cpp),
   ~160 KB, built with Zig 0.16 by `make build`. It reuses the `c` flavour's
   bindings, nanopb codec, WIT and proto, with a C adapter over the generated
   structs (nanopb names a field `namespace`, which C++ can't include) and
@@ -123,7 +123,7 @@ C++ (as `c` projects) and MoonBit.
   as a `c` one and wraps it with the wasip1 adapter for the clock and the
   randomness it imports. `make test` runs the unit tests natively.
 - **MoonBit**:
-  [`examples/hello-moonbit`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/hello-moonbit),
+  [`examples/function-wasm-moonbit`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-moonbit),
   ~107 KB, built with `moon` (version `0.1.20260920`). It uses wit-bindgen's
   MoonBit bindings and the protoc-gen-mbt codec, regenerated by `make
   gen-bindings` and `make gen-proto`. `guestfn build` detects it by `moon.mod`,

@@ -1,0 +1,30 @@
+# The module manifest: what this module declares about itself. guestfn build
+# validates it, guestfn push publishes it beside the module as the artifact's
+# manifest layer, and the runtime holds it against what the policy layers grant
+# before every run - a manifest can refuse a run earlier and say why, never
+# make one possible.
+contract: wasm@1.0
+name: function-wasm-go
+version: 0.1.1
+# No requires: the add-on runs in the default sandbox - no network, no
+# filesystem, no environment. Everything it reads arrives in the request, and
+# everything it does is the response, so no policy layer has anything to
+# grant it.
+# What it composes, declared for the tooling (function validate --resolve
+# warns where a Composition's policy would refuse it, guestfn scaffold
+# composition writes the matching permit); the runtime judges the actual
+# output against the composeResource rules, never this declaration.
+composes:
+  - kind: policy/PodDisruptionBudget
+    changes: [add]
+config:
+  # The JSON Schema (draft 2020-12) of the Input's config; the runtime refuses
+  # a request whose config does not match, naming the field.
+  schema:
+    type: object
+    properties:
+      maxUnavailable:
+        description: How many of a Deployment's pods a voluntary disruption may take down at once; defaults to 1.
+        type: integer
+        minimum: 1
+    additionalProperties: false

@@ -26,6 +26,13 @@ response to standard output. The process gets the image's own arguments
 and nothing more. The runtime sends it no signal before the deadline; at
 the deadline it stops the VM.
 
+[`examples/function-oci-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go)
+is that `main` around function-sdk-go, with the hello function behind it
+and a manifest like the one below. Its `Dockerfile` puts a static binary
+into an empty image under a numeric user. Its `Makefile` has a `push`
+target that runs the two commands of [Build and publish](#build-and-publish)
+against a local registry.
+
 The process sees `/tmp` writable and empty, and the rest of its root
 filesystem writable through an overlay the VM discards on exit. It sees
 its own kernel, no network interface, the host's clock and randomness, and

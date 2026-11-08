@@ -40,11 +40,12 @@ project.
 
 ## Examples
 
-The guests under `examples/` illustrate the guest languages. Three of them,
-`cloudflare-origin`, `policy-gate` and `pdb-addon`, are published as signed
-OCI artifacts under `ghcr.io/jonasz-lasut/wasmfn/examples/`, so a Composition
-can reference them. The runtime image contains only the runtime binary, and
-the package embeds only the example manifests of `examples/pdb-addon/example`.
+The guests under `examples/` illustrate the guest languages. Four of them,
+`function-wasm-rust`, `function-wasm-ts`, `function-wasm-go` and
+`function-oci-go` (an image with its manifest layer), are published signed
+under `ghcr.io/jonasz-lasut/wasmfn/examples/`, so a Composition can
+reference them. The runtime image contains only the runtime binary, and
+the package embeds only the example manifests of `examples/function-wasm-go/example`.
 Renovate refreshes the examples' dependencies in a monthly batch that merges
 once the end-to-end suite passes, and its vulnerability pull requests against
 them merge when their checks pass. The maintainers dismiss an alert against

@@ -1,0 +1,37 @@
+# The function-wasm-cpp guest, C++ on ABI v2: needs zig (0.16) on PATH - zig cc
+# and zig c++ compile the sources and build.zig fetches nanopb and mbedTLS -
+# and guestfn, which comes from this repository (cargo run) and wraps the
+# core module zig links into the component the runtime loads (no wasm-tools;
+# the wasip1 adapter guestfn carries is linked in for the clock and the
+# randomness wasi-libc imports). wit-bindgen 0.62.0 is only needed to
+# regenerate the checked-in bindings (make gen-bindings; the root Makefile's
+# gen-bindings mirrors the c template's, which these are byte for byte) and
+# nanopb_generator (pip install nanopb) the checked-in codec (make
+# gen-proto). Render needs the crossplane CLI and Docker. GUESTFN and
+# FUNCTION_BIN (read by ../render.sh) can name prebuilt binaries instead.
+ROOT := $(abspath ../..)
+GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
+
+.PHONY: build test lint gen-proto gen-bindings render clean
+
+build: ## Compile the guest to fn.wasm (a component)
+	$(GUESTFN) build --dir $(CURDIR)
+
+test: ## Run the unit tests natively
+	zig build test
+
+lint: ## Check build.zig's formatting (the C and C++ sources are compiled by zig, which has no formatter for them)
+	zig fmt --check build.zig
+
+gen-proto: ## Regenerate src/fnv1 from proto/ (needs nanopb_generator)
+	zig build gen-proto
+
+gen-bindings: ## Regenerate src/gen from wit/ (needs wit-bindgen 0.62.0)
+	zig build gen-bindings
+
+render: build ## Start the runtime serving this directory and crossplane render example/
+	../render.sh $(CURDIR)
+
+
+clean:
+	rm -rf .zig-cache zig-out zig-pkg zig-prefix fn.wasm

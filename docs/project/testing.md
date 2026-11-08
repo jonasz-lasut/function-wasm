@@ -109,7 +109,7 @@ the service CIDR in band, the env, credential and `/tmp` refusals, and the
 operator ceiling refusing a cluster-scoped read.
 
 The `lifecycle` profile runs with `--debug`, `--warm-modules` on the published
-pdb-addon, a PVC-backed cache bounded below that module's size, a readiness
+function-wasm-go, a PVC-backed cache bounded below that module's size, a readiness
 probe on `/readyz`, and `--cosign-trust-instance public-good` with no root file
 mounted. Its policy requires the published examples' signatures and accepts
 this repository's release workflow as a signer. Its tests cover readiness

@@ -1,0 +1,20 @@
+# The module manifest: what this module declares about itself. guestfn push
+# --image appends it to the image as one more layer, read by the runtime
+# before it pulls the rest, and the runtime holds it against what the policy
+# layers grant before every run - a manifest can refuse a run earlier and
+# say why, never make one possible.
+contract: oci@1.0
+name: function-oci-go
+version: 0.1.0
+description: The hello function as an OCI module, a Go process function-oci boots once per request.
+source: https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go
+# requires: nothing. The process gets the request and nothing else: the VM
+# has no network, and no step credential or environment binding is bound.
+config:
+  # The JSON Schema (draft 2020-12) of the Input's config; the runtime refuses
+  # a request whose config does not match, naming the field.
+  schema:
+    type: object
+    properties:
+      greeting: {type: string}
+    additionalProperties: false

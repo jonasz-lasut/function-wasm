@@ -187,9 +187,9 @@
     {
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
-      // and cloudflare-origin, its wit/deps for the python, c, zig and go
-      // scaffolds, team-tags, hello-c, hello-zig, hello-odin, hello-moonbit,
-      // pdb-addon and dashboard-bundle (templates and goldens included: the
+      // and function-wasm-rust, its wit/deps for the python, c, zig and go
+      // scaffolds, function-wasm-python, function-wasm-c, function-wasm-zig, function-wasm-odin, function-wasm-moonbit,
+      // function-wasm-go and function-wasm-csharp (templates and goldens included: the
       // files are plain .wit in all of them). Same tripwire as the proto: a
       // bump PR moves the version in every header at once; it does NOT
       // re-download the WIT, so treat the PR as the signal to re-vendor by
@@ -399,9 +399,9 @@
       groupName: 'crossplane e2e',
     },
     // The WASI WIT headers, for the same reason: one dep across the rust,
-    // python, c, zig and go templates, their goldens, cloudflare-origin,
-    // team-tags, hello-c, hello-zig, hello-odin, hello-moonbit, pdb-addon and
-    // dashboard-bundle.
+    // python, c, zig and go templates, their goldens, function-wasm-rust,
+    // function-wasm-python, function-wasm-c, function-wasm-zig, function-wasm-odin, function-wasm-moonbit, function-wasm-go and
+    // function-wasm-csharp.
     // Their group is the wasmtime one above.
     {
       matchManagers: ['custom.regex'],
@@ -444,18 +444,18 @@
     {
       matchUpdateTypes: ['lockFileMaintenance'],
       matchFileNames: [
-        'examples/cloudflare-origin/Cargo.toml',
-        'examples/policy-gate/package.json',
+        'examples/function-wasm-rust/Cargo.toml',
+        'examples/function-wasm-ts/package.json',
       ],
       enabled: true,
     },
-    // gomod has no lock file maintenance, so the Go examples take regular
-    // updates. `enabled` here also covers their indirect requirements,
+    // gomod has no lock file maintenance, so the Go examples (the wasm one and
+    // the OCI one, which shares its pins) take regular updates. `enabled` here also covers their indirect requirements,
     // which gomod extracts disabled. gomodTidy leaves go.mod and go.sum
     // tidy, so a bump never leaves go.sum behind.
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/pdb-addon/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       enabled: true,
       postUpdateOptions: ['gomodTidy'],
     },
@@ -467,7 +467,7 @@
     // generator targets (it moves with a wit-bindgen bump and `make
     // gen-bindings`, never on its own).
     {
-      matchFileNames: ['examples/pdb-addon/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       matchPackageNames: ['go', 'github.com/crossplane/function-sdk-go', 'go.bytecodealliance.org/pkg'],
       enabled: false,
     },
@@ -481,17 +481,17 @@
     // directive rose with it).
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/pdb-addon/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       matchPackageNames: ['k8s.io/kube-openapi'],
       enabled: false,
     },
-    // dashboard-bundle is example-only, with no template to drift from: its
+    // function-wasm-csharp is example-only, with no template to drift from: its
     // NuGet packages take regular updates. nuget reads every version from
     // its Directory.Packages.props (the projects name packages without one)
     // and looks them up in the sources its nuget.config names.
     {
       matchManagers: ['nuget'],
-      matchFileNames: ['examples/dashboard-bundle/**'],
+      matchFileNames: ['examples/function-wasm-csharp/**'],
       enabled: true,
     },
     // ...except NativeAOT-LLVM: componentize-dotnet is built against one
@@ -505,15 +505,15 @@
       matchPackageNames: ['/^(runtime\\.[a-z0-9-]+\\.)?Microsoft\\.DotNet\\.ILCompiler\\.LLVM$/i'],
       enabled: false,
     },
-    // team-tags's requirements.txt is the python template's: its
+    // function-wasm-python's requirements.txt is the python template's: its
     // componentize-py and protobuf pins move with the template at release
     // time (the cut-release skill), never in this batch - pip_requirements
     // is not an enabled manager.
     //
-    // hello-zig, hello-c and hello-odin name their dependencies in
+    // function-wasm-zig, function-wasm-c and function-wasm-odin name their dependencies in
     // build.zig.zon by URL and content hash, which no Renovate manager
     // reads: they move by hand, with the zig and c templates, at release
-    // time (hello-odin's nanopb pin is hello-c's). hello-moonbit's one
+    // time (function-wasm-odin's nanopb pin is function-wasm-c's). function-wasm-moonbit's one
     // dependency (moonbitlang/protobuf in moon.mod.json) has no Renovate
     // manager either: it moves by hand, with the generator pins in its
     // Makefile, at release time.
@@ -521,7 +521,7 @@
     // One batch, early on the 1st of the month. Renovate does not group lock
     // file maintenance with other updates - a grouped one gets its own
     // lock-file-maintenance- branch - so the batch is two PRs:
-    // renovate/examples (the Go examples and dashboard-bundle) and
+    // renovate/examples (the Go examples and function-wasm-csharp) and
     // renovate/lock-file-maintenance-examples (the four lockfiles). A major
     // rides in its batch instead of a PR of its own; /e2e judges the whole.
     // A security update to a Go or .NET example dependency still opens at
@@ -541,13 +541,13 @@
     // the major is dropped.
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/pdb-addon/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       matchDepTypes: ['indirect'],
       separateMajorMinor: true,
     },
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/pdb-addon/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       matchDepTypes: ['indirect'],
       matchUpdateTypes: ['major'],
       enabled: false,

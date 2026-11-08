@@ -101,7 +101,7 @@ E2E_WASM_PROFILES := default strict lifecycle
 E2E_OCI_PROFILES := default
 E2E_CARGO := cargo run -q -p guestfn-e2e --features cluster
 E2E_GUEST_DIR := crates/e2e/guest
-FUNCTION_PKG_EXAMPLES := examples/pdb-addon/example
+FUNCTION_PKG_EXAMPLES := examples/function-wasm-go/example
 # The image and the runtime config local.xpkg.deploy.function.% installs a
 # Function with; the function-oci target sets its own below.
 FUNCTION_IMAGE := $(E2E_IMAGE)
@@ -181,7 +181,7 @@ endif
 
 # The Function package from the image: what xpkg.mk's xpkg.build.% would do
 # for a Provider. --examples-root must hold Crossplane objects only (xpkg
-# build parses every YAML file under it), which the pdb-addon example's
+# build parses every YAML file under it), which the function-wasm-go example's
 # directory does.
 xpkg.build.function-wasm: $(CROSSPLANE_CLI) e2e.image
 	@$(INFO) building package function-wasm-$(VERSION).xpkg
@@ -344,11 +344,11 @@ e2e.guest:
 # `make vendor-proto PROTO_VERSION=vX.Y.Z` vendors one Renovate has not proposed.
 #
 # `make gen-bindings` is the same loop for the wit-bindgen bindings: the c,
-# zig and odin guests' C bindings (examples/hello-c/src/gen,
-# examples/hello-zig/src/gen and examples/hello-odin/src/gen: one generator's
+# zig and odin guests' C bindings (examples/function-wasm-c/src/gen,
+# examples/function-wasm-zig/src/gen and examples/function-wasm-odin/src/gen: one generator's
 # output over one world, which the guestfn tests hold identical), the go
-# guest's Go bindings (examples/pdb-addon/internal/bindings, over its own
-# world) and the moonbit example's MoonBit bindings (examples/hello-moonbit/src,
+# guest's Go bindings (examples/function-wasm-go/internal/bindings, over its own
+# world) and the moonbit example's MoonBit bindings (examples/function-wasm-moonbit/src,
 # over the c world again; no template). It runs the pinned wit-bindgen in
 # each, mirrors each scaffold's result into its template (the go one with the
 # module path templated as [[ .Module ]]) and refreshes the goldens - after a
@@ -361,19 +361,19 @@ e2e.guest:
 
 # Only the three generators the guests invoke bare from PATH are pinned here;
 # the rest are pinned where each guest builds them: zig-protobuf (and the
-# protoc it downloads) by hello-zig's build.zig.zon, protoc-gen-es by
-# policy-gate's package-lock.json, protoc-gen-mbt by the moonx release
-# hello-moonbit's Makefile names (moon itself is not pinned here: e2e.yml
+# protoc it downloads) by function-wasm-zig's build.zig.zon, protoc-gen-es by
+# function-wasm-ts's package-lock.json, protoc-gen-mbt by the moonx release
+# function-wasm-moonbit's Makefile names (moon itself is not pinned here: e2e.yml
 # pins the release its render job installs).
 #
 # protoc stamps its version into the Python codec, which refuses to load on a
 # protobuf runtime older than that stamp, so
 # PROTOC_VERSION must not pass the runtime the python template's
-# requirements.txt pins (team-tags's is the same file). NANOPB_VERSION is
-# the nanopb release hello-c's and hello-odin's build.zig.zon compile and
+# requirements.txt pins (function-wasm-python's is the same file). NANOPB_VERSION is
+# the nanopb release function-wasm-c's and function-wasm-odin's build.zig.zon compile and
 # e2e.yml's codec drift checks install. WIT_BINDGEN_VERSION is the
-# wit-bindgen-cli release that wrote hello-c's, hello-zig's, hello-odin's and
-# pdb-addon's checked-in bindings and e2e.yml's bindings drift checks install.
+# wit-bindgen-cli release that wrote function-wasm-c's, function-wasm-zig's, function-wasm-odin's and
+# function-wasm-go's checked-in bindings and e2e.yml's bindings drift checks install.
 PROTOC_VERSION := 35.1
 NANOPB_VERSION := 0.4.9.1
 WIT_BINDGEN_VERSION := 0.62.0
@@ -433,26 +433,26 @@ vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(PROTO_VE
 # rust and rust-v2 have no checked-in codec (build.rs runs prost-build); the
 # zig, c, ts and python codecs are mirrored into their guestfn
 # templates, which examples_share_the_scaffold_plumbing holds identical to
-# the examples (hello-odin regenerates the c codec over its own copy of the
+# the examples (function-wasm-odin regenerates the c codec over its own copy of the
 # proto, and the same test holds it to the c template's). The ts and python
 # codecs are copied file by file: a gen/ directory may hold a __pycache__ the
-# templates must not embed. The moonbit codec has no template: hello-moonbit's
+# templates must not embed. The moonbit codec has no template: function-wasm-moonbit's
 # gen-proto runs the pinned protoc-gen-mbt through moonx, so moon must be on
 # PATH.
 vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the pinned generators and mirror them into the templates
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-odin gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-moonbit gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/team-tags gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/policy-gate gen-proto
-	$(WITH_TOOLS) $(MAKE) -C examples/dashboard-bundle gen-proto
-	rm -rf crates/guestfn/templates/zig/src/fnv1 && cp -R examples/hello-zig/src/fnv1 crates/guestfn/templates/zig/src/fnv1
-	rm -rf crates/guestfn/templates/c/src/fnv1 && cp -R examples/hello-c/src/fnv1 crates/guestfn/templates/c/src/fnv1
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-zig gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-c gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-odin gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-moonbit gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-python gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-ts gen-proto
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-csharp gen-proto
+	rm -rf crates/guestfn/templates/zig/src/fnv1 && cp -R examples/function-wasm-zig/src/fnv1 crates/guestfn/templates/zig/src/fnv1
+	rm -rf crates/guestfn/templates/c/src/fnv1 && cp -R examples/function-wasm-c/src/fnv1 crates/guestfn/templates/c/src/fnv1
 	for f in run_function_pb.js run_function_pb.d.ts; do \
-		cp "examples/policy-gate/src/gen/$$f" "crates/guestfn/templates/ts/src/gen/$$f"; \
+		cp "examples/function-wasm-ts/src/gen/$$f" "crates/guestfn/templates/ts/src/gen/$$f"; \
 	done
-	cp examples/team-tags/src/gen/run_function_pb2.py crates/guestfn/templates/python/src/gen/run_function_pb2.py
+	cp examples/function-wasm-python/src/gen/run_function_pb2.py crates/guestfn/templates/python/src/gen/run_function_pb2.py
 
 vendor-proto-goldens: ## Refresh the guestfn scaffold goldens from the templates
 	UPDATE_GOLDENS=1 cargo test -p guestfn
@@ -496,17 +496,17 @@ vendor-docs-highlight: ## Re-vendor the docs site's highlight.js core and Cedar 
 # export_wit_world. A generated Go file names the guest's module path in its
 # imports, so it becomes a .go.tmpl with the path as [[ .Module ]]; the rest
 # is copied as it is.
-GO_MODULE := github.com/jonasz-lasut/guestfn/examples/pdb-addon
+GO_MODULE := github.com/jonasz-lasut/guestfn/examples/function-wasm-go
 GO_BINDINGS := crates/guestfn/templates/go/internal/bindings
-gen-bindings: tools ## Regenerate hello-c's, hello-zig's, hello-odin's, pdb-addon's and hello-moonbit's wit-bindgen bindings with the pinned wit-bindgen, mirror the c, zig and go ones into their templates and refresh the goldens
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-bindings
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-zig gen-bindings
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-odin gen-bindings
-	$(WITH_TOOLS) $(MAKE) -C examples/pdb-addon gen-bindings
-	$(WITH_TOOLS) $(MAKE) -C examples/hello-moonbit gen-bindings
-	rm -rf crates/guestfn/templates/c/src/gen && cp -R examples/hello-c/src/gen crates/guestfn/templates/c/src/gen
-	rm -rf crates/guestfn/templates/zig/src/gen && cp -R examples/hello-zig/src/gen crates/guestfn/templates/zig/src/gen
-	rm -rf $(GO_BINDINGS) && cp -R examples/pdb-addon/internal/bindings $(GO_BINDINGS)
+gen-bindings: tools ## Regenerate function-wasm-c's, function-wasm-zig's, function-wasm-odin's, function-wasm-go's and function-wasm-moonbit's wit-bindgen bindings with the pinned wit-bindgen, mirror the c, zig and go ones into their templates and refresh the goldens
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-c gen-bindings
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-zig gen-bindings
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-odin gen-bindings
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-go gen-bindings
+	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-moonbit gen-bindings
+	rm -rf crates/guestfn/templates/c/src/gen && cp -R examples/function-wasm-c/src/gen crates/guestfn/templates/c/src/gen
+	rm -rf crates/guestfn/templates/zig/src/gen && cp -R examples/function-wasm-zig/src/gen crates/guestfn/templates/zig/src/gen
+	rm -rf $(GO_BINDINGS) && cp -R examples/function-wasm-go/internal/bindings $(GO_BINDINGS)
 	@set -e; \
 	for f in $$(find $(GO_BINDINGS) -name '*.go' -not -path '*/export_wit_world/*'); do \
 		sed 's#$(GO_MODULE)#[[ .Module ]]#g' "$$f" > "$$f.tmpl"; \

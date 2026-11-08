@@ -203,7 +203,7 @@ write.
 3. `guestfn scaffold composition`'s step and fragment, `guestfn scaffold
    xrd`, the six scaffolds' examples and goldens, the guest suite's
    configured-greeting cases moved to the observed composite resource.
-4. The use-case examples (`team-tags`' `cmdbUrl`, the hello guests'
+4. The use-case examples (`function-wasm-python`'s `cmdbUrl`, the hello guests'
    greeting) moved to their composite resources and definitions.
 5. The OCI runtime, after its code merges: the same `config` object,
    delivered the way its process contract then says (the record is
