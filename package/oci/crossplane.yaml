@@ -4,7 +4,7 @@ metadata:
   name: function-oci
   annotations:
     meta.crossplane.io/maintainer: Jonasz Małecki <jonaszlasut@proton.me>
-    meta.crossplane.io/source: github.com/jonasz-lasut/function-wasm
+    meta.crossplane.io/source: github.com/jonasz-lasut/guestfn
     meta.crossplane.io/license: Apache-2.0
     meta.crossplane.io/description: "A composition function that runs an OCI image supplied through its input in a Firecracker microVM: the image's process reads a RunFunctionRequest from its standard input and writes a RunFunctionResponse to its standard output, under the same manifest and policy layers as function-wasm's WebAssembly modules. Alpha: the pod needs /dev/kvm."
     meta.crossplane.io/readme: |
@@ -15,9 +15,9 @@ metadata:
       or read from a field of the composite resource, and its config block
       is passed through untouched. One installed function serves any number
       of images. The pod needs /dev/kvm. See the
-      [documentation](https://jonasz-lasut.github.io/function-wasm/) for the
+      [documentation](https://jonasz-lasut.github.io/guestfn/) for the
       OCI runtime's install page and the process contract, and the
-      [repository](https://github.com/jonasz-lasut/function-wasm) for the source.
+      [repository](https://github.com/jonasz-lasut/guestfn) for the source.
 spec:
   capabilities:
   - composition

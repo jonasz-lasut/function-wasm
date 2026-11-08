@@ -6,7 +6,7 @@ machine. It assumes a Rust toolchain for the first tier and Docker for the
 second.
 
 `crossplane render` belongs to the
-[development loop](../guests/render-locally.md) and isn't part of either tier.
+[development loop](../wasm/render-locally.md) and isn't part of either tier.
 
 | Tier | Runs | What it covers |
 |---|---|---|
@@ -20,17 +20,17 @@ second.
 | a guest-visible behaviour of the engine (a trap, a limit, a WASI interface) | a WAT fixture in `crates/engine/tests/engine.rs`, or a setting of the committed guest driven from `crates/engine/tests/committed_guest.rs` |
 | an Input rule, a refusal, a policy decision | a unit test beside the code, a fixture under `crates/function/testdata/validate/` and a conformance golden |
 | a scaffold change | the template, then `UPDATE_GOLDENS=1 cargo test -p guestfn`; the guest suite builds the goldens |
-| a fixture or stand-in a test needs | `function_wasm_engine::testing` for a guest component, `function_wasm::testing` for a registry, a signer, an in-process runtime, a server or a policy (both behind the `testutil` feature) |
+| a fixture or stand-in a test needs | `guestfn_engine::testing` for a guest component, `guestfn_runtime::testing` for a registry, a signer, an in-process runtime, a server or a policy (both behind the `testutil` feature) |
 | something only Crossplane shows, such as a condition, an event, a resolved `requirements` entry, a pod restart or a scraped metric | a feature in the end-to-end suite |
 
-`UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` records a
+`UPDATE_GOLDENS=1 cargo test -p guestfn-runtime --test conformance` records a
 conformance golden. A re-record is a behaviour change, so say so in the commit.
 A suite uses the shared `testing` modules and never declares its own copy of a
 fixture.
 
 ## The end-to-end suite
 
-The suite is in `crates/e2e` (package `function-wasm-e2e`). It gives each
+The suite is in `crates/e2e` (package `guestfn-e2e`). It gives each
 test its own namespace (`with_temp_ns` in `crates/e2e/src/ns.rs`) and uses typed
 kube-rs helpers. Tests wait with timeouts and compare what the cluster contains with
 `assert_eq!`. The crate is empty without its `cluster` feature, so
@@ -92,7 +92,7 @@ before its first test and waits for the rollout. Each binary uses one profile.
 | `wasm/default` | every case a runtime admits, under both signature verifiers |
 | `wasm/strict` | the refusals of a narrow operator layer, the read fence's ceiling among them |
 | `wasm/lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
-| `oci/default` | the `function-oci` package ([the OCI runtime](../operators/oci-runtime.md)) beside `function-wasm`, running the test module as a process in a Firecracker VM. Its runtime config mounts the `wasm/default` policy |
+| `oci/default` | the `function-oci` package ([the OCI runtime](../oci/install.md)) beside `function-wasm`, running the test module as a process in a Firecracker VM. Its runtime config mounts the `wasm/default` policy |
 
 The `default` profile runs the runtime with `--cosign-key` (the suite's key)
 and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with
@@ -152,7 +152,7 @@ make e2e.wasm-profile.default   # or strict, lifecycle; e2e.oci-profile.default 
 make e2e.down
 ```
 
-`cargo test -p function-wasm-e2e --features cluster --test <runtime>_<profile>`
+`cargo test -p guestfn-e2e --features cluster --test <runtime>_<profile>`
 runs one profile as the make target does.
 `FUNCTION_BIN=<linux binary> make e2e.up` wraps a prebuilt runtime with
 `Dockerfile.wasm.dev` instead of compiling the workspace in `Dockerfile.wasm`'s build
@@ -168,7 +168,7 @@ push, and on a pull request unless it touches only Markdown, JSON or SVG files.
 
 A `/e2e` comment on a pull request runs `e2e.yml`:
 
-- the guest suite, with `FUNCTION_WASM_REQUIRE_TOOLCHAINS=1` so a missing
+- the guest suite, with `GUESTFN_REQUIRE_TOOLCHAINS=1` so a missing
   toolchain fails instead of skipping
 - one build job per example toolchain: build, unit tests, lint, and codec and
   bindings drift
@@ -178,7 +178,7 @@ A `/e2e` comment on a pull request runs `e2e.yml`:
 - the OCI jobs: a build job that compiles the runtime with the `oci` engine,
   the init and the test module as a process (musl) and fetches the pinned
   Firecracker and kernel (`make oci.tools`), an engine job that runs the OCI
-  engine's suite in real VMs under the runner's KVM (`FUNCTION_WASM_REQUIRE_KVM=1`,
+  engine's suite in real VMs under the runner's KVM (`GUESTFN_REQUIRE_KVM=1`,
   so a missing tool fails instead of skipping), and a second cluster job that
   installs both runtimes (`E2E_OCI=1`) and runs the `oci` profiles
 

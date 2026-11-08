@@ -15,7 +15,7 @@ It takes the same flags as the serving runtime, such as `--module-timeout`,
 flags your pod runs with, or the verdict can differ from the cluster's.
 
 ```shell
-cargo run --release -p function-wasm -- validate \
+cargo run --release -p guestfn-runtime -- validate \
   example/composition.yaml --module-dir=. --resolve
 # or, with the released image (its entrypoint is the runtime):
 docker run --rm -v "$PWD:/w" ghcr.io/jonasz-lasut/function-wasm:<version> validate /w/composition.yaml \
@@ -61,4 +61,4 @@ The exit code is:
 - 1 when at least one step is refused.
 - 2 when the tool itself failed: an unreadable file, unparsable YAML or a bad flag.
 
-To run it as part of the development loop, see [Render locally](render-locally.md).
+To run it as part of the development loop, see [Render locally](../wasm/render-locally.md).

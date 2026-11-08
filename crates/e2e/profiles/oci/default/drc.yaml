@@ -22,30 +22,30 @@ spec:
           - name: package-runtime
             image: function-oci-e2e:dev
             args:
-            - --sandbox-policy-file=/etc/function-wasm/policy/policy.cedar
-            - --cosign-key=/etc/function-wasm/cosign/cosign.pub
-            - --cosign-trusted-root=/etc/function-wasm/trusted-root/trusted_root.json
+            - --sandbox-policy-file=/etc/guestfn/policy/policy.cedar
+            - --cosign-key=/etc/guestfn/cosign/cosign.pub
+            - --cosign-trusted-root=/etc/guestfn/trusted-root/trusted_root.json
             - --debug
             resources:
               limits:
                 devic.es/kvm: "1"
             env:
             - name: SSL_CERT_FILE
-              value: /etc/function-wasm/registry-ca/ca.crt
+              value: /etc/guestfn/registry-ca/ca.crt
             - name: SSL_CERT_DIR
               value: /etc/ssl/certs
             volumeMounts:
             - name: policy
-              mountPath: /etc/function-wasm/policy
+              mountPath: /etc/guestfn/policy
               readOnly: true
             - name: cosign-key
-              mountPath: /etc/function-wasm/cosign
+              mountPath: /etc/guestfn/cosign
               readOnly: true
             - name: trusted-root
-              mountPath: /etc/function-wasm/trusted-root
+              mountPath: /etc/guestfn/trusted-root
               readOnly: true
             - name: registry-ca
-              mountPath: /etc/function-wasm/registry-ca
+              mountPath: /etc/guestfn/registry-ca
               readOnly: true
           volumes:
           - name: policy

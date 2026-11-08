@@ -1,4 +1,4 @@
-# Copyright 2026 The function-wasm Authors.
+# Copyright 2026 The guestfn Authors.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -123,7 +123,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RELEASE_BODY=$(gh release view ${{ inputs.version }} --repo jonasz-lasut/function-wasm --json body -q .body 2>/dev/null || true)
+          RELEASE_BODY=$(gh release view ${{ inputs.version }} --repo jonasz-lasut/guestfn --json body -q .body 2>/dev/null || true)
           if [ -n "$RELEASE_BODY" ]; then
             echo "$RELEASE_BODY" >> "release_notes.md"
           fi

@@ -1,6 +1,6 @@
 # function-wasm
 
-[![CI](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml)
+[![CI](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml)
 
 > [!CAUTION]
 > **Experimental.** function-wasm is young: the sandbox hasn't had an
@@ -9,7 +9,7 @@
 > what [Compatibility](contract/compatibility.md) lists change only
 > through its deprecation policy; before it they could change between
 > minor releases. Try it, break it and
-> [open an issue](https://github.com/jonasz-lasut/function-wasm/issues),
+> [open an issue](https://github.com/jonasz-lasut/guestfn/issues),
 > but don't build a platform on it yet.
 
 This page is for Crossplane users deciding whether to run composition
@@ -63,9 +63,12 @@ granted.
 
 ## Where to go next
 
-- [Write a module](guests/write-a-module.md) to scaffold, build and publish a
-  guest. [Other languages](guests/other-languages.md) lists the rest.
-- [Install the runtime](operators/install.md) to run function-wasm in a
+- [Write a module](wasm/write-a-module.md) to scaffold, build and publish a
+  guest. [Other languages](wasm/other-languages.md) lists the rest.
+- [Install the runtime](wasm/install.md) to run function-wasm in a
   cluster.
+- [Install function-oci](oci/install.md) and [OCI modules](oci/modules.md) for
+  the second runtime, which runs an OCI image in a microVM under the same
+  Input, manifest and policy layers.
 - [A request, step by step](how-a-request-runs.md) to see what the runtime
   does between Crossplane's request and the module's response.

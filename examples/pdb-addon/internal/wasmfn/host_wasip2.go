@@ -18,12 +18,12 @@ import (
 
 	witTypes "go.bytecodealliance.org/pkg/wit/types"
 
-	exports "github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/export_wit_world"
-	handler "github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wasi_http_outgoing_handler"
-	types "github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wasi_http_types"
-	streams "github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wasi_io_streams"
-	_ "github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wit_exports"
-	"github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wit_world"
+	exports "github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/export_wit_world"
+	handler "github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wasi_http_outgoing_handler"
+	types "github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wasi_http_types"
+	streams "github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wasi_io_streams"
+	_ "github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wit_exports"
+	"github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wit_world"
 )
 
 // The generated wit_exports package calls export_wit_world.Run for the

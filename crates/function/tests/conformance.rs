@@ -9,13 +9,13 @@
 //! Run-specific values (temp directories, loopback ports) are replaced
 //! with stable placeholders before comparing.
 
-use function_wasm::engine::Engine as _;
+use guestfn_runtime::engine::Engine as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use function_wasm::testing::guests::tiny_component;
-use function_wasm::testing::registry::{Registry, module_artifact};
+use guestfn_runtime::testing::guests::tiny_component;
+use guestfn_runtime::testing::registry::{Registry, module_artifact};
 
 struct Case {
     name: &'static str,
@@ -368,7 +368,7 @@ fn validate_resolve_matches_the_goldens() {
     // A wasmtime compiled artifact (.cwasm) named as a module source: the
     // runtime refuses it by name rather than as malformed wasm.
     let artifact = {
-        let e = function_wasm::engine::Selected::new(function_wasm_engine::Config::default())
+        let e = guestfn_runtime::engine::Selected::new(guestfn_engine::Config::default())
             .expect("engine");
         let m = e.compile(&ok).expect("compile");
         e.serialize(&m).expect("serialize")
@@ -880,8 +880,8 @@ fn validate_resolve_oci_source_matches_the_goldens() {
 /// are not read, so the unsigned refusal's wording is the runtime's own.
 #[test]
 fn validate_resolve_cosign_matches_the_goldens() {
-    use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey};
-    use function_wasm::oci::testregistry::digest_of;
+    use guestfn_runtime::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey};
+    use guestfn_runtime::oci::testregistry::digest_of;
 
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
     let cwd = crate_dir();
@@ -953,7 +953,7 @@ fn validate_resolve_cosign_matches_the_goldens() {
     std::fs::create_dir_all(&docker).expect("docker config dir");
     {
         use base64::Engine as _;
-        use function_wasm::oci::testregistry::{BASIC_PASSWORD, BASIC_USER};
+        use guestfn_runtime::oci::testregistry::{BASIC_PASSWORD, BASIC_USER};
         let auth = base64::engine::general_purpose::STANDARD
             .encode(format!("{BASIC_USER}:{BASIC_PASSWORD}"));
         std::fs::write(
@@ -993,7 +993,7 @@ fn validate_resolve_cosign_matches_the_goldens() {
 }
 
 /// Keyless cosign verification against an in-memory Sigstore instance
-/// (`function_wasm::testsigstore`): a module signed keyless by a release
+/// (`guestfn_runtime::testsigstore`): a module signed keyless by a release
 /// workflow identity, verified with the instance's trusted root under a
 /// policy that trusts that identity, one that trusts another branch, and
 /// another instance's root; a keyless module met by a key-only runtime, and
@@ -1002,10 +1002,10 @@ fn validate_resolve_cosign_matches_the_goldens() {
 /// that crate's words too, so a bump of it may re-record that golden.
 #[test]
 fn validate_resolve_keyless_cosign_matches_the_goldens() {
-    use function_wasm::cosign::Signer;
-    use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey};
-    use function_wasm::oci::testregistry::digest_of;
-    use function_wasm::testsigstore::Instance;
+    use guestfn_runtime::cosign::Signer;
+    use guestfn_runtime::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey};
+    use guestfn_runtime::oci::testregistry::digest_of;
+    use guestfn_runtime::testsigstore::Instance;
 
     let rust = Path::new(env!("CARGO_BIN_EXE_function"));
     let cwd = crate_dir();

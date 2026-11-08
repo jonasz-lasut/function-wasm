@@ -4,7 +4,7 @@ A [Crossplane](https://crossplane.io) composition function in TypeScript,
 componentized with [jco](https://github.com/bytecodealliance/jco) into a
 WebAssembly component of about 14 MB (SpiderMonkey embedded) implementing
 **ABI v2** and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm). Its
+[function-wasm](https://github.com/jonasz-lasut/guestfn). Its
 `config.greetingUrl` fetch is the platform's own `fetch()` - jco maps it to
 `wasi:http@0.2`, which the runtime serves through the host's egress policy.
 
@@ -21,7 +21,7 @@ which cannot exist inside a SpiderMonkey component.
   plus full types - checked in (`npm run gen-proto` redoes it, needs
   `protoc`).
 - `wit/world.wit` is this guest's own world, in a `local:guest` package:
-  the [ABI v2 world](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md)
+  the [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
   restated with `run` declared **sync**. componentize-js cannot async-lift
   a custom world's export yet, and a sync-lifted function satisfies the
   runtime's async world; the TypeScript still awaits freely -

@@ -1,9 +1,9 @@
 # cert-rotator
 
 A [Crossplane](https://crossplane.io) composition function in C++ on
-[ABI v2](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md):
+[ABI v2](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md):
 a WebAssembly component of about 160 KB, compiled by `zig c++` and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm). It keeps a
+[function-wasm](https://github.com/jonasz-lasut/guestfn). It keeps a
 TLS Secret's self-signed certificate fresh. A `ServerCertificate` composite
 resource names the Secret, the common name, the DNS names and the validity;
 the module asks Crossplane for that Secret through the response's

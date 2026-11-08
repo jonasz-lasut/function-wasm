@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use function_sdk_rust::proto::v1::{Resource, RunFunctionRequest, RunFunctionResponse, State};
-use function_wasm_engine::Engine as _;
-use function_wasm_engine::wire::{HttpRequester, Request, Response};
-use function_wasm_engine::{Config, Module, RunOptions, Wasmtime};
+use guestfn_engine::Engine as _;
+use guestfn_engine::wire::{HttpRequester, Request, Response};
+use guestfn_engine::{Config, Module, RunOptions, Wasmtime};
 use prost::Message;
 
 const GUEST: &[u8] = include_bytes!("../../e2e/guest/fn.wasm");
@@ -28,7 +28,7 @@ fn guest(e: &Wasmtime) -> Module {
 /// A request whose composite resource asks the guest to GET url.
 fn request(url: &str) -> Vec<u8> {
     let xr = serde_json::json!({
-        "apiVersion": "e2e.function-wasm.io/v1alpha1",
+        "apiVersion": "e2e.guestfn.io/v1alpha1",
         "kind": "Guest",
         "metadata": {"name": "probe", "namespace": "e2e"},
         "spec": {"nopResources": 0, "egress": {"url": url}},

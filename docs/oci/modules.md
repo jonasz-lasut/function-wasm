@@ -2,10 +2,10 @@
 
 This page is for authors publishing an OCI image as a module for
 `function-oci`, the OCI runtime ([design record](../one-pager-oci-runtime.md),
-[the operators' page](../operators/oci-runtime.md)). It covers the process
+[the install page](install.md)). It covers the process
 contract the image's command follows, the manifest and the artifact
 `guestfn push` publishes, and how the runtime runs the image. A
-WebAssembly module follows [Write a module](write-a-module.md) instead.
+WebAssembly module follows [Write a module](../wasm/write-a-module.md) instead.
 
 ## The process contract
 
@@ -49,7 +49,7 @@ config:
 `contract: oci@1.0` names the process contract and its version.
 `image` pins the image by digest; `guestfn push --image` writes it, so the
 file may leave it out. The other fields keep their meaning from
-[Module manifests](module-manifests.md). The runtime refuses
+[Module manifests](../guests/module-manifests.md). The runtime refuses
 `requires.egress` for now: the VM has no network, and the proxy is a later
 phase of the design.
 
@@ -102,7 +102,7 @@ A refusal states the module. The common ones:
 - A `Path` or `HTTP` source: `cannot resolve module: module.type Path is not
   served by function-oci: an OCI module is an image pulled from a registry,
   so module.type must be OCI`. Push the image to a registry; the development
-  loop uses a local one ([the OCI runtime](../operators/oci-runtime.md)).
+  loop uses a local one ([Install function-oci](install.md)).
 - `image has neither an entrypoint nor a command`: set `ENTRYPOINT` or
   `CMD` in the `Dockerfile`.
 - `image is built for linux/arm64, and this runtime runs on linux/amd64`:

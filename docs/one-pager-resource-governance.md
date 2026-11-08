@@ -24,7 +24,7 @@ capped to `--max-concurrent-runs` without a message.
 ## Background
 
 A first request for a large guest costs seconds of CPU and about a gigabyte of
-peak memory to compile ([sizing](operators/sizing.md) has the measurements),
+peak memory to compile ([sizing](wasm/sizing.md) has the measurements),
 and the run itself costs far less. Without bounds, N cold requests would run N
 compiles at once and every module used within ten minutes would stay resident.
 Every version ever served would also stay on disk. A pod with a core or two serving
@@ -101,8 +101,8 @@ results:
 - `waiting for one of this step's 2 run slots (limits.concurrency): deadline exceeded`
 
 A run takes its slot after the module has loaded, around exactly one run, so
-`function_wasm_module_run_duration_seconds` measures runs rather than queues.
-`function_wasm_module_runs_in_flight` pinned at `--max-concurrent-runs` means
+`guestfn_module_run_duration_seconds` measures runs rather than queues.
+`guestfn_module_runs_in_flight` pinned at `--max-concurrent-runs` means
 the queue is the bottleneck.
 
 ### Run memory pool
@@ -142,7 +142,7 @@ idle buckets. The operator sets the rate, and a Composition can't change it.
 
 ## Sizing
 
-The [sizing page](operators/sizing.md) has the measurements. The terms are:
+The [sizing page](wasm/sizing.md) has the measurements. The terms are:
 
 - **Memory** is the resident compiled modules, plus `--max-concurrent-compiles`
   times the peak of compiling the largest module, plus concurrent runs times the
@@ -152,7 +152,7 @@ The [sizing page](operators/sizing.md) has the measurements. The terms are:
 - **CPU** is requests per second times the per-request cost, plus the compiles,
   one per module version per cache.
 - **Cold start** is the compile CPU of every module over the cores. A volume
-  under `/tmp/function-wasm-cache` replaces compiles with loading the stored
+  under `/tmp/guestfn-cache` replaces compiles with loading the stored
   artifact, and `--warm-modules` moves either ahead of readiness.
 - **Disk** is a module and its artifact per version served, until
   `--max-cache-size` bounds it.
@@ -186,13 +186,13 @@ else on the pod's filesystem is a module's to read.
 ## Observability
 
 The series are [documented](operators/metrics.md). Those that govern resources
-are `function_wasm_module_run_duration_seconds{outcome}` (timeouts are an
+are `guestfn_module_run_duration_seconds{outcome}` (timeouts are an
 outcome of their own, and a wait for a run slot is outside it),
-`function_wasm_module_runs_in_flight`,
-`function_wasm_module_compile_duration_seconds`,
-`function_wasm_module_cache_events_total{cache,event}`,
-`function_wasm_module_cache_bytes{cache}` from the sweep, and
-`function_wasm_module_memory_denials_total{reason}`. No series has a module,
+`guestfn_module_runs_in_flight`,
+`guestfn_module_compile_duration_seconds`,
+`guestfn_module_cache_events_total{cache,event}`,
+`guestfn_module_cache_bytes{cache}` from the sweep, and
+`guestfn_module_memory_denials_total{reason}`. No series has a module,
 digest or host label: the set is unbounded.
 
 ## Alternatives

@@ -1,5 +1,5 @@
 # The device plugin that grants /dev/kvm to function-oci's pod
-# (docs/operators/oci-runtime.md, "Node requirements"): an unprivileged
+# (docs/oci/install.md, "Node requirements"): an unprivileged
 # container opens only the devices its runtime admitted into its device
 # cgroup, and a hostPath mount of a device node admits nothing, so the
 # e2e-oci runtime config requests devic.es/kvm from this plugin instead.

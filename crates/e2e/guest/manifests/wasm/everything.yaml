@@ -3,7 +3,7 @@
 contract: wasm@1.0
 name: e2e-guest
 version: 0.1.0-everything
-description: function-wasm's end-to-end test module, requiring every capability
+description: guestfn's end-to-end test module, requiring every capability
 requires:
   egress:
     http:

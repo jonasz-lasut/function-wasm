@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The development loop of an example (docs/guests/render-locally.md): renders
+# The development loop of an example (docs/wasm/render-locally.md): renders
 # <example dir>/example/ with the function-wasm runtime from this repository
 # serving that directory (module.type: Path, path: fn.wasm), the way the
 # scaffold README describes. The guest must already be built to fn.wasm:
@@ -55,7 +55,7 @@ if [[ -n "${FUNCTION_BIN:-}" ]]; then
   cp "$FUNCTION_BIN" "$work/function"
 else
   echo "==> building the runtime" >&2
-  (cd "$root" && cargo build --release -p function-wasm >&2)
+  (cd "$root" && cargo build --release -p guestfn-runtime >&2)
   cp "$root/target/release/function" "$work/function"
 fi
 

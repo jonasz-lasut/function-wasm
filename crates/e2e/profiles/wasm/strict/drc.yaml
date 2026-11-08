@@ -14,18 +14,18 @@ spec:
           - name: package-runtime
             image: function-wasm-e2e:dev
             args:
-            - --sandbox-policy-file=/etc/function-wasm/policy/policy.cedar
+            - --sandbox-policy-file=/etc/guestfn/policy/policy.cedar
             env:
             - name: SSL_CERT_FILE
-              value: /etc/function-wasm/registry-ca/ca.crt
+              value: /etc/guestfn/registry-ca/ca.crt
             - name: SSL_CERT_DIR
               value: /etc/ssl/certs
             volumeMounts:
             - name: policy
-              mountPath: /etc/function-wasm/policy
+              mountPath: /etc/guestfn/policy
               readOnly: true
             - name: registry-ca
-              mountPath: /etc/function-wasm/registry-ca
+              mountPath: /etc/guestfn/registry-ca
               readOnly: true
           volumes:
           - name: policy

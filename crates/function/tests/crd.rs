@@ -10,8 +10,8 @@ use std::path::PathBuf;
 #[test]
 fn the_input_crd_is_what_input_rs_generates() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let want = function_wasm::crd::yaml();
-    for file in [function_wasm::crd::FILE, function_wasm::crd::OCI_FILE] {
+    let want = guestfn_runtime::crd::yaml();
+    for file in [guestfn_runtime::crd::FILE, guestfn_runtime::crd::OCI_FILE] {
         let path = root.join(file);
         if std::env::var_os("UPDATE_GOLDENS").is_some() {
             std::fs::write(&path, &want).expect("write the CRD");
@@ -21,7 +21,7 @@ fn the_input_crd_is_what_input_rs_generates() {
         assert_eq!(
             got,
             want,
-            "{} differs from what crd::document generates; UPDATE_GOLDENS=1 cargo test -p function-wasm --test crd re-records it",
+            "{} differs from what crd::document generates; UPDATE_GOLDENS=1 cargo test -p guestfn-runtime --test crd re-records it",
             path.display()
         );
     }

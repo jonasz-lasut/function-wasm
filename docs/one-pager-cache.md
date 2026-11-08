@@ -22,7 +22,7 @@ not how.
 ## Layout
 
 ```
-/tmp/function-wasm-cache/
+/tmp/guestfn-cache/
 ├── modules/                          fetched blobs, as delivered by the source
 │   └── sha256-<hex>                    verified against its name on every read
 ├── compiled/                         Wasmtime artifacts
@@ -187,7 +187,7 @@ the module it names loads on its first request as before. Warm-up costs time
 between listen and serving, one map per entry on a warm volume and one compile
 per entry on a cold cache, so a gRPC liveness probe on the function port needs
 a failure threshold that outlasts it. A volume under
-`/tmp/function-wasm-cache` is what makes that time short. The operator's view
+`/tmp/guestfn-cache` is what makes that time short. The operator's view
 is [readiness](operators/readiness.md).
 
 ## Failure behavior
@@ -207,12 +207,12 @@ is [readiness](operators/readiness.md).
 
 ## Observability
 
-`function_wasm_module_cache_events_total{cache,event}` with `cache` in
+`guestfn_module_cache_events_total{cache,event}` with `cache` in
 `compiled` (memory tier), `compiled-disk` (artifacts) and `blob` (fetched
 modules), and `event` in `hit`, `miss` and `stale` (`compiled-disk` only: an
-artifact Wasmtime refused). `function_wasm_module_fetch_duration_seconds{source}`
-and `function_wasm_module_compile_duration_seconds` time the miss paths.
-`function_wasm_module_cache_bytes{cache}` is the size of the `blob` and
+artifact Wasmtime refused). `guestfn_module_fetch_duration_seconds{source}`
+and `guestfn_module_compile_duration_seconds` time the miss paths.
+`guestfn_module_cache_bytes{cache}` is the size of the `blob` and
 `compiled-disk` stores as of the last sweep. The metrics page lists the full
 series: [metrics](operators/metrics.md).
 

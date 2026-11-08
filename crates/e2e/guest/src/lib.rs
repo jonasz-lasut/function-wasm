@@ -1,4 +1,4 @@
-//! function-wasm's end-to-end test module (crates/e2e, docs/project/testing.md):
+//! guestfn's end-to-end test module (crates/e2e, docs/project/testing.md):
 //! an ABI v2 guest whose composite resource's spec says which runtime feature
 //! to exercise. It composes provider-nop `NopResource`s, the way Crossplane's
 //! own end-to-end suite composes something that reconciles without a cloud,
@@ -603,7 +603,7 @@ mod tests {
             observed: Some(fnv1::State {
                 composite: Some(fnv1::Resource {
                     resource: Some(json_to_struct(&serde_json::json!({
-                        "apiVersion": "e2e.function-wasm.io/v1alpha1",
+                        "apiVersion": "e2e.guestfn.io/v1alpha1",
                         "kind": "Guest",
                         "metadata": {"name": "probe", "namespace": "e2e"},
                         "spec": spec,

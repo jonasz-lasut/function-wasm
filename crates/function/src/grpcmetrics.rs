@@ -7,13 +7,13 @@
 //! methods (reflection, health Watch) are not counted, and like its
 //! InitializeMetrics, every method the server carries starts as a zero
 //! series. No handling-time histogram: function-sdk-go never enabled one,
-//! and `function_wasm_module_run_duration_seconds` covers latency.
+//! and `guestfn_module_run_duration_seconds` covers latency.
 
 use std::pin::Pin;
 use std::sync::LazyLock;
 use std::task::{Context, Poll};
 
-use function_wasm_engine::metrics::LabeledCounter;
+use guestfn_engine::metrics::LabeledCounter;
 
 const RUN_FUNCTION_SERVICE: &str = "apiextensions.fn.proto.v1.FunctionRunnerService";
 const HEALTH_SERVICE: &str = "grpc.health.v1.Health";
@@ -329,7 +329,7 @@ mod tests {
     fn a_dropped_reporter_is_a_canceled_call() {
         initialize();
         let canceled = || {
-            function_wasm_engine::metrics::sample(
+            guestfn_engine::metrics::sample(
                 "grpc_server_handled_total",
                 &[
                     ("grpc_type", "unary"),

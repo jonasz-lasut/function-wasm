@@ -6,6 +6,9 @@
 // --cosign-key the profile mounts; a keyless one counts when its signer is
 // trusted for the repository - the suite's release identity for the e2e
 // repository, this repository's release workflow for the published examples.
+// A certificate names the repository as it was at signing time, so the
+// examples published while the repository was function-wasm (through 0.6)
+// keep that identity beside today's.
 permit (principal, action == Action::"requireSignature", resource)
 when {
   resource in Repository::"registry.e2e.svc:5000" ||
@@ -15,15 +18,16 @@ when {
 permit (principal, action == Action::"trustSigner", resource)
 when {
   resource in Repository::"registry.e2e.svc:5000/e2e" &&
-  context.issuer == "https://e2e.function-wasm.io" &&
-  context.identity == "https://e2e.function-wasm.io/release"
+  context.issuer == "https://e2e.guestfn.io" &&
+  context.identity == "https://e2e.guestfn.io/release"
 };
 
 permit (principal, action == Action::"trustSigner", resource)
 when {
   resource in Repository::"ghcr.io/jonasz-lasut/wasmfn/examples" &&
   context.issuer == "https://token.actions.githubusercontent.com" &&
-  (context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-examples.yml@refs/heads/main" ||
+  (context.identity like "https://github.com/jonasz-lasut/guestfn/.github/workflows/publish-examples.yml@refs/heads/main" ||
+   context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-examples.yml@refs/heads/main" ||
    context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-pkg.yml@refs/tags/v*")
 };
 

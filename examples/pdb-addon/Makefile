@@ -8,7 +8,7 @@
 # into the go template). GUESTFN, FUNCTION_BIN (read by ../render.sh)
 # and WIT_BINDGEN can name prebuilt binaries instead, as CI does.
 ROOT := $(abspath ../..)
-MODULE := github.com/jonasz-lasut/function-wasm/examples/pdb-addon
+MODULE := github.com/jonasz-lasut/guestfn/examples/pdb-addon
 GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 WIT_BINDGEN ?= wit-bindgen
 

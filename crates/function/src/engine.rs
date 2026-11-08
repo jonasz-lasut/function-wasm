@@ -1,5 +1,5 @@
 //! The engine behind the runtime, behind the `Engine` trait of
-//! function-wasm-engine: what `runner.rs` compiles, inspects and runs
+//! guestfn-engine: what `runner.rs` compiles, inspects and runs
 //! modules through, what `cache.rs` keeps and what `validate.rs` reads. A
 //! Cargo feature selects the one engine a package serves with (`wasm`:
 //! Wasmtime; `oci`: the OCI engine of docs/one-pager-oci-runtime.md, built
@@ -10,13 +10,13 @@
 //! --all-features does, wasm serves. The engine's own flags, if any, are
 //! `EngineArgs`, flattened into serve's and validate's.
 
-pub use function_wasm_engine::{Config, Engine, Error, Inspection, RunOptions};
+pub use guestfn_engine::{Config, Engine, Error, Inspection, RunOptions};
 
 #[cfg(feature = "wasm")]
-pub use function_wasm_engine::Wasmtime as Selected;
+pub use guestfn_engine::Wasmtime as Selected;
 
 #[cfg(all(feature = "oci", not(feature = "wasm")))]
-pub use function_wasm_engine::oci::Oci as Selected;
+pub use guestfn_engine::oci::Oci as Selected;
 
 #[cfg(not(any(feature = "wasm", feature = "oci")))]
 compile_error!("function-wasm serves with one engine: build with the `wasm` or the `oci` feature");
@@ -30,7 +30,7 @@ pub type Module = <Selected as Engine>::Module;
 pub struct EngineArgs {}
 
 /// The OCI engine's flags: the VM pieces the package image puts under
-/// /usr/lib/guestfn, and the vCPUs per VM (docs/operators/oci-runtime.md).
+/// /usr/lib/guestfn, and the vCPUs per VM (docs/oci/install.md).
 #[cfg(all(feature = "oci", not(feature = "wasm")))]
 #[derive(clap::Args, Debug, Clone)]
 pub struct EngineArgs {
@@ -81,7 +81,7 @@ pub fn new(config: Config, _args: &EngineArgs) -> Result<Selected, Error> {
 pub fn new(config: Config, args: &EngineArgs) -> Result<Selected, Error> {
     Selected::new(
         config,
-        function_wasm_engine::oci::Options {
+        guestfn_engine::oci::Options {
             vmm: args.vmm.clone(),
             kernel: args.guest_kernel.clone(),
             init: args.guest_init.clone(),

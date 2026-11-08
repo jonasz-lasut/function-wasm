@@ -1,4 +1,4 @@
-//! The engines of function-wasm, behind one `Engine` trait: what the
+//! The engines of guestfn, behind one `Engine` trait: what the
 //! runtime holds an engine to (compile, inspect, run, version), the
 //! ceilings (`Config`), one run's narrowing and grants (`RunOptions`), the
 //! inspection a tool reads, the egress seam (`wire::HttpRequester`), the

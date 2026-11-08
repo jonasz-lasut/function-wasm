@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 /// Where the runtime keeps its caches - a fixed location: a pod that must
 /// survive restarts backs it with a volume, one with a read-only root
 /// filesystem mounts an emptyDir there.
-pub const DEFAULT_DIR: &str = "/tmp/function-wasm-cache";
+pub const DEFAULT_DIR: &str = "/tmp/guestfn-cache";
 
 /// Subdirectories of DEFAULT_DIR.
 pub const MODULES_DIR: &str = "modules";

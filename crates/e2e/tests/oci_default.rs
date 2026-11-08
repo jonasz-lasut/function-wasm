@@ -5,7 +5,7 @@
 //! same Guest XR; what the OCI runtime does not
 //! serve yet (egress) is refused by name.
 
-use function_wasm_e2e::prelude::*;
+use guestfn_e2e::prelude::*;
 
 const WAIT: Duration = Duration::from_secs(240);
 

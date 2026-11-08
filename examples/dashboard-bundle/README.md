@@ -6,7 +6,7 @@ ahead of time by NativeAOT-LLVM with
 [componentize-dotnet](https://github.com/bytecodealliance/componentize-dotnet)
 into an **ABI v2** component ([docs/abi-v2.md](../../docs/abi-v2.md)) of
 about 4.5 MB, run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm).
+[function-wasm](https://github.com/jonasz-lasut/guestfn).
 
 Teams publish their Grafana dashboards as one versioned archive, a release
 artifact. A `DashboardBundle` composite resource names the bundle, pins its
@@ -178,7 +178,7 @@ guestfn push ghcr.io/example/dashboard-bundle:v0.1.0
 The operator grants both capabilities in the runtime's
 `--sandbox-policy-file`, and bounds the private `/tmp` through the runtime's
 `DeploymentRuntimeConfig` (`TMPDIR` on a tmpfs `emptyDir` with a
-`sizeLimit`, as function-wasm's [runtime flags](https://jonasz-lasut.github.io/function-wasm/operators/runtime-flags.html) page shows):
+`sizeLimit`, as function-wasm's [runtime flags](https://jonasz-lasut.github.io/guestfn/operators/runtime-flags.html) page shows):
 
 ```cedar
 permit (principal, action == Action::"usePrivateTmp", resource);

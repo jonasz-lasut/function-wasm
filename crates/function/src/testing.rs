@@ -6,7 +6,7 @@
 
 pub use crate::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey, attach};
 pub use crate::testsigstore::Instance as Sigstore;
-pub use function_wasm_engine::testing as guests;
+pub use guestfn_engine::testing as guests;
 
 pub mod registry {
     //! An in-memory distribution registry assembled by name.
@@ -264,8 +264,8 @@ pub mod runtime {
     use crate::egress::Egress;
     use crate::resolver::Resolver;
     use crate::runner::WasmFunction;
-    use function_wasm_engine::Config;
-    use function_wasm_engine::concurrency::StepSlots;
+    use guestfn_engine::Config;
+    use guestfn_engine::concurrency::StepSlots;
 
     use crate::engine::Selected;
 

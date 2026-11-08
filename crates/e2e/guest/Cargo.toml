@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.100"
 publish = false
-description = "function-wasm's end-to-end test module: an ABI v2 guest whose composite resource's spec says which runtime feature to exercise, composing provider-nop resources"
+description = "guestfn's end-to-end test module: an ABI v2 guest whose composite resource's spec says which runtime feature to exercise, composing provider-nop resources"
 
 # Its own workspace root: a package under a member's directory (crates/e2e)
 # cannot be excluded from the root workspace, and this one is a standalone

@@ -3,7 +3,7 @@
 // earlier pipeline step composed a PodDisruptionBudget.
 package main
 
-import "github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/wasmfn"
+import "github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/wasmfn"
 
 // Go runs package initializers, not main, in a wasip1 reactor
 // (-buildmode=c-shared), so the function is registered from init.

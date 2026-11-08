@@ -7,9 +7,9 @@
 
 use std::path::PathBuf;
 
-use function_wasm::location::{AnyReference, parse_any_reference, parse_oci_reference};
-use function_wasm::manifest::{Manifest, TYPE_OCI};
-use function_wasm::oci::{self, RegistryClient};
+use guestfn_runtime::location::{AnyReference, parse_any_reference, parse_oci_reference};
+use guestfn_runtime::manifest::{Manifest, TYPE_OCI};
+use guestfn_runtime::oci::{self, RegistryClient};
 use serde::Serialize;
 use sha2::Digest as _;
 
@@ -128,7 +128,7 @@ impl PushCmd {
         let Some(mut m) = self.load_manifest()? else {
             return Err(format!(
                 "--image needs an oci@1.0 manifest: no {} next to {} and no --manifest",
-                function_wasm::manifest::FILE_NAME,
+                guestfn_runtime::manifest::FILE_NAME,
                 self.file.display()
             ));
         };
@@ -143,7 +143,7 @@ impl PushCmd {
         if m.image.is_empty() {
             return Err(format!(
                 "an oci@1.0 manifest names the image it is built from: set image in {} or pass --image registry/repository@sha256:...",
-                function_wasm::manifest::FILE_NAME
+                guestfn_runtime::manifest::FILE_NAME
             ));
         }
         // The pin is checked here, where the author can fix it, with the
@@ -228,12 +228,12 @@ impl PushCmd {
                     .file
                     .parent()
                     .unwrap_or(std::path::Path::new("."))
-                    .join(function_wasm::manifest::FILE_NAME);
+                    .join(guestfn_runtime::manifest::FILE_NAME);
                 if !candidate.is_file() {
                     if self.module_version.is_some() {
                         return Err(format!(
                             "--module-version needs a manifest: no {} next to {} and no --manifest",
-                            function_wasm::manifest::FILE_NAME,
+                            guestfn_runtime::manifest::FILE_NAME,
                             self.file.display()
                         ));
                     }
@@ -254,7 +254,7 @@ impl PushCmd {
 /// through the runtime's own registry client, authenticated with the local
 /// Docker config.
 fn push(reference: &AnyReference, blobs: &[&[u8]], raw_manifest: &[u8]) -> Result<(), String> {
-    let pinned = function_wasm::location::OciReference {
+    let pinned = guestfn_runtime::location::OciReference {
         registry: reference.registry.clone(),
         repository: reference.repository.clone(),
         digest: digest_of(raw_manifest),
@@ -543,7 +543,7 @@ fn requires_block(m: &Manifest) -> Result<Option<String>, String> {
     }
     #[derive(Serialize)]
     struct Block<'a> {
-        requires: &'a function_wasm::manifest::Requires,
+        requires: &'a guestfn_runtime::manifest::Requires,
     }
     serde_saphyr::to_string(&Block { requires: r })
         .map(Some)

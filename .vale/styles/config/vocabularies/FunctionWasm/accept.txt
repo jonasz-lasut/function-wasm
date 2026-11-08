@@ -50,6 +50,7 @@ function-sdk-python
 function-sdk-rust
 function-sdk-typescript
 function-wasm
+function-oci
 GCC
 GHC
 GHCR

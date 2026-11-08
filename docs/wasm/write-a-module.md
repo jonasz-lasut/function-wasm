@@ -8,7 +8,7 @@ commands. See [Other languages](other-languages.md) for what differs.
 Install the CLI and scaffold a project:
 
 ```shell
-cargo install --git https://github.com/jonasz-lasut/function-wasm guestfn
+cargo install --git https://github.com/jonasz-lasut/guestfn guestfn
 
 guestfn init greeter --module github.com/example/greeter   # --lang go (default), rust, zig, c, ts or python
 cd greeter
@@ -35,7 +35,7 @@ calls your `RunFunction` and encodes the response. It also provides a
 bindings under `internal/bindings` are written by
 [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) and checked in.
 
-[`examples/pdb-addon`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/pdb-addon)
+[`examples/pdb-addon`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/pdb-addon)
 is a Go module built on what `guestfn init` writes. Its `internal/wasmfn`,
 `wit/` and `internal/bindings` are the scaffold's, byte for byte.
 
@@ -70,7 +70,7 @@ The scaffold includes a `guestfn.yaml`, the module's manifest. It gives the
 module a name and version, declares the sandbox capabilities the module can't
 run without, and contains the JSON Schema of its `config`. `guestfn build`
 validates it and `guestfn push` publishes it beside the module. See
-[Module manifests](module-manifests.md) for the fields and for how the runtime
+[Module manifests](../guests/module-manifests.md) for the fields and for how the runtime
 checks a module's requirements.
 
 `guestfn scaffold composition --from ghcr.io/example/greeter:v0.1.0` (or
@@ -96,4 +96,4 @@ the archive.
 ## Module size
 
 A Go module that uses function-sdk-go's helpers is about 75 MB. See
-[Sizing](../operators/sizing.md) for what that costs the runtime.
+[Sizing](sizing.md) for what that costs the runtime.

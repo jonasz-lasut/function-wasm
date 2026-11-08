@@ -15,7 +15,7 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/wasmfn"
+	"github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/wasmfn"
 )
 
 // Config is what the Composition passes under input.config.

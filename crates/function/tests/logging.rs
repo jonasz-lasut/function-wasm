@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use function_sdk_rust::proto::v1::function_runner_service_client::FunctionRunnerServiceClient;
 use function_sdk_rust::proto::v1::{RequestMeta, RunFunctionRequest};
 use function_sdk_rust::resource;
-use function_wasm::input::API_VERSION;
+use guestfn_runtime::input::API_VERSION;
 
 const GUEST_MSG: &str = "a debug record from the guest";
 
@@ -36,7 +36,7 @@ fn serve_and_run_input(
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("fn.wasm"),
-        function_wasm::testing::guests::logging_component(GUEST_MSG),
+        guestfn_runtime::testing::guests::logging_component(GUEST_MSG),
     )
     .expect("write");
     let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -142,7 +142,7 @@ async fn connect(port: u16) -> tonic::transport::Channel {
 fn foreign_debug_lines(lines: &[String]) -> Vec<&String> {
     lines
         .iter()
-        .filter(|l| l.contains("DEBUG") && !l.contains("function_wasm"))
+        .filter(|l| l.contains("DEBUG") && !l.contains("guestfn_"))
         .collect()
 }
 
@@ -161,7 +161,7 @@ fn debug_is_scoped_to_the_runtime() {
         lines.join("\n")
     );
     assert!(
-        guest[0].contains("DEBUG") && guest[0].contains("function_wasm_engine::component"),
+        guest[0].contains("DEBUG") && guest[0].contains("guestfn_engine::component"),
         "the record is logged at DEBUG by the engine: {}",
         guest[0]
     );

@@ -13,9 +13,9 @@
 package wasi_http_types
 
 import (
-	"github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wasi_io_error"
-	"github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wasi_io_poll"
-	"github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wasi_io_streams"
+	"github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wasi_io_error"
+	"github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wasi_io_poll"
+	"github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wasi_io_streams"
 	witRuntime "go.bytecodealliance.org/pkg/wit/runtime"
 	witTypes "go.bytecodealliance.org/pkg/wit/types"
 	"runtime"

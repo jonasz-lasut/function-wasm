@@ -1,4 +1,4 @@
-module github.com/jonasz-lasut/function-wasm/examples/pdb-addon
+module github.com/jonasz-lasut/guestfn/examples/pdb-addon
 
 go 1.27.3
 

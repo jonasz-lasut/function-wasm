@@ -126,7 +126,7 @@ with a `wasi:http` client has egress. The host:
   response, 5 redirects) and the process-wide rate limit
   (`--egress-rate-limit-per-minute`, `--egress-rate-limit-burst`); a request
   is also cut at the run's remaining deadline;
-- counts `function_wasm_module_http_requests_total{outcome}` and writes one log line
+- counts `guestfn_module_http_requests_total{outcome}` and writes one log line
   per request (method, host, path without query, status or reason, bytes and
   duration, never headers or body).
 

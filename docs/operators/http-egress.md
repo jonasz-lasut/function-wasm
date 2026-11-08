@@ -4,7 +4,7 @@ This page is for operators who let modules make HTTP and HTTPS requests. It
 covers what to enable, the budgets, the block list and CIDR rules, and what
 the runtime refuses and logs. It assumes a runtime started with a Cedar
 `--sandbox-policy-file` (see [operator grant policy](grant-policy.md)); the
-guest-side client is covered in [write a module](../guests/write-a-module.md).
+guest-side client is covered in [write a module](../wasm/write-a-module.md).
 
 A module never opens a socket. The runtime resolves the name and checks the
 address against its block list, then sends the request over TLS with its own
@@ -38,7 +38,7 @@ default-deny and the policy opens it through two actions:
   over `context.ip`.
 
 ```shell
-function --sandbox-policy-file /etc/function-wasm/policy.cedar \
+function --sandbox-policy-file /etc/guestfn/policy.cedar \
   --egress-rate-limit-per-minute 60 --egress-rate-limit-burst 10
 ```
 
@@ -159,6 +159,6 @@ and digest. The line contains:
 A redirect adds one line per hop. Repeated calls without a grant or past
 `maxRequests` log one info line, then debug lines.
 
-Each request also increments `function_wasm_module_http_requests_total{outcome}`,
+Each request also increments `guestfn_module_http_requests_total{outcome}`,
 where the outcome is `ok`, `refused`, `budget` or `error`. The series has no
 host label.

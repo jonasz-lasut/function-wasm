@@ -17,6 +17,6 @@ fn main() {
             break;
         }
     }
-    println!("cargo:rustc-env=FUNCTION_WASM_WASMTIME_VERSION={version}");
+    println!("cargo:rustc-env=GUESTFN_WASMTIME_VERSION={version}");
     println!("cargo:rerun-if-changed=../../Cargo.lock");
 }

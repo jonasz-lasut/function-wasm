@@ -4,7 +4,7 @@
 # runtime built with its `oci` engine, the guest init built static for
 # musl, and the microVM pieces the engine boots a VM from - the Firecracker
 # binary from its release and the guest kernel Firecracker's CI publishes,
-# both pinned by checksum. The pod needs /dev/kvm (docs/operators/oci-runtime.md).
+# both pinned by checksum. The pod needs /dev/kvm (docs/oci/install.md).
 ARG RUST_VERSION=1
 ARG FIRECRACKER_VERSION=v1.17.0
 # The checksums of firecracker-${FIRECRACKER_VERSION}-<arch>.tgz.
@@ -37,8 +37,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 WORKDIR /fn
 
-ARG FUNCTION_WASM_VERSION=
-ENV FUNCTION_WASM_VERSION=${FUNCTION_WASM_VERSION}
+ARG GUESTFN_VERSION=
+ENV GUESTFN_VERSION=${GUESTFN_VERSION}
 
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
@@ -56,9 +56,9 @@ RUN --mount=target=.,rw \
     esac; \
     if [ "${BUILDARCH}" != "${TARGETARCH}" ]; then rustup target add "${target}"; fi; \
     rustup target add "${musl}"; \
-    cargo build --release --locked -p function-wasm --no-default-features --features oci --target "${target}" && \
+    cargo build --release --locked -p guestfn-runtime --no-default-features --features oci --target "${target}" && \
     cp "target/${target}/release/function" /function && \
-    cargo build --release --locked -p function-wasm-engine --no-default-features --bin guestfn-init --target "${musl}" && \
+    cargo build --release --locked -p guestfn-engine --no-default-features --bin guestfn-init --target "${musl}" && \
     cp "target/${musl}/release/guestfn-init" /guestfn-init
 
 # Firecracker and the guest kernel, fetched at their pinned versions and

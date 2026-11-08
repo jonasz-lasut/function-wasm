@@ -1,5 +1,6 @@
-//! The Rust runtime of function-wasm: a Crossplane composition function that
-//! runs a user-supplied WebAssembly module in a wasmtime sandbox. This is
+//! The guestfn runtime, the `function` binary behind the function-wasm and
+//! function-oci packages: a Crossplane composition function that runs a
+//! user-supplied module in the engine its Cargo feature selected. This is
 //! the implementation of docs/one-pager-abi-v2.md; the flags, their names,
 //! defaults and units are the contract of docs/contract/compatibility.md. Serving is the default; `function validate`
 //! runs the same admission over Compositions offline.
@@ -11,11 +12,11 @@ use std::time::Duration;
 
 use clap::Parser;
 use function_sdk_rust::Args;
-use function_wasm::engine::{self, Engine as _, Selected};
-use function_wasm::{
+use guestfn_engine::{Config, duration};
+use guestfn_runtime::engine::{self, Engine as _, Selected};
+use guestfn_runtime::{
     authz, cache, cosign, egress, grpc, logging, ops, resolver, runner, store, trustroot, validate,
 };
-use function_wasm_engine::{Config, duration};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -90,7 +91,7 @@ struct ServeArgs {
     /// (public-good, staging or github) and refresh it while serving,
     /// instead of reading --cosign-trusted-root's file. The verified TUF
     /// metadata and the root are cached under
-    /// /tmp/function-wasm-cache/tuf/<instance>; a keyless signature is
+    /// /tmp/guestfn-cache/tuf/<instance>; a keyless signature is
     /// refused until the first fetch, or that cache, yields a root.
     #[arg(long, env = "COSIGN_TRUST_INSTANCE", value_enum)]
     cosign_trust_instance: Option<trustroot::Instance>,
@@ -382,7 +383,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             ..Default::default()
         },
     ));
-    let step_slots = Arc::new(function_wasm_engine::concurrency::StepSlots::new());
+    let step_slots = Arc::new(guestfn_engine::concurrency::StepSlots::new());
     let function = runner::WasmFunction {
         engine: Arc::clone(&engine),
         cache: Arc::clone(&module_cache),
@@ -411,10 +412,10 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             if freed > 0 {
                 tracing::info!(freed_bytes = freed, "Swept the on-disk caches");
             }
-            let m = &function_wasm_engine::metrics::CACHE_BYTES;
-            m.with_label_values(&[function_wasm_engine::metrics::CACHE_BLOB])
+            let m = &guestfn_engine::metrics::CACHE_BYTES;
+            m.with_label_values(&[guestfn_engine::metrics::CACHE_BLOB])
                 .set(store::bytes(&stores[0]) as f64);
-            m.with_label_values(&[function_wasm_engine::metrics::CACHE_COMPILED_DISK])
+            m.with_label_values(&[guestfn_engine::metrics::CACHE_COMPILED_DISK])
                 .set(store::bytes(&stores[1]) as f64);
         };
         sweep_stores();

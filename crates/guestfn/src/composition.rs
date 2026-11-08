@@ -5,9 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use function_wasm::location::parse_any_reference;
-use function_wasm::manifest::Manifest;
-use function_wasm::oci;
+use guestfn_runtime::location::parse_any_reference;
+use guestfn_runtime::manifest::Manifest;
+use guestfn_runtime::oci;
 
 #[derive(clap::Args, Debug)]
 pub struct CompositionCmd {
@@ -87,7 +87,7 @@ impl CompositionCmd {
                 let candidate = from
                     .parent()
                     .unwrap_or(Path::new("."))
-                    .join(function_wasm::manifest::FILE_NAME);
+                    .join(guestfn_runtime::manifest::FILE_NAME);
                 if candidate.is_file() {
                     m = Some(Manifest::load(&candidate)?);
                 }
@@ -128,8 +128,8 @@ fn composition_step(
 ) -> Result<String, String> {
     let mut b = format!(
         "- step: {name}\n  functionRef:\n    name: {function_name}\n  input:\n    apiVersion: {}\n    kind: {}\n",
-        function_wasm::input::API_VERSION,
-        function_wasm::input::KIND
+        guestfn_runtime::input::API_VERSION,
+        guestfn_runtime::input::KIND
     );
     let module_yaml = match src {
         Source::Path(p) => format!("module:\n  type: Path\n  path: {p}\n"),
@@ -255,7 +255,7 @@ fn composition_policy_skeleton(src: &Source, m: Option<&Manifest>) -> Option<Str
         }
     }
     if let Source::Oci(reference) = src
-        && let Ok(r) = function_wasm::location::parse_oci_reference(reference)
+        && let Ok(r) = guestfn_runtime::location::parse_oci_reference(reference)
     {
         body.push(
             "// for a module.from source, permit pulling this repository (a static".to_string(),
@@ -283,7 +283,7 @@ fn composition_policy_skeleton(src: &Source, m: Option<&Manifest>) -> Option<Str
 
 /// The distinct hosts (or host patterns) of a module's egress rules,
 /// first-seen order, so one grantEgress permit is emitted per host.
-fn egress_hosts(rules: &[function_wasm::egress_rules::HttpRule]) -> Vec<String> {
+fn egress_hosts(rules: &[guestfn_runtime::egress_rules::HttpRule]) -> Vec<String> {
     let mut out = Vec::new();
     for r in rules {
         let h = if r.host.is_empty() {
@@ -301,7 +301,7 @@ fn egress_hosts(rules: &[function_wasm::egress_rules::HttpRule]) -> Vec<String> 
 
 /// The distinct credential names a module's env bindings spend, first-seen
 /// order.
-fn credential_names(bindings: &[function_wasm::sandboxenv::EnvBinding]) -> Vec<String> {
+fn credential_names(bindings: &[guestfn_runtime::sandboxenv::EnvBinding]) -> Vec<String> {
     let mut out = Vec::new();
     for b in bindings {
         let name = &b.from_credential.name;

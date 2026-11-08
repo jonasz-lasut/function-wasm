@@ -1,10 +1,10 @@
 [package]
-name = "function-wasm-engine"
+name = "guestfn-engine"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The engines of function-wasm behind one Engine trait: the Wasmtime engine (feature wasm) and the OCI engine (feature oci), with the OCI runtime's guest init and its test fixture as the crate's binaries"
+description = "The engines of guestfn behind one Engine trait: the Wasmtime engine (feature wasm) and the OCI engine (feature oci), with the OCI runtime's guest init and its test fixture as the crate's binaries"
 publish = false
 
 # The two binaries are the OCI runtime's guest init (PID 1 of the microVM)
@@ -120,7 +120,7 @@ wat = { version = "1", optional = true }
 [dev-dependencies]
 function-sdk-rust = "0.4.0"
 # The crate's own tests use its testing module.
-function-wasm-engine = { path = ".", default-features = false, features = ["testutil"] }
+guestfn-engine = { path = ".", default-features = false, features = ["testutil"] }
 prost = "0.14"
 # The committed-guest tests build the composite resource a RunFunctionRequest
 # carries (function-sdk-rust's Struct is pbjson's, serde-capable).

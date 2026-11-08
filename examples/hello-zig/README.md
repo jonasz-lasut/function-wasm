@@ -1,9 +1,9 @@
 # hello-zig
 
 A [Crossplane](https://crossplane.io) composition function in Zig on
-[ABI v2](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md):
+[ABI v2](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md):
 a WebAssembly component of about 60 KB, built by `zig` and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm). The one
+[function-wasm](https://github.com/jonasz-lasut/guestfn). The one
 `zig` binary is the toolchain, the build system and the package fetcher,
 and `guestfn build` wraps the core module it links into the component - no
 wasm-tools, no adapter download.

@@ -20,7 +20,9 @@ for a rule that didn't exist before.
   conditions for these strings.
 - The module manifest (`guestfn.yaml`): its fields and what each requests.
 - The ABI v2 world, which has its own version (see [ABI v2](../abi-v2.md)).
-- The metric names and labels (`function_wasm_*`, `grpc_server_*`).
+- The metric names and labels (`guestfn_*`, `grpc_server_*`).
+- The cache directory, `/tmp/guestfn-cache`, where an operator mounts a
+  volume or an `emptyDir`.
 - `function validate`: its exit codes (0 admitted, 1 refused, 2 the tool
   failed) and the field names of `--output json`.
 - The `guestfn` commands, their arguments and flags.
@@ -51,4 +53,8 @@ A removal runs in two steps:
 ABI v1 set the precedent: deprecated in 0.6.0, removed in 1.0.0. Before
 1.0 a rename may skip the deprecation step: the Input's group moved from
 `wasm.fn.crossplane.io` to `guestfn.crossplane.io` outright, and the
-runtime refuses the old group by name.
+runtime refuses the old group by name. The project's own names moved the
+same way at 0.6, with no alias for the old ones: the metric series
+`function_wasm_*` became `guestfn_*`, the cache directory
+`/tmp/function-wasm-cache` became `/tmp/guestfn-cache` and the stamped
+version variable `FUNCTION_WASM_VERSION` became `GUESTFN_VERSION`.

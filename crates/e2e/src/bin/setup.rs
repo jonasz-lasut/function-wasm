@@ -13,13 +13,13 @@
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use function_wasm_e2e::fixtures;
-use function_wasm_e2e::forward::Bridge;
-use function_wasm_e2e::guest::{self, OCI_VARIANTS, VARIANTS};
-use function_wasm_e2e::k8s::{self, CROSSPLANE_NAMESPACE, apply, condition_is, dynamic, wait_for};
-use function_wasm_e2e::profile::{Profile, Runtime};
-use function_wasm_e2e::registry::{self, Pusher};
-use function_wasm_e2e::state::{Pushed, State};
+use guestfn_e2e::fixtures;
+use guestfn_e2e::forward::Bridge;
+use guestfn_e2e::guest::{self, OCI_VARIANTS, VARIANTS};
+use guestfn_e2e::k8s::{self, CROSSPLANE_NAMESPACE, apply, condition_is, dynamic, wait_for};
+use guestfn_e2e::profile::{Profile, Runtime};
+use guestfn_e2e::registry::{self, Pusher};
+use guestfn_e2e::state::{Pushed, State};
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment};
 use k8s_openapi::api::core::v1::{Node, Pod};
 use kube::Client;
@@ -32,7 +32,7 @@ use serde_json::json;
 const PDB_ADDON: &str = "ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon@sha256:f80a8364a61555f02d1429a17af9feaf0e9e8505c8fbb0d64589f84b05b14346";
 const REGISTRY_IMAGE: &str = "registry:3";
 /// The device plugin that admits the node's /dev/kvm into function-oci's
-/// pod (docs/operators/oci-runtime.md, "Node requirements"), and the
+/// pod (docs/oci/install.md, "Node requirements"), and the
 /// resource it advertises.
 const KVM_DEVICE_PLUGIN: &str = include_str!("../../cluster/kvm-device-plugin.yaml");
 const KVM_RESOURCE: &str = "devic.es/kvm";

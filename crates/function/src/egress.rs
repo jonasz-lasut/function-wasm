@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use function_wasm_engine::wire;
+use guestfn_engine::wire;
 
 use crate::authz::{IpPrefix, IpRules};
 use crate::egress_rules::{self, HttpRule};
@@ -280,12 +280,12 @@ pub struct Client {
     over_budget: AtomicBool,
 }
 
-impl function_wasm_engine::HttpRequester for Client {
+impl guestfn_engine::HttpRequester for Client {
     fn do_request(&self, req: &wire::Request, deadline: Instant) -> wire::Response {
         let start = Instant::now();
         let method = method_of(req);
         let (rsp, outcome, url, detail) = self.perform(req, deadline);
-        function_wasm_engine::metrics::HTTP_REQUESTS
+        guestfn_engine::metrics::HTTP_REQUESTS
             .with_label_values(&[outcome])
             .inc();
         // The audit line: method, host and path (never the query, the
@@ -373,7 +373,7 @@ impl Client {
                 budget.timeout,
                 format!(
                     "its {} timeout",
-                    function_wasm_engine::duration::format(budget.timeout)
+                    guestfn_engine::duration::format(budget.timeout)
                 ),
             )
         };
@@ -812,7 +812,7 @@ impl RateLimiters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use function_wasm_engine::HttpRequester;
+    use guestfn_engine::HttpRequester;
     use std::io::{Read as _, Write as _};
     use std::net::TcpListener;
 

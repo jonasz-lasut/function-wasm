@@ -25,8 +25,8 @@ WORKDIR /fn
 
 # The runtime's release version, stamped into the binary for minRuntime
 # checks; a local build stays a development build (empty).
-ARG FUNCTION_WASM_VERSION=
-ENV FUNCTION_WASM_VERSION=${FUNCTION_WASM_VERSION}
+ARG GUESTFN_VERSION=
+ENV GUESTFN_VERSION=${GUESTFN_VERSION}
 
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc
@@ -40,7 +40,7 @@ RUN --mount=target=.,rw \
       *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     if [ "${BUILDARCH}" != "${TARGETARCH}" ]; then rustup target add "${target}"; fi; \
-    cargo build --release --locked -p function-wasm --target "${target}" && \
+    cargo build --release --locked -p guestfn-runtime --target "${target}" && \
     cp "target/${target}/release/function" /function
 
 # Produce the Function image. The binary links glibc dynamically, so the

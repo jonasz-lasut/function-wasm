@@ -3,15 +3,15 @@
 //! a guest kernel and the init and fixture binaries built for musl, named
 //! by GUESTFN_FIRECRACKER, GUESTFN_KERNEL, GUESTFN_INIT and
 //! GUESTFN_FIXTURE (`make oci.tools` and `make oci.init` set them up); without them every test
-//! is skipped, or fails under FUNCTION_WASM_REQUIRE_KVM=1, which the OCI
+//! is skipped, or fails under GUESTFN_REQUIRE_KVM=1, which the OCI
 //! workflow sets.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use function_wasm_engine::oci::testing::fixture_image;
-use function_wasm_engine::oci::{Oci, Options};
-use function_wasm_engine::{Config, Engine, RunOptions};
+use guestfn_engine::oci::testing::fixture_image;
+use guestfn_engine::oci::{Oci, Options};
+use guestfn_engine::{Config, Engine, RunOptions};
 
 struct Tools {
     firecracker: PathBuf,
@@ -37,9 +37,9 @@ fn tools() -> Option<Tools> {
             fixture: std::fs::read(&fixture).expect("the fixture binary"),
         }),
         _ => {
-            if std::env::var_os("FUNCTION_WASM_REQUIRE_KVM").is_some() {
+            if std::env::var_os("GUESTFN_REQUIRE_KVM").is_some() {
                 panic!(
-                    "FUNCTION_WASM_REQUIRE_KVM is set but GUESTFN_FIRECRACKER, GUESTFN_KERNEL, GUESTFN_INIT or GUESTFN_FIXTURE is not"
+                    "GUESTFN_REQUIRE_KVM is set but GUESTFN_FIRECRACKER, GUESTFN_KERNEL, GUESTFN_INIT or GUESTFN_FIXTURE is not"
                 );
             }
             eprintln!(

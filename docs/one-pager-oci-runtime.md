@@ -3,7 +3,7 @@
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
 * Status: draft (a second runtime that runs OCI images in a microVM behind the same manifest and policy layers as a WebAssembly module. The owner settled the packaging and the contract and the egress and the artifact and the names and the order on 2026-11-05. The renames and the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247). The first `function-oci` build runs a process under Firecracker, the evaluation's first prototype behind the `Sandbox` seam, with the egress proxy and the scaffolds still ahead)
-* Tracking: https://github.com/jonasz-lasut/function-wasm/issues/239
+* Tracking: https://github.com/jonasz-lasut/guestfn/issues/239
 
 ## Summary
 
@@ -69,9 +69,9 @@ settle it.
   cluster without an explicit flag.
 - **A second ABI for WebAssembly.** The component world remains the one
   WebAssembly contract. The OCI contract is a process contract.
-- **Renaming the repository or the WebAssembly package.** `function-wasm`
-  keeps its name. The OCI package is `function-oci`. A later record may
-  rename the project once both runtimes have a release.
+- **Renaming the WebAssembly package.** The repository became
+  `jonasz-lasut/guestfn` at 0.6 (#252); the packages, `function-wasm` and
+  `function-oci`, kept their names.
 - **Kubernetes-level sandboxing.** The runtime never creates Pods, Jobs or
   RuntimeClass workloads. It remains a gRPC server, and `crossplane render`
   and the Development runtime keep working.
@@ -230,7 +230,7 @@ cgroups, virtio and vsock built in), pinned by checksum with Firecracker's
 release in `Dockerfile.oci` and the Makefile. The artifacts are at a dated
 prefix of Firecracker's bucket, whose retention the project doesn't
 control. Building the kernel in the repository from that source and
-config is what the record calls the project's own kernel build. `function_wasm_module_compile_duration_seconds` measures
+config is what the record calls the project's own kernel build. `guestfn_module_compile_duration_seconds` measures
 the unpacking.
 
 **One VM per request.** The runtime starts the VM with the kernel, the

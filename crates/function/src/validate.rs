@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use function_wasm_engine::{Config, duration};
+use guestfn_engine::{Config, duration};
 
 use crate::engine::{self, Engine as _, Selected};
 
@@ -94,7 +94,7 @@ pub struct ValidateArgs {
     /// (public-good, staging or github) instead of reading
     /// --cosign-trusted-root's file, as the runtime does: with --resolve,
     /// from the repository or the cache under
-    /// /tmp/function-wasm-cache/tuf/<instance>.
+    /// /tmp/guestfn-cache/tuf/<instance>.
     #[arg(long, env = "COSIGN_TRUST_INSTANCE", value_enum)]
     cosign_trust_instance: Option<crate::trustroot::Instance>,
 

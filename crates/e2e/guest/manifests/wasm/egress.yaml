@@ -3,7 +3,7 @@
 contract: wasm@1.0
 name: e2e-guest
 version: 0.1.0-egress
-description: function-wasm's end-to-end test module, requiring egress to the suite's registry
+description: guestfn's end-to-end test module, requiring egress to the suite's registry
 requires:
   egress:
     http:

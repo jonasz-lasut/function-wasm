@@ -4,7 +4,7 @@ The organisation's policy as the last step of every pipeline: a
 [Crossplane](https://crossplane.io) composition function in TypeScript,
 componentized with [jco](https://github.com/bytecodealliance/jco) into a
 WebAssembly **component** (ABI v2) and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm).
+[function-wasm](https://github.com/jonasz-lasut/guestfn).
 
 A team's Composition composes what it needs - here, an RDS `Instance` for a
 `Database` composite resource. The gate runs after it and holds every
@@ -155,7 +155,7 @@ policy: it requires no capability.
   after it** (`import log from "log"`, typed by `src/log.d.ts`), and esbuild
   must keep it external (`--external:log`).
 - `wit/world.wit`: this guest's own world, in a `local:guest` package: the
-  [ABI v2 world](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md)
+  [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
   restated with `run` declared **sync**, because componentize-js cannot
   async-lift a custom world's export yet, and a sync-lifted function
   satisfies the runtime's async world.

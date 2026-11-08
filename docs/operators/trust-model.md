@@ -85,7 +85,7 @@ module now, forbid it: the `pullModule` fence for a `module.from` source, or
 
 ## The cache directory
 
-The caches under `/tmp/function-wasm-cache` belong to the runtime. The
+The caches under `/tmp/guestfn-cache` belong to the runtime. The
 runtime checks each tier before it serves it. Fetched modules and manifests are
 verified against their digest on every read. Compiled artifacts, native
 code that Wasmtime loads without a check of its own, carry an HMAC under a

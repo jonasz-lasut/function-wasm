@@ -316,13 +316,13 @@ pub struct Grants {
 }
 
 /// The runtime's own release version, stamped at build time
-/// (FUNCTION_WASM_VERSION, set by the release pipeline); empty for a
+/// (GUESTFN_VERSION, set by the release pipeline); empty for a
 /// development build, which passes every minRuntime rule.
 /// The manifest file a guest project carries.
 pub const FILE_NAME: &str = "guestfn.yaml";
 
 pub fn runtime_version() -> &'static str {
-    option_env!("FUNCTION_WASM_VERSION").unwrap_or("")
+    option_env!("GUESTFN_VERSION").unwrap_or("")
 }
 
 impl Manifest {

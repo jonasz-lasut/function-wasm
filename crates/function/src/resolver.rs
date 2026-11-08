@@ -269,7 +269,7 @@ impl Resolver {
         };
         let start = std::time::Instant::now();
         let result = self.fetch_inner(resolved);
-        function_wasm_engine::metrics::FETCH_DURATION
+        guestfn_engine::metrics::FETCH_DURATION
             .with_label_values(&[source])
             .observe(start.elapsed().as_secs_f64());
         result
@@ -315,7 +315,7 @@ impl Resolver {
     /// module. A WebAssembly artifact is refused by name.
     #[cfg(feature = "oci")]
     fn fetch_image(&self, reference: &OciReference, auth: Option<Auth>) -> Result<Vec<u8>, String> {
-        use function_wasm_engine::oci::layout;
+        use guestfn_engine::oci::layout;
         let image_client = RegistryClient::new(reference, auth);
         let top = image_client.manifest_by_digest(&reference.digest, usize::MAX)?;
         if !(top.is_image() || top.is_index()) {
@@ -533,7 +533,7 @@ impl Resolver {
         digest: &str,
         fetch: impl FnOnce() -> Result<Vec<u8>, String>,
     ) -> Result<Vec<u8>, String> {
-        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
+        use guestfn_engine::metrics::{self, CACHE_EVENTS};
         if let Some(blobs) = &self.blobs {
             if let Some(b) = blobs.get(digest) {
                 CACHE_EVENTS

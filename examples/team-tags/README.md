@@ -5,7 +5,7 @@ person who asked for it: a [Crossplane](https://crossplane.io) composition
 function in Python, componentized with
 [componentize-py](https://github.com/bytecodealliance/componentize-py) into
 a WebAssembly **component** (ABI v2, about 21 MB with CPython embedded), run
-by [function-wasm](https://github.com/jonasz-lasut/function-wasm).
+by [function-wasm](https://github.com/jonasz-lasut/guestfn).
 
 A `Bucket` composite resource lives in its team's namespace and names a
 region. The platform's first pipeline step,
@@ -194,7 +194,7 @@ v2 with its namespaced `s3.aws.m.upbound.io` resources.
   log adapter, and the CMDB request over `wasi:http@0.2`'s
   `outgoing-handler` on componentize-py's poll loop.
 - `wit/world.wit` is this guest's own world, in a `local:guest` package:
-  the [ABI v2 world](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md)
+  the [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
   restated with `run` declared **sync** (componentize-py takes the sync
   shape, and a sync-lifted function satisfies the runtime's async world),
   plus the `wasi:http` import the request goes through.

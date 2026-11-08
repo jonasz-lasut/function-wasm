@@ -1,4 +1,4 @@
-# Install
+# Install function-wasm
 
 This page is for operators adding function-wasm to a cluster that already runs Crossplane. It installs the function package and checks that Crossplane accepted it.
 
@@ -27,7 +27,7 @@ Crossplane pulls the package and starts the function's pod. The function is read
 kubectl get function function-wasm
 ```
 
-If it stays unhealthy, read the pod's logs and the Function's conditions (`kubectl describe function function-wasm`). [Troubleshooting](troubleshooting.md) lists the runtime's own refusals.
+If it stays unhealthy, read the pod's logs and the Function's conditions (`kubectl describe function function-wasm`). [Troubleshooting](../operators/troubleshooting.md) lists the runtime's own refusals.
 
 ## The side ports
 
@@ -69,11 +69,11 @@ The function port isn't in the policy, so Crossplane keeps reaching it.
 
 ## Next steps
 
-A fresh install runs every module in the default sandbox, which gives a module no network, filesystem or environment beyond the request ([trust model](trust-model.md)).
+A fresh install runs every module in the default sandbox, which gives a module no network, filesystem or environment beyond the request ([trust model](../operators/trust-model.md)).
 
-- Set flags, such as limits and caches, through a `DeploymentRuntimeConfig`: see [runtime flags](runtime-flags.md).
-- Keep the caches across restarts on a volume that only this Function's pods mount: see [cache storage](runtime-flags.md#cache-storage).
-- Add readiness and liveness probes and pre-load modules: see [readiness and warm-up](readiness.md).
-- Require signed modules: see [signatures](signatures.md).
-- Allow a module more than the default sandbox, such as egress or a private `/tmp`: see the [grant policy](grant-policy.md).
+- Set flags, such as limits and caches, through a `DeploymentRuntimeConfig`: see [runtime flags](../operators/runtime-flags.md).
+- Keep the caches across restarts on a volume that only this Function's pods mount: see [cache storage](../operators/runtime-flags.md#cache-storage).
+- Add readiness and liveness probes and pre-load modules: see [readiness and warm-up](../operators/readiness.md).
+- Require signed modules: see [signatures](../operators/signatures.md).
+- Allow a module more than the default sandbox, such as egress or a private `/tmp`: see the [grant policy](../operators/grant-policy.md).
 - Admit the metrics and probe ports only from their readers: see [the side ports](#the-side-ports).

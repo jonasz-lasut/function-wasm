@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use function_wasm_engine::Engine as _;
+use guestfn_engine::Engine as _;
 
 /// Used when go is not on PATH to say better, so a scaffold is never left
 /// without a version.
@@ -217,16 +217,16 @@ fn go_version() -> String {
 
 /// Compiles wasm with a throwaway engine and reports its shape, ABI verdict
 /// included - the runtime's own view.
-pub(crate) fn inspect_module(wasm: &[u8]) -> Result<function_wasm_engine::Inspection, String> {
-    let engine = function_wasm_engine::Wasmtime::new(function_wasm_engine::Config::default())
+pub(crate) fn inspect_module(wasm: &[u8]) -> Result<guestfn_engine::Inspection, String> {
+    let engine = guestfn_engine::Wasmtime::new(guestfn_engine::Config::default())
         .map_err(|e| e.to_string())?;
     engine.inspect(wasm).map_err(|e| {
         let e = e.to_string();
         // A core module that carries wit-bindgen's component-type section
         // is a guest built outside guestfn (zig build, go build): one wrap
         // away, which is worth more than the refusal alone.
-        if e == function_wasm_engine::CORE_MODULE_REFUSAL
-            && function_wasm_engine::componentize::carries_component_type(wasm)
+        if e == guestfn_engine::CORE_MODULE_REFUSAL
+            && guestfn_engine::componentize::carries_component_type(wasm)
         {
             format!("{e}; {WRAP_HINT}")
         } else {
@@ -242,7 +242,7 @@ pub(crate) const WRAP_HINT: &str =
 
 /// The runtime's own load-time check: the shape, or the refusal the runtime
 /// would give at load.
-pub(crate) fn check_module(wasm: &[u8]) -> Result<function_wasm_engine::Inspection, String> {
+pub(crate) fn check_module(wasm: &[u8]) -> Result<guestfn_engine::Inspection, String> {
     let shape = inspect_module(wasm)?;
     if let Some(e) = &shape.abi_error {
         return Err(e.clone());
