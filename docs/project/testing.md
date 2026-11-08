@@ -51,42 +51,55 @@ the suite's own setup binary, in three steps:
    a `registry:3` behind Basic auth and TLS from a CA it generates. It installs
    provider-nop (`PROVIDER_NOP_VERSION`), a provider whose `NopResource`
    managed resources do nothing, so the tests can compose resources without a
-   cloud. It pushes and signs the test module under every variant, creates the
-   profiles' ConfigMaps, Secrets and volume in `crossplane-system` and the
-   Guest XRD, and writes `_output/e2e/state.json`, which the tests read.
-3. `make e2e.image` builds the runtime image from the Dockerfile, or from
-   `Dockerfile.dev` around a prebuilt binary named by `FUNCTION_BIN`.
+   cloud. It pushes and signs the test module under every variant and creates
+   the profiles' ConfigMaps, Secrets, volume and `DeploymentRuntimeConfig`s in
+   `crossplane-system`. When the kind node has `/dev/kvm`, it installs the KVM
+   device plugin and puts the node's `kvm` group into the `oci` runtime
+   config as a supplemental group. It then creates the Guest XRD and writes
+   `_output/e2e/state.json`, which the tests read.
+3. `make e2e.image` builds the runtime image from `Dockerfile.wasm`, or from
+   `Dockerfile.wasm.dev` around a prebuilt binary named by `FUNCTION_BIN`.
    `xpkg.build.function-wasm` builds the Function package from it, and
    `local.xpkg.deploy.function.function-wasm` installs it from Crossplane's
-   cache with `packagePullPolicy: Never`, on the `default` profile.
+   cache with `packagePullPolicy: Never`, on the `wasm` runtime's `default` profile.
+   `function-oci` follows the same way, from `Dockerfile.oci` in Docker or
+   from `Dockerfile.oci.dev` around the prebuilt pieces `FUNCTION_OCI_TOOLS`
+   names, on the `oci` runtime's `default` profile. `E2E_OCI` decides:
+   `auto` (the default) installs it when the kind node has `/dev/kvm`, `1`
+   requires it and `0` leaves it out, the two values CI's cluster jobs set.
+   The test module as a process is built in a `rust` container on any host
+   but Linux.
 
-`make e2e.test.<profile>` runs one profile's tests, `make e2e.test` runs the
-three in sequence, `make e2e.down` deletes the cluster and `make e2e` does
-everything. After a failed run, `make e2e.dump` writes the cluster's state under
+`make e2e.wasm-profile.<p>` and `make e2e.oci-profile.<p>` run one profile's
+tests, `make e2e.test.wasm` and `make e2e.test.oci` one runtime's,
+`make e2e.test` every profile the cluster has, `make e2e.down` deletes the
+cluster and `make e2e` does everything. After a failed run, `make e2e.dump` writes the cluster's state under
 `_output/controlplane-dump`. A failed test also keeps its namespace and dumps
 its objects, events and the function pod's log under
 `_output/e2e/logs/<namespace>`.
 
 ### The profiles
 
-A profile is one runtime configuration: a set of flags, an operator policy and
-the mounts they need. Each test binary switches the Function's
-`runtimeConfigRef` to its profile's `DeploymentRuntimeConfig`
-(`crates/e2e/profiles/<profile>/drc.yaml`) before its first test and waits for
-the rollout. Each binary uses one profile.
+A profile is one runtime configuration, flags and an operator policy with the
+mounts they need, for one of the two runtimes. `wasm` and `oci` are each an
+installed Function. Each test binary (`crates/e2e/tests/<runtime>_<profile>.rs`)
+switches its runtime's Function's `runtimeConfigRef` to its profile's
+`DeploymentRuntimeConfig` (`crates/e2e/profiles/<runtime>/<profile>/drc.yaml`)
+before its first test and waits for the rollout. Each binary uses one profile.
 
 | Profile | What it tests |
 |---|---|
-| `default` | every case a runtime admits, under both signature verifiers |
-| `strict` | the refusals of a narrow operator layer, the read fence's ceiling among them |
-| `lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
+| `wasm/default` | every case a runtime admits, under both signature verifiers |
+| `wasm/strict` | the refusals of a narrow operator layer, the read fence's ceiling among them |
+| `wasm/lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
+| `oci/default` | the `function-oci` package ([the OCI runtime](../operators/oci-runtime.md)) beside `function-wasm`, running the test module as a process in a Firecracker VM. Its runtime config mounts the `wasm/default` policy |
 
 The `default` profile runs the runtime with `--cosign-key` (the suite's key)
 and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with
 the public-good root). Its policy requires signatures from the suite's registry
 and the published examples, and grants the egress, credential, env and private
-`/tmp` cases the tests need. The policy is `crates/e2e/profiles/default/policy.cedar`
-and the tests are in `crates/e2e/tests/default.rs`.
+`/tmp` cases the tests need. The policy is `crates/e2e/profiles/wasm/default/policy.cedar`
+and the tests are in `crates/e2e/tests/wasm_default.rs`.
 
 The `strict` profile has no verifier. Its policy requires a signature for the
 plain variant only and grants egress to the registry host with no
@@ -123,8 +136,10 @@ The Guest XR is the composite resource the suite creates for each test, and its
 | `fatal`, `spin`, `growMiB` | a fatal result with the message, a spin past the deadline, a memory growth refused at the limit |
 
 A variant is the same `fn.wasm` published under one manifest. The suite has
-nine, one for each of the six manifests in `crates/e2e/guest/manifests`, plus
-three signature variants derived from the plain one. Each has its own digest,
+nine, one for each of the six manifests in `crates/e2e/guest/manifests/wasm`,
+plus three signature variants derived from the plain one; the `oci` profile's
+variants are the same declarations under `manifests/oci`, around the module
+as a process. Each has its own digest,
 because the runtime caches a signature verdict per digest and two variants
 sharing one would share a verdict. The same `fn.wasm` is the engine's `wasi:http` fixture
 (`crates/engine/tests/committed_guest.rs`).
@@ -132,13 +147,15 @@ sharing one would share a verdict. The same `fn.wasm` is the engine's `wasi:http
 ### Running it locally
 
 ```shell
-make e2e.up                # kind, Crossplane, provider-nop, the registry, the package (Docker running)
-make e2e.test.default      # or strict, lifecycle; cargo test -p function-wasm-e2e --features cluster --test <profile> does the same
+make e2e.up                     # kind, Crossplane, provider-nop, the registry, the packages (Docker running; function-oci when the kind node has /dev/kvm)
+make e2e.wasm-profile.default   # or strict, lifecycle; e2e.oci-profile.default with function-oci installed
 make e2e.down
 ```
 
+`cargo test -p function-wasm-e2e --features cluster --test <runtime>_<profile>`
+runs one profile as the make target does.
 `FUNCTION_BIN=<linux binary> make e2e.up` wraps a prebuilt runtime with
-`Dockerfile.dev` instead of compiling the workspace in the Dockerfile's build
+`Dockerfile.wasm.dev` instead of compiling the workspace in `Dockerfile.wasm`'s build
 stage, as CI does. After `controlplane.up`, `KUBECONFIG` and the
 current context point at the cluster. `CROSSPLANE_VERSION=2.2.7 make e2e` runs
 the whole suite on another Crossplane, given as the chart version without a
@@ -155,13 +172,31 @@ A `/e2e` comment on a pull request runs `e2e.yml`:
   toolchain fails instead of skipping
 - one build job per example toolchain: build, unit tests, lint, and codec and
   bindings drift
-- the cluster job, which runs the three profiles one after another on one kind
-  cluster at the Makefile's `CROSSPLANE_VERSION` and uploads `make e2e.dump` on
-  failure
+- the `wasm` cluster job, which runs the three `wasm` profiles one after another
+  on one kind cluster at the Makefile's `CROSSPLANE_VERSION` with
+  `function-oci` left out (`E2E_OCI=0`), and uploads `make e2e.dump` on failure
+- the OCI jobs: a build job that compiles the runtime with the `oci` engine,
+  the init and the test module as a process (musl) and fetches the pinned
+  Firecracker and kernel (`make oci.tools`), an engine job that runs the OCI
+  engine's suite in real VMs under the runner's KVM (`FUNCTION_WASM_REQUIRE_KVM=1`,
+  so a missing tool fails instead of skipping), and a second cluster job that
+  installs both runtimes (`E2E_OCI=1`) and runs the `oci` profiles
 
 The jobs cache under `e2e-` keys that no trusted workflow restores, and the
 workflow sets `cache-mode: write` because a comment-started run gets a
 read-only cache token.
+
+GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs
+install, and the kind node inherits it. The node's device is `root:kvm 0660`
+whatever the rule says, and the pod's user is the package's. The suite's
+setup installs the device plugin
+(`crates/e2e/cluster/kvm-device-plugin.yaml`), reads the node's `kvm`
+gid and puts it into the `oci` runtime config as the pod's supplemental
+group: the operator page's recipe for a hosted cluster. The same page says
+why a `hostPath` mount of the device isn't enough. A comment-started run reads
+`e2e.yml` from `main`, so a new job there is proved only after it merges.
+A failed cluster job prints every function pod's description and logs into
+the job log (`make e2e.dump` does that before the dump itself).
 
 ### The release matrix
 

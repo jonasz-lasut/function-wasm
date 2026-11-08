@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use function_wasm_engine_api::duration;
+use function_wasm_engine::duration;
 
 use crate::authz::{
     ACTION_COMPOSE_RESOURCE, ACTION_GRANT_EGRESS, ACTION_REQUIRE_RESOURCE, ACTION_SET_ENV,
@@ -36,9 +36,13 @@ pub struct Admitted {
     pub composition: Option<Arc<CompositionPolicy>>,
 }
 
+/// `kind` is the engine's module type (`Selected::KIND`, wasm or oci): the
+/// sources it serves are part of admission, so `function validate` built
+/// for either package gives the same verdict as its runtime.
 pub fn admit(
     input: &Input,
-    ceilings: &function_wasm_engine_api::Config,
+    ceilings: &function_wasm_engine::Config,
+    kind: &str,
 ) -> Result<Admitted, String> {
     // The group the Input had before the OCI runtime is refused by name
     // rather than skipped: a Composition written for 0.6 fails with the
@@ -51,7 +55,22 @@ pub fn admit(
     let mut admitted = run_options(input, ceilings)?;
     admitted.composition = composition;
     validate_source(&input.module).map_err(|e| format!("cannot resolve module: {e}"))?;
+    validate_source_for(kind, &input.module).map_err(|e| format!("cannot resolve module: {e}"))?;
     Ok(admitted)
+}
+
+/// The sources one engine serves. function-oci pulls an image from a
+/// registry and nothing else, so a Path or HTTP source is refused by name
+/// under it (the operator page says how the development loop uses a local
+/// registry instead); function-wasm serves the three.
+pub(crate) fn validate_source_for(kind: &str, src: &ModuleSource) -> Result<(), String> {
+    if kind == "oci" && src.r#type != "OCI" {
+        return Err(format!(
+            "module.type {} is not served by function-oci: an OCI module is an image pulled from a registry, so module.type must be OCI",
+            src.r#type
+        ));
+    }
+    Ok(())
 }
 
 /// What one run gets of the sandbox and of its request's step credentials:
@@ -454,10 +473,7 @@ fn admit_credentials(
     Ok(())
 }
 
-fn run_options(
-    input: &Input,
-    ceilings: &function_wasm_engine_api::Config,
-) -> Result<Admitted, String> {
+fn run_options(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<Admitted, String> {
     let mut out = Admitted::default();
     let Some(limits) = &input.limits else {
         return Ok(out);
@@ -630,16 +646,56 @@ mod tests {
         }
     }
 
-    fn ceilings() -> function_wasm_engine_api::Config {
-        function_wasm_engine_api::Config::default()
+    fn ceilings() -> function_wasm_engine::Config {
+        function_wasm_engine::Config::default()
     }
 
     #[test]
     fn admits_a_path_source() {
-        let admitted = admit(&path_input("fn.wasm"), &ceilings()).unwrap();
+        let admitted = admit(&path_input("fn.wasm"), &ceilings(), "wasm").unwrap();
         assert_eq!(admitted.timeout, None);
         assert_eq!(admitted.memory_limit, None);
         assert!(admitted.composition.is_none());
+    }
+
+    /// function-oci serves registries alone: a Path or HTTP source is
+    /// refused by name, an OCI source is admitted as under function-wasm.
+    #[test]
+    fn function_oci_serves_oci_sources_alone() {
+        assert_eq!(
+            admit(&path_input("fn.wasm"), &ceilings(), "oci").unwrap_err(),
+            "cannot resolve module: module.type Path is not served by function-oci: an OCI module is an image pulled from a registry, so module.type must be OCI"
+        );
+        let http = Input {
+            module: ModuleSource {
+                r#type: "HTTP".to_string(),
+                http: Some(crate::input::HttpSource {
+                    url: "https://example.com/fn.tar".to_string(),
+                    digest: "sha256:".to_string() + &"a".repeat(64),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(
+            admit(&http, &ceilings(), "oci")
+                .unwrap_err()
+                .contains("module.type HTTP is not served by function-oci")
+        );
+        let oci = Input {
+            module: ModuleSource {
+                r#type: "OCI".to_string(),
+                oci: Some(crate::input::OciSource {
+                    r#ref: "ghcr.io/acme/tagger@sha256:".to_string() + &"b".repeat(64),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(admit(&oci, &ceilings(), "oci").is_ok());
+        assert!(admit(&oci, &ceilings(), "wasm").is_ok());
     }
 
     #[test]
@@ -722,7 +778,7 @@ mod tests {
             ),
         ];
         for (name, input, want) in cases {
-            let err = admit(input, &ceilings()).expect_err(name);
+            let err = admit(input, &ceilings(), "wasm").expect_err(name);
             assert_eq!(&err, want, "{name}");
         }
     }
@@ -836,7 +892,7 @@ mod tests {
     fn allow_empty_needs_a_from_source() {
         let mut input = path_input("fn.wasm");
         input.module.allow_empty = true;
-        let err = admit(&input, &ceilings()).expect_err("refused");
+        let err = admit(&input, &ceilings(), "wasm").expect_err("refused");
         assert_eq!(
             err,
             "cannot resolve module: module.allowEmpty is set but module.from is not: only a module the composite resource chooses can be left unset"
@@ -851,7 +907,7 @@ mod tests {
             },
             ..Default::default()
         };
-        admit(&input, &ceilings()).expect("admitted");
+        admit(&input, &ceilings(), "wasm").expect("admitted");
     }
 
     fn change(group: &str, kind: &str, change: crate::authz::ChangeKind, name: &str) -> Change {

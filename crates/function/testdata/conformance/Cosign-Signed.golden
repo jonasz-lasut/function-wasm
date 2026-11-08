@@ -1,5 +1,5 @@
 exit 0
 --- stdout
 <DIR>/Signed.yaml: Composition/Signed pipeline[0] Signed: OK (oci <REGISTRY>/example/greeter@sha256:1ee4b1ffab4e0338f4d7affab430ffc6f8c6f580270f56c0c93c14ba1af5bff2)
-  module: sha256:1ee4b1ffab4e0338f4d7affab430ffc6f8c6f580270f56c0c93c14ba1af5bff2, 255 B, ABI v2
+  module: sha256:1ee4b1ffab4e0338f4d7affab430ffc6f8c6f580270f56c0c93c14ba1af5bff2, 255 B, contract wasm@1.0
 --- stderr

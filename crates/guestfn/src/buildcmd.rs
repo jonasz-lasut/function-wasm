@@ -96,6 +96,18 @@ impl BuildCmd {
         } else {
             None
         };
+        // An OCI image is built by its own Dockerfile and published by
+        // guestfn push --image (docs/one-pager-oci-runtime.md); what was
+        // just built here is a WebAssembly module, which an oci@1.0
+        // manifest does not describe.
+        if m.as_ref()
+            .is_some_and(|m| m.kind() == function_wasm::manifest::TYPE_OCI)
+        {
+            return Err(format!(
+                "{} declares contract oci@1.0, an OCI image; guestfn build builds WebAssembly modules: build the image with docker build and publish it with guestfn push --image <ref@sha256:...>",
+                manifest_path.display()
+            ));
+        }
         // The runtime's own load-time check, so a module it would refuse is
         // refused here, with the same words, before it is pushed anywhere.
         let shape = crate::check_module(&wasm).map_err(|e| {

@@ -28,6 +28,21 @@ const WASM_LAYER_TYPES: &[&str] = &[
 /// The media type of the artifact layer carrying the module manifest.
 pub const MANIFEST_LAYER_TYPE: &str = "application/vnd.guestfn.manifest.v1+json";
 
+/// An OCI image becomes an `oci@1.0` module by a layer `guestfn push
+/// --image` appends to it (docs/one-pager-oci-runtime.md): a plain tar
+/// layer with its diff_id in the image config like any other, holding the
+/// module manifest at MANIFEST_LAYER_PATH, marked by this annotation on its
+/// descriptor. The image stays what every container runtime pulls and runs;
+/// the Input pins the appended image's digest, one signature covers image
+/// and manifest, and the runtime reads the manifest from that one layer
+/// before it pulls the rest.
+pub const MANIFEST_LAYER_ANNOTATION: &str = "io.crossplane.guestfn";
+pub const MANIFEST_LAYER_ANNOTATION_VALUE: &str = "manifest";
+pub const MANIFEST_LAYER_PATH: &str = "/.guestfn/manifest.json";
+/// OCI 1.1's empty descriptor: the config of an artifact that has none.
+pub const EMPTY_CONFIG_TYPE: &str = "application/vnd.oci.empty.v1+json";
+pub const EMPTY_CONFIG: &[u8] = b"{}";
+
 /// The media types of an OCI image manifest and image index.
 pub const OCI_MANIFEST_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
 pub const OCI_INDEX_TYPE: &str = "application/vnd.oci.image.index.v1+json";
@@ -49,6 +64,9 @@ pub struct Auth {
 pub struct OciManifest {
     #[serde(default, rename = "mediaType")]
     pub media_type: String,
+    /// OCI 1.1's artifact type, when the publisher set one.
+    #[serde(default, rename = "artifactType")]
+    pub artifact_type: String,
     #[serde(default)]
     pub config: Option<Descriptor>,
     #[serde(default)]
@@ -79,6 +97,49 @@ pub struct Descriptor {
     pub size: i64,
     #[serde(default)]
     pub annotations: std::collections::BTreeMap<String, String>,
+    /// An index entry's platform.
+    #[serde(default)]
+    pub platform: Option<Platform>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Platform {
+    #[serde(default)]
+    pub architecture: String,
+    #[serde(default)]
+    pub os: String,
+}
+
+/// The media types of an image's config: what makes a manifest an image
+/// rather than an artifact.
+pub const IMAGE_CONFIG_TYPES: &[&str] = &[
+    "application/vnd.oci.image.config.v1+json",
+    "application/vnd.docker.container.image.v1+json",
+];
+
+impl OciManifest {
+    /// Whether this is an image index (a manifest list).
+    pub fn is_index(&self) -> bool {
+        self.media_type == OCI_INDEX_TYPE
+            || self.media_type.contains("manifest.list")
+            || (self.media_type.is_empty() && !self.manifests.is_empty())
+    }
+
+    /// An index's entries, with their platforms.
+    pub fn index_entries(&self) -> Vec<Descriptor> {
+        self.manifests
+            .iter()
+            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+            .collect()
+    }
+
+    /// Whether this is a container image: its config is an image config
+    /// (the OCI runtime runs it as a manifest-less module).
+    pub fn is_image(&self) -> bool {
+        self.config
+            .as_ref()
+            .is_some_and(|c| IMAGE_CONFIG_TYPES.contains(&c.media_type.as_str()))
+    }
 }
 
 /// A distribution-API client for one artifact's registry.
@@ -436,16 +497,42 @@ pub fn referrers_tag(digest: &str) -> String {
     digest.replacen(':', "-", 1)
 }
 
+/// Whether a layer descriptor is the module manifest's: the manifest layer
+/// of a WebAssembly artifact (its own media type) or the annotated tar
+/// layer of an OCI module image.
+pub fn is_manifest_layer(l: &Descriptor) -> bool {
+    l.media_type == MANIFEST_LAYER_TYPE
+        || (is_tar_layer(&l.media_type)
+            && l.annotations
+                .get(MANIFEST_LAYER_ANNOTATION)
+                .is_some_and(|v| v == MANIFEST_LAYER_ANNOTATION_VALUE))
+}
+
+/// Whether m is an OCI image with a module manifest layer: an `oci@1.0`
+/// module as `guestfn push --image` publishes it. A plain image is not one;
+/// the OCI runtime runs it in the default sandbox.
+pub fn is_module_image(m: &OciManifest) -> bool {
+    m.is_image() && m.layers.iter().any(is_manifest_layer)
+}
+
+/// The refusal of an OCI module image by this package: the OCI runtime's
+/// module, named so the reader knows which package serves it.
+pub const MODULE_IMAGE_REFUSAL: &str = "is an OCI image with a module manifest (an oci@1.0 module), which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)";
+
 /// Picks the layer of a manifest that holds the module: a wasm-typed layer
-/// if there is one, otherwise the only layer that is not the
-/// module-manifest layer.
+/// if there is one, otherwise the only layer that is not the module
+/// manifest's. An OCI module image has none, and is refused by what it is
+/// rather than by its layer count.
 pub fn wasm_layer(m: &OciManifest) -> Result<Descriptor, String> {
+    if is_module_image(m) {
+        return Err(MODULE_IMAGE_REFUSAL.to_string());
+    }
     let mut candidates = Vec::new();
     for l in &m.layers {
         if WASM_LAYER_TYPES.contains(&l.media_type.as_str()) {
             return Ok(l.clone());
         }
-        if l.media_type != MANIFEST_LAYER_TYPE {
+        if !is_manifest_layer(l) {
             candidates.push(l.clone());
         }
     }
@@ -458,12 +545,31 @@ pub fn wasm_layer(m: &OciManifest) -> Result<Descriptor, String> {
     ))
 }
 
-/// Picks the module-manifest layer of an artifact's manifest, if any.
+/// Picks the module-manifest layer of an artifact's or an image's
+/// manifest, if any.
 pub fn manifest_layer(m: &OciManifest) -> Option<Descriptor> {
-    m.layers
-        .iter()
-        .find(|l| l.media_type == MANIFEST_LAYER_TYPE)
-        .cloned()
+    m.layers.iter().find(|l| is_manifest_layer(l)).cloned()
+}
+
+/// The module manifest's bytes out of its layer blob: a JSON layer as it
+/// is, or MANIFEST_LAYER_PATH out of an image's annotated tar layer, the
+/// entry bounded by limit.
+pub fn manifest_from_layer(layer: &Descriptor, blob: &[u8], limit: u64) -> Result<Vec<u8>, String> {
+    if !is_tar_layer(&layer.media_type) {
+        return Ok(blob.to_vec());
+    }
+    match tar_entry(
+        blob,
+        MANIFEST_LAYER_PATH,
+        limit,
+        "manifest layer",
+        "manifest",
+    )? {
+        Some(bytes) => Ok(bytes),
+        None => Err(format!(
+            "manifest layer is a tar archive without {MANIFEST_LAYER_PATH}"
+        )),
+    }
 }
 
 /// Whether a layer media type is a tar archive - a FROM scratch image
@@ -473,10 +579,29 @@ pub fn is_tar_layer(media_type: &str) -> bool {
 }
 
 /// Returns SCRATCH_MODULE_PATH from a (possibly gzipped) tar layer; an
-/// archive without that exact entry is refused, whatever else it holds. The
-/// archive may expand to at most eight times limit before the entry is
-/// found, so a gzip bomb costs bounded work.
+/// archive without that exact entry is refused, whatever else it holds.
 pub fn extract_wasm(b: &[u8], limit: u64) -> Result<Vec<u8>, String> {
+    match tar_entry(b, SCRATCH_MODULE_PATH, limit, "module layer", "module")? {
+        Some(out) => Ok(out),
+        None => Err(format!(
+            "module layer is a tar archive without {SCRATCH_MODULE_PATH}: a FROM scratch image must COPY the module to {SCRATCH_MODULE_PATH}"
+        )),
+    }
+}
+
+/// The file at path out of a (possibly gzipped) tar layer, None when the
+/// archive has no such entry. Builders name an entry with or without a
+/// leading ./ or /, and all of them are the root's file. The archive may
+/// expand to at most eight times limit before the entry is found, so a
+/// gzip bomb costs bounded work, and the entry itself may not exceed
+/// limit. `archive` and `entry` name the layer and the file in the errors.
+fn tar_entry(
+    b: &[u8],
+    path: &str,
+    limit: u64,
+    archive: &str,
+    entry_name: &str,
+) -> Result<Option<Vec<u8>>, String> {
     let reader: Box<dyn Read> = if b.starts_with(&[0x1f, 0x8b]) {
         Box::new(flate2::read::GzDecoder::new(b))
     } else {
@@ -485,49 +610,51 @@ pub fn extract_wasm(b: &[u8], limit: u64) -> Result<Vec<u8>, String> {
     let capped = CappedReader {
         r: reader,
         left: 8 * limit as i64,
+        exceeded: format!("{archive} archive exceeds the size limit before {path}"),
     };
-    let mut archive = tar::Archive::new(capped);
-    let entries = archive
+    let mut tar = tar::Archive::new(capped);
+    let entries = tar
         .entries()
-        .map_err(|e| format!("cannot read module layer archive: {e}"))?;
+        .map_err(|e| format!("cannot read {archive} archive: {e}"))?;
     for entry in entries {
-        let mut entry = entry.map_err(|e| format!("cannot read module layer archive: {e}"))?;
+        let mut entry = entry.map_err(|e| format!("cannot read {archive} archive: {e}"))?;
         let is_file = entry.header().entry_type().is_file();
         let name = entry
             .path()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
-        // Builders name the entry fn.wasm, ./fn.wasm or /fn.wasm; all are
-        // the root's fn.wasm, and nothing else is.
-        let cleaned = format!("/{}", name.trim_start_matches(['.', '/']));
-        if is_file && cleaned == SCRATCH_MODULE_PATH {
+        let trimmed = name
+            .strip_prefix("./")
+            .or_else(|| name.strip_prefix('/'))
+            .unwrap_or(&name);
+        let cleaned = format!("/{}", trimmed.trim_start_matches('/'));
+        if is_file && cleaned == path {
             let mut out = Vec::new();
             let mut limited = (&mut entry).take(limit + 1);
             limited
                 .read_to_end(&mut out)
-                .map_err(|e| format!("cannot read module layer archive: {e}"))?;
+                .map_err(|e| format!("cannot read {archive} archive: {e}"))?;
             if out.len() as u64 > limit {
-                return Err(format!("module exceeds the size limit of {limit} bytes"));
+                return Err(format!(
+                    "{entry_name} exceeds the size limit of {limit} bytes"
+                ));
             }
-            return Ok(out);
+            return Ok(Some(out));
         }
     }
-    Err(format!(
-        "module layer is a tar archive without {SCRATCH_MODULE_PATH}: a FROM scratch image must COPY the module to {SCRATCH_MODULE_PATH}"
-    ))
+    Ok(None)
 }
 
 struct CappedReader<R> {
     r: R,
     left: i64,
+    exceeded: String,
 }
 
 impl<R: Read> Read for CappedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.left <= 0 {
-            return Err(std::io::Error::other(format!(
-                "module layer archive exceeds the size limit before {SCRATCH_MODULE_PATH}"
-            )));
+            return Err(std::io::Error::other(self.exceeded.clone()));
         }
         let cap = (self.left as usize).min(buf.len());
         let n = self.r.read(&mut buf[..cap])?;
@@ -896,7 +1023,8 @@ mod tests {
 
     #[test]
     fn fetches_through_the_bearer_token_flow() {
-        let (digest, addr) = testregistry::wasm_artifact(b"fake wasm", Some(br#"{"abi":1}"#), true);
+        let (digest, addr) =
+            testregistry::wasm_artifact(b"fake wasm", Some(br#"{"contract":"wasm@1.0"}"#), true);
         let r = reference(&addr, &digest);
         let client = RegistryClient::new(&r, None);
         let m = client.manifest(&r).expect("manifest");
@@ -912,8 +1040,87 @@ mod tests {
             client
                 .blob(&mlayer.digest, 1 << 20, "manifest layer")
                 .expect("blob"),
-            br#"{"abi":1}"#
+            br#"{"contract":"wasm@1.0"}"#
         );
+    }
+
+    /// An OCI image with the annotated manifest layer is an oci@1.0
+    /// module: this package names the package that serves it, and the
+    /// manifest comes out of the layer's tar, gzipped or not. A plain image
+    /// is neither.
+    #[test]
+    fn a_module_image_is_refused_by_name_and_its_manifest_read() {
+        let manifest_json = br#"{"contract":"oci@1.0","name":"tagger"}"#;
+        let mut tar = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mode(0o444);
+        header.set_size(manifest_json.len() as u64);
+        header.set_cksum();
+        tar.append_data(&mut header, ".guestfn/manifest.json", &manifest_json[..])
+            .expect("tar");
+        let plain = tar.into_inner().expect("tar");
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &plain).expect("gzip");
+        let gzipped = gz.finish().expect("gzip");
+        let image = |layer: &[u8], media_type: &str, annotated: bool| -> OciManifest {
+            let mut desc = serde_json::json!({"mediaType": media_type, "digest": testregistry::digest_of(layer), "size": layer.len()});
+            if annotated {
+                desc["annotations"] =
+                    serde_json::json!({MANIFEST_LAYER_ANNOTATION: MANIFEST_LAYER_ANNOTATION_VALUE});
+            }
+            serde_json::from_value(serde_json::json!({
+                "schemaVersion": 2,
+                "mediaType": OCI_MANIFEST_TYPE,
+                "config": {"mediaType": IMAGE_CONFIG_TYPES[0], "digest": testregistry::digest_of(b"{}"), "size": 2},
+                "layers": [
+                    {"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": testregistry::digest_of(b"rootfs"), "size": 6},
+                    desc,
+                ],
+            }))
+            .expect("manifest")
+        };
+        let module = image(&plain, "application/vnd.oci.image.layer.v1.tar", true);
+        assert!(is_module_image(&module));
+        assert_eq!(wasm_layer(&module).unwrap_err(), MODULE_IMAGE_REFUSAL);
+        let layer = manifest_layer(&module).expect("the annotated layer");
+        assert_eq!(
+            manifest_from_layer(&layer, &plain, 1 << 16).expect("manifest"),
+            manifest_json
+        );
+        let module_gz = image(
+            &gzipped,
+            "application/vnd.oci.image.layer.v1.tar+gzip",
+            true,
+        );
+        let layer = manifest_layer(&module_gz).expect("the annotated layer");
+        assert_eq!(
+            manifest_from_layer(&layer, &gzipped, 1 << 16).expect("manifest"),
+            manifest_json
+        );
+        let without_entry = manifest_from_layer(&layer, b"", 1 << 16).unwrap_err();
+        assert!(
+            without_entry.contains("without /.guestfn/manifest.json"),
+            "{without_entry}"
+        );
+        // The same layers with no annotation: a plain image, with two layers
+        // and no wasm one.
+        let plain_image = image(&plain, "application/vnd.oci.image.layer.v1.tar", false);
+        assert!(!is_module_image(&plain_image));
+        assert!(manifest_layer(&plain_image).is_none());
+        assert!(
+            wasm_layer(&plain_image)
+                .unwrap_err()
+                .contains("has 2 layers")
+        );
+        // A WebAssembly artifact beside its manifest layer is not an image.
+        let (digest, addr) = testregistry::wasm_artifact(b"fake wasm", Some(b"{}"), false);
+        let r = reference(&addr, &digest);
+        let m = RegistryClient::new(&r, None)
+            .manifest(&r)
+            .expect("manifest");
+        assert!(!is_module_image(&m));
+        assert!(manifest_layer(&m).is_some());
     }
 
     #[test]

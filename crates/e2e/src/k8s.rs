@@ -21,6 +21,9 @@ pub const FIELD_MANAGER: &str = "function-wasm-e2e";
 pub const CROSSPLANE_NAMESPACE: &str = "crossplane-system";
 /// The Function under test and the label its pods carry.
 pub const FUNCTION_NAME: &str = "function-wasm";
+/// The second runtime's Function (docs/one-pager-oci-runtime.md), installed
+/// beside it when the node has /dev/kvm.
+pub const OCI_FUNCTION_NAME: &str = "function-oci";
 pub const FUNCTION_POD_SELECTOR: &str = "pkg.crossplane.io/function=function-wasm";
 pub const FUNCTION_CONTAINER: &str = "package-runtime";
 
@@ -136,9 +139,14 @@ pub async fn events_for(
 
 /// The function pods, as the current rollout left them.
 pub async fn function_pods(client: &Client) -> Result<Vec<Pod>> {
+    function_pods_of(client, FUNCTION_POD_SELECTOR).await
+}
+
+/// The pods of one Function, by its label selector.
+pub async fn function_pods_of(client: &Client, selector: &str) -> Result<Vec<Pod>> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), CROSSPLANE_NAMESPACE);
     Ok(pods
-        .list(&ListParams::default().labels(FUNCTION_POD_SELECTOR))
+        .list(&ListParams::default().labels(selector))
         .await
         .context("listing function pods")?
         .items)

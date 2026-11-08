@@ -11,11 +11,11 @@ use std::time::Duration;
 
 use clap::Parser;
 use function_sdk_rust::Args;
-use function_wasm::engine::{Engine as _, Selected};
+use function_wasm::engine::{self, Engine as _, Selected};
 use function_wasm::{
     authz, cache, cosign, egress, grpc, logging, ops, resolver, runner, store, trustroot, validate,
 };
-use function_wasm_engine_api::{Config, duration};
+use function_wasm_engine::{Config, duration};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -43,6 +43,9 @@ enum Command {
 struct ServeArgs {
     #[command(flatten)]
     sdk: Args,
+
+    #[command(flatten)]
+    engine: engine::EngineArgs,
 
     /// Directory served for 'path' module sources; unset refuses them.
     #[arg(long, env = "MODULE_DIR")]
@@ -307,14 +310,17 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         }
     }
 
-    let engine = match Selected::new(Config {
-        timeout: args.module_timeout,
-        memory_limit: args.module_memory_limit << 20,
-        stack_limit: args.module_stack_limit << 10,
-        backtrace_details: args.sdk.debug,
-        max_concurrent_runs: args.max_concurrent_runs,
-        max_total_run_memory: args.max_total_run_memory << 20,
-    }) {
+    let engine = match engine::new(
+        Config {
+            timeout: args.module_timeout,
+            memory_limit: args.module_memory_limit << 20,
+            stack_limit: args.module_stack_limit << 10,
+            backtrace_details: args.sdk.debug,
+            max_concurrent_runs: args.max_concurrent_runs,
+            max_total_run_memory: args.max_total_run_memory << 20,
+        },
+        &args.engine,
+    ) {
         Ok(engine) => engine,
         Err(e) => {
             eprintln!("{e}");
@@ -361,7 +367,8 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
 
     let resolver = Arc::new(
         resolver::Resolver::new(args.module_dir, args.max_module_size << 20, Some(blobs))
-            .with_manifest_store(Arc::clone(&manifests)),
+            .with_manifest_store(Arc::clone(&manifests))
+            .serving(Selected::KIND),
     );
     let module_cache = Arc::new(cache::ModuleCache::new(
         Arc::clone(&engine),
@@ -375,7 +382,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             ..Default::default()
         },
     ));
-    let step_slots = Arc::new(function_wasm_engine_api::concurrency::StepSlots::new());
+    let step_slots = Arc::new(function_wasm_engine::concurrency::StepSlots::new());
     let function = runner::WasmFunction {
         engine: Arc::clone(&engine),
         cache: Arc::clone(&module_cache),
@@ -404,10 +411,10 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             if freed > 0 {
                 tracing::info!(freed_bytes = freed, "Swept the on-disk caches");
             }
-            let m = &function_wasm_engine_api::metrics::CACHE_BYTES;
-            m.with_label_values(&[function_wasm_engine_api::metrics::CACHE_BLOB])
+            let m = &function_wasm_engine::metrics::CACHE_BYTES;
+            m.with_label_values(&[function_wasm_engine::metrics::CACHE_BLOB])
                 .set(store::bytes(&stores[0]) as f64);
-            m.with_label_values(&[function_wasm_engine_api::metrics::CACHE_COMPILED_DISK])
+            m.with_label_values(&[function_wasm_engine::metrics::CACHE_COMPILED_DISK])
                 .set(store::bytes(&stores[1]) as f64);
         };
         sweep_stores();

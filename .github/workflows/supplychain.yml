@@ -17,6 +17,13 @@ name: Supply Chain and Xpkg Extensions
 on:
   workflow_dispatch:
     inputs:
+      function:
+        description: "The function whose package to sign and attest"
+        type: choice
+        required: true
+        options:
+          - function-wasm
+          - function-oci
       version:
         description: "Version string to use while attesting and signing the package (e.g. v1.0.0-alpha.1)"
         required: true
@@ -27,8 +34,8 @@ env:
   XP_CHANNEL: stable
   XP_VERSION: 'v2.5.0'
 
-  GHCR_IMAGE: ghcr.io/jonasz-lasut/function-wasm
-  MIRROR_IMAGE: xpkg.upbound.io/jonasz-lasut/function-wasm
+  GHCR_IMAGE: ghcr.io/jonasz-lasut/${{ inputs.function }}
+  MIRROR_IMAGE: xpkg.upbound.io/jonasz-lasut/${{ inputs.function }}
 
   UP_VERSION: v0.51.1
 

@@ -3,7 +3,7 @@
 # manifest layer, and the runtime holds it against what the policy layers grant
 # before every run - a manifest can refuse a run earlier and say why, never
 # make one possible.
-abi: 2
+contract: wasm@1.0
 name: cert-rotator
 version: 0.1.0
 description: Keeps a TLS Secret's self-signed certificate fresh, rotating it before it expires

@@ -10,12 +10,14 @@
 - [Write a module](guests/write-a-module.md)
 - [Other languages](guests/other-languages.md)
 - [Module manifests](guests/module-manifests.md)
+- [OCI modules](guests/oci-modules.md)
 - [Render locally](guests/render-locally.md)
 - [Check a composition](guests/validate.md)
 
 # Operators
 
 - [Install](operators/install.md)
+- [The OCI runtime](operators/oci-runtime.md)
 - [Input reference](operators/input-reference.md)
 - [Runtime flags](operators/runtime-flags.md)
 - [Operator grant policy](operators/grant-policy.md)
@@ -43,7 +45,7 @@
   - [ABI v2 and the Rust host (Implemented, revision 0.7)](one-pager-abi-v2.md)
   - [Compiled-artifact cache key (Implemented, revision 1.0)](one-pager-cache-key.md)
   - [Module and compiled artifacts cache (Implemented, revision 2.7)](one-pager-cache.md)
-  - [Module manifest (Implemented, revision 1.6)](one-pager-module-manifest.md)
+  - [Module manifest (Implemented, revision 1.7)](one-pager-module-manifest.md)
   - [Module source schema (Implemented, revision 2.4)](one-pager-module-source-schema.md)
   - [Module configuration from the composite resource (Draft)](one-pager-module-config.md)
   - [OCI runtime (Draft)](one-pager-oci-runtime.md)

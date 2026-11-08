@@ -3,9 +3,9 @@
 //! (`make e2e.up`), driven through composite resources of the committed
 //! test module under `guest/`, which composes provider-nop resources and
 //! writes what it observed into the composite's status. The tests are
-//! `tests/<profile>.rs`, one target per runtime profile (`profiles/`), each
-//! switching the Function to its profile's DeploymentRuntimeConfig before
-//! its first test; `src/bin/setup.rs` is what `make e2e.up` runs after the
+//! `tests/<runtime>_<profile>.rs`, one target per runtime profile
+//! (`profiles/<runtime>/<profile>`), each switching its runtime's Function
+//! to the profile's DeploymentRuntimeConfig before its first test; `src/bin/setup.rs` is what `make e2e.up` runs after the
 //! cluster exists: the module registry with its TLS and auth, provider-nop,
 //! the test module pushed and signed under every variant, the profiles'
 //! ConfigMaps and Secrets, the XRD.

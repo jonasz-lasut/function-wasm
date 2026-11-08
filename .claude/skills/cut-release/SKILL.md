@@ -210,16 +210,18 @@ scaffold.` A guest keeps running as long as the runtime's wasmtime serves
 the versions it was built against, so a release that moves any of them
 says which, and what a guest does about it (re-vendor `wit/deps/`, rebuild).
 
-### 8. Publish the package — `Publish Function Package`, from the new tag
+### 8. Publish the package — `Publish Function`, from the new tag
 
 ```bash
-gh workflow run "Publish Function Package" --ref "$NEW_VERSION" -f version="$NEW_VERSION"
+gh workflow run "Publish Function" --ref "$NEW_VERSION" -f function=function-wasm -f version="$NEW_VERSION"
 ```
 
 Must run from the **tag**, not the branch — it builds the function binary
-from that exact tagged source.
+from that exact tagged source. `function-oci` is published the same way, with
+`-f function=function-oci`, when its first release comes.
 
-The run publishes the package and the WIT world only. The use-case examples
+The run publishes the package only; the WIT world has its own workflow,
+`Publish WIT` (`publish-wit.yml`), run by hand when the world version moves. The use-case examples
 have a lifecycle of their own: `Publish Examples` (`publish-examples.yml`),
 run by hand from `main` when an example's `guestfn.yaml` `version` moved, and
 never part of a release.
@@ -227,7 +229,7 @@ never part of a release.
 ### 9. Sign & attest — `Supply Chain and Xpkg Extensions`, from `main`
 
 ```bash
-gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f version="$NEW_VERSION"
+gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f function=function-wasm -f version="$NEW_VERSION"
 ```
 
 Runs from `main`, not the tag — it signs/attests the image already published
@@ -279,8 +281,8 @@ superseded release branches, if any, were deleted.
 | `Release Matrix E2E` | started by the push of `release-X.Y` | none; `gh run watch --exit-status` on it |
 | `Tag` | new release branch (`release-X.Y`) | `version`, `message` |
 | (n/a) `gh release create` | — | tag name, `--target` branch |
-| `Publish Function Package` | the new tag (`vX.Y.0` / `vX.0.0`) | `version` |
-| `Supply Chain and Xpkg Extensions` | `main` | `version` |
+| `Publish Function` | the new tag (`vX.Y.0` / `vX.0.0`) | `function` (`function-wasm`), `version` |
+| `Supply Chain and Xpkg Extensions` | `main` | `function` (`function-wasm`), `version` |
 | Retire old branches | n/a | delete every `release-0.*` except the new one; 1.0.0+ lines are kept |
 
 ## Common mistakes
@@ -297,7 +299,7 @@ superseded release branches, if any, were deleted.
 - Cutting the tag before the release matrix is green on the branch, or
   skipping it: `/e2e` covered the current Crossplane only; the two older
   minors are tested nowhere else.
-- Running `Publish Function Package` against the branch instead of the new
+- Running `Publish Function` against the branch instead of the new
   tag — builds a moving target if the branch gets more commits later.
 - Running `Supply Chain and Xpkg Extensions` from the tag instead of `main`
   — it still works, but forfeits any signing/attestation fixes landed on

@@ -17,7 +17,7 @@ const CORE_MODULE_WAT: &str = r#"(module
   (func (export "wasmfn_alloc") (param i32) (result i32) i32.const 8)
   (func (export "wasmfn_run") (param i32 i32) (result i64) i64.const 0))"#;
 
-const MANIFEST_YAML: &str = "abi: 2
+const MANIFEST_YAML: &str = "contract: wasm@1.0
 name: greeter
 version: v0.1.0
 description: Greets the composite resource
@@ -116,6 +116,137 @@ fn push_then_inspect_and_show() {
     assert!(stdout.contains("name: greeter"), "{stdout}");
     assert!(stdout.contains("host: example.com"), "{stdout}");
     assert!(stdout.contains("- cmdb"), "{stdout}");
+}
+
+/// An oci@1.0 manifest publishes the image with the manifest appended as
+/// one more layer (docs/one-pager-oci-runtime.md): no module file is read,
+/// the image's digest goes into the published manifest, the result sits in
+/// the image's repository, and inspect reads the manifest out of the layer.
+#[test]
+fn push_a_module_image_then_inspect_and_show() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("guestfn.yaml"),
+        "contract: oci@1.0\nname: tagger\nversion: 0.3.0\nrequires:\n  credentials: [cmdb]\n",
+    )
+    .expect("write");
+    let mut registry = Registry::new();
+    let image_digest = registry.plain_image("tagger");
+    let addr = registry.serve();
+    let image = format!("{addr}/example/tagger@{image_digest}");
+    let reference = format!("{addr}/example/tagger:v0.3.0-module");
+
+    // The pin is checked before anything is pushed.
+    let (_, stderr, ok) = guestfn(
+        dir.path(),
+        &[
+            "push",
+            &reference,
+            "--image",
+            &format!("{addr}/example/tagger:v1"),
+        ],
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("image must be an OCI reference pinned by digest"),
+        "{stderr}"
+    );
+    let (_, stderr, ok) = guestfn(dir.path(), &["push", &reference]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("names the image it is built from"),
+        "{stderr}"
+    );
+    // The module goes where the image's layers already are.
+    let (_, stderr, ok) = guestfn(
+        dir.path(),
+        &[
+            "push",
+            &format!("{addr}/example/other:v1"),
+            "--image",
+            &image,
+        ],
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("is not in the image's repository"),
+        "{stderr}"
+    );
+
+    let (stdout, stderr, ok) = guestfn(dir.path(), &["push", &reference, "--image", &image]);
+    assert!(ok, "push failed: {stderr}");
+    assert!(
+        stdout.contains(&format!("(the image {image} with its manifest layer)")),
+        "{stdout}"
+    );
+    assert!(stdout.contains("credentials:\n  - cmdb"), "{stdout}");
+    let pinned = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("Pushed "))
+        .and_then(|l| l.split(' ').next())
+        .expect("pinned reference")
+        .to_string();
+    assert!(
+        pinned.starts_with(&format!("{addr}/example/tagger:v0.3.0-module@sha256:"))
+            && !pinned.ends_with(&image_digest),
+        "the module has a digest of its own: {pinned}"
+    );
+
+    let (stdout, stderr, ok) = guestfn(dir.path(), &["inspect", &pinned]);
+    assert!(ok, "inspect failed: {stderr}");
+    assert!(
+        stdout.contains("config: application/vnd.oci.image.config.v1+json"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("io.crossplane.guestfn=manifest"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "module: an OCI image (oci@1.0), which the OCI runtime, function-oci, boots; built from {image}"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "manifest: tagger 0.3.0, contract oci@1.0, image {image}, credentials cmdb"
+        )),
+        "{stdout}"
+    );
+    let (stdout, _, ok) = guestfn(dir.path(), &["inspect", &pinned, "--output", "json"]);
+    assert!(ok);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(v["reference"]["image"], image);
+    assert_eq!(v["reference"]["manifest"]["contract"], "oci@1.0");
+    assert_eq!(
+        v["reference"]["layers"].as_array().expect("layers").len(),
+        2
+    );
+    let (_, stderr, ok) = guestfn(dir.path(), &["inspect", &pinned, "--pull"]);
+    assert!(!ok);
+    assert!(stderr.contains("has no module file to pull"), "{stderr}");
+
+    let (stdout, stderr, ok) = guestfn(dir.path(), &["manifest", "show", &pinned]);
+    assert!(ok, "manifest show failed: {stderr}");
+    assert!(stdout.contains("contract: oci@1.0"), "{stdout}");
+    // The emitter folds the long reference onto its own line.
+    assert!(
+        stdout.contains("image:") && stdout.contains(&image),
+        "{stdout}"
+    );
+
+    // A WebAssembly project refuses --image, and guestfn build refuses an
+    // OCI manifest.
+    let wasm_dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(wasm_dir.path().join("fn.wasm"), tiny_component()).expect("write");
+    std::fs::write(wasm_dir.path().join("guestfn.yaml"), MANIFEST_YAML).expect("write");
+    let (_, stderr, ok) = guestfn(wasm_dir.path(), &["push", &reference, "--image", &image]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("--image is for an oci@1.0 manifest"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -240,7 +371,11 @@ fn manifest_validate() {
         "{stdout}"
     );
 
-    std::fs::write(dir.path().join("bad.yaml"), "abi: 2\nverion: nope\n").expect("write");
+    std::fs::write(
+        dir.path().join("bad.yaml"),
+        "contract: wasm@1.0\nverion: nope\n",
+    )
+    .expect("write");
     let (_, stderr, ok) = guestfn(dir.path(), &["manifest", "validate", "bad.yaml"]);
     assert!(!ok);
     assert!(stderr.contains("unknown field \"verion\""), "{stderr}");

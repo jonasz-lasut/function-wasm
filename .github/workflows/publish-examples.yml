@@ -15,7 +15,7 @@
 # The use-case examples' own publish (#245): run by hand, from main, when an
 # example's guestfn.yaml version moved. The examples version independently
 # of the runtime, so a release neither builds nor carries them; the package
-# publishes through publish-pkg.yml alone. A keyless signature from this
+# publishes through publish-function.yml alone. A keyless signature from this
 # workflow names publish-examples.yml on refs/heads/main as its identity,
 # which the operator's trustSigner rule states (docs/operators/signatures.md).
 name: Publish Examples

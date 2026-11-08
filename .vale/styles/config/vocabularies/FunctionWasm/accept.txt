@@ -213,3 +213,7 @@ Xen
 krata
 dom0
 guestfn.crossplane.io
+squashfs
+vCPUs
+overlayfs
+udev

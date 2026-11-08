@@ -56,6 +56,10 @@ struct ReferenceInfo {
     module_layer: Option<DescriptorInfo>,
     #[serde(rename = "moduleLayerError", skip_serializing_if = "String::is_empty")]
     module_layer_error: String,
+    /// For an OCI module image: the image its manifest says it was built
+    /// from (the manifest's image field).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
     /// The module manifest the artifact carries as its manifest layer, read
     /// without pulling the module.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -131,26 +135,44 @@ impl InspectCmd {
             annotations: m.annotations.clone(),
             module_layer: None,
             module_layer_error: String::new(),
+            image: None,
             manifest: None,
             manifest_error: String::new(),
         };
-        let layer = match oci::wasm_layer(&m) {
-            Ok(l) => {
-                info.module_layer = Some(descriptor(&l));
-                Some(l)
-            }
-            Err(e) => {
-                info.module_layer_error = e;
-                None
+        let module_image = oci::is_module_image(&m);
+        let layer = if module_image {
+            info.module_layer_error = oci::MODULE_IMAGE_REFUSAL.to_string();
+            None
+        } else {
+            match oci::wasm_layer(&m) {
+                Ok(l) => {
+                    info.module_layer = Some(descriptor(&l));
+                    Some(l)
+                }
+                Err(e) => {
+                    info.module_layer_error = e;
+                    None
+                }
             }
         };
         if let Some(ml) = oci::manifest_layer(&m) {
             match fetch_manifest(&client, &ml) {
-                Ok(parsed) => info.manifest = Some(parsed),
+                Ok(parsed) => {
+                    if module_image && !parsed.image.is_empty() {
+                        info.image = Some(parsed.image.clone());
+                    }
+                    info.manifest = Some(parsed);
+                }
                 Err(e) => info.manifest_error = e,
             }
         }
         out.reference = Some(info);
+        if self.pull && module_image {
+            return Err(format!(
+                "{} is an OCI image (an oci@1.0 module) and has no module file to pull; the OCI runtime, function-oci, pulls and boots it",
+                self.target
+            ));
+        }
         if self.pull
             && let Some(layer) = layer
         {
@@ -194,14 +216,17 @@ impl InspectCmd {
             if !r.annotations.is_empty() {
                 println!("  annotations:{}", annotations_text(&r.annotations));
             }
-            match &r.module_layer {
-                Some(l) => println!(
+            match (&r.module_layer, &r.image) {
+                (Some(l), _) => println!(
                     "  module layer: {} {} ({})",
                     l.media_type,
                     l.digest,
                     crate::human_bytes(l.size as u64)
                 ),
-                None => println!(
+                (None, Some(image)) => println!(
+                    "  module: an OCI image (oci@1.0), which the OCI runtime, function-oci, boots; built from {image}"
+                ),
+                (None, None) => println!(
                     "  module layer: none - the runtime would refuse it: {}",
                     r.module_layer_error
                 ),
@@ -253,13 +278,12 @@ pub(crate) fn fetch_manifest(
     client: &RegistryClient,
     layer: &Descriptor,
 ) -> Result<Manifest, String> {
-    let raw = client
-        .blob(
-            &layer.digest,
-            function_wasm::manifest::MAX_SIZE as u64,
-            "manifest layer",
-        )
+    let limit = function_wasm::manifest::MAX_SIZE as u64;
+    let blob = client
+        .blob(&layer.digest, 2 * limit, "manifest layer")
         .map_err(|e| format!("cannot fetch the manifest layer: {e}"))?;
+    let raw = oci::manifest_from_layer(layer, &blob, limit)
+        .map_err(|e| format!("the manifest layer is invalid: {e}"))?;
     Manifest::parse(&raw).map_err(|e| format!("the manifest layer is invalid: {e}"))
 }
 

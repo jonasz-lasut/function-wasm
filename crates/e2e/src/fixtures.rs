@@ -174,7 +174,7 @@ pub fn composition(name: &str, namespace: &str, step: &Step) -> Value {
             "mode": "Pipeline",
             "pipeline": [{
                 "step": "guest",
-                "functionRef": {"name": super::k8s::FUNCTION_NAME},
+                "functionRef": {"name": super::profile::current().map(|p| p.function_name()).unwrap_or(super::k8s::FUNCTION_NAME)},
                 "input": step.input(),
                 "credentials": credentials,
             }],

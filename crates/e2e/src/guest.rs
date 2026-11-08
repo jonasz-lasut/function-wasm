@@ -43,7 +43,7 @@ pub enum Signature {
 
 pub struct Variant {
     pub name: &'static str,
-    /// The manifest file under guest/manifests the variant is built from.
+    /// The manifest file under guest/manifests/<runtime> the variant is built from.
     manifest: &'static str,
     /// A version suffix distinguishing variants that share a manifest file.
     version_suffix: Option<&'static str>,
@@ -53,69 +53,126 @@ pub struct Variant {
 pub const VARIANTS: &[Variant] = &[
     Variant {
         name: "plain",
-        manifest: include_str!("../guest/manifests/plain.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/plain.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "egress",
-        manifest: include_str!("../guest/manifests/egress.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/egress.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "env",
-        manifest: include_str!("../guest/manifests/env.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/env.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "credentials",
-        manifest: include_str!("../guest/manifests/credentials.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/credentials.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "tmp",
-        manifest: include_str!("../guest/manifests/tmp.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/tmp.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "everything",
-        manifest: include_str!("../guest/manifests/everything.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/everything.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "unsigned",
-        manifest: include_str!("../guest/manifests/plain.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/plain.yaml"),
         version_suffix: Some("unsigned"),
         signature: Signature::None,
     },
     Variant {
         name: "keyless-trusted",
-        manifest: include_str!("../guest/manifests/plain.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/plain.yaml"),
         version_suffix: Some("keyless-trusted"),
         signature: Signature::KeylessTrusted,
     },
     Variant {
         name: "keyless-untrusted",
-        manifest: include_str!("../guest/manifests/plain.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/plain.yaml"),
         version_suffix: Some("keyless-untrusted"),
         signature: Signature::KeylessUntrusted,
     },
 ];
 
+/// The oci profile's variants (docs/one-pager-oci-runtime.md): the same
+/// declarations around the test module as a process, each the one image
+/// setup pushed with that manifest appended as a layer, so each has a
+/// digest of its own. Their repositories live under REPOSITORY too, so the
+/// default policy's rules cover them.
+pub const OCI_VARIANTS: &[Variant] = &[
+    Variant {
+        name: "oci-plain",
+        manifest: include_str!("../guest/manifests/oci/plain.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    Variant {
+        name: "oci-env",
+        manifest: include_str!("../guest/manifests/oci/env.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    Variant {
+        name: "oci-credentials",
+        manifest: include_str!("../guest/manifests/oci/credentials.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    Variant {
+        name: "oci-tmp",
+        manifest: include_str!("../guest/manifests/oci/tmp.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    // Refused by name: function-oci serves no egress yet.
+    Variant {
+        name: "oci-egress",
+        manifest: include_str!("../guest/manifests/oci/egress.yaml"),
+        version_suffix: None,
+        signature: Signature::Key,
+    },
+    Variant {
+        name: "oci-unsigned",
+        manifest: include_str!("../guest/manifests/oci/plain.yaml"),
+        version_suffix: Some("unsigned"),
+        signature: Signature::None,
+    },
+];
+
+/// The test image's repository and the process's path inside it.
+pub const OCI_IMAGE_REPOSITORY: &str = "e2e/oci-image";
+pub const OCI_PROCESS_PATH: &str = "e2e-guest";
+
 impl Variant {
     /// The manifest layer: the YAML validated the way guestfn build does,
-    /// encoded the way guestfn push publishes it.
+    /// encoded the way guestfn push publishes it; an oci variant's `image`
+    /// is the image it was appended to, as guestfn push --image writes it.
     pub fn manifest_json(&self) -> Result<Vec<u8>> {
+        self.manifest_json_for(None)
+    }
+
+    pub fn manifest_json_for(&self, image: Option<&str>) -> Result<Vec<u8>> {
         let mut value: serde_json::Value = serde_saphyr::from_str(self.manifest)
             .with_context(|| format!("{}: manifest yaml", self.name))?;
         if let Some(suffix) = self.version_suffix {
             let version = value["version"].as_str().unwrap_or("0.1.0").to_string();
             value["version"] = serde_json::Value::String(format!("{version}-{suffix}"));
+        }
+        if let Some(image) = image {
+            value["image"] = serde_json::Value::String(image.to_string());
         }
         let manifest = Manifest::parse(&serde_json::to_vec(&value)?)
             .map_err(|e| anyhow::anyhow!("{}: {e}", self.name))?;

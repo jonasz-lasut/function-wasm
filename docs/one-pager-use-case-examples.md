@@ -183,7 +183,7 @@ build` embeds the world into and wraps.
 The world's publication ([#106](https://github.com/jonasz-lasut/function-wasm/issues/106)):
 the examples target `wasmfn:function@2.0.0`, frozen on 2026-10-07
 ([#77](https://github.com/jonasz-lasut/function-wasm/issues/77)). The
-`publish-wit` job of `publish-pkg.yml` holds the world back while the `rust`
-scaffold's `rust-toolchain.toml` pins a beta channel (`beta-2026-10-05` today),
-and publishes it at the first release after the scaffold builds on stable Rust
+`Publish WIT` workflow (`publish-wit.yml`) publishes it, run by hand and no
+earlier than when the `rust` scaffold's `rust-toolchain.toml`, which pins a beta
+channel (`beta-2026-10-05` today), is off beta and the scaffold builds on stable Rust
 ([#129](https://github.com/jonasz-lasut/function-wasm/issues/129)).

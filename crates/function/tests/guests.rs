@@ -424,7 +424,7 @@ fn run_guest(guest: &str) {
     let greetings = http::greeting_server();
     let greetings_host = greetings.split(':').next().expect("host").to_string();
     let egress_manifest = format!(
-        r#"{{"abi":2,"requires":{{"egress":{{"http":[{{"host":"{greetings_host}","methods":["GET"]}}]}}}}}}"#
+        r#"{{"contract":"wasm@1.0","requires":{{"egress":{{"http":[{{"host":"{greetings_host}","methods":["GET"]}}]}}}}}}"#
     );
     // The guest with an egress request, two ways: an OCI artifact's manifest
     // layer, and a manifest a path module names by reference

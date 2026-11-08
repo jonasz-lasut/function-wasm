@@ -124,6 +124,105 @@ pub fn module_artifact(wasm: &[u8], module_manifest: &[u8]) -> Artifact {
     }
 }
 
+pub const IMAGE_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.image.config.v1+json";
+pub const LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar";
+
+/// A tar layer holding one regular file.
+fn tar_layer(path: &str, content: &[u8], mode: u32) -> Vec<u8> {
+    let mut tar = tar::Builder::new(Vec::new());
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Regular);
+    header.set_mode(mode);
+    header.set_mtime(0);
+    header.set_size(content.len() as u64);
+    header.set_cksum();
+    tar.append_data(&mut header, path, content).expect("tar");
+    tar.into_inner().expect("tar")
+}
+
+/// A one-layer image for this host's platform around one static binary at
+/// `/<path>`, run as `user` (the oci profile's test image).
+pub fn image(binary: &[u8], path: &str, user: &str) -> Artifact {
+    let layer = tar_layer(path, binary, 0o755);
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        other => other,
+    };
+    let config = serde_json::to_vec(&serde_json::json!({
+        "architecture": arch,
+        "os": "linux",
+        "config": {"Entrypoint": [format!("/{path}")], "User": user, "WorkingDir": "/"},
+        "rootfs": {"type": "layers", "diff_ids": [digest_of(&layer)]},
+    }))
+    .expect("config json");
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": function_wasm::oci::OCI_MANIFEST_TYPE,
+        "config": {"mediaType": IMAGE_CONFIG_MEDIA_TYPE, "digest": digest_of(&config), "size": config.len()},
+        "layers": [{"mediaType": LAYER_MEDIA_TYPE, "digest": digest_of(&layer), "size": layer.len()}],
+    }))
+    .expect("manifest json");
+    Artifact {
+        manifest,
+        media_type: function_wasm::oci::OCI_MANIFEST_TYPE,
+        blobs: vec![(digest_of(&config), config), (digest_of(&layer), layer)],
+    }
+}
+
+/// An OCI module image as `guestfn push --image` publishes it: the image
+/// with the module manifest appended as one more layer, a tar holding
+/// /.guestfn/manifest.json whose diff_id joins the config's and whose
+/// descriptor carries the annotation the runtime looks for
+/// (docs/one-pager-oci-runtime.md). The image's blobs come along, since
+/// the result lives in a repository of its own here.
+pub fn module_image(image: &Artifact, module_manifest: &[u8]) -> Artifact {
+    let layer = tar_layer(
+        function_wasm::oci::MANIFEST_LAYER_PATH.trim_start_matches('/'),
+        module_manifest,
+        0o444,
+    );
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&image.manifest).expect("image manifest");
+    let config_digest = manifest["config"]["digest"]
+        .as_str()
+        .expect("config digest")
+        .to_string();
+    let raw_config = &image
+        .blobs
+        .iter()
+        .find(|(d, _)| *d == config_digest)
+        .expect("config blob")
+        .1;
+    let mut config: serde_json::Value = serde_json::from_slice(raw_config).expect("config");
+    config["rootfs"]["diff_ids"]
+        .as_array_mut()
+        .expect("diff_ids")
+        .push(serde_json::json!(digest_of(&layer)));
+    let new_config = serde_json::to_vec(&config).expect("config json");
+    manifest["config"]["digest"] = serde_json::json!(digest_of(&new_config));
+    manifest["config"]["size"] = serde_json::json!(new_config.len());
+    manifest["layers"]
+        .as_array_mut()
+        .expect("layers")
+        .push(serde_json::json!({
+            "mediaType": LAYER_MEDIA_TYPE,
+            "digest": digest_of(&layer),
+            "size": layer.len(),
+            "annotations": {
+                function_wasm::oci::MANIFEST_LAYER_ANNOTATION: function_wasm::oci::MANIFEST_LAYER_ANNOTATION_VALUE,
+            },
+        }));
+    let mut blobs = image.blobs.clone();
+    blobs.push((digest_of(&new_config), new_config));
+    blobs.push((digest_of(&layer), layer));
+    Artifact {
+        manifest: serde_json::to_vec(&manifest).expect("manifest json"),
+        media_type: image.media_type,
+        blobs,
+    }
+}
+
 /// A cosign 3.1 referrer carrying a Sigstore bundle for subject.
 pub fn referrer(subject: &str, bundle: &[u8]) -> Artifact {
     let config = b"{}".to_vec();

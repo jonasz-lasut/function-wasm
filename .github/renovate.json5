@@ -12,7 +12,7 @@
   // the CLI versions in their env), the Dockerfiles and the build submodule.
   // The Dockerfile's rust:1 build stage floats by design; the runtime base
   // (cgr.dev/chainguard/glibc-dynamic, a `latest`-only image) is digest-pinned
-  // in both Dockerfile and Dockerfile.dev and the dockerfile manager keeps
+  // in Dockerfile.wasm, Dockerfile.wasm.dev and the dockerfile manager keeps
   // the digests current.
   //
   // The scaffold goldens are NOT a surface, and the example guests are one
@@ -112,6 +112,29 @@
       matchStrings: [
         '# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\s+ZIG_[A-Z0-9_]+: (?<currentValue>[^@\\s]+)@(?<currentDigest>[0-9a-f]{64})',
       ],
+      versioningTemplate: 'semver',
+    },
+    {
+      // The Firecracker release the OCI runtime boots a VM with
+      // (docs/one-pager-oci-runtime.md), pinned in Dockerfile.oci and read
+      // from there by hack/oci-tools.sh, so one file moves. The version
+      // comes from the release tag; the two checksums (one per
+      // architecture) come from the release's <asset>.sha256.txt attachments,
+      // which github-release-attachments reads to update a currentDigest.
+      // The guest kernel beside it (KERNEL_CI, KERNEL_VERSION and their
+      // checksums) sits under a dated prefix of Firecracker's artifact
+      // bucket with no datasource: the Firecracker PR is the signal to move
+      // it by hand to the kernel that release's CI built.
+      customType: 'regex',
+      description: 'the Firecracker release Dockerfile.oci pins, version and per-architecture checksum',
+      managerFilePatterns: ['/^Dockerfile\\.oci$/'],
+      matchStrings: [
+        'ARG FIRECRACKER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\n[^\\n]*\\nARG FIRECRACKER_SHA256_AMD64=(?<currentDigest>[0-9a-f]{64})',
+        'ARG FIRECRACKER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\n[^\\n]*\\nARG FIRECRACKER_SHA256_AMD64=[0-9a-f]{64}\\nARG FIRECRACKER_SHA256_ARM64=(?<currentDigest>[0-9a-f]{64})',
+      ],
+      depNameTemplate: 'firecracker',
+      packageNameTemplate: 'firecracker-microvm/firecracker',
+      datasourceTemplate: 'github-release-attachments',
       versioningTemplate: 'semver',
     },
     {
@@ -255,6 +278,13 @@
     {
       matchDepNames: ['zig'],
       groupName: 'zig',
+    },
+    // The two Firecracker matches of Dockerfile.oci (one checksum per
+    // architecture) are one dependency: one PR moves the version and both
+    // digests, and it is the signal for the kernel bump by hand.
+    {
+      matchDepNames: ['firecracker'],
+      groupName: 'firecracker',
     },
     // GitHub Actions: let a release settle before pulling its digest, batch
     // non-major bumps into one PR, and keep majors as separate PRs since they
