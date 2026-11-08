@@ -327,6 +327,46 @@ jobs:
           go vet $(go list ./... | grep -v /internal/bindings/)
           go test -race ./...
 
+  # The Go process guest, an oci@1.0 module: the function-oci-go hello, the
+  # image function-oci boots. Go vets and tests it natively; the image is
+  # built, never pushed, to prove the Dockerfile.
+  build-oci-go:
+    name: build (oci-go)
+    runs-on: ubuntu-26.04
+    needs:
+      - start
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          cache: false
+          go-version-file: examples/function-oci-go/go.mod
+
+      - name: Cache the Go Modules and Build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: e2e-oci-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-oci-go/go.sum') }}
+          restore-keys: |
+            e2e-oci-go-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Vet and Test the Process Guest
+        working-directory: examples/function-oci-go
+        run: |
+          go vet ./...
+          go test -race ./...
+
+      - name: Build the Image
+        run: docker build -t function-oci-go:ci examples/function-oci-go
+
   # The Rust guest, an ABI v2 component (wasm32-wasip3 on the toolchain its
   # rust-toolchain.toml pins): the function-wasm-rust use case.
   build-rust:
@@ -1364,7 +1404,7 @@ jobs:
   # One commit status carries the verdict back to the PR.
   report:
     runs-on: ubuntu-26.04
-    needs: [start, guest-suite, build-go, build-rust, build-zig, build-c, build-cpp, build-odin, build-moonbit, build-ts, build-python, build-dotnet, build-oci, engine-firecracker, e2e-cluster-wasm, e2e-cluster-oci]
+    needs: [start, guest-suite, build-go, build-oci-go, build-rust, build-zig, build-c, build-cpp, build-odin, build-moonbit, build-ts, build-python, build-dotnet, build-oci, engine-firecracker, e2e-cluster-wasm, e2e-cluster-oci]
     if: always() && needs.start.result == 'success'
     permissions:
       statuses: write
@@ -1376,7 +1416,7 @@ jobs:
           state=success
           description="all jobs passed"
           for result in "${{ needs.guest-suite.result }}" "${{ needs.build-go.result }}" \
-            "${{ needs.build-rust.result }}" \
+            "${{ needs.build-oci-go.result }}" "${{ needs.build-rust.result }}" "${{ needs.build-cpp.result }}" \
             "${{ needs.build-zig.result }}" "${{ needs.build-c.result }}" \
             "${{ needs.build-odin.result }}" "${{ needs.build-moonbit.result }}" "${{ needs.build-ts.result }}" \
             "${{ needs.build-python.result }}" "${{ needs.build-dotnet.result }}" \

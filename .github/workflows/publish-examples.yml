@@ -63,7 +63,10 @@ jobs:
   # whose version moved, and a published tag stays immutable. Only the
   # examples that work as published are here: function-wasm-python and function-wasm-csharp
   # request egress to placeholder hosts their users replace before
-  # publishing their own.
+  # publishing their own. function-oci-go is an oci@1.0 module: buildx pushes
+  # its image for amd64 and arm64 into the repository first, and guestfn
+  # push --image publishes the module, the image with its manifest layer,
+  # under the version tag.
   publish-examples:
     runs-on: ubuntu-26.04
     needs:
@@ -83,6 +86,8 @@ jobs:
             toolchain: node
           - name: function-wasm-go
             toolchain: go
+          - name: function-oci-go
+            toolchain: docker
     env:
       REPOSITORY: jonasz-lasut/wasmfn/examples/${{ matrix.name }}
       EXAMPLE: examples/${{ matrix.name }}
@@ -180,7 +185,7 @@ jobs:
           go-version-file: ${{ env.EXAMPLE }}/go.mod
 
       - name: Build the Example
-        if: steps.registry.outputs.publish == 'true'
+        if: steps.registry.outputs.publish == 'true' && matrix.toolchain != 'docker'
         run: make -C "${EXAMPLE}" build
 
       - name: Install Cosign
@@ -195,12 +200,37 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup Docker Buildx
+        if: steps.registry.outputs.publish == 'true' && matrix.toolchain == 'docker'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The image goes into the module's repository first, under the version
+      # tag with -image, for both platforms the runtime serves (the Go build
+      # stage cross-compiles, so no emulation); guestfn push --image below
+      # reads it back from there. Provenance and SBOM attestations are off:
+      # they add manifests of no platform to the index.
+      - name: Push the Image
+        id: image
+        if: steps.registry.outputs.publish == 'true' && matrix.toolchain == 'docker'
+        env:
+          TAG: ${{ steps.example.outputs.tag }}
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --sbom=false \
+            --push -t "ghcr.io/${REPOSITORY}:${TAG}-image" \
+            --metadata-file "${RUNNER_TEMP}/image.json" "${EXAMPLE}"
+          digest=$(jq -r '."containerimage.digest"' "${RUNNER_TEMP}/image.json")
+          case "${digest}" in
+            sha256:*) ;;
+            *) echo "::error::docker buildx build reported no digest"; exit 1 ;;
+          esac
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
       # guestfn push refuses a module the runtime would refuse, publishes the
       # module manifest as the artifact's second layer, and is reproducible
       # under SOURCE_DATE_EPOCH.
       - name: Push the Example
         id: push
-        if: steps.registry.outputs.publish == 'true'
+        if: steps.registry.outputs.publish == 'true' && matrix.toolchain != 'docker'
         env:
           TAG: ${{ steps.example.outputs.tag }}
         run: |
@@ -216,15 +246,37 @@ jobs:
           fi
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
+      # guestfn push --image appends the manifest to the image as one more
+      # layer and publishes the result, which Docker still runs, under the
+      # version tag; the Composition pins the digest it prints.
+      - name: Push the Example Image
+        id: push-image
+        if: steps.registry.outputs.publish == 'true' && matrix.toolchain == 'docker'
+        env:
+          TAG: ${{ steps.example.outputs.tag }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          output=$("${GUESTFN}" push --manifest "${EXAMPLE}/guestfn.yaml" \
+            "ghcr.io/${REPOSITORY}:${TAG}" --image "ghcr.io/${REPOSITORY}@${IMAGE_DIGEST}")
+          echo "${output}"
+          digest=$(printf '%s\n' "${output}" | sed -nE 's/^Pushed [^ ]*@(sha256:[0-9a-f]{64}).*$/\1/p')
+          if [ -z "${digest}" ]; then
+            echo "::error::guestfn push printed no digest"
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Sign the Example
         if: steps.registry.outputs.publish == 'true'
-        run: cosign sign --yes "ghcr.io/${REPOSITORY}@${{ steps.push.outputs.digest }}"
+        run: cosign sign --yes "ghcr.io/${REPOSITORY}@${{ steps.push.outputs.digest || steps.push-image.outputs.digest }}"
 
       - name: Attest SLSA Provenance to the Example
         if: steps.registry.outputs.publish == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.REPOSITORY }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.push.outputs.digest || steps.push-image.outputs.digest }}
           push-to-registry: true
           create-storage-record: false

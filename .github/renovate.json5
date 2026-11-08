@@ -449,13 +449,13 @@
       ],
       enabled: true,
     },
-    // gomod has no lock file maintenance, so the Go examples take regular
-    // updates. `enabled` here also covers their indirect requirements,
+    // gomod has no lock file maintenance, so the Go examples (the wasm one and
+    // the OCI one, which shares its pins) take regular updates. `enabled` here also covers their indirect requirements,
     // which gomod extracts disabled. gomodTidy leaves go.mod and go.sum
     // tidy, so a bump never leaves go.sum behind.
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/function-wasm-go/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       enabled: true,
       postUpdateOptions: ['gomodTidy'],
     },
@@ -467,7 +467,7 @@
     // generator targets (it moves with a wit-bindgen bump and `make
     // gen-bindings`, never on its own).
     {
-      matchFileNames: ['examples/function-wasm-go/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       matchPackageNames: ['go', 'github.com/crossplane/function-sdk-go', 'go.bytecodealliance.org/pkg'],
       enabled: false,
     },
@@ -481,7 +481,7 @@
     // directive rose with it).
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/function-wasm-go/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       matchPackageNames: ['k8s.io/kube-openapi'],
       enabled: false,
     },
@@ -541,13 +541,13 @@
     // the major is dropped.
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/function-wasm-go/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       matchDepTypes: ['indirect'],
       separateMajorMinor: true,
     },
     {
       matchManagers: ['gomod'],
-      matchFileNames: ['examples/function-wasm-go/go.mod'],
+      matchFileNames: ['examples/function-wasm-go/go.mod', 'examples/function-oci-go/go.mod'],
       matchDepTypes: ['indirect'],
       matchUpdateTypes: ['major'],
       enabled: false,
