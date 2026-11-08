@@ -215,11 +215,8 @@ digest, applies the whiteouts and preserves ownership and modes without
 root, into the form the sandbox boots from. For a VMM with block devices
 only, that form is a squashfs image, which a pure Rust writer builds
 straight from the layer tarballs; a VMM that shares files through
-virtio-fs takes a directory instead. (The record first said ext4. A squashfs writer keeps the
-ownership without root, and the guest mounts the image read-only under
-its overlay, as the design describes. The first build uses it.) The image
-config, with the
-user resolved against the image's `/etc/passwd` and `/etc/group`, goes
+virtio-fs takes a directory instead. The image config, with the user
+resolved against the image's `/etc/passwd` and `/etc/group`, goes
 inside the squashfs, so a stored root filesystem describes itself. The
 content-addressed store keeps the result beside the compiled WebAssembly
 artifacts, under `engine::version()`, under the same LRU sweep and the
@@ -252,10 +249,7 @@ Alternatives until measurements ask for it.
 **Bounds.** `limits.timeout` is the VM's wall clock, the boot included.
 `limits.memory` is the process's memory. The init runs it in a cgroup
 capped at the limit. The VM gets the limit plus a fixed share for the
-kernel, the init and the overlay. (The first build tried the VM's memory
-as the limit alone; without swap the guest kernel thrashed its page cache
-for the whole budget before its killer acted, which the cgroup cap
-settles.) The run slots, the fair scheduler by digest, the memory pool,
+kernel, the init and the overlay. The run slots, the fair scheduler by digest, the memory pool,
 the step slots and the gRPC deadline cap apply unchanged, because they
 wrap `Engine::run`. The kernel kills a process past its cap. The
 init reports the exit, and the fatal states the limit as the Wasmtime
@@ -290,14 +284,9 @@ container gets.
 **Node requirements.** The pod needs `/dev/kvm`. The install page documents
 a device plugin that advertises the node's `/dev/kvm` as a resource
 (generic-device-plugin) and a `DeploymentRuntimeConfig` that requests one,
-with the `kvm` group among the container's supplemental groups. A
-`hostPath` mount of the device, the first draft's recipe, puts the node
-in the container but not in its device cgroup, so every `open` of it
-fails with `Operation not permitted` in an unprivileged pod. The e2e
-profile's first run found this. The runtime exited at startup, so
-Crossplane's gRPC client, which resolves a function's headless Service,
-found the Service empty. The runtime refuses to serve with a sentence that states
-the device when it can't open it. The VMM runs as the pod's user, and the
+with the `kvm` group among the container's supplemental groups. The
+runtime refuses to serve with a sentence that states the device when it
+can't open it. The VMM runs as the pod's user, and the
 pod's cgroup is the jail, without `privileged` and without
 `CAP_SYS_ADMIN`.
 
@@ -523,6 +512,22 @@ package starts alpha on the shared release train.
   pull of the layers, and admission couldn't refuse before the fetch. The
   annotated layer is that file, found through the manifest and read on
   its own.
+- **An ext4 image as the root filesystem.** The first draft's form for a
+  VMM with block devices only. A squashfs writer keeps the ownership
+  without root, and the guest mounts the image read-only under its
+  overlay, the read-only root the design describes. The build writes
+  squashfs.
+- **The VM's memory as the process's limit.** The first build sized the
+  VM to `limits.memory` alone. Without swap the guest kernel thrashed its
+  page cache for the whole budget before its killer acted. The cgroup cap
+  inside the VM ends the process at once.
+- **A `hostPath` mount of `/dev/kvm`.** The first draft's recipe for the
+  pod. It puts the device node in the container but not in its device
+  cgroup, so every `open` fails with `Operation not permitted` in an
+  unprivileged pod, the runtime exits at startup and Crossplane's gRPC
+  client finds the function's headless Service empty, which the e2e
+  profile's first run showed. The device plugin admits the device, and
+  the operator page keeps the symptom for the reader who meets it.
 - **Snapshot and restore per image digest.** Firecracker restores a booted
   VM in tens of milliseconds, and libkrun has no snapshots. Deferred until
   cold boot measurements ask for it. The `Sandbox` trait leaves room.
