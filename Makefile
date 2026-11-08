@@ -59,8 +59,8 @@ include build/makelib/local.xpkg.mk
 #                     the kvm device plugin when the node has /dev/kvm, the
 #                     XRD), function-wasm's image and package installed from
 #                     it, and function-oci beside it when the kind node has
-#                     /dev/kvm (the oci profiles need it; E2E_OCI=auto|1|0,
-#                     below, says whether to skip, require or leave it out)
+#                     /dev/kvm and E2E_OCI asks for it (auto by the node, 1
+#                     required; the default 0 leaves it out)
 # make e2e.wasm-profile.<p>
 #                     one wasm profile's suite (default, strict, lifecycle):
 #                     cargo test --test wasm_<p>, which switches function-wasm
@@ -105,11 +105,13 @@ FUNCTION_PKG_EXAMPLES := examples/pdb-addon/example
 # Function with; the function-oci target sets its own below.
 FUNCTION_IMAGE := $(E2E_IMAGE)
 FUNCTION_RUNTIME_CONFIG := e2e-wasm-default
-# Whether function-oci is part of the cluster: `auto` (the default) by the
-# kind node's /dev/kvm, which the pod opens there and the node inherits from
-# the host (a Linux host with KVM has it, Docker Desktop has not); 1 to
-# require it (CI's oci job); 0 to leave it out (CI's wasm job).
-E2E_OCI ?= auto
+# Whether function-oci is part of the cluster: 0 (the default) leaves it
+# out; `auto` installs it when the kind node has /dev/kvm, which the pod
+# opens there and the node inherits from the host (a Linux host with KVM
+# has it, Docker Desktop has not); 1 requires it (CI's oci cluster job).
+# The oci half needs protoc and the musl target for the test module as a
+# process, so it is asked for rather than assumed.
+E2E_OCI ?= 0
 E2E_NODE_HAS_KVM := docker exec $(KIND_CLUSTER_NAME)-control-plane test -c /dev/kvm
 e2e_oci_wanted = { [ "$(E2E_OCI)" = "1" ] || { [ "$(E2E_OCI)" = "auto" ] && $(E2E_NODE_HAS_KVM) 2>/dev/null; }; }
 
@@ -141,7 +143,7 @@ e2e.up: controlplane.up e2e.crossplane
 	@$(INFO) waiting for function-wasm to become healthy
 	@$(KUBECTL) wait function.pkg.crossplane.io/function-wasm --for=condition=Healthy --timeout=300s || $(FAIL)
 	@if $(e2e_oci_wanted); then $(MAKE) e2e.oci.install; \
-	else echo "function-oci is left out (E2E_OCI=$(E2E_OCI), the kind node's /dev/kvm decides under auto); the oci profiles are skipped"; fi
+	else echo "function-oci is left out (E2E_OCI=$(E2E_OCI): auto installs it when the kind node has /dev/kvm, 1 requires it); the oci profiles are skipped"; fi
 	@$(OK) the end-to-end cluster is up, run make e2e.test, e2e.wasm-profile.<p> or e2e.oci-profile.<p>
 
 # controlplane.up returns as soon as the chart is installed; Crossplane's
@@ -264,9 +266,18 @@ $(foreach p,$(E2E_OCI_PROFILES),$(eval $(call e2e.profile,oci,$(p))))
 
 e2e.test.wasm: $(addprefix e2e.wasm-profile.,$(E2E_WASM_PROFILES))
 e2e.test.oci: $(addprefix e2e.oci-profile.,$(E2E_OCI_PROFILES))
+
+# The wasm profiles under their old names, e2e.test.<p>: a comment-started
+# /e2e run reads e2e.yml from main, which calls these until the workflow
+# with the per-runtime names has merged. Remove them after that.
+define e2e.test.alias
+.PHONY: e2e.test.$(1)
+e2e.test.$(1): e2e.wasm-profile.$(1)
+endef
+$(foreach p,$(E2E_WASM_PROFILES),$(eval $(call e2e.test.alias,$(p))))
 e2e.test: e2e.test.wasm
 	@if $(e2e_oci_wanted); then $(MAKE) e2e.test.oci; \
-	else echo "function-oci is left out (E2E_OCI=$(E2E_OCI)); the oci profiles are skipped"; fi
+	else echo "function-oci is not in this cluster (E2E_OCI=$(E2E_OCI)); the oci profiles are skipped"; fi
 
 e2e.down: controlplane.down
 
