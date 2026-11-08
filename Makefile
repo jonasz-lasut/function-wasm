@@ -150,7 +150,7 @@ e2e.up: controlplane.up e2e.crossplane
 	@$(KUBECTL) wait function.pkg.crossplane.io/function-wasm --for=condition=Healthy --timeout=300s || $(FAIL)
 	@if $(e2e_oci_wanted); then $(MAKE) e2e.oci.install; \
 	else echo "function-oci is left out (E2E_OCI=$(E2E_OCI): auto installs it when the kind node has /dev/kvm, 1 requires it); the oci profiles are skipped"; fi
-	@$(OK) the end-to-end cluster is up, run make e2e.test, e2e.wasm-profile.<p> or e2e.oci-profile.<p>
+	@$(OK) the end-to-end cluster is up: make e2e.test runs every profile, make e2e.wasm-profile.default or e2e.oci-profile.default one
 
 # controlplane.up returns as soon as the chart is installed; Crossplane's
 # init container registers the package CRDs after that, and an older
