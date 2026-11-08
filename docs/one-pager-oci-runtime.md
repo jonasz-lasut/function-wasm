@@ -432,8 +432,8 @@ The `v1beta1` deprecation goes with the old group.
   holds the kernel configuration and the build the release workflow runs
   where the project builds its own.
 - `.github/workflows`: the kernel build, `build-oci` jobs in `e2e.yml`, an
-  `oci` e2e profile on a KVM runner, and `publish-pkg.yml` publishing both
-  packages.
+  `oci` e2e profile on a KVM runner, and `publish-function.yml` publishing either
+  package.
 
 ## Tests
 
@@ -585,6 +585,7 @@ Open:
 5. The egress bridge (the TLS-decrypting proxy in the init) with audit and
    metrics parity; until then `function-oci` refuses a manifest that
    requires egress, by name.
-6. The `function-oci` package's publish workflow and one use-case example;
-   its image (`Dockerfile.oci`), its package root (`package/oci`) and its
-   operators page are in the tree.
+6. One use-case example. The `function-oci` package's publish workflow
+   (`Publish Function`, with `function-oci` chosen), its image
+   (`Dockerfile.oci`), its package root (`package/oci`) and its operators
+   page are in the tree.

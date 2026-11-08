@@ -84,7 +84,7 @@ For everything else, Grype scans the built ghcr image, so the fix is one of:
   `cargo update <crate> --precise <fixed-version>`.
 - **Go stdlib/toolchain CVE** → bump the `go` directive in `go.mod`. It is
   the single source of truth: `ci.yml` sets up Go from it and
-  `publish-pkg.yml` reads it to pick the `golang:<version>` image the runtime
+  `publish-function.yml` reads it to pick the `golang:<version>` image the runtime
   is built with, so nothing else needs editing.
 - **Base image CVE** (`cgr.dev/chainguard/glibc-dynamic:latest@sha256:…` in
   the Dockerfile) → bump the pinned digest to the current `latest`
@@ -135,8 +135,8 @@ Compare what got fixed against the full CVE list from step 2.
   ```
 
 - **Nothing was fixed — no open CVE was a dependency bump** →
-  **stop here.** Do not push, and do not trigger `Tag`, `Publish Function
-  Package`, or `Supply Chain and Xpkg Extensions` — an empty patch release
+  **stop here.** Do not push, and do not trigger `Tag`, `Publish
+  Function`, or `Supply Chain and Xpkg Extensions` — an empty patch release
   remediates nothing. Leave `$BRANCH` as you found it and report the
   warning(s) above.
 
@@ -168,19 +168,21 @@ skipped under the wasm exception, say so in the notes — the next weekly scan
 will report them against this release again, and that must not read as a
 regression.
 
-### 8. Publish the package — `Publish Function Package`, from the new tag
+### 8. Publish the package — `Publish Function`, from the new tag
 
 ```bash
-gh workflow run "Publish Function Package" --ref "$NEW_VERSION" -f version="$NEW_VERSION"
+gh workflow run "Publish Function" --ref "$NEW_VERSION" -f function=function-wasm -f version="$NEW_VERSION"
 ```
 
 Must run from the **tag**, not the branch — it builds the runtime image from
 that exact tagged source, with the Go version that tag's `go.mod` declares.
+`function-oci` is published the same way, with `-f function=function-oci`,
+when its first release comes.
 
 ### 9. Sign & attest — `Supply Chain and Xpkg Extensions`, from `main`
 
 ```bash
-gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f version="$NEW_VERSION"
+gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f function=function-wasm -f version="$NEW_VERSION"
 ```
 
 Runs from `main`, not the tag — unlike step 8, this workflow doesn't build
@@ -208,8 +210,8 @@ its warning block.
 |---|---|---|
 | `Tag` | release branch (`release-X.Y`) | `version`, `message` |
 | (n/a) `gh release create` | — | tag name, `--target` branch |
-| `Publish Function Package` | the new tag (`vX.Y.Z+1`) | `version` |
-| `Supply Chain and Xpkg Extensions` | `main` | `version` |
+| `Publish Function` | the new tag (`vX.Y.Z+1`) | `function` (`function-wasm`), `version` |
+| `Supply Chain and Xpkg Extensions` | `main` | `function` (`function-wasm`), `version` |
 | `Grype Vulnerability Scan` | `main` (scans the latest release) | — |
 
 ## Common mistakes
@@ -224,7 +226,7 @@ its warning block.
   without reading it — that diff is what `guestfn init` will generate.
 - Cutting `release-X.Y` from `main` HEAD instead of the release tag — leaks
   unreleased changes into a security patch.
-- Running `Publish Function Package` against the branch instead of the new
+- Running `Publish Function` against the branch instead of the new
   tag — builds a moving target if the branch gets more commits later.
 - Running `Supply Chain and Xpkg Extensions` from the tag instead of `main`
   — it still works, but forfeits any signing/attestation fixes landed on
