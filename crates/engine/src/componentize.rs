@@ -1,6 +1,6 @@
 //! Wraps a core module into an ABI v2 component, for guestfn build.
 //!
-//! wit-bindgen's C generator (the c and zig scaffolds) does not emit a
+//! wit-bindgen's C generator (the c, zig, cpp and odin examples) does not emit a
 //! component: it links a `component-type*` custom section into the core
 //! module - the guest's world, encoded - and leaves the wrap to wasm-tools.
 //! This module is that wrap, with wit-component: the world is read from the

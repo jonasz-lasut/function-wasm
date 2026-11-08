@@ -1,10 +1,9 @@
 //! The guests - the same greeting function written as ABI v2 components
 //! with function-sdk-go (Go over wit-bindgen's Go bindings, sync-lifted;
 //! go build emits the core module and the suite embeds its world and wraps
-//! it as guestfn build does), in Zig with zig-protobuf and in C with nanopb
-//! (both over wit-bindgen's C bindings, sync-lifted; zig emits the core
-//! module and the suite wraps it as guestfn build does) and in async Rust
-//! with wit-bindgen, and as components in TypeScript and Python -
+//! it as guestfn build does), in async Rust with wit-bindgen, and as
+//! components in TypeScript and Python: the four languages with an
+//! official function-sdk, the ones `guestfn init` scaffolds (#264) -
 //! through the whole host: path and OCI sources, compile, per-request
 //! instance, egress through wasi:http, guest logging. Every guest must
 //! produce the same response.
@@ -80,7 +79,7 @@ fn guest_dir(guest: &str) -> PathBuf {
         .join(guest);
     // Build caches survive between runs; every other file is the golden's,
     // so a file the scaffold no longer writes cannot linger.
-    const CACHES: [&str; 5] = [".venv", "node_modules", "target", ".zig-cache", "zig-out"];
+    const CACHES: [&str; 3] = [".venv", "node_modules", "target"];
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
             if CACHES.iter().any(|c| entry.file_name() == *c) {
@@ -287,27 +286,6 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
                 return Some(Vec::new());
             }
             std::fs::copy(dir.join("fn.wasm"), out).ok()?;
-            true
-        }
-        "zig" | "c" => {
-            if !on_path("zig") {
-                return skip(guest, "zig not on PATH");
-            }
-            if !command(&dir, "zig", &["build", "-Doptimize=ReleaseSmall"], &[]) {
-                return Some(Vec::new());
-            }
-            // zig emits a core module. One carrying wit-bindgen's
-            // component-type section (the zig and c scaffolds) is wrapped
-            // into its component here, as guestfn build wraps it for a user.
-            let built = std::fs::read(dir.join("zig-out/bin/fn.wasm")).ok()?;
-            let wasm = if componentize::carries_component_type(&built) {
-                componentize::componentize(&built)
-                    .expect("componentize the zig-built core module")
-                    .wasm
-            } else {
-                built
-            };
-            std::fs::write(out, wasm).ok()?;
             true
         }
         _ => false,
@@ -594,14 +572,4 @@ fn ts_guest() {
 #[test]
 fn python_guest() {
     run_guest("python");
-}
-
-#[test]
-fn zig_guest() {
-    run_guest("zig");
-}
-
-#[test]
-fn c_guest() {
-    run_guest("c");
 }

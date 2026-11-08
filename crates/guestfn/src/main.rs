@@ -72,11 +72,11 @@ struct InitCmd {
 
     /// Language of the project: go (function-sdk-go, an ABI v2 component
     /// over wit-bindgen's Go bindings), rust (prost, an ABI
-    /// v2 component), zig (zig-protobuf over wit-bindgen's C bindings, an
-    /// ABI v2 component, ~60 KB), c (nanopb over the same C bindings, built
-    /// by zig cc, an ABI v2 component, ~62 KB), ts
-    /// (protobuf-es, an ABI v2 component built by jco, ~14 MB) or python
-    /// (protobuf, an ABI v2 component built by componentize-py, ~21 MB).
+    /// v2 component), ts (protobuf-es, an ABI v2 component built by jco,
+    /// ~14 MB) or python (protobuf, an ABI v2 component built by
+    /// componentize-py, ~21 MB): the languages with an official
+    /// function-sdk. Zig, C and other languages are examples in the
+    /// repository, which guestfn build still builds.
     #[arg(long, default_value = "go", value_parser = scaffold::LANGS)]
     lang: String,
 
@@ -86,9 +86,8 @@ struct InitCmd {
     module: Option<String>,
 
     /// Short name used in docs and the example Composition, the crate name
-    /// for rust and the package name for ts (the project name for zig, c
-    /// and python). Defaults to the module's last element or the
-    /// directory's base name.
+    /// for rust and the package name for ts (the project name for python).
+    /// Defaults to the module's last element or the directory's base name.
     #[arg(long)]
     name: Option<String>,
 
@@ -161,10 +160,6 @@ impl InitCmd {
         }
         let test = match self.lang.as_str() {
             scaffold::LANG_RUST => "cargo test           # edit src/lib.rs, keep the tests passing",
-            scaffold::LANG_ZIG => {
-                "zig build test       # edit src/main.zig, keep the tests passing"
-            }
-            scaffold::LANG_C => "zig build test       # edit src/fn.c, keep the tests passing",
             scaffold::LANG_TS => {
                 "npm install          # protobuf-es, esbuild, jco\n  npm test             # edit src/fn.ts, keep the tests passing"
             }
