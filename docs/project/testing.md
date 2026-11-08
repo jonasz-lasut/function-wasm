@@ -62,10 +62,13 @@ the suite's own setup binary, in three steps:
    `xpkg.build.function-wasm` builds the Function package from it, and
    `local.xpkg.deploy.function.function-wasm` installs it from Crossplane's
    cache with `packagePullPolicy: Never`, on the `wasm` runtime's `default` profile.
-   `function-oci` follows the same way, from `Dockerfile.oci.dev` around the
-   prebuilt pieces `FUNCTION_OCI_TOOLS` names or built here, on the `oci`
-   runtime's `default` profile. `E2E_OCI` decides whether it does: `auto` (the default)
-   by the kind node's `/dev/kvm`, `1` to require it, `0` to leave it out.
+   `function-oci` follows the same way, from `Dockerfile.oci` in Docker or
+   from `Dockerfile.oci.dev` around the prebuilt pieces `FUNCTION_OCI_TOOLS`
+   names, on the `oci` runtime's `default` profile. `E2E_OCI` decides:
+   `auto` (the default) installs it when the kind node has `/dev/kvm`, `1`
+   requires it and `0` leaves it out, the two values CI's cluster jobs set.
+   The test module as a process is built in a `rust` container on any host
+   but Linux.
 
 `make e2e.wasm-profile.<p>` and `make e2e.oci-profile.<p>` run one profile's
 tests, `make e2e.test.wasm` and `make e2e.test.oci` one runtime's,

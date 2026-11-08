@@ -590,8 +590,8 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             the variants pushed and signed, the profiles' ConfigMaps, Secrets and
                             runtime configs, the kvm device plugin (cluster/kvm-device-plugin.yaml)
                             when the kind node has /dev/kvm with the node's kvm gid as the oci
-                            config's supplemental group - E2E_OCI asks for it: auto by the node,
-                            1 required, the default 0 leaves it out - the XRD, _output/e2e/state.json for the
+                            config's supplemental group - E2E_OCI: auto (the default) by the node,
+                            1 required, 0 left out - the XRD, _output/e2e/state.json for the
                             tests), profiles/<runtime>/<p>/
                             (drc.yaml + policy.cedar: wasm default grants everything the admitted
                             cases need under both verifiers, strict grants nothing, fences reads to
@@ -622,7 +622,7 @@ build/                      the crossplane build submodule (makelib): common.mk,
                             package synced into Crossplane's cache with packagePullPolicy Never).
                             Provisioning only: releases stay in publish-pkg.yml
 Makefile                    the end-to-end targets (e2e.up - one cluster, function-oci beside
-                            function-wasm under E2E_OCI=auto|1 (the default 0 leaves it out), e2e.crossplane - a kubectl wait
+                            function-wasm under E2E_OCI=auto (the default, by the node's /dev/kvm)|1|0, e2e.crossplane - a kubectl wait
                             for Crossplane and its package CRDs, e2e.wasm-profile.<p>,
                             e2e.oci-profile.<p>, e2e.test, e2e.test.wasm, e2e.test.oci, e2e.down,
                             e2e, e2e.dump, e2e.guest, e2e.oci.guest, e2e.image, e2e.oci.image,
@@ -748,7 +748,7 @@ cargo test -p function-wasm-engine        # the engine over WAT fixtures, and th
 cargo test -p function-wasm               # runtime units, conformance goldens, guest suite, raw client
 cargo test -p guestfn                     # scaffold goldens, the examples' shared plumbing, CLI against an in-memory registry
 make e2e                                  # the second tier: kind + Crossplane + the packages, every profile in turn, teardown
-make e2e.up && make e2e.wasm-profile.default   # or strict, lifecycle; E2E_OCI=auto make e2e.up adds function-oci on a node with /dev/kvm for e2e.oci-profile.default; make e2e.down when done
+make e2e.up && make e2e.wasm-profile.default   # or strict, lifecycle; e2e.up adds function-oci on a node with /dev/kvm (E2E_OCI=auto, the default) for e2e.oci-profile.default; make e2e.down when done
 (cd examples/pdb-addon && go test -race ./...)
 (cd examples/hello-zig && zig build test)
 (cd examples/hello-c && zig build test)
