@@ -1,4 +1,4 @@
-//! The strict profile: no verifier, a policy that requires a signature for
+//! The wasm strict profile: no verifier, a policy that requires a signature for
 //! the plain variant, grants egress to the registry host but opens no
 //! address for it, and fences reads to the tenant's own namespace, and
 //! nothing else. Every test here is a refusal an operator's narrow layer
@@ -12,7 +12,7 @@ const WAIT: Duration = Duration::from_secs(180);
 #[tokio::test]
 async fn a_required_signature_cannot_be_verified_without_a_verifier() -> Result<()> {
     with_temp_ns("no-verifier", |ns| async move {
-        ns.ensure_profile(Profile::Strict).await?;
+        ns.ensure_profile(Profile::WasmStrict).await?;
         let step = Step::oci(&ns.state.variant("plain").reference());
         let guest = ns.guest("probe", &step, json!({})).await?;
         let message = guest.wait_fatal(WAIT).await?;
@@ -32,7 +32,7 @@ async fn a_required_signature_cannot_be_verified_without_a_verifier() -> Result<
 #[tokio::test]
 async fn egress_to_a_blocked_address_is_refused_in_band() -> Result<()> {
     with_temp_ns("ssrf", |ns| async move {
-        ns.ensure_profile(Profile::Strict).await?;
+        ns.ensure_profile(Profile::WasmStrict).await?;
         let step = Step::oci(&ns.state.variant("egress").reference());
         let url = ns.state.registry_v2_url();
         let guest = ns
@@ -71,7 +71,7 @@ async fn egress_to_a_blocked_address_is_refused_in_band() -> Result<()> {
 #[tokio::test]
 async fn a_read_outside_the_namespace_is_refused_by_the_operator_ceiling() -> Result<()> {
     with_temp_ns("require-ceiling", |ns| async move {
-        ns.ensure_profile(Profile::Strict).await?;
+        ns.ensure_profile(Profile::WasmStrict).await?;
         let env = ns.environment_config(json!({"tier": "gold"})).await?;
         let step = Step::oci(&ns.state.variant("egress").reference());
         let guest = ns
@@ -102,7 +102,7 @@ async fn a_read_outside_the_namespace_is_refused_by_the_operator_ceiling() -> Re
 #[tokio::test]
 async fn an_env_binding_is_refused_without_setenv() -> Result<()> {
     with_temp_ns("env-refused", |ns| async move {
-        ns.ensure_profile(Profile::Strict).await?;
+        ns.ensure_profile(Profile::WasmStrict).await?;
         ns.secret("e2e-secret", &[("token", "t-123")]).await?;
         let step =
             Step::oci(&ns.state.variant("env").reference()).with_credential("e2e", "e2e-secret");
@@ -121,7 +121,7 @@ async fn an_env_binding_is_refused_without_setenv() -> Result<()> {
 #[tokio::test]
 async fn a_required_credential_is_refused_without_spendcredential() -> Result<()> {
     with_temp_ns("credential-refused", |ns| async move {
-        ns.ensure_profile(Profile::Strict).await?;
+        ns.ensure_profile(Profile::WasmStrict).await?;
         ns.secret("e2e-secret", &[("token", "t-123")]).await?;
         let step = Step::oci(&ns.state.variant("credentials").reference())
             .with_credential("e2e", "e2e-secret");
@@ -142,7 +142,7 @@ async fn a_required_credential_is_refused_without_spendcredential() -> Result<()
 #[tokio::test]
 async fn a_private_tmp_is_refused_without_the_grant() -> Result<()> {
     with_temp_ns("tmp-refused", |ns| async move {
-        ns.ensure_profile(Profile::Strict).await?;
+        ns.ensure_profile(Profile::WasmStrict).await?;
         let step = Step::oci(&ns.state.variant("tmp").reference());
         let guest = ns
             .guest("probe", &step, json!({"privateTmp": true}))

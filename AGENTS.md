@@ -577,7 +577,8 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             (ns.rs: a namespace per test, Linkerd's with_temp_ns, kept with its
                             state dumped under _output/e2e/logs when a test fails; fixtures.rs:
                             the Guest XRD, a Composition per test, the Guest XR, Secrets;
-                            profile.rs: the three runtime profiles, switched by the Function's
+                            profile.rs: the profiles per runtime (wasm: default, strict,
+                            lifecycle; oci: default), each switching its runtime's Function by
                             runtimeConfigRef once per test binary; registry.rs: the in-cluster
                             registry:3 with TLS from a generated CA and Basic auth, the pusher
                             that attaches signatures through the sha256-<hex> referrers tag
@@ -586,14 +587,19 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             guest.rs: the variants, one fn.wasm under nine manifests, each with
                             its own digest since a verdict is cached per digest), src/bin/setup.rs
                             what `make e2e.up` runs after controlplane.up (registry, provider-nop,
-                            the variants pushed and signed, the profiles' ConfigMaps and Secrets,
-                            the XRD, _output/e2e/state.json for the tests), profiles/<p>/
-                            (drc.yaml + policy.cedar: default grants everything the admitted
+                            the variants pushed and signed, the profiles' ConfigMaps, Secrets and
+                            runtime configs, the kvm device plugin (cluster/kvm-device-plugin.yaml)
+                            when the kind node has /dev/kvm with the node's kvm gid as the oci
+                            config's supplemental group - E2E_OCI=auto|1|0 says by the node,
+                            required or left out - the XRD, _output/e2e/state.json for the
+                            tests), profiles/<runtime>/<p>/
+                            (drc.yaml + policy.cedar: wasm default grants everything the admitted
                             cases need under both verifiers, strict grants nothing, fences reads to
                             the tenant's namespace and has no verifier, lifecycle warms the published pdb-addon on a PVC-backed
                             cache under --debug with the trusted root fetched over TUF from the
-                            public-good instance, no root file mounted), tests/<p>.rs one target
-                            per profile, and
+                            public-good instance, no root file mounted; oci default is function-oci
+                            under the wasm default's policy with the device requested from the
+                            plugin), tests/<runtime>_<p>.rs one target per profile, and
                             guest/ the committed test module: a Rust ABI v2 guest on the rust
                             scaffold's wit/ and proto (read in place, not vendored), its own
                             workspace root, fn.wasm checked in (make e2e.guest rebuilds it), whose
@@ -615,10 +621,15 @@ build/                      the crossplane build submodule (makelib): common.mk,
                             under .cache/tools; kind + Crossplane at CROSSPLANE_VERSION; the
                             package synced into Crossplane's cache with packagePullPolicy Never).
                             Provisioning only: releases stay in publish-pkg.yml
-Makefile                    the end-to-end targets (e2e.up, e2e.crossplane - a kubectl wait for
-                            Crossplane and its package CRDs, e2e.test.<profile>, e2e.test,
-                            e2e.down, e2e, e2e.guest, e2e.image, xpkg.build.function-wasm,
-                            local.xpkg.deploy.function.%, print-crossplane-version) over the
+Makefile                    the end-to-end targets (e2e.up - one cluster, function-oci beside
+                            function-wasm under E2E_OCI=auto|1|0, e2e.crossplane - a kubectl wait
+                            for Crossplane and its package CRDs, e2e.wasm-profile.<p>,
+                            e2e.oci-profile.<p>, e2e.test, e2e.test.wasm, e2e.test.oci, e2e.down,
+                            e2e, e2e.dump, e2e.guest, e2e.oci.guest, e2e.image, e2e.oci.image,
+                            xpkg.build.function-wasm, xpkg.build.function-oci,
+                            local.xpkg.deploy.function.%, print-crossplane-version; oci.tools -
+                            hack/oci-tools.sh fetching Firecracker and the kernel at the pins
+                            Dockerfile.oci writes, oci.init, oci.test) over the
                             submodule, with the CROSSPLANE_VERSION default Renovate moves (the
                             current Crossplane; the release matrix's two older pins live in
                             release-matrix-e2e.yml), then the vendoring loops (vendor-proto,
@@ -736,8 +747,8 @@ cargo test --workspace                    # the first tier: everything below
 cargo test -p function-wasm-engine        # the engine over WAT fixtures, and the committed e2e guest with a fake requester
 cargo test -p function-wasm               # runtime units, conformance goldens, guest suite, raw client
 cargo test -p guestfn                     # scaffold goldens, the examples' shared plumbing, CLI against an in-memory registry
-make e2e                                  # the second tier: kind + Crossplane + the package, the three profiles in turn, teardown
-make e2e.up && make e2e.test.default      # or one profile at a time (strict, lifecycle); make e2e.down when done
+make e2e                                  # the second tier: kind + Crossplane + the packages, every profile in turn, teardown
+make e2e.up && make e2e.wasm-profile.default   # or strict, lifecycle; e2e.oci-profile.default when the kind node has /dev/kvm; make e2e.down when done
 (cd examples/pdb-addon && go test -race ./...)
 (cd examples/hello-zig && zig build test)
 (cd examples/hello-c && zig build test)

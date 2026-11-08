@@ -98,9 +98,10 @@ DaemonSet with the node's `/dev` mounted, which the device plugin already
 is, can set the device to `0666` in an init container instead, which is
 what KubeVirt does. A `privileged: true` function container gets every
 device of the node admitted, at the cost of the boundary the pod keeps
-otherwise. The end-to-end suite's `oci` profile
-runs the plugin and patches the kind node's gid into its runtime config
-(`crates/e2e/profiles/oci/`, `make e2e.oci.kvm`). The runtime refuses to
+otherwise. The end-to-end suite's setup
+runs the plugin and patches the kind node's gid into the `oci` profile's
+runtime config (`crates/e2e/cluster/kvm-device-plugin.yaml`,
+`crates/e2e/profiles/oci/default/`). The runtime refuses to
 start without the device and says so:
 
 ```text

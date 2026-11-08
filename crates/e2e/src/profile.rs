@@ -1,8 +1,11 @@
-//! The runtime profiles (profiles/<name>/drc.yaml and policy.cedar): one
-//! Function, reconfigured between suites by switching its runtimeConfigRef
-//! to the profile's DeploymentRuntimeConfig, then waiting until exactly one
-//! function pod runs with that config's args and is Ready. Each test binary
-//! is one profile; the switch runs once per process.
+//! The runtime profiles (profiles/<runtime>/<name>/drc.yaml, with a
+//! policy.cedar where the profile has a policy of its own): one Function
+//! per runtime, function-wasm or function-oci, reconfigured between suites
+//! by switching its runtimeConfigRef to the profile's
+//! DeploymentRuntimeConfig, then waiting until exactly one function pod
+//! runs with that config's args and is Ready. Each test binary
+//! (tests/<runtime>_<name>.rs) is one profile; the switch runs once per
+//! process.
 
 use std::time::{Duration, Instant};
 
@@ -13,32 +16,76 @@ use tokio::sync::OnceCell;
 
 use crate::k8s::{self, CROSSPLANE_NAMESPACE, dynamic};
 
+/// The runtime a profile configures: one installed Function each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Profile {
-    Default,
-    Strict,
-    Lifecycle,
+pub enum Runtime {
+    Wasm,
     /// The function-oci package (docs/one-pager-oci-runtime.md): a second
-    /// Function beside function-wasm, switched the same way.
+    /// Function beside function-wasm, installed when the node has /dev/kvm.
     Oci,
 }
 
-impl Profile {
+impl Runtime {
     pub fn name(self) -> &'static str {
         match self {
-            Profile::Default => "default",
-            Profile::Strict => "strict",
-            Profile::Lifecycle => "lifecycle",
-            Profile::Oci => "oci",
+            Runtime::Wasm => "wasm",
+            Runtime::Oci => "oci",
         }
+    }
+
+    /// The Function the runtime is installed as.
+    pub fn function_name(self) -> &'static str {
+        match self {
+            Runtime::Wasm => k8s::FUNCTION_NAME,
+            Runtime::Oci => k8s::OCI_FUNCTION_NAME,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Profile {
+    WasmDefault,
+    WasmStrict,
+    WasmLifecycle,
+    /// function-oci under the wasm default profile's policy and verifiers.
+    OciDefault,
+}
+
+impl Profile {
+    /// Every profile, in the order setup creates their cluster objects.
+    pub const ALL: [Profile; 4] = [
+        Profile::WasmDefault,
+        Profile::WasmStrict,
+        Profile::WasmLifecycle,
+        Profile::OciDefault,
+    ];
+
+    pub fn runtime(self) -> Runtime {
+        match self {
+            Profile::WasmDefault | Profile::WasmStrict | Profile::WasmLifecycle => Runtime::Wasm,
+            Profile::OciDefault => Runtime::Oci,
+        }
+    }
+
+    /// The profile's name within its runtime (the directory under
+    /// profiles/<runtime>/ and the test target's suffix).
+    pub fn short_name(self) -> &'static str {
+        match self {
+            Profile::WasmDefault | Profile::OciDefault => "default",
+            Profile::WasmStrict => "strict",
+            Profile::WasmLifecycle => "lifecycle",
+        }
+    }
+
+    /// The profile's full name, `<runtime>-<name>`: the label the switch
+    /// writes and the stem of the runtime config and policy names.
+    pub fn name(self) -> String {
+        format!("{}-{}", self.runtime().name(), self.short_name())
     }
 
     /// The Function the profile reconfigures and the tests compose with.
     pub fn function_name(self) -> &'static str {
-        match self {
-            Profile::Oci => "function-oci",
-            _ => k8s::FUNCTION_NAME,
-        }
+        self.runtime().function_name()
     }
 
     /// The label selector of that Function's pods.
@@ -53,20 +100,22 @@ impl Profile {
 
     pub fn drc_yaml(self) -> &'static str {
         match self {
-            Profile::Default => include_str!("../profiles/default/drc.yaml"),
-            Profile::Strict => include_str!("../profiles/strict/drc.yaml"),
-            Profile::Lifecycle => include_str!("../profiles/lifecycle/drc.yaml"),
-            Profile::Oci => include_str!("../profiles/oci/drc.yaml"),
+            Profile::WasmDefault => include_str!("../profiles/wasm/default/drc.yaml"),
+            Profile::WasmStrict => include_str!("../profiles/wasm/strict/drc.yaml"),
+            Profile::WasmLifecycle => include_str!("../profiles/wasm/lifecycle/drc.yaml"),
+            Profile::OciDefault => include_str!("../profiles/oci/default/drc.yaml"),
         }
     }
 
-    /// The operator policy the profile mounts.
+    /// The operator policy the profile owns; a profile whose runtime config
+    /// mounts another profile's policy (the oci default mounts the wasm
+    /// default's) has none of its own.
     pub fn policy(self) -> Option<&'static str> {
         match self {
-            Profile::Default => Some(include_str!("../profiles/default/policy.cedar")),
-            Profile::Strict => Some(include_str!("../profiles/strict/policy.cedar")),
-            Profile::Lifecycle => Some(include_str!("../profiles/lifecycle/policy.cedar")),
-            Profile::Oci => Some(include_str!("../profiles/oci/policy.cedar")),
+            Profile::WasmDefault => Some(include_str!("../profiles/wasm/default/policy.cedar")),
+            Profile::WasmStrict => Some(include_str!("../profiles/wasm/strict/policy.cedar")),
+            Profile::WasmLifecycle => Some(include_str!("../profiles/wasm/lifecycle/policy.cedar")),
+            Profile::OciDefault => None,
         }
     }
 

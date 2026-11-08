@@ -8,7 +8,7 @@
 apiVersion: pkg.crossplane.io/v1beta1
 kind: DeploymentRuntimeConfig
 metadata:
-  name: e2e-lifecycle
+  name: e2e-wasm-lifecycle
 spec:
   deploymentTemplate:
     spec:
@@ -51,7 +51,7 @@ spec:
           volumes:
           - name: policy
             configMap:
-              name: e2e-policy-lifecycle
+              name: e2e-policy-wasm-lifecycle
           - name: cache
             persistentVolumeClaim:
               claimName: e2e-cache

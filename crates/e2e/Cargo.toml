@@ -9,8 +9,8 @@ publish = false
 
 [features]
 # Everything here needs a cluster, so the crate is empty without the feature:
-# cargo test --workspace builds none of it, make e2e.test.<profile> turns it
-# on (docs/project/testing.md).
+# cargo test --workspace builds none of it, make e2e.wasm-profile.<p> and
+# make e2e.oci-profile.<p> turn it on (docs/project/testing.md).
 cluster = [
   "dep:anyhow",
   "dep:base64",
@@ -65,18 +65,20 @@ name = "e2e-setup"
 path = "src/bin/setup.rs"
 required-features = ["cluster"]
 
+# One target per profile, <runtime>_<profile>: make e2e.wasm-profile.<p>
+# and make e2e.oci-profile.<p> run them.
 [[test]]
-name = "default"
+name = "wasm_default"
 required-features = ["cluster"]
 
 [[test]]
-name = "strict"
+name = "wasm_strict"
 required-features = ["cluster"]
 
 [[test]]
-name = "lifecycle"
+name = "wasm_lifecycle"
 required-features = ["cluster"]
 
 [[test]]
-name = "oci"
+name = "oci_default"
 required-features = ["cluster"]

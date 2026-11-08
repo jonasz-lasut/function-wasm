@@ -43,7 +43,7 @@ pub enum Signature {
 
 pub struct Variant {
     pub name: &'static str,
-    /// The manifest file under guest/manifests the variant is built from.
+    /// The manifest file under guest/manifests/<runtime> the variant is built from.
     manifest: &'static str,
     /// A version suffix distinguishing variants that share a manifest file.
     version_suffix: Option<&'static str>,
@@ -53,55 +53,55 @@ pub struct Variant {
 pub const VARIANTS: &[Variant] = &[
     Variant {
         name: "plain",
-        manifest: include_str!("../guest/manifests/plain.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/plain.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "egress",
-        manifest: include_str!("../guest/manifests/egress.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/egress.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "env",
-        manifest: include_str!("../guest/manifests/env.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/env.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "credentials",
-        manifest: include_str!("../guest/manifests/credentials.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/credentials.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "tmp",
-        manifest: include_str!("../guest/manifests/tmp.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/tmp.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "everything",
-        manifest: include_str!("../guest/manifests/everything.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/everything.yaml"),
         version_suffix: None,
         signature: Signature::Key,
     },
     Variant {
         name: "unsigned",
-        manifest: include_str!("../guest/manifests/plain.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/plain.yaml"),
         version_suffix: Some("unsigned"),
         signature: Signature::None,
     },
     Variant {
         name: "keyless-trusted",
-        manifest: include_str!("../guest/manifests/plain.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/plain.yaml"),
         version_suffix: Some("keyless-trusted"),
         signature: Signature::KeylessTrusted,
     },
     Variant {
         name: "keyless-untrusted",
-        manifest: include_str!("../guest/manifests/plain.yaml"),
+        manifest: include_str!("../guest/manifests/wasm/plain.yaml"),
         version_suffix: Some("keyless-untrusted"),
         signature: Signature::KeylessUntrusted,
     },

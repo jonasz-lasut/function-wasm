@@ -21,6 +21,9 @@ pub const FIELD_MANAGER: &str = "function-wasm-e2e";
 pub const CROSSPLANE_NAMESPACE: &str = "crossplane-system";
 /// The Function under test and the label its pods carry.
 pub const FUNCTION_NAME: &str = "function-wasm";
+/// The second runtime's Function (docs/one-pager-oci-runtime.md), installed
+/// beside it when the node has /dev/kvm.
+pub const OCI_FUNCTION_NAME: &str = "function-oci";
 pub const FUNCTION_POD_SELECTOR: &str = "pkg.crossplane.io/function=function-wasm";
 pub const FUNCTION_CONTAINER: &str = "package-runtime";
 

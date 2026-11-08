@@ -10,7 +10,7 @@
 apiVersion: pkg.crossplane.io/v1beta1
 kind: DeploymentRuntimeConfig
 metadata:
-  name: e2e-oci
+  name: e2e-oci-default
 spec:
   deploymentTemplate:
     spec:
@@ -50,7 +50,7 @@ spec:
           volumes:
           - name: policy
             configMap:
-              name: e2e-policy-oci
+              name: e2e-policy-wasm-default
           - name: cosign-key
             secret:
               secretName: e2e-cosign-key

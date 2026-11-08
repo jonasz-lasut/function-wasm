@@ -1,4 +1,4 @@
-//! The lifecycle profile: the published pdb-addon warmed at startup, the
+//! The wasm lifecycle profile: the published pdb-addon warmed at startup, the
 //! caches on a volume that outlives the pod and bounded below that module's
 //! size, the trusted root fetched over TUF from the public-good instance,
 //! --debug on. The oracle is the function pod itself: its readiness and its
@@ -62,7 +62,7 @@ async fn restart_function(client: &Client) -> Result<String> {
 async fn readiness_waits_for_the_warm_up() -> Result<()> {
     let _serial = ONE_AT_A_TIME.lock().await;
     with_temp_ns("warm-up", |ns| async move {
-        ns.ensure_profile(Profile::Lifecycle).await?;
+        ns.ensure_profile(Profile::WasmLifecycle).await?;
         let pod = restart_function(&ns.client).await?;
         assert_eq!(metrics::health(&ns.client, &pod, "/livez").await?, 200);
         assert_eq!(metrics::health(&ns.client, &pod, "/readyz").await?, 200);
@@ -95,7 +95,7 @@ async fn readiness_waits_for_the_warm_up() -> Result<()> {
 async fn the_volume_keeps_fetched_modules_and_the_sweep_bounds_them() -> Result<()> {
     let _serial = ONE_AT_A_TIME.lock().await;
     with_temp_ns("caches", |ns| async move {
-        ns.ensure_profile(Profile::Lifecycle).await?;
+        ns.ensure_profile(Profile::WasmLifecycle).await?;
         let step = Step::oci(&ns.state.variant("plain").reference());
         let first = ns.guest("first", &step, json!({})).await?;
         first.wait_ready(WAIT).await?;
@@ -147,7 +147,7 @@ async fn the_volume_keeps_fetched_modules_and_the_sweep_bounds_them() -> Result<
 async fn the_trusted_root_is_fetched_over_tuf() -> Result<()> {
     let _serial = ONE_AT_A_TIME.lock().await;
     with_temp_ns("tuf", |ns| async move {
-        ns.ensure_profile(Profile::Lifecycle).await?;
+        ns.ensure_profile(Profile::WasmLifecycle).await?;
         let refreshed = |scraped: &str| -> Result<()> {
             let updated = metrics::sample(
                 scraped,

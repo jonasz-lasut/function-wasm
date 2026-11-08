@@ -32,6 +32,10 @@ pub struct State {
     /// The image those artifacts pin, as the cluster names it.
     #[serde(default)]
     pub oci_image: String,
+    /// Whether the kind node had /dev/kvm when setup ran: function-oci is
+    /// installed and the oci profiles run only then.
+    #[serde(default)]
+    pub kvm: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,7 +84,7 @@ impl State {
     pub fn oci_variant(&self, name: &str) -> &Pushed {
         self.oci_variants.get(name).unwrap_or_else(|| {
             panic!(
-                "no oci variant {name:?} in {}: run make e2e.oci.up (setup needs E2E_OCI_GUEST)",
+                "no oci variant {name:?} in {}: run make e2e.up on a node with /dev/kvm (setup pushes the image when E2E_OCI_GUEST names the process)",
                 Self::path().display()
             )
         })

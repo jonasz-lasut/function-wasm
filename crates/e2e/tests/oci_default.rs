@@ -1,7 +1,8 @@
-//! The oci profile (docs/one-pager-oci-runtime.md): the function-oci
-//! package, with /dev/kvm from the node, running the test module as a
-//! process in a Firecracker VM per request. Every case is the default
-//! profile's oracle over the same Guest XR; what the OCI runtime does not
+//! The oci default profile (docs/one-pager-oci-runtime.md): the
+//! function-oci package, with /dev/kvm from the node, running the test
+//! module as a process in a Firecracker VM per request under the wasm
+//! default profile's policy. Every case is that profile's oracle over the
+//! same Guest XR; what the OCI runtime does not
 //! serve yet (egress) is refused by name.
 
 use function_wasm_e2e::prelude::*;
@@ -11,7 +12,7 @@ const WAIT: Duration = Duration::from_secs(240);
 #[tokio::test]
 async fn an_image_module_composes_nop_resources() -> Result<()> {
     with_temp_ns("oci-signed", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         let step = Step::oci(&ns.state.oci_variant("oci-plain").reference());
         let guest = ns
             .guest(
@@ -38,7 +39,7 @@ async fn an_image_module_composes_nop_resources() -> Result<()> {
 #[tokio::test]
 async fn an_unsigned_image_module_is_refused() -> Result<()> {
     with_temp_ns("oci-unsigned", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         let step = Step::oci(&ns.state.oci_variant("oci-unsigned").reference());
         let guest = ns.guest("probe", &step, json!({})).await?;
         let message = guest.wait_fatal(WAIT).await?;
@@ -54,7 +55,7 @@ async fn an_unsigned_image_module_is_refused() -> Result<()> {
 #[tokio::test]
 async fn a_wasm_module_is_refused_by_name() -> Result<()> {
     with_temp_ns("oci-wasm", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         let step = Step::oci(&ns.state.variant("plain").reference());
         let guest = ns.guest("probe", &step, json!({})).await?;
         let message = guest.wait_fatal(WAIT).await?;
@@ -70,7 +71,7 @@ async fn a_wasm_module_is_refused_by_name() -> Result<()> {
 #[tokio::test]
 async fn a_manifest_requiring_egress_is_refused_by_name() -> Result<()> {
     with_temp_ns("oci-egress", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         let step = Step::oci(&ns.state.oci_variant("oci-egress").reference());
         let guest = ns.guest("probe", &step, json!({})).await?;
         let message = guest.wait_fatal(WAIT).await?;
@@ -88,7 +89,7 @@ async fn a_manifest_requiring_egress_is_refused_by_name() -> Result<()> {
 #[tokio::test]
 async fn only_the_granted_credential_reaches_the_process() -> Result<()> {
     with_temp_ns("oci-credentials", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         ns.secret("e2e-secret", &[("token", "t-123"), ("other-key", "x")])
             .await?;
         ns.secret("other-secret", &[("password", "p")]).await?;
@@ -115,7 +116,7 @@ async fn only_the_granted_credential_reaches_the_process() -> Result<()> {
 #[tokio::test]
 async fn an_env_binding_reaches_the_process_environment() -> Result<()> {
     with_temp_ns("oci-env", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         ns.secret("e2e-secret", &[("token", "t-123")]).await?;
         let step = Step::oci(&ns.state.oci_variant("oci-env").reference())
             .with_credential("e2e", "e2e-secret");
@@ -136,7 +137,7 @@ async fn an_env_binding_reaches_the_process_environment() -> Result<()> {
 #[tokio::test]
 async fn tmp_is_writable_in_the_vm() -> Result<()> {
     with_temp_ns("oci-tmp", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         for variant in ["oci-tmp", "oci-plain"] {
             let step = Step::oci(&ns.state.oci_variant(variant).reference());
             let guest = ns
@@ -156,7 +157,7 @@ async fn tmp_is_writable_in_the_vm() -> Result<()> {
 #[tokio::test]
 async fn a_fatal_result_names_the_exit_status_and_the_message() -> Result<()> {
     with_temp_ns("oci-fatal", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         let step = Step::oci(&ns.state.oci_variant("oci-plain").reference());
         let guest = ns
             .guest("probe", &step, json!({"fatal": "asked to fail"}))
@@ -174,7 +175,7 @@ async fn a_fatal_result_names_the_exit_status_and_the_message() -> Result<()> {
 #[tokio::test]
 async fn the_deadline_stops_a_spinning_process() -> Result<()> {
     with_temp_ns("oci-spin", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         let step = Step::oci(&ns.state.oci_variant("oci-plain").reference())
             .with_limits(json!({"timeout": "5s"}));
         let guest = ns.guest("probe", &step, json!({"spin": true})).await?;
@@ -191,7 +192,7 @@ async fn the_deadline_stops_a_spinning_process() -> Result<()> {
 #[tokio::test]
 async fn the_memory_limit_is_the_vms() -> Result<()> {
     with_temp_ns("oci-grow", |ns| async move {
-        ns.ensure_profile(Profile::Oci).await?;
+        ns.ensure_profile(Profile::OciDefault).await?;
         let step = Step::oci(&ns.state.oci_variant("oci-plain").reference())
             .with_limits(json!({"memory": "96Mi"}));
         let guest = ns.guest("probe", &step, json!({"growMiB": 256})).await?;

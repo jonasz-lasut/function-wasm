@@ -1,4 +1,4 @@
-//! The default profile: both verifiers, the registry CA trusted, a policy
+//! The wasm default profile: both verifiers, the registry CA trusted, a policy
 //! that grants the test module everything the suite's admitted cases need.
 //! Every test here is a feature the runtime admits; what Crossplane then
 //! shows is the oracle.
@@ -20,7 +20,7 @@ when {{ context has repository && context.repository in Repository::"{registry}/
 #[tokio::test]
 async fn a_signed_module_composes_nop_resources() -> Result<()> {
     with_temp_ns("signed", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("plain").reference());
         let guest = ns
             .guest(
@@ -47,7 +47,7 @@ async fn a_signed_module_composes_nop_resources() -> Result<()> {
 #[tokio::test]
 async fn an_unsigned_module_is_refused() -> Result<()> {
     with_temp_ns("unsigned", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("unsigned").reference());
         let guest = ns.guest("probe", &step, json!({})).await?;
         let message = guest.wait_fatal(WAIT).await?;
@@ -61,7 +61,7 @@ async fn an_unsigned_module_is_refused() -> Result<()> {
 #[tokio::test]
 async fn a_keyless_signature_by_a_trusted_signer_is_admitted() -> Result<()> {
     with_temp_ns("keyless-trusted", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("keyless-trusted").reference());
         let guest = ns.guest("probe", &step, json!({})).await?;
         guest.wait_synced(WAIT).await?;
@@ -73,7 +73,7 @@ async fn a_keyless_signature_by_a_trusted_signer_is_admitted() -> Result<()> {
 #[tokio::test]
 async fn a_keyless_signature_by_an_untrusted_signer_is_refused() -> Result<()> {
     with_temp_ns("keyless-untrusted", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("keyless-untrusted").reference());
         let guest = ns.guest("probe", &step, json!({})).await?;
         let message = guest.wait_fatal(WAIT).await?;
@@ -93,7 +93,7 @@ async fn a_keyless_signature_by_an_untrusted_signer_is_refused() -> Result<()> {
 #[tokio::test]
 async fn a_published_keyless_signature_verifies_against_the_public_good_root() -> Result<()> {
     with_temp_ns("public-good", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci_public(&ns.state.pdb_addon);
         let guest = ns.guest("probe", &step, json!({})).await?;
         guest.wait_synced(Duration::from_secs(300)).await?;
@@ -105,7 +105,7 @@ async fn a_published_keyless_signature_verifies_against_the_public_good_root() -
 #[tokio::test]
 async fn egress_reaches_the_registry_through_the_host() -> Result<()> {
     with_temp_ns("egress", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("egress").reference());
         let url = ns.state.registry_v2_url();
         let guest = ns
@@ -143,7 +143,7 @@ async fn egress_reaches_the_registry_through_the_host() -> Result<()> {
 #[tokio::test]
 async fn egress_outside_the_rules_is_refused_in_band() -> Result<()> {
     with_temp_ns("egress-rules", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("egress").reference());
         let guest = ns
             .guest(
@@ -166,7 +166,7 @@ async fn egress_outside_the_rules_is_refused_in_band() -> Result<()> {
 #[tokio::test]
 async fn only_the_granted_credential_reaches_the_module() -> Result<()> {
     with_temp_ns("credentials", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         ns.secret("e2e-secret", &[("token", "t-123"), ("other-key", "x")])
             .await?;
         ns.secret("other-secret", &[("password", "p")]).await?;
@@ -194,7 +194,7 @@ async fn only_the_granted_credential_reaches_the_module() -> Result<()> {
 #[tokio::test]
 async fn an_env_binding_delivers_the_credential_key() -> Result<()> {
     with_temp_ns("env", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         ns.secret("e2e-secret", &[("token", "t-123")]).await?;
         let step =
             Step::oci(&ns.state.variant("env").reference()).with_credential("e2e", "e2e-secret");
@@ -213,7 +213,7 @@ async fn an_env_binding_delivers_the_credential_key() -> Result<()> {
 #[tokio::test]
 async fn a_private_tmp_is_writable_when_granted() -> Result<()> {
     with_temp_ns("tmp", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("tmp").reference());
         let guest = ns
             .guest("probe", &step, json!({"privateTmp": true}))
@@ -229,7 +229,7 @@ async fn a_private_tmp_is_writable_when_granted() -> Result<()> {
 #[tokio::test]
 async fn without_the_requirement_tmp_is_not_writable() -> Result<()> {
     with_temp_ns("tmp-none", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("plain").reference());
         let guest = ns
             .guest("probe", &step, json!({"privateTmp": true}))
@@ -249,7 +249,7 @@ async fn without_the_requirement_tmp_is_not_writable() -> Result<()> {
 #[tokio::test]
 async fn the_requirements_round_trip_resolves_an_environment_config() -> Result<()> {
     with_temp_ns("requirements", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let env = ns
             .environment_config(json!({"region": "eu-central-1", "tier": "gold"}))
             .await?;
@@ -282,7 +282,7 @@ when { context has name };"#,
 #[tokio::test]
 async fn a_fenced_read_is_refused_for_a_kind_the_policy_does_not_permit() -> Result<()> {
     with_temp_ns("require-refused", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let env = ns.environment_config(json!({"tier": "gold"})).await?;
         let step = Step::oci(&ns.state.variant("plain").reference()).with_composition_policy(
             r#"forbid (principal, action == Action::"requireResource", resource == Kind::"apiextensions.crossplane.io/EnvironmentConfig");
@@ -316,7 +316,7 @@ permit (principal, action == Action::"requireResource", resource);"#,
 #[tokio::test]
 async fn a_fatal_result_shows_on_the_composite_and_its_events() -> Result<()> {
     with_temp_ns("fatal", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("plain").reference());
         let guest = ns
             .guest("probe", &step, json!({"fatal": "asked to fail"}))
@@ -343,7 +343,7 @@ async fn a_fatal_result_shows_on_the_composite_and_its_events() -> Result<()> {
 #[tokio::test]
 async fn a_run_past_the_deadline_is_fatal() -> Result<()> {
     with_temp_ns("deadline", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step =
             Step::oci(&ns.state.variant("plain").reference()).with_limits(json!({"timeout": "1s"}));
         let guest = ns.guest("probe", &step, json!({"spin": true})).await?;
@@ -360,7 +360,7 @@ async fn a_run_past_the_deadline_is_fatal() -> Result<()> {
 #[tokio::test]
 async fn a_growth_past_the_memory_limit_is_refused() -> Result<()> {
     with_temp_ns("memory", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("plain").reference())
             .with_limits(json!({"memory": "32Mi"}));
         let guest = ns.guest("probe", &step, json!({"growMiB": 64})).await?;
@@ -375,7 +375,7 @@ async fn a_growth_past_the_memory_limit_is_refused() -> Result<()> {
 #[tokio::test]
 async fn module_from_inside_the_fence_runs() -> Result<()> {
     with_temp_ns("from", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::from(
             "spec.module",
             false,
@@ -394,7 +394,7 @@ async fn module_from_inside_the_fence_runs() -> Result<()> {
 #[tokio::test]
 async fn module_from_outside_the_fence_is_refused() -> Result<()> {
     with_temp_ns("from-outside", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::from(
             "spec.module",
             false,
@@ -417,7 +417,7 @@ async fn module_from_outside_the_fence_is_refused() -> Result<()> {
 #[tokio::test]
 async fn module_from_an_unsigned_module_is_refused() -> Result<()> {
     with_temp_ns("from-unsigned", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::from(
             "spec.module",
             false,
@@ -436,7 +436,7 @@ async fn module_from_an_unsigned_module_is_refused() -> Result<()> {
 #[tokio::test]
 async fn module_from_unset_skips_the_step() -> Result<()> {
     with_temp_ns("from-empty", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let before = metrics::sample(
             &metrics::scrape(&ns.client).await?,
             "function_wasm_module_requests_total",
@@ -468,7 +468,7 @@ async fn module_from_unset_skips_the_step() -> Result<()> {
 #[tokio::test]
 async fn a_fenced_module_composes_what_the_policy_permits() -> Result<()> {
     with_temp_ns("compose-permitted", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("plain").reference()).with_composition_policy(
             r#"permit (principal, action == Action::"composeResource", resource in Group::"nop.crossplane.io")
 when { context.change == "add" || context.change == "modify" };
@@ -491,7 +491,7 @@ when { context.target == "composite" };"#,
 #[tokio::test]
 async fn a_fenced_module_is_refused_for_a_kind_the_policy_does_not_permit() -> Result<()> {
     with_temp_ns("compose-refused", |ns| async move {
-        ns.ensure_profile(Profile::Default).await?;
+        ns.ensure_profile(Profile::WasmDefault).await?;
         let step = Step::oci(&ns.state.variant("plain").reference()).with_composition_policy(
             r#"permit (principal, action == Action::"composeResource", resource)
 when { context.target == "composite" };"#,
