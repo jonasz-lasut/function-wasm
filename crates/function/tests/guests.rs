@@ -383,6 +383,17 @@ fn fatal_response() -> RunFunctionResponse {
     }
 }
 
+/// One case of the behavioural suite: the Input as JSON, the configuration
+/// the composite resource carries under spec.config, the expected response
+/// and the log lines the run must have written.
+type Case = (
+    &'static str,
+    String,
+    Option<serde_json::Value>,
+    RunFunctionResponse,
+    Vec<String>,
+);
+
 fn run_guest(guest: &str) {
     // CI's unit-test job is deliberately toolchain-free: the render jobs
     // prove each guest end to end, and the runner's preinstalled Go would
@@ -435,12 +446,15 @@ fn run_guest(guest: &str) {
     std::fs::write(dir.path().join(&path_manifest), &egress_manifest).expect("write");
 
     let module_digest = digest_of(&wasm);
-    let cases: Vec<(&str, String, RunFunctionResponse, Vec<String>)> = vec![
+    // The Input references the configuration under spec.config of the
+    // composite resource (config.from); the value travels there.
+    let cases: Vec<Case> = vec![
         (
             "Default",
             format!(
                 r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}}}}"#
             ),
+            None,
             response("hello my-xr"),
             vec![
                 "Running function".to_string(),
@@ -450,40 +464,45 @@ fn run_guest(guest: &str) {
         (
             "Configured",
             format!(
-                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"greeting":"hi"}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"from":"spec.config"}}}}"#
             ),
+            Some(serde_json::json!({"greeting": "hi"})),
             response("hi my-xr"),
             vec!["Running function".to_string()],
         ),
         (
             "GreetingFromURL",
             format!(
-                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"OCI","oci":{{"ref":"{egress_ref}"}}}},"config":{{"greetingUrl":"http://{greetings}/en"}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"OCI","oci":{{"ref":"{egress_ref}"}}}},"config":{{"from":"spec.config"}}}}"#
             ),
+            Some(serde_json::json!({"greetingUrl": format!("http://{greetings}/en")})),
             response("howdy my-xr"),
             vec!["outcome=\"ok\"".to_string()],
         ),
         (
             "GreetingFromURLPath",
             format!(
-                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}","manifestPath":"{path_manifest}"}},"config":{{"greetingUrl":"http://{greetings}/en"}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}","manifestPath":"{path_manifest}"}},"config":{{"from":"spec.config"}}}}"#
             ),
+            Some(serde_json::json!({"greetingUrl": format!("http://{greetings}/en")})),
             response("howdy my-xr"),
             vec!["outcome=\"ok\"".to_string()],
         ),
         (
             "GreetingURLWithoutGrant",
             format!(
-                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"greetingUrl":"http://{greetings}/en"}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"from":"spec.config"}}}}"#
             ),
+            Some(serde_json::json!({"greetingUrl": format!("http://{greetings}/en")})),
             fatal_response(),
             vec!["outcome=\"refused\"".to_string()],
         ),
         (
             "BadConfig",
             format!(
-                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"greeting":7}}}}"#
+                r#"{{"apiVersion":"guestfn.crossplane.io/v1","kind":"Input","module":{{"type":"Path","path":"{file}"}},"config":{{"from":"spec.config"}}}}"#
             ),
+            Some(serde_json::json!({"greeting": 7})),
             fatal_response(),
             Vec::new(),
         ),
@@ -493,7 +512,7 @@ fn run_guest(guest: &str) {
         .enable_all()
         .build()
         .expect("runtime");
-    for (name, input, want, want_logs) in cases {
+    for (name, input, config, want, want_logs) in cases {
         let start = logs.lock().expect("poisoned").len();
         let input: serde_json::Value = serde_json::from_str(&input).expect("input json");
         let req = RunFunctionRequest {
@@ -516,6 +535,7 @@ fn run_guest(guest: &str) {
                             "apiVersion": "example.org/v1",
                             "kind": "XR",
                             "metadata": {"name": "my-xr"},
+                            "spec": {"config": config},
                         })
                         .as_object()
                         .expect("object"),

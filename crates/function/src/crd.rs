@@ -59,6 +59,7 @@ pub fn document() -> Value {
     schema["properties"]["module"]["required"] = json!(["type"]);
     schema["properties"]["module"]["properties"]["oci"]["required"] = json!(["ref"]);
     schema["properties"]["module"]["properties"]["http"]["required"] = json!(["digest", "url"]);
+    schema["properties"]["config"]["required"] = json!(["from"]);
     let (group, version) = input::API_VERSION.split_once('/').expect("group/version");
     let properties = schema["properties"]
         .as_object_mut()
@@ -127,7 +128,7 @@ mod tests {
 
     /// What the hand-written CRD had and the generated one must keep: the
     /// identity, the required fields, the enum, the patterns, the CEL
-    /// rules, the pass-through config and the int-or-string quantity.
+    /// rules, the config object and the int-or-string quantity.
     #[test]
     fn the_crd_keeps_the_rules_of_the_hand_written_one() {
         let crd = document();
@@ -159,8 +160,17 @@ mod tests {
             json!(["digest", "url"])
         );
         assert!(module["properties"]["oci"]["properties"]["ref"]["pattern"].is_string());
+        // config is an object of from and allowEmpty (#262), closed: a
+        // value written under it is what admission refuses by name.
         let config = &schema["properties"]["config"];
-        assert_eq!(config["x-kubernetes-preserve-unknown-fields"], true);
+        assert_eq!(config["required"], json!(["from"]));
+        assert!(config["properties"]["from"]["pattern"].is_string());
+        assert_eq!(config["properties"]["allowEmpty"]["type"], "boolean");
+        assert!(config.get("x-kubernetes-preserve-unknown-fields").is_none());
+        assert_eq!(
+            config["x-kubernetes-validations"].as_array().map(Vec::len),
+            Some(1)
+        );
         assert!(
             config["description"].is_string(),
             "the doc comment is the description"

@@ -31,7 +31,9 @@ The glue is a small `internal/wasmfn` package that the project owns. It
 exports `run` for the [ABI v2](../abi-v2.md) world: it decodes the request,
 calls your `RunFunction` and encodes the response. It also provides a
 `logging.Logger` over the runtime's typed `log` import, and
-`wasmfn.GetConfig(req, &cfg)` to read the Input's `config` block. The Go
+`wasmfn.GetConfig(req, &cfg)` to read the module's configuration, which the
+runtime reads from the composite resource field the step's `config.from`
+names and hands over as `input.config`. The Go
 bindings under `internal/bindings` are written by
 [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) and checked in.
 
@@ -75,8 +77,8 @@ checks a module's requirements.
 
 `guestfn scaffold composition --from ghcr.io/example/greeter:v0.1.0` (or
 `--from fn.wasm`) writes a Composition step for the module, pinned by digest,
-with a `config` skeleton from the schema and a commented `compositionPolicy`
-skeleton. The policy block is a commented starting point for narrowing.
+with `config.from: spec.config`, a commented definition fragment with the
+schema for that field, and a commented `compositionPolicy` skeleton. The policy block is a commented starting point for narrowing.
 `--full` writes a whole Composition.
 
 ## What `guestfn push` publishes

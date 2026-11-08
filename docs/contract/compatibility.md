@@ -13,7 +13,9 @@ for a rule that didn't exist before.
 - The Input, `guestfn.crossplane.io/v1`: its field names, types and
   semantics. A field the runtime doesn't know is ignored, and `function
   validate` warns naming it; the removed `policy` and `sandbox` fields it
-  refuses by name.
+  refuses by name. `config` is an object of `from` and `allowEmpty` since
+  0.6 (#262): a value written there is refused, and the refusal states
+  the field it belongs in.
 - Each runtime flag's meaning and default.
 - The wording of refusals and fatal results, as the conformance goldens pin
   it (`crates/function/testdata/conformance/`). Operators grep logs and XR

@@ -85,13 +85,48 @@ pub struct Input {
     /// than a ceiling is a fatal result naming both. Read from the Input
     /// only.
     pub limits: Option<Limits>,
-    /// Passed to the module verbatim as part of its request input. The
-    /// runtime does not interpret it; it only ever holds it against the
-    /// module manifest's config.schema. Non-secret module configuration
-    /// belongs here: the module's environment is its manifest's
-    /// requires.env credential bindings, never Input-authored values.
-    #[schemars(schema_with = "crate::crd::preserve_unknown_fields")]
-    pub config: Option<serde_json::Value>,
+    /// Where the module's configuration comes from: a field of the observed
+    /// composite resource, named by config.from. The runtime reads it on
+    /// every request, holds it against the module manifest's config.schema
+    /// and hands it to the module as input.config, where every guest reads
+    /// its configuration. An Input without config runs the module
+    /// unconfigured. Non-secret settings belong there: the module's
+    /// environment is its manifest's requires.env credential bindings,
+    /// never Input-authored values.
+    pub config: Option<Config>,
+}
+
+/// The module's configuration, as a reference into the composite resource
+/// (docs/one-pager-module-config.md). The module's author publishes the
+/// structure as the manifest's config.schema, the composite resource holds
+/// the values, and the Composition says which field: a module the
+/// composite resource chooses (module.from) is configured by the same
+/// author, and a fixed module exposes what its definition declares.
+#[derive(Debug, Default, Clone, Deserialize, JsonSchema)]
+#[serde(default, rename_all = "camelCase")]
+#[schemars(extend("x-kubernetes-validations" = [{
+    "message": "allowEmpty is only allowed with from",
+    "rule": "!has(self.allowEmpty) || !self.allowEmpty || has(self.from)"
+}]))]
+pub struct Config {
+    /// A field of the observed composite resource, under spec or status,
+    /// that holds the module's configuration as an object, for example
+    /// "spec.addOnConfig". Required. The value is read on every request,
+    /// checked against the module manifest's config.schema and forwarded
+    /// to the module as input.config; the rest of the request passes
+    /// unchanged.
+    #[schemars(regex(pattern = r"^(spec|status)\..+"))]
+    pub from: String,
+    /// Lets the composite resource leave the field unset (absent or null):
+    /// the module then runs unconfigured, as for an Input without config,
+    /// instead of a fatal result naming the field. Refused without from.
+    pub allow_empty: bool,
+    /// Every other key, which admission refuses by name: a value written
+    /// here, as 0.6 took it, belongs in the composite resource field that
+    /// from names.
+    #[serde(flatten)]
+    #[schemars(skip)]
+    pub other: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// Where the module comes from. The Composition always chooses the kind;

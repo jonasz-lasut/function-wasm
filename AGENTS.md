@@ -37,7 +37,11 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       spendCredential for a named credential - default-deny) or refuses;     │
 │       an unset field under module.allowEmpty ends the request here: the      │
 │       caller's desired state and context echoed at the wire level            │
-│       (protowire::noop_response), requests_total{outcome="skipped"}          │
+│       (protowire::noop_response), requests_total{outcome="skipped"};        │
+│       from::config_from_composite(input.config, observed XR) → the module's  │
+│       configuration (an object) or None under config.allowEmpty, or a fatal │
+│       naming config.from; checked against the manifest's config.schema at   │
+│       step 6 and written into the forwarded Input at step 8                  │
 │  3. oci::auth_for(req, module) → registry auth        (step credential)      │
 │  4. resolver.resolve(module) → Resolved{digest, source}     resolver.rs      │
 │       no I/O: oci manifest digest from the ref, http.digest from the Input,  │
@@ -686,7 +690,7 @@ The function receives an `Input` (`guestfn.crossplane.io/v1`; the group of 0.6 a
 - `module` — `type: OCI|HTTP|Path` (required) + exactly one of `oci{ref, credentials}`, `http{url, digest, manifestURL, manifestDigest}`, `path` (+ `manifestPath`), or `from` (the XR field holding that object; with `allowEmpty: true` a field the XR leaves unset - absent or null - skips the step: no module runs and the desired state goes back unchanged; refused without `from`)
 - `compositionPolicy` — raw Cedar, the composition author's layer: fences `from` sources (`pullModule`/`spendCredential`, default-deny) and may narrow sandbox capabilities (scoped default-permit); read from the Input only, never from the XR
 - `limits` — `timeout`, `memory`, `concurrency`, each ≤ the runtime's ceiling flag (concurrency silently capped)
-- `config` — opaque; the guest reads it via `GetConfig` - non-secret module configuration lives here
+- `config` — `{from, allowEmpty}`: the observed composite resource field (under `spec.`/`status.`) holding the module's configuration, an object; read at admission by `from::config_from_composite` under `module.from`'s rules, held against the manifest's `config.schema` at step 6, and handed to the module as `input.config` by a wire-level edit of the Input (`protowire::replace_input_config`), so `GetConfig` in every guest reads the value; `allowEmpty` runs the module unconfigured when the field is unset; any other key under `config` (a 0.6-style value) is refused by name (`docs/one-pager-module-config.md`)
 
 There is no `sandbox` field: what a module gets beyond the default sandbox is decided per capability by three AND-combined layers (`docs/one-pager-three-layer-authz.md`) - the module's manifest requests it (`requires.filesystem.privateTmp`, `requires.egress.http`, `requires.env` credential bindings, `requires.credentials` - the step credentials it reads whole from its request), the Input's `compositionPolicy` permits it, and the operator's Cedar `--sandbox-policy-file` permits it (default-deny: no policy file, no capability). The same two layers fence what a module composes through a ninth action, `composeResource` (#174), and what it asks Crossplane for through the response's `requirements` through a tenth, `requireResource` (#208), both judged over the response after the run and scoped default-permit in both layers (a layer with no such rule narrows nothing); the manifest's advisory `composes` and `requires.resources` declare them for the tooling. The user-facing field reference lives in `docs/operators/input-reference.md` (the documentation site's "Input reference" page); keep it in sync with `input.rs`; the CRD under `package/wasm/input/` follows `input.rs` by generation.
 

@@ -144,7 +144,8 @@ impl WasmFunction {
         };
         // A module.from source names a field of the composite resource; the
         // compositionPolicy fences what it may pick (from.rs, default-deny).
-        let composite = if input.module.from.is_empty() {
+        // config.from names the field that holds the module's configuration.
+        let composite = if input.module.from.is_empty() && input.config.is_none() {
             None
         } else {
             req.observed
@@ -170,6 +171,17 @@ impl WasmFunction {
                     format!("cannot resolve module: {e}"),
                 )));
             }
+        };
+        // The module's configuration, read from the composite resource
+        // before the resolver sees the module: held against the manifest's
+        // schema at step 6 and handed to the module as input.config in
+        // place of the reference (docs/one-pager-module-config.md).
+        let config = match &input.config {
+            None => None,
+            Some(c) => match crate::from::config_from_composite(c, composite.as_ref()) {
+                Ok(config) => config,
+                Err(e) => return Ok(raw_rsp(self.fatal(&req, OUTCOME_REFUSED, e))),
+            },
         };
         // Whether this module must carry a cosign signature is settled
         // before it is resolved: the legacy all-or-nothing --cosign-key
@@ -398,7 +410,7 @@ impl WasmFunction {
         if let Some(m) = &manifest
             && let Err(e) = m.check(
                 &caps.grants(),
-                input.config.as_ref(),
+                config.as_ref(),
                 crate::manifest::runtime_version(),
             )
         {
@@ -435,9 +447,32 @@ impl WasmFunction {
         };
 
         // The whole request is forwarded and the whole response returned:
-        // the caller's own bytes, with only the step credentials the module
-        // was not granted edited out at the wire level - the pull credential
-        // unconditionally; the engine works on the protobuf bytes.
+        // the caller's own bytes, with the step credentials the module was
+        // not granted edited out at the wire level - the pull credential
+        // unconditionally - and the Input's config reference replaced by
+        // the configuration read from the composite resource; the engine
+        // works on the protobuf bytes.
+        let raw = if input.config.is_some() {
+            // A one-entry Struct encodes to exactly the map entry the
+            // Input's Struct gains.
+            let entry = config.as_ref().map(|value| {
+                use prost::Message as _;
+                let mut entry = serde_json::Map::new();
+                entry.insert("config".to_string(), value.clone());
+                function_sdk_rust::resource::json_to_struct(&entry).encode_to_vec()
+            });
+            match crate::protowire::replace_input_config(&raw, entry.as_deref()) {
+                Some(bytes) => bytes,
+                None => {
+                    return Ok(raw_rsp(self.fatal(&req,
+                        OUTCOME_ERROR,
+                        "internal error while running the module: cannot replace the Input's config: the request does not parse as protobuf".to_string(),
+                    )));
+                }
+            }
+        } else {
+            raw
+        };
         let granted = caps.forwarded_credentials();
         let forward = |name: &str| name != pull_credential && granted.contains(name);
         let mut withheld: Vec<&str> = req

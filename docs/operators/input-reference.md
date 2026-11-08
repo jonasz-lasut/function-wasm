@@ -27,11 +27,14 @@ compositionPolicy: |           # optional; the composition author's own Cedar la
 limits:                        # optional; each at most the runtime's ceiling
   timeout: 5s
   memory: 128Mi
-config: {...}                  # optional; opaque, forwarded to the module
+config:                        # optional; the module's configuration, read from the XR
+  from: spec.config            # the observed XR field holding it, an object
+  allowEmpty: true             # optional: an unset field runs the module unconfigured
 ```
 
-Everything but the source is read from the Input: `compositionPolicy` and
-`limits` are the Composition's, never the composite resource's. The Input
+Everything but the source and the configuration is read from the Input:
+`compositionPolicy` and `limits` are the Composition's, never the composite
+resource's. The Input
 has no `sandbox` block. Capabilities come from the module's manifest and
 two Cedar layers, described under [Capabilities](#capabilities).
 
@@ -55,7 +58,9 @@ The fields are:
 | `limits.timeout` | duration | compute budget of one run, e.g. `5s`. See [Limits](#limits) |
 | `limits.memory` | quantity | memory a run may use, its linear memories and tables together, e.g. `128Mi`. See [Limits](#limits) |
 | `limits.concurrency` | int32 | at most N runs of this step at once. See [Limits](#limits) |
-| `config` | object | opaque, passed to the module untouched inside the request input. Non-secret module configuration belongs here: the module's environment comes only from its manifest's `requires.env` credential bindings |
+| `config` | object | Optional. Where the module's configuration comes from. See [Configuration from the XR](#configuration-from-the-xr) |
+| `config.from` | string | Required within `config`. A field of the observed composite resource, under `spec.` or `status.`, that holds the configuration as an object |
+| `config.allowEmpty` | boolean | Optional, with `config.from`. An unset field (absent or `null`) runs the module unconfigured instead of a fatal result |
 
 ## OCI references
 
@@ -156,6 +161,56 @@ carries `repository` only for this pull credential:
       when { context has repository &&
              context.repository in Repository::"ghcr.io/example-org" };
 ```
+
+## Configuration from the XR
+
+The module's configuration is a field of the composite resource, which the
+step names in `config.from`. The module's author publishes its structure as
+the manifest's `config.schema`; the composite resource definition declares
+the field, with that schema transplanted, so the API server checks and
+defaults the values; the runtime reads the field on every request, holds it
+against the manifest's schema as the backstop and hands it to the module as
+`input.config`, where every guest reads its configuration. A module chosen
+through `module.from` is configured by the same author who chose it, and a
+fixed module exposes what the definition declares. Secrets don't belong
+there: a module reads a step credential through its manifest's
+`requires.env` or `requires.credentials`.
+
+```yaml
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        from: spec.addOn
+      config:
+        from: spec.addOnConfig      # spec.addOnConfig: {maxUnavailable: 2}
+        allowEmpty: true            # a WebApp that sets none runs the add-on unconfigured
+```
+
+The field's value must be an object. A step without `config` runs the
+module unconfigured. A value written under `config` itself, as 0.6 took it, is
+refused at admission with a sentence that states where it belongs:
+
+```text
+config.greeting is not a field of config, which has from and allowEmpty only: the module's configuration is written in the composite resource, in the field config.from names
+```
+
+A request without an observed composite resource, a field the resource
+doesn't have or a value that isn't an object is a fatal result worded as
+`module.from`'s:
+
+```text
+config.from spec.addOnConfig: no observed composite resource to read it from
+config.from: cannot read spec.addOnConfig from the composite resource: addOnConfig: no such field
+config.from: spec.addOnConfig of the composite resource is not an object
+```
+
+`config.allowEmpty: true` makes an unset field (absent or `null`) run the
+module unconfigured, the state of a step without `config`; a scalar or a
+list is refused either way. `function validate --xr` reads the field from the
+composite resource given and prints the same sentences; without `--xr` it
+reports the reference and leaves the value unchecked.
 
 ## The composition policy
 

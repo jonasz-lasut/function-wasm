@@ -16,7 +16,7 @@ use crate::authz::{
     OperatorPolicy, Principal, Requirement, RequirementMatch, compile_composition_policy,
 };
 use crate::egress_rules::HttpRule;
-use crate::input::{Input, ModuleSource};
+use crate::input::{Config, Input, ModuleSource};
 use crate::location::digest_is_valid;
 use crate::manifest::{Grants, Requires};
 use crate::quantity;
@@ -56,7 +56,43 @@ pub fn admit(
     admitted.composition = composition;
     validate_source(&input.module).map_err(|e| format!("cannot resolve module: {e}"))?;
     validate_source_for(kind, &input.module).map_err(|e| format!("cannot resolve module: {e}"))?;
+    if let Some(config) = &input.config {
+        validate_config(config)?;
+    }
     Ok(admitted)
+}
+
+/// The shape of the Input's config: an object of from and allowEmpty, and
+/// nothing else. A value written there, as 0.6 took it, is refused by its
+/// first key with a sentence that says where the value now belongs
+/// (docs/one-pager-module-config.md); the composite resource holds it, and
+/// from.rs reads it. from is required and follows module.from's grammar.
+pub fn validate_config(config: &Config) -> Result<(), String> {
+    if let Some(key) = config.other.keys().next() {
+        return Err(format!(
+            "config.{key} is not a field of config, which has from and allowEmpty only: the module's configuration is written in the composite resource, in the field config.from names"
+        ));
+    }
+    let has_from = !config.from.is_empty();
+    if config.allow_empty && !has_from {
+        return Err(
+            "config.allowEmpty is set but config.from is not: only a configuration the composite resource holds can be left unset"
+                .to_string(),
+        );
+    }
+    if !has_from {
+        return Err(
+            "config.from is required: it names the field of the composite resource that holds the module's configuration, e.g. spec.config"
+                .to_string(),
+        );
+    }
+    if !from_field_is_valid(&config.from) {
+        return Err(format!(
+            "config.from {:?} must be a field under spec or status of the composite resource, e.g. spec.config",
+            config.from
+        ));
+    }
+    Ok(())
 }
 
 /// The sources one engine serves. function-oci pulls an image from a
@@ -648,6 +684,46 @@ mod tests {
 
     fn ceilings() -> guestfn_engine::Config {
         guestfn_engine::Config::default()
+    }
+
+    /// The config object's shape: from required and under spec or
+    /// status, allowEmpty only with from, no other key - a value where
+    /// the reference belongs is refused by its first key.
+    #[test]
+    fn checks_the_config_object() {
+        let config = |json: serde_json::Value| -> Config { serde_json::from_value(json).unwrap() };
+        assert_eq!(
+            validate_config(&config(serde_json::json!({"from": "spec.config"}))),
+            Ok(())
+        );
+        assert_eq!(
+            validate_config(&config(
+                serde_json::json!({"from": "status.config", "allowEmpty": true})
+            )),
+            Ok(())
+        );
+        assert_eq!(
+            validate_config(&config(serde_json::json!({"greeting": "hi"}))),
+            Err("config.greeting is not a field of config, which has from and allowEmpty only: the module's configuration is written in the composite resource, in the field config.from names".to_string())
+        );
+        assert_eq!(
+            validate_config(&config(serde_json::json!({"allowEmpty": true}))),
+            Err("config.allowEmpty is set but config.from is not: only a configuration the composite resource holds can be left unset".to_string())
+        );
+        assert_eq!(
+            validate_config(&config(serde_json::json!({}))),
+            Err("config.from is required: it names the field of the composite resource that holds the module's configuration, e.g. spec.config".to_string())
+        );
+        assert_eq!(
+            validate_config(&config(serde_json::json!({"from": "metadata.name"}))),
+            Err("config.from \"metadata.name\" must be a field under spec or status of the composite resource, e.g. spec.config".to_string())
+        );
+        let mut input = path_input("fn.wasm");
+        input.config = Some(config(serde_json::json!({"greeting": "hi"})));
+        assert!(
+            admit(&input, &ceilings(), "wasm").is_err(),
+            "admission applies the rules"
+        );
     }
 
     #[test]

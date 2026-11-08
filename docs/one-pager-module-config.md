@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft
+* Status: implemented, revision 1.0 (phases 2 to 4, #262; the open questions settled: objects alone, `guestfn scaffold xrd` later)
 
 The Input's `config` block is today a value the Composition author writes
 and the runtime forwards to the module verbatim, checked against the module
@@ -236,10 +236,11 @@ write.
 
 ## Open questions
 
-- Whether `config.from` may reference a field that contains a scalar or a
-  list where a module's schema allows one. The scaffolds all declare
-  objects; the first build refuses anything but an object, and the
-  question returns with a module whose schema declares otherwise.
-- Whether `guestfn scaffold xrd` belongs in the first build or follows the
-  fragment `scaffold composition` writes. The fragment covers the common
-  case.
+Both settled by the owner on 2026-11-08 (Jonasz, #262):
+
+- `config.from` references an object. The scaffolds all declare objects.
+  The runtime refuses a scalar or a list with `config.from: <field> of the
+  composite resource is not an object`, and the question returns with a
+  module whose schema declares otherwise.
+- `guestfn scaffold xrd` follows later. The commented definition fragment
+  `scaffold composition` writes covers the common case.

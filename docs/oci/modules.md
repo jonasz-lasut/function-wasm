@@ -23,7 +23,9 @@ directory, with its configured environment. The contract is four streams:
 A twenty-line `main` around the language's function SDK meets it. It
 decodes the request from standard input and writes the function's encoded
 response to standard output. The process gets the image's own arguments
-and nothing more. The runtime sends it no signal before the deadline; at
+and nothing more. The runtime resolves the step's `config.from` before the
+run, as for a component: `input.config` in the request bytes is the
+configuration object from the composite resource. The runtime sends it no signal before the deadline; at
 the deadline it stops the VM.
 
 [`examples/function-oci-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go)
