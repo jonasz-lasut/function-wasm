@@ -87,7 +87,7 @@ include build/makelib/local.xpkg.mk
 #
 # FUNCTION_BIN names a prebuilt linux runtime binary for the host's
 # architecture (CI's build-tools job hands one over), wrapped by
-# Dockerfile.dev; without it the image is built from the Dockerfile, which
+# Dockerfile.wasm.dev; without it the image is built from Dockerfile.wasm, which
 # compiles the workspace in a container. FUNCTION_OCI_TOOLS names a
 # directory of prebuilt function (the oci engine), init, firecracker and
 # vmlinux (CI's build-oci job hands one over), wrapped by Dockerfile.oci.dev;
@@ -173,9 +173,9 @@ e2e.image:
 	@$(INFO) building the runtime image $(E2E_IMAGE) for linux/$(TARGETARCH)
 ifdef FUNCTION_BIN
 	@mkdir -p $(E2E_DIR)/prebuilt && cp $(FUNCTION_BIN) $(E2E_DIR)/prebuilt/function
-	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.dev -t $(E2E_IMAGE) $(E2E_DIR)/prebuilt || $(FAIL)
+	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.wasm.dev -t $(E2E_IMAGE) $(E2E_DIR)/prebuilt || $(FAIL)
 else
-	@docker buildx build --load --platform linux/$(TARGETARCH) --target image -t $(E2E_IMAGE) . || $(FAIL)
+	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.wasm --target image -t $(E2E_IMAGE) . || $(FAIL)
 endif
 	@$(OK) building the runtime image $(E2E_IMAGE)
 

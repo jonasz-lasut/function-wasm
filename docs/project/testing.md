@@ -57,8 +57,8 @@ the suite's own setup binary, in three steps:
    device plugin and puts the node's `kvm` group into the `oci` runtime
    config as a supplemental group. It then creates the Guest XRD and writes
    `_output/e2e/state.json`, which the tests read.
-3. `make e2e.image` builds the runtime image from the Dockerfile, or from
-   `Dockerfile.dev` around a prebuilt binary named by `FUNCTION_BIN`.
+3. `make e2e.image` builds the runtime image from `Dockerfile.wasm`, or from
+   `Dockerfile.wasm.dev` around a prebuilt binary named by `FUNCTION_BIN`.
    `xpkg.build.function-wasm` builds the Function package from it, and
    `local.xpkg.deploy.function.function-wasm` installs it from Crossplane's
    cache with `packagePullPolicy: Never`, on the `wasm` runtime's `default` profile.
@@ -155,7 +155,7 @@ make e2e.down
 `cargo test -p function-wasm-e2e --features cluster --test <runtime>_<profile>`
 runs one profile as the make target does.
 `FUNCTION_BIN=<linux binary> make e2e.up` wraps a prebuilt runtime with
-`Dockerfile.dev` instead of compiling the workspace in the Dockerfile's build
+`Dockerfile.wasm.dev` instead of compiling the workspace in `Dockerfile.wasm`'s build
 stage, as CI does. After `controlplane.up`, `KUBECONFIG` and the
 current context point at the cluster. `CROSSPLANE_VERSION=2.2.7 make e2e` runs
 the whole suite on another Crossplane, given as the chart version without a

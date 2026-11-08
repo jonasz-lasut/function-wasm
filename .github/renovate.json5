@@ -12,7 +12,7 @@
   // the CLI versions in their env), the Dockerfiles and the build submodule.
   // The Dockerfile's rust:1 build stage floats by design; the runtime base
   // (cgr.dev/chainguard/glibc-dynamic, a `latest`-only image) is digest-pinned
-  // in both Dockerfile and Dockerfile.dev and the dockerfile manager keeps
+  // in Dockerfile.wasm, Dockerfile.wasm.dev and the dockerfile manager keeps
   // the digests current.
   //
   // The scaffold goldens are NOT a surface, and the example guests are one

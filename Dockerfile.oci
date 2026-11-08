@@ -90,7 +90,7 @@ RUN set -eu; \
     curl -fsSL -o /out/vmlinux "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/${KERNEL_CI}/${arch}/vmlinux-${KERNEL_VERSION}"; \
     if [ -n "${kernel_sha}" ]; then echo "${kernel_sha}  /out/vmlinux" | sha256sum -c -; fi
 
-# The image: the Dockerfile's base (see there), the runtime, and the VM
+# The image: Dockerfile.wasm's base (see there), the runtime, and the VM
 # pieces under /usr/lib/guestfn, where the engine's flags default to.
 FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:671a621016fb33812136dea6182b1db957996d3c8c618187aaf86abd9b14af53 AS image
 WORKDIR /

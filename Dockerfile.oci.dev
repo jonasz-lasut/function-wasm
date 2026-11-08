@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # The function-oci runtime image around binaries built elsewhere, as
-# Dockerfile.dev wraps the function-wasm one: the OCI workflow builds the
+# Dockerfile.wasm.dev wraps the function-wasm one: the OCI workflow builds the
 # runtime (with its oci engine), the init and fetches Firecracker and the
 # kernel once (make oci.tools), then wraps them here. The build context is
 # a directory holding `function`, `init`, `firecracker` and `vmlinux` for
