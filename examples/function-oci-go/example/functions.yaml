@@ -1,0 +1,12 @@
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-oci
+  annotations:
+    # Development runtime: function-oci running locally, on a Linux machine
+    # with /dev/kvm, against the registry the Composition names
+    # (docs/oci/install.md, "The development loop").
+    render.crossplane.io/runtime: Development
+spec:
+  package: ghcr.io/jonasz-lasut/function-oci:v0.1.0

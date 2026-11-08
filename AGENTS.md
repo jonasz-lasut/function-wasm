@@ -543,6 +543,19 @@ examples/function-wasm-cpp       the C++ use case (example only: no scaffold; gu
                             the operator's ceiling and example/required-resources.yaml the
                             Secret crossplane render supplies. Tests: src/rotator_test.cpp and
                             src/fn_test.c natively (zig build test); the build-cpp job. ~160 KB
+examples/function-oci-go      the hello function as an oci@1.0 module (#263, phase 6 of #239): a Go
+                            process on function-sdk-go's types behind main.go's process contract
+                            (RunFunctionRequest bytes on stdin, RunFunctionResponse bytes on
+                            stdout, the logger's JSON lines on stderr, a non-zero status with one
+                            plain line for a request it cannot answer), built by its Dockerfile
+                            into a static binary in an empty image under a numeric user; no
+                            scaffold plumbing, since the contract needs none. make push pushes the
+                            image to REGISTRY (127.0.0.1:5000, the development loop's registry:3)
+                            and runs guestfn push --image over it; publish-examples.yml pushes the
+                            image with buildx for amd64 and arm64 and publishes the module into
+                            the same repository. The build-oci-go job vets and tests it and builds
+                            the image. Its render needs function-oci on a Linux machine with
+                            /dev/kvm, so it has no render target.
   src/oci/                    the OCI engine of the function-oci runtime (docs/one-pager-oci-runtime.md,
                               docs/oci/install.md), feature `oci`: mod.rs implements
                               the Engine trait as `Oci` over a `Sandbox` seam (sandbox.rs;
@@ -754,6 +767,7 @@ cargo test -p guestfn                     # scaffold goldens, the examples' shar
 make e2e                                  # the second tier: kind + Crossplane + the packages, every profile in turn, teardown
 make e2e.up && make e2e.wasm-profile.default   # or strict, lifecycle; e2e.up adds function-oci on a node with /dev/kvm (E2E_OCI=auto, the default) for e2e.oci-profile.default; make e2e.down when done
 (cd examples/function-wasm-go && go test -race ./...)
+(cd examples/function-oci-go && go test -race ./...)   # the OCI example: the function and the process contract, natively
 (cd examples/function-wasm-zig && zig build test)
 (cd examples/function-wasm-c && zig build test)
 (cd examples/function-wasm-odin && zig build test)       # odin and zig on PATH
@@ -777,6 +791,7 @@ Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration 
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 (cd examples/function-wasm-go && golangci-lint run ./...)  # the Go guests keep Go lint
+(cd examples/function-oci-go && golangci-lint run ./...)
 make -C examples/function-wasm-zig lint                     # zig fmt --check over build.zig and the guest's sources
 make -C examples/function-wasm-c lint                       # zig fmt --check build.zig
 make -C examples/function-wasm-odin lint                    # odin check -vet -strict-style, zig fmt --check build.zig
@@ -882,7 +897,7 @@ Releases are driven by two skills; use them rather than improvising the branch/t
 - **`/cut-release`** — a new minor or major version from `main` HEAD: new `release-X.Y` branch, whose push runs the release matrix (`release-matrix-e2e.yml`: the end-to-end suite on the three Crossplane minors the project supports; the skill waits for it and a red version blocks the release), tag (`.github/workflows/tag.yml`), GitHub release, package publish (`Publish Function` in `publish-function.yml`, which takes the function, `function-wasm` or `function-oci`, and the version → `ghcr.io/jonasz-lasut/<function>`, mirrored to `xpkg.upbound.io/jonasz-lasut/<function>`; the version is stamped into the binary as `GUESTFN_VERSION` — what module manifests' `minRuntime` rules are checked against), signing/attestation (`supplychain.yml`). The bump size is the user's choice, never inferred.
 - **`/remediate-cves`**: a patch release on a `release-X.Y` branch (the latest by default) for CVEs found by `grype-scan.yml` (weekly against the latest release). Through 0.x only the latest release branch is kept; from 1.0.0 on superseded release branches stay, so an older line can be patched when asked (Jonasz, 2026-10-07). A wasmtime crate bump is in scope there (it is the sandbox's own security fix): `crates/engine` only.
 
-`Publish WIT` (`publish-wit.yml`), run by hand and separate from the release, publishes the ABI v2 world (`wit/wasmfn-function.wit`, built with a pinned `wkg`) to `ghcr.io/jonasz-lasut/wasmfn/function:<world version>`, signs and attests it, and refuses a pre-release world version (#106). It has no beta hold for the rust scaffold's `rust-toolchain.toml` and no published-tag check, and attaches no tarball to a release, so whoever runs it checks that the world version is final, that the scaffold builds on stable Rust (#129's Rust 1.100 step) and that the tag is not already in the registry. The use-case examples publish apart from the release, on their own lifecycle (#245): `publish-examples.yml` (`Publish Examples`), run by hand from `main` (guestfn built once by `build-guestfn`), builds the examples that work as published (`function-wasm-rust`, `function-wasm-ts`, `function-wasm-go`) and pushes them with their manifests to `ghcr.io/jonasz-lasut/wasmfn/examples/<name>:v<version>` (the version in each `guestfn.yaml`, independent of the runtime's), signed keyless and attested - only a version not yet in the registry, so bump an example's `guestfn.yaml` version and run the workflow to publish a change; a keyless signature's identity is `publish-examples.yml@refs/heads/main`, and the `trustSigner` rules (the signatures page, the e2e profiles) keep `publish-pkg.yml@refs/tags/v*` (the release workflow's name through 0.6, since split into `publish-function.yml`) beside it for the versions it published through 0.6 (`docs/one-pager-use-case-examples.md`). `SECURITY.md` is the dependency CVE policy these follow: the runtime is patched through `/remediate-cves`, the scaffold templates' pins are refreshed by `/cut-release` at every release, and the examples are refreshed by Renovate's monthly examples batch (`.github/renovate.json5`), gated by `/e2e`.
+`Publish WIT` (`publish-wit.yml`), run by hand and separate from the release, publishes the ABI v2 world (`wit/wasmfn-function.wit`, built with a pinned `wkg`) to `ghcr.io/jonasz-lasut/wasmfn/function:<world version>`, signs and attests it, and refuses a pre-release world version (#106). It has no beta hold for the rust scaffold's `rust-toolchain.toml` and no published-tag check, and attaches no tarball to a release, so whoever runs it checks that the world version is final, that the scaffold builds on stable Rust (#129's Rust 1.100 step) and that the tag is not already in the registry. The use-case examples publish apart from the release, on their own lifecycle (#245): `publish-examples.yml` (`Publish Examples`), run by hand from `main` (guestfn built once by `build-guestfn`), builds the examples that work as published (`function-wasm-rust`, `function-wasm-ts`, `function-wasm-go`, and `function-oci-go`, whose image `docker buildx` pushes for amd64 and arm64 before `guestfn push --image` appends the manifest) and pushes them with their manifests to `ghcr.io/jonasz-lasut/wasmfn/examples/<name>:v<version>` (the version in each `guestfn.yaml`, independent of the runtime's), signed keyless and attested - only a version not yet in the registry, so bump an example's `guestfn.yaml` version and run the workflow to publish a change; a keyless signature's identity is `publish-examples.yml@refs/heads/main`, and the `trustSigner` rules (the signatures page, the e2e profiles) keep `publish-pkg.yml@refs/tags/v*` (the release workflow's name through 0.6, since split into `publish-function.yml`) beside it for the versions it published through 0.6 (`docs/one-pager-use-case-examples.md`). `SECURITY.md` is the dependency CVE policy these follow: the runtime is patched through `/remediate-cves`, the scaffold templates' pins are refreshed by `/cut-release` at every release, and the examples are refreshed by Renovate's monthly examples batch (`.github/renovate.json5`), gated by `/e2e`.
 
 ## Troubleshooting
 

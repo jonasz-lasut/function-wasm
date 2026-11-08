@@ -1,0 +1,25 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: function-oci-go
+spec:
+  compositeTypeRef:
+    apiVersion: example.crossplane.io/v1
+    kind: XR
+  mode: Pipeline
+  pipeline:
+  - step: greet
+    functionRef:
+      name: function-oci
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        # An OCI module comes from a registry alone, pinned by digest: the
+        # reference `make push` prints. This one is a placeholder for the
+        # local registry of the development loop.
+        type: OCI
+        oci:
+          ref: 127.0.0.1:5000/function-oci-go@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      config:
+        greeting: hi

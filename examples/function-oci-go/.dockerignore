@@ -1,0 +1,5 @@
+example/
+README.md
+Makefile
+guestfn.yaml
+*_test.go

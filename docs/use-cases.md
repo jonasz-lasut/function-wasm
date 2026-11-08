@@ -59,11 +59,11 @@ builds, tests and lints them, but nothing in CI asserts what an example
 composes. The [use-case examples design record](one-pager-use-case-examples.md)
 explains why these were chosen and how they're published.
 
-A release publishes `function-wasm-rust`, `function-wasm-ts` and `function-wasm-go` to
+`Publish Examples` publishes `function-wasm-rust`, `function-wasm-ts`,
+`function-wasm-go` and `function-oci-go` to
 `ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, signed and attested, when the
-version in the example's `guestfn.yaml` isn't in the registry yet. The
-digest-pinned references are in the release's
-`function-wasm-examples-<release>.yaml`.
+version in the example's `guestfn.yaml` isn't in the registry yet. `guestfn
+inspect <ref>` prints the digest-pinned reference for a Composition.
 
 - [`examples/function-wasm-rust`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-rust) (Rust): only
   Cloudflare may connect to an origin. The module composes the origin's AWS
@@ -105,3 +105,10 @@ digest-pinned references are in the release's
   egress, refuses any other content, unpacks it into its private `/tmp` and
   composes one ConfigMap per dashboard for Grafana's sidecar - the two
   capabilities its manifest requests.
+- [`examples/function-oci-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go) (Go, an OCI
+  module): the hello function as an image that `function-oci`, the OCI
+  runtime, boots in a microVM once per request. `main.go` is the process
+  contract, the request on standard input and the response on standard
+  output, around an ordinary function-sdk-go function, and `guestfn push
+  --image` appends the manifest to the image
+  ([OCI modules](oci/modules.md)).

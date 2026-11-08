@@ -54,6 +54,18 @@ An example belongs here when its use case needs at least one of these.
 - **The languages platform engineers use get the strongest stories**,
   TypeScript and Python over C#.
 
+## Names
+
+An example's directory is `function-<runtime>-<lang>`: `function-wasm-go`,
+`function-wasm-rust`, `function-oci-go`. The reader who comes for a language
+finds it by name, and the use case stays in the example's README and its
+manifest's `description` (Jonasz, 2026-11-08,
+[#263](https://github.com/jonasz-lasut/function-wasm/issues/263)). The
+manifest's `name` and the published repository under
+`ghcr.io/jonasz-lasut/wasmfn/examples/` follow the directory. The artifacts
+published under the earlier names keep their place, and the e2e lifecycle
+profile pins one of them until the first publish under the new names.
+
 ## The examples
 
 | Example | Language | Use case | What it shows | Demand |
@@ -92,6 +104,20 @@ detects the MoonBit one by its `moon.mod`
 Python, TypeScript and Go are covered by the use-case examples in the table.
 C# has only `function-wasm-csharp`, C++ only `function-wasm-cpp`. The language matrix is in
 [other languages](wasm/other-languages.md).
+
+### The OCI example
+
+`function-oci-go` is the hello function as an `oci@1.0` module
+([#263](https://github.com/jonasz-lasut/function-wasm/issues/263), phase 6
+of the [OCI runtime record](one-pager-oci-runtime.md)). An ordinary
+function-sdk-go function sits behind a `main` that reads the request from
+standard input and writes the response to standard output. Its
+`Dockerfile` cross-compiles it into an empty image, and `guestfn push
+--image` appends the manifest. It doesn't share plumbing with a scaffold,
+because the process contract needs none. The `build-oci-go` job vets and
+tests it and builds the image. Once it's published, the `oci` e2e profile gets the case the
+`wasm` lifecycle profile has with the published Go example: the module
+pulled from `ghcr.io` with its real signature.
 
 ## Testing
 
@@ -151,7 +177,13 @@ published as CNCF Wasm OCI artifacts, with their module manifests:
 - **References:** the registry's: `repo:v<version>` for people, the digest
   `guestfn inspect` prints for a Composition's `module.oci.ref`. The workflow
   commits nothing back and attaches nothing to a release.
-- **Which:** `function-wasm-rust`, `function-wasm-ts` and `function-wasm-go`. `function-wasm-python` and
+- **An OCI module:** `function-oci-go`'s image is built by `docker buildx`
+  for `linux/amd64` and `linux/arm64` and pushed into the same repository
+  under `v<version>-image`. `guestfn push --image` then publishes the
+  module, the image with its manifest layer, as `v<version>`, and the
+  signature covers that digest.
+- **Which:** `function-wasm-rust`, `function-wasm-ts`, `function-wasm-go` and
+  `function-oci-go`. `function-wasm-python` and
   `function-wasm-csharp` request egress to placeholder hosts (`cmdb.example.org`,
   `artifacts.example.com`) that their users replace before publishing their
   own.

@@ -118,6 +118,10 @@ C#, C++, Odin and MoonBit exist as examples only
 produces a component for the world can target the runtime.
 [Other languages](https://jonasz-lasut.github.io/guestfn/wasm/other-languages.html) lists what each needs.
 
+[`examples/function-oci-go`](examples/function-oci-go) is the same hello
+function as an OCI image for `function-oci`, the OCI runtime
+([OCI modules](https://jonasz-lasut.github.io/guestfn/oci/modules.html)).
+
 ## Documentation
 
 The manual at <https://jonasz-lasut.github.io/guestfn/> comes from [`docs/`](docs), built with mdBook. Start from the page
