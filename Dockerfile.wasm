@@ -40,7 +40,7 @@ RUN --mount=target=.,rw \
       *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     if [ "${BUILDARCH}" != "${TARGETARCH}" ]; then rustup target add "${target}"; fi; \
-    cargo build --release --locked -p function-wasm --target "${target}" && \
+    cargo build --release --locked -p guestfn-runtime --target "${target}" && \
     cp "target/${target}/release/function" /function
 
 # Produce the Function image. The binary links glibc dynamically, so the

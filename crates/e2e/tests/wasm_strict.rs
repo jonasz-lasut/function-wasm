@@ -4,8 +4,8 @@
 //! nothing else. Every test here is a refusal an operator's narrow layer
 //! produces, as Crossplane or the module shows it.
 
-use function_wasm_e2e::ns::status_of;
-use function_wasm_e2e::prelude::*;
+use guestfn_e2e::ns::status_of;
+use guestfn_e2e::prelude::*;
 
 const WAIT: Duration = Duration::from_secs(180);
 

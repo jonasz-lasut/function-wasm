@@ -2,10 +2,10 @@
 //! of, as the runtime sees it - read by the runtime's own engine, so a
 //! verdict printed on a laptop is the verdict a load reaches.
 
-use function_wasm::location::parse_any_reference;
-use function_wasm::manifest::Manifest;
-use function_wasm::oci::{self, Descriptor, OciManifest, RegistryClient};
-use function_wasm_engine::Inspection;
+use guestfn_engine::Inspection;
+use guestfn_runtime::location::parse_any_reference;
+use guestfn_runtime::manifest::Manifest;
+use guestfn_runtime::oci::{self, Descriptor, OciManifest, RegistryClient};
 use serde::Serialize;
 
 #[derive(clap::Args, Debug)]
@@ -263,8 +263,8 @@ impl InspectCmd {
 
 /// A registry client for any reference, authenticated with the local Docker
 /// config.
-pub(crate) fn client_for(reference: &function_wasm::location::AnyReference) -> RegistryClient {
-    let pinned = function_wasm::location::OciReference {
+pub(crate) fn client_for(reference: &guestfn_runtime::location::AnyReference) -> RegistryClient {
+    let pinned = guestfn_runtime::location::OciReference {
         registry: reference.registry.clone(),
         repository: reference.repository.clone(),
         digest: reference.digest.clone().unwrap_or_default(),
@@ -278,7 +278,7 @@ pub(crate) fn fetch_manifest(
     client: &RegistryClient,
     layer: &Descriptor,
 ) -> Result<Manifest, String> {
-    let limit = function_wasm::manifest::MAX_SIZE as u64;
+    let limit = guestfn_runtime::manifest::MAX_SIZE as u64;
     let blob = client
         .blob(&layer.digest, 2 * limit, "manifest layer")
         .map_err(|e| format!("cannot fetch the manifest layer: {e}"))?;
@@ -321,7 +321,7 @@ fn describe_module(wasm: &[u8]) -> Result<ModuleInfo, String> {
         None => ("v2".to_string(), String::new()),
         Some(e) => (String::new(), e.clone()),
     };
-    let item = |e: &function_wasm_engine::Extern| ExternInfo {
+    let item = |e: &guestfn_engine::Extern| ExternInfo {
         name: e.name.clone(),
         kind: e.kind.clone(),
     };

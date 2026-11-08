@@ -100,14 +100,14 @@ pub fn module_artifact(wasm: &[u8], module_manifest: &[u8]) -> Artifact {
     let layers = serde_json::json!([
         {"mediaType": WASM_MEDIA_TYPE, "digest": digest_of(wasm), "size": wasm.len()},
         {
-            "mediaType": function_wasm::oci::MANIFEST_LAYER_TYPE,
+            "mediaType": guestfn_runtime::oci::MANIFEST_LAYER_TYPE,
             "digest": digest_of(module_manifest),
             "size": module_manifest.len(),
         },
     ]);
     let manifest = serde_json::to_vec(&serde_json::json!({
         "schemaVersion": 2,
-        "mediaType": function_wasm::oci::OCI_MANIFEST_TYPE,
+        "mediaType": guestfn_runtime::oci::OCI_MANIFEST_TYPE,
         "artifactType": WASM_MEDIA_TYPE,
         "config": {"mediaType": EMPTY_CONFIG_MEDIA_TYPE, "digest": digest_of(&config), "size": config.len()},
         "layers": layers,
@@ -115,7 +115,7 @@ pub fn module_artifact(wasm: &[u8], module_manifest: &[u8]) -> Artifact {
     .expect("manifest json");
     Artifact {
         manifest,
-        media_type: function_wasm::oci::OCI_MANIFEST_TYPE,
+        media_type: guestfn_runtime::oci::OCI_MANIFEST_TYPE,
         blobs: vec![
             (digest_of(wasm), wasm.to_vec()),
             (digest_of(module_manifest), module_manifest.to_vec()),
@@ -158,14 +158,14 @@ pub fn image(binary: &[u8], path: &str, user: &str) -> Artifact {
     .expect("config json");
     let manifest = serde_json::to_vec(&serde_json::json!({
         "schemaVersion": 2,
-        "mediaType": function_wasm::oci::OCI_MANIFEST_TYPE,
+        "mediaType": guestfn_runtime::oci::OCI_MANIFEST_TYPE,
         "config": {"mediaType": IMAGE_CONFIG_MEDIA_TYPE, "digest": digest_of(&config), "size": config.len()},
         "layers": [{"mediaType": LAYER_MEDIA_TYPE, "digest": digest_of(&layer), "size": layer.len()}],
     }))
     .expect("manifest json");
     Artifact {
         manifest,
-        media_type: function_wasm::oci::OCI_MANIFEST_TYPE,
+        media_type: guestfn_runtime::oci::OCI_MANIFEST_TYPE,
         blobs: vec![(digest_of(&config), config), (digest_of(&layer), layer)],
     }
 }
@@ -178,7 +178,7 @@ pub fn image(binary: &[u8], path: &str, user: &str) -> Artifact {
 /// the result lives in a repository of its own here.
 pub fn module_image(image: &Artifact, module_manifest: &[u8]) -> Artifact {
     let layer = tar_layer(
-        function_wasm::oci::MANIFEST_LAYER_PATH.trim_start_matches('/'),
+        guestfn_runtime::oci::MANIFEST_LAYER_PATH.trim_start_matches('/'),
         module_manifest,
         0o444,
     );
@@ -210,7 +210,7 @@ pub fn module_image(image: &Artifact, module_manifest: &[u8]) -> Artifact {
             "digest": digest_of(&layer),
             "size": layer.len(),
             "annotations": {
-                function_wasm::oci::MANIFEST_LAYER_ANNOTATION: function_wasm::oci::MANIFEST_LAYER_ANNOTATION_VALUE,
+                guestfn_runtime::oci::MANIFEST_LAYER_ANNOTATION: guestfn_runtime::oci::MANIFEST_LAYER_ANNOTATION_VALUE,
             },
         }));
     let mut blobs = image.blobs.clone();
@@ -238,7 +238,7 @@ pub fn referrer(subject: &str, bundle: &[u8]) -> Artifact {
         .unwrap_or_default();
     let manifest = serde_json::to_vec(&serde_json::json!({
         "schemaVersion": 2,
-        "mediaType": function_wasm::oci::OCI_MANIFEST_TYPE,
+        "mediaType": guestfn_runtime::oci::OCI_MANIFEST_TYPE,
         "artifactType": BUNDLE_MEDIA_TYPE,
         "config": {"mediaType": EMPTY_CONFIG_MEDIA_TYPE, "digest": digest_of(&config), "size": config.len()},
         "layers": [{"mediaType": BUNDLE_MEDIA_TYPE, "digest": digest_of(bundle), "size": bundle.len()}],
@@ -246,12 +246,12 @@ pub fn referrer(subject: &str, bundle: &[u8]) -> Artifact {
             "dev.sigstore.bundle.content": "dsse-envelope",
             "dev.sigstore.bundle.predicateType": predicate_type,
         },
-        "subject": {"mediaType": function_wasm::oci::OCI_MANIFEST_TYPE, "digest": subject, "size": 0},
+        "subject": {"mediaType": guestfn_runtime::oci::OCI_MANIFEST_TYPE, "digest": subject, "size": 0},
     }))
     .expect("referrer json");
     Artifact {
         manifest,
-        media_type: function_wasm::oci::OCI_MANIFEST_TYPE,
+        media_type: guestfn_runtime::oci::OCI_MANIFEST_TYPE,
         blobs: vec![
             (digest_of(bundle), bundle.to_vec()),
             (digest_of(&config), config),
@@ -334,7 +334,7 @@ impl Pusher {
             .http
             .get(&url)
             .basic_auth(USERNAME, Some(PASSWORD))
-            .header("Accept", function_wasm::oci::OCI_INDEX_TYPE)
+            .header("Accept", guestfn_runtime::oci::OCI_INDEX_TYPE)
             .send()
             .await
             .with_context(|| format!("GET {url}"))?;
@@ -345,7 +345,7 @@ impl Pusher {
                 .context("referrers index")?,
             404 => serde_json::json!({
                 "schemaVersion": 2,
-                "mediaType": function_wasm::oci::OCI_INDEX_TYPE,
+                "mediaType": guestfn_runtime::oci::OCI_INDEX_TYPE,
                 "manifests": [],
             }),
             other => bail!("GET {url}: {other}"),
@@ -358,7 +358,7 @@ impl Pusher {
         }
         let index = Artifact {
             manifest: serde_json::to_vec(&index)?,
-            media_type: function_wasm::oci::OCI_INDEX_TYPE,
+            media_type: guestfn_runtime::oci::OCI_INDEX_TYPE,
             blobs: Vec::new(),
         };
         self.push(repository, &tag, &index).await?;

@@ -13,13 +13,13 @@
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use function_wasm_e2e::fixtures;
-use function_wasm_e2e::forward::Bridge;
-use function_wasm_e2e::guest::{self, OCI_VARIANTS, VARIANTS};
-use function_wasm_e2e::k8s::{self, CROSSPLANE_NAMESPACE, apply, condition_is, dynamic, wait_for};
-use function_wasm_e2e::profile::{Profile, Runtime};
-use function_wasm_e2e::registry::{self, Pusher};
-use function_wasm_e2e::state::{Pushed, State};
+use guestfn_e2e::fixtures;
+use guestfn_e2e::forward::Bridge;
+use guestfn_e2e::guest::{self, OCI_VARIANTS, VARIANTS};
+use guestfn_e2e::k8s::{self, CROSSPLANE_NAMESPACE, apply, condition_is, dynamic, wait_for};
+use guestfn_e2e::profile::{Profile, Runtime};
+use guestfn_e2e::registry::{self, Pusher};
+use guestfn_e2e::state::{Pushed, State};
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment};
 use k8s_openapi::api::core::v1::{Node, Pod};
 use kube::Client;

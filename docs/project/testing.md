@@ -20,17 +20,17 @@ second.
 | a guest-visible behaviour of the engine (a trap, a limit, a WASI interface) | a WAT fixture in `crates/engine/tests/engine.rs`, or a setting of the committed guest driven from `crates/engine/tests/committed_guest.rs` |
 | an Input rule, a refusal, a policy decision | a unit test beside the code, a fixture under `crates/function/testdata/validate/` and a conformance golden |
 | a scaffold change | the template, then `UPDATE_GOLDENS=1 cargo test -p guestfn`; the guest suite builds the goldens |
-| a fixture or stand-in a test needs | `function_wasm_engine::testing` for a guest component, `function_wasm::testing` for a registry, a signer, an in-process runtime, a server or a policy (both behind the `testutil` feature) |
+| a fixture or stand-in a test needs | `guestfn_engine::testing` for a guest component, `guestfn_runtime::testing` for a registry, a signer, an in-process runtime, a server or a policy (both behind the `testutil` feature) |
 | something only Crossplane shows, such as a condition, an event, a resolved `requirements` entry, a pod restart or a scraped metric | a feature in the end-to-end suite |
 
-`UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` records a
+`UPDATE_GOLDENS=1 cargo test -p guestfn-runtime --test conformance` records a
 conformance golden. A re-record is a behaviour change, so say so in the commit.
 A suite uses the shared `testing` modules and never declares its own copy of a
 fixture.
 
 ## The end-to-end suite
 
-The suite is in `crates/e2e` (package `function-wasm-e2e`). It gives each
+The suite is in `crates/e2e` (package `guestfn-e2e`). It gives each
 test its own namespace (`with_temp_ns` in `crates/e2e/src/ns.rs`) and uses typed
 kube-rs helpers. Tests wait with timeouts and compare what the cluster contains with
 `assert_eq!`. The crate is empty without its `cluster` feature, so
@@ -152,7 +152,7 @@ make e2e.wasm-profile.default   # or strict, lifecycle; e2e.oci-profile.default 
 make e2e.down
 ```
 
-`cargo test -p function-wasm-e2e --features cluster --test <runtime>_<profile>`
+`cargo test -p guestfn-e2e --features cluster --test <runtime>_<profile>`
 runs one profile as the make target does.
 `FUNCTION_BIN=<linux binary> make e2e.up` wraps a prebuilt runtime with
 `Dockerfile.wasm.dev` instead of compiling the workspace in `Dockerfile.wasm`'s build

@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use function_sdk_rust::proto::v1::{Resource, RunFunctionRequest, RunFunctionResponse, State};
-use function_wasm_engine::Engine as _;
-use function_wasm_engine::wire::{HttpRequester, Request, Response};
-use function_wasm_engine::{Config, Module, RunOptions, Wasmtime};
+use guestfn_engine::Engine as _;
+use guestfn_engine::wire::{HttpRequester, Request, Response};
+use guestfn_engine::{Config, Module, RunOptions, Wasmtime};
 use prost::Message;
 
 const GUEST: &[u8] = include_bytes!("../../e2e/guest/fn.wasm");

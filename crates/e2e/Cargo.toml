@@ -1,5 +1,5 @@
 [package]
-name = "function-wasm-e2e"
+name = "guestfn-e2e"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ publish = false
 cluster = [
   "dep:anyhow",
   "dep:base64",
-  "dep:function-wasm",
+  "dep:guestfn-runtime",
   "dep:hex",
   "dep:k8s-openapi",
   "dep:kube",
@@ -35,7 +35,7 @@ anyhow = { version = "1", optional = true }
 base64 = { version = "0.23", optional = true }
 # The runtime's own pieces the suite reuses: the module manifest, the test
 # signer (cosign::testutil) and the in-memory Sigstore instance.
-function-wasm = { path = "../function", features = ["testutil"], optional = true }
+guestfn-runtime = { path = "../function", features = ["testutil"], optional = true }
 hex = { version = "0.4", optional = true }
 # kube pins the k8s-openapi minor it was built against, and a second copy
 # fails k8s-openapi's build script: Renovate moves the two as one group

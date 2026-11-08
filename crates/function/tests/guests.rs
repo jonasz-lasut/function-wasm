@@ -29,10 +29,10 @@ use function_sdk_rust::proto::v1::{
     RunFunctionRequest, RunFunctionResponse, Severity, State, Status, Target,
 };
 use function_sdk_rust::resource;
-use function_wasm::engine::Engine as _;
-use function_wasm::oci::testregistry;
-use function_wasm::testing::{http, policy, runtime};
-use function_wasm_engine::componentize;
+use guestfn_engine::componentize;
+use guestfn_runtime::engine::Engine as _;
+use guestfn_runtime::oci::testregistry;
+use guestfn_runtime::testing::{http, policy, runtime};
 use sha2::Digest as _;
 
 /// Every log line of the process, captured by a global subscriber so lines

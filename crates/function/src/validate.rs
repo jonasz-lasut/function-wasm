@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use function_wasm_engine::{Config, duration};
+use guestfn_engine::{Config, duration};
 
 use crate::engine::{self, Engine as _, Selected};
 

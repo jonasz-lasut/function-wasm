@@ -1,4 +1,4 @@
-# function-wasm's Makefile. Two kinds of targets live here:
+# guestfn's Makefile. Two kinds of targets live here:
 #
 # - The end-to-end suite's cluster (`make e2e`, "Testing" in AGENTS.md and
 #   docs/project/testing.md): a kind cluster with Crossplane, provider-nop,
@@ -99,7 +99,7 @@ E2E_DIR := $(OUTPUT_DIR)/e2e
 # over crates/e2e/profiles/<runtime>/<profile>/.
 E2E_WASM_PROFILES := default strict lifecycle
 E2E_OCI_PROFILES := default
-E2E_CARGO := cargo run -q -p function-wasm-e2e --features cluster
+E2E_CARGO := cargo run -q -p guestfn-e2e --features cluster
 E2E_GUEST_DIR := crates/e2e/guest
 FUNCTION_PKG_EXAMPLES := examples/pdb-addon/example
 # The image and the runtime config local.xpkg.deploy.function.% installs a
@@ -207,13 +207,13 @@ oci.tools: ## Fetch the pinned Firecracker release and guest kernel under .cache
 
 oci.init: ## Build the guest init and the test fixture (the engine crate's binaries) static for musl
 	@rustup target add $(MUSL_TARGET) >/dev/null
-	@cargo build --release -p function-wasm-engine --no-default-features --bins --target $(MUSL_TARGET) || $(FAIL)
+	@cargo build --release -p guestfn-engine --no-default-features --bins --target $(MUSL_TARGET) || $(FAIL)
 
 oci.test: oci.tools oci.init ## The OCI engine's suite over a real Firecracker VM (needs /dev/kvm)
 	@GUESTFN_FIRECRACKER=$(CURDIR)/$(OCI_TOOLS)/firecracker GUESTFN_KERNEL=$(CURDIR)/$(OCI_TOOLS)/vmlinux \
 	 GUESTFN_INIT=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-init \
 	 GUESTFN_FIXTURE=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-guest-fixture GUESTFN_VM_CONSOLE=1 \
-	 cargo test -p function-wasm-engine --no-default-features --features oci -- --nocapture || $(FAIL)
+	 cargo test -p guestfn-engine --no-default-features --features oci -- --nocapture || $(FAIL)
 
 # The test module as a process, static for musl, on the guest's own pinned
 # toolchain (its rust-toolchain.toml). A Linux host builds it natively. Any
@@ -278,7 +278,7 @@ define e2e.profile
 .PHONY: e2e.$(1)-profile.$(2)
 e2e.$(1)-profile.$(2):
 	@$$(INFO) running the $(1) $(2) profile suite
-	@cargo test -p function-wasm-e2e --features cluster --test $(1)_$(2) || $$(FAIL)
+	@cargo test -p guestfn-e2e --features cluster --test $(1)_$(2) || $$(FAIL)
 	@$$(OK) running the $(1) $(2) profile suite
 endef
 $(foreach p,$(E2E_WASM_PROFILES),$(eval $(call e2e.profile,wasm,$(p))))

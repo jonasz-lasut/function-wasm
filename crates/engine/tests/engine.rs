@@ -14,12 +14,12 @@ use std::fmt::Write as _;
 use std::time::Duration;
 
 use function_sdk_rust::proto::v1::{Result as FnResult, RunFunctionResponse, Severity, Target};
-use function_wasm_engine::Engine as _;
-use function_wasm_engine::testing::{
+use guestfn_engine::Engine as _;
+use guestfn_engine::testing::{
     COMPONENT_CORE_PRELUDE, component_importing, component_with_run, fixed_component, grow_guest,
     lift_run, ok_result, spinning_guest, wat_bytes,
 };
-use function_wasm_engine::{CORE_MODULE_REFUSAL, Config, RunOptions, Wasmtime};
+use guestfn_engine::{CORE_MODULE_REFUSAL, Config, RunOptions, Wasmtime};
 use prost::Message;
 
 fn engine() -> Wasmtime {
@@ -39,7 +39,7 @@ fn response_bytes() -> Vec<u8> {
     .encode_to_vec()
 }
 
-fn compile(e: &Wasmtime, wat: &str) -> function_wasm_engine::Module {
+fn compile(e: &Wasmtime, wat: &str) -> guestfn_engine::Module {
     e.compile(&wat::parse_str(wat).expect("wat"))
         .expect("compile")
 }
@@ -96,11 +96,11 @@ fn a_run_observes_the_hostcall_split() {
     let e = engine();
     let m = compile(&e, &fixed_component(&response_bytes()));
     let name = "function_wasm_module_hostcall_duration_seconds";
-    let before = function_wasm_engine::metrics::sample(name, &[]).unwrap_or(0.0);
+    let before = guestfn_engine::metrics::sample(name, &[]).unwrap_or(0.0);
     e.run(&m, b"", RunOptions::default()).expect("run");
     // Other tests' runs share the process-global registry, so the count is
     // only monotonic: this run added at least its own observation.
-    let after = function_wasm_engine::metrics::sample(name, &[]).expect("series registered");
+    let after = guestfn_engine::metrics::sample(name, &[]).expect("series registered");
     assert!(after >= before + 1.0, "the run observes the split");
 }
 
@@ -240,7 +240,7 @@ fn the_memory_limit_denies_growth() {
     let m = compile(&e, &grow_guest(16));
     let out = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(out.len(), 0, "growth past the ceiling should be denied");
-    let denied = function_wasm_engine::metrics::sample(
+    let denied = guestfn_engine::metrics::sample(
         "function_wasm_module_memory_denials_total",
         &[("reason", "limit")],
     )
@@ -287,7 +287,7 @@ fn the_pool_denies_growth_it_cannot_serve() {
         "growth the pool cannot serve should be denied"
     );
     blocking.join().expect("join");
-    let denied = function_wasm_engine::metrics::sample(
+    let denied = guestfn_engine::metrics::sample(
         "function_wasm_module_memory_denials_total",
         &[("reason", "pool")],
     )
@@ -479,7 +479,7 @@ impl tracing::Subscriber for GuestLogLines {
         }
         // WASI's own tracing runs through the same dispatcher; only the
         // world's log import is under test.
-        if event.metadata().target() != "function_wasm_engine::component" {
+        if event.metadata().target() != "guestfn_engine::component" {
             return;
         }
         let mut msg = Message(String::new());
@@ -605,17 +605,14 @@ fn the_memory_limit_denies_table_growth() {
         ..Config::default()
     })
     .expect("engine");
-    let m = compile(
-        &e,
-        &function_wasm_engine::testing::grow_table_guest(100_000),
-    );
+    let m = compile(&e, &guestfn_engine::testing::grow_table_guest(100_000));
     let out = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(
         out.len(),
         0,
         "table growth past the ceiling should be denied"
     );
-    let denied = function_wasm_engine::metrics::sample(
+    let denied = guestfn_engine::metrics::sample(
         "function_wasm_module_memory_denials_total",
         &[("reason", "limit")],
     )
@@ -638,7 +635,7 @@ fn the_pool_denies_table_growth_it_cannot_serve() {
         .expect("engine"),
     );
     let blocker = compile(&e, &spinning_guest(300_000_000));
-    let grower = compile(&e, &function_wasm_engine::testing::grow_table_guest(1));
+    let grower = compile(&e, &guestfn_engine::testing::grow_table_guest(1));
 
     let eb = std::sync::Arc::clone(&e);
     let blocking = std::thread::spawn(move || {
@@ -657,7 +654,7 @@ fn the_pool_denies_table_growth_it_cannot_serve() {
         "table growth the pool cannot serve should be denied"
     );
     blocking.join().expect("join");
-    let denied = function_wasm_engine::metrics::sample(
+    let denied = guestfn_engine::metrics::sample(
         "function_wasm_module_memory_denials_total",
         &[("reason", "pool")],
     )
@@ -768,7 +765,7 @@ fn the_ceiling_is_per_run_across_regions() {
         ..Config::default()
     })
     .expect("engine");
-    let m = compile(&e, &function_wasm_engine::testing::grow_table_guest(40_000));
+    let m = compile(&e, &guestfn_engine::testing::grow_table_guest(40_000));
     let out = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(
         out.len(),
@@ -781,10 +778,7 @@ fn the_ceiling_is_per_run_across_regions() {
         ..Config::default()
     })
     .expect("engine");
-    let m = compile(
-        &roomy,
-        &function_wasm_engine::testing::grow_table_guest(40_000),
-    );
+    let m = compile(&roomy, &guestfn_engine::testing::grow_table_guest(40_000));
     let out = roomy.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(out.len(), 1, "the growth should succeed with room for both");
 }

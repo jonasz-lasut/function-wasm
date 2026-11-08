@@ -1548,110 +1548,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "function-wasm"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "bytes",
- "cedar-policy",
- "clap",
- "flate2",
- "function-sdk-rust",
- "function-wasm",
- "function-wasm-engine",
- "getrandom 0.4.3",
- "hex",
- "hmac",
- "http",
- "http-body",
- "jiff",
- "jsonschema",
- "p256",
- "pbjson-types",
- "pem",
- "prost",
- "rcgen",
- "reqwest",
- "schemars 1.2.3",
- "serde",
- "serde-saphyr",
- "serde_json",
- "sha2 0.11.1",
- "sigstore-trust-root",
- "sigstore-tuf",
- "sigstore-types",
- "sigstore-verify",
- "tar",
- "tempfile",
- "time",
- "tokio",
- "tonic",
- "tonic-health",
- "tonic-reflection",
- "tower-layer",
- "tower-service",
- "tracing",
- "tracing-subscriber",
- "wat",
- "x509-cert 0.3.0",
-]
-
-[[package]]
-name = "function-wasm-e2e"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "function-wasm",
- "hex",
- "k8s-openapi",
- "kube",
- "rand",
- "rcgen",
- "reqwest",
- "serde",
- "serde-saphyr",
- "serde_json",
- "sha2 0.11.1",
- "sigstore-trust-root",
- "tar",
- "tokio",
-]
-
-[[package]]
-name = "function-wasm-engine"
-version = "0.1.0"
-dependencies = [
- "backhand",
- "bytes",
- "flate2",
- "function-sdk-rust",
- "function-wasm-engine",
- "hex",
- "http",
- "http-body-util",
- "libc",
- "pbjson-types",
- "prometheus-client",
- "prost",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tar",
- "tempfile",
- "thiserror",
- "tracing",
- "wasi-preview1-component-adapter-provider",
- "wasmparser 0.258.3",
- "wasmtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
- "wat",
- "wit-component 0.258.3",
- "wit-parser 0.258.3",
-]
-
-[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1832,8 +1728,8 @@ dependencies = [
  "clap",
  "crc32fast",
  "flate2",
- "function-wasm",
- "function-wasm-engine",
+ "guestfn-engine",
+ "guestfn-runtime",
  "hex",
  "include_dir",
  "serde",
@@ -1843,6 +1739,110 @@ dependencies = [
  "tar",
  "tempfile",
  "wat",
+]
+
+[[package]]
+name = "guestfn-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "guestfn-runtime",
+ "hex",
+ "k8s-openapi",
+ "kube",
+ "rand",
+ "rcgen",
+ "reqwest",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "sha2 0.11.1",
+ "sigstore-trust-root",
+ "tar",
+ "tokio",
+]
+
+[[package]]
+name = "guestfn-engine"
+version = "0.1.0"
+dependencies = [
+ "backhand",
+ "bytes",
+ "flate2",
+ "function-sdk-rust",
+ "guestfn-engine",
+ "hex",
+ "http",
+ "http-body-util",
+ "libc",
+ "pbjson-types",
+ "prometheus-client",
+ "prost",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "wasi-preview1-component-adapter-provider",
+ "wasmparser 0.258.3",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+ "wat",
+ "wit-component 0.258.3",
+ "wit-parser 0.258.3",
+]
+
+[[package]]
+name = "guestfn-runtime"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "cedar-policy",
+ "clap",
+ "flate2",
+ "function-sdk-rust",
+ "getrandom 0.4.3",
+ "guestfn-engine",
+ "guestfn-runtime",
+ "hex",
+ "hmac",
+ "http",
+ "http-body",
+ "jiff",
+ "jsonschema",
+ "p256",
+ "pbjson-types",
+ "pem",
+ "prost",
+ "rcgen",
+ "reqwest",
+ "schemars 1.2.3",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "sha2 0.11.1",
+ "sigstore-trust-root",
+ "sigstore-tuf",
+ "sigstore-types",
+ "sigstore-verify",
+ "tar",
+ "tempfile",
+ "time",
+ "tokio",
+ "tonic",
+ "tonic-health",
+ "tonic-reflection",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+ "tracing-subscriber",
+ "wat",
+ "x509-cert 0.3.0",
 ]
 
 [[package]]

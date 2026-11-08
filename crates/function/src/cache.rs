@@ -82,7 +82,7 @@ impl ModuleCache {
     where
         F: FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
     {
-        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
+        use guestfn_engine::metrics::{self, CACHE_EVENTS};
         if let Some(m) = self.memory_get(digest) {
             CACHE_EVENTS
                 .with_label_values(&[metrics::CACHE_COMPILED, metrics::EVENT_HIT])
@@ -117,7 +117,7 @@ impl ModuleCache {
         // artifact is a miss - the store refuses one whose MAC isn't this
         // process's, wasmtime refuses one it can't load - and the module
         // recompiles.
-        use function_wasm_engine::metrics::{self, CACHE_EVENTS};
+        use guestfn_engine::metrics::{self, CACHE_EVENTS};
         if let Some(disk) = &self.disk {
             match disk.path(digest) {
                 crate::store::Lookup::Hit(path) => {
@@ -185,7 +185,7 @@ impl ModuleCache {
                         .inc();
                     return Err(format!(
                         "compile exceeded --module-compile-timeout {}",
-                        function_wasm_engine::duration::format(bound)
+                        guestfn_engine::duration::format(bound)
                     ));
                 }
             },
@@ -235,7 +235,7 @@ impl ModuleCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use function_wasm_engine::Config;
+    use guestfn_engine::Config;
 
     fn engine() -> Arc<Selected> {
         Arc::new(Selected::new(Config::default()).expect("engine"))
@@ -319,7 +319,7 @@ mod tests {
             fetched.load(std::sync::atomic::Ordering::SeqCst),
             "the planted artifact must not be served: the module is fetched and compiled"
         );
-        let stale = function_wasm_engine::metrics::sample(
+        let stale = guestfn_engine::metrics::sample(
             "function_wasm_module_cache_events_total",
             &[("cache", "compiled-disk"), ("event", "stale")],
         )
@@ -385,7 +385,7 @@ mod tests {
             .await
             .expect_err("cut short");
         assert_eq!(err, "compile exceeded --module-compile-timeout 50ms");
-        let timeouts = function_wasm_engine::metrics::sample(
+        let timeouts = guestfn_engine::metrics::sample(
             "function_wasm_module_cache_events_total",
             &[("cache", "compiled"), ("event", "timeout")],
         )

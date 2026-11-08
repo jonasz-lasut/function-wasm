@@ -3,9 +3,9 @@
 
 use std::path::PathBuf;
 
-use function_wasm::location::parse_any_reference;
-use function_wasm::manifest::Manifest;
-use function_wasm::oci;
+use guestfn_runtime::location::parse_any_reference;
+use guestfn_runtime::manifest::Manifest;
+use guestfn_runtime::oci;
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ManifestCmd {
@@ -29,7 +29,7 @@ impl ManifestCmd {
 #[derive(clap::Args, Debug)]
 pub struct ValidateCmd {
     /// The manifest file (default guestfn.yaml).
-    #[arg(default_value = function_wasm::manifest::FILE_NAME)]
+    #[arg(default_value = guestfn_runtime::manifest::FILE_NAME)]
     file: PathBuf,
 }
 
@@ -68,7 +68,7 @@ impl ShowCmd {
             return Err(format!(
                 "{} carries no module manifest layer: it was pushed without a {} (guestfn push publishes the manifest beside a module, or as a layer of an image)",
                 self.r#ref,
-                function_wasm::manifest::FILE_NAME
+                guestfn_runtime::manifest::FILE_NAME
             ));
         };
         let m = crate::inspect::fetch_manifest(&client, &ml)

@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use function_wasm_engine::duration;
+use guestfn_engine::duration;
 
 use crate::authz::{
     ACTION_COMPOSE_RESOURCE, ACTION_GRANT_EGRESS, ACTION_REQUIRE_RESOURCE, ACTION_SET_ENV,
@@ -41,7 +41,7 @@ pub struct Admitted {
 /// for either package gives the same verdict as its runtime.
 pub fn admit(
     input: &Input,
-    ceilings: &function_wasm_engine::Config,
+    ceilings: &guestfn_engine::Config,
     kind: &str,
 ) -> Result<Admitted, String> {
     // The group the Input had before the OCI runtime is refused by name
@@ -473,7 +473,7 @@ fn admit_credentials(
     Ok(())
 }
 
-fn run_options(input: &Input, ceilings: &function_wasm_engine::Config) -> Result<Admitted, String> {
+fn run_options(input: &Input, ceilings: &guestfn_engine::Config) -> Result<Admitted, String> {
     let mut out = Admitted::default();
     let Some(limits) = &input.limits else {
         return Ok(out);
@@ -646,8 +646,8 @@ mod tests {
         }
     }
 
-    fn ceilings() -> function_wasm_engine::Config {
-        function_wasm_engine::Config::default()
+    fn ceilings() -> guestfn_engine::Config {
+        guestfn_engine::Config::default()
     }
 
     #[test]

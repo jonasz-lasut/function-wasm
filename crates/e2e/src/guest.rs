@@ -6,10 +6,10 @@
 //! variants sharing a digest would share a verdict.
 
 use anyhow::{Context as _, Result};
-use function_wasm::cosign::Signer;
-use function_wasm::cosign::testutil::{COSIGN_SIGN_PREDICATE, TestKey};
-use function_wasm::manifest::Manifest;
-use function_wasm::testsigstore::Instance;
+use guestfn_runtime::cosign::Signer;
+use guestfn_runtime::cosign::testutil::{COSIGN_SIGN_PREDICATE, TestKey};
+use guestfn_runtime::manifest::Manifest;
+use guestfn_runtime::testsigstore::Instance;
 
 pub const WASM: &[u8] = include_bytes!("../guest/fn.wasm");
 

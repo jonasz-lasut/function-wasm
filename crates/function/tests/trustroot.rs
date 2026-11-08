@@ -9,14 +9,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use function_wasm::cosign::{Signer, SignerPolicy, Verifier};
-use function_wasm::location::parse_oci_reference;
-use function_wasm::oci::RegistryClient;
-use function_wasm::testing::registry::Registry;
-use function_wasm::testing::tuf::Repository;
-use function_wasm::testing::{COSIGN_SIGN_PREDICATE, Shape, Sigstore, guests};
-use function_wasm::trustroot::{Origin, Outcome, Refresher};
-use function_wasm_engine::metrics;
+use guestfn_engine::metrics;
+use guestfn_runtime::cosign::{Signer, SignerPolicy, Verifier};
+use guestfn_runtime::location::parse_oci_reference;
+use guestfn_runtime::oci::RegistryClient;
+use guestfn_runtime::testing::registry::Registry;
+use guestfn_runtime::testing::tuf::Repository;
+use guestfn_runtime::testing::{COSIGN_SIGN_PREDICATE, Shape, Sigstore, guests};
+use guestfn_runtime::trustroot::{Origin, Outcome, Refresher};
 
 const INTERVAL: Duration = Duration::from_secs(3600);
 

@@ -1,4 +1,4 @@
-//! The function-wasm runtime as a library: everything the `function`
+//! The guestfn runtime as a library: everything the `function`
 //! binary and the `guestfn` CLI share - the Input admission, the module
 //! resolver and caches, the manifest, the policy layers, the raw gRPC
 //! service and the offline validator.

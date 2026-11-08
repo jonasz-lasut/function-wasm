@@ -53,13 +53,13 @@ pub async fn serve_metrics(address: &str) -> Result<(), std::io::Error> {
             let response = if path == "/metrics" {
                 let (body, content_type) = if wants_classic_text(&head) {
                     (
-                        function_wasm_engine::metrics::render(),
+                        guestfn_engine::metrics::render(),
                         "text/plain; version=0.0.4",
                     )
                 } else {
                     (
-                        function_wasm_engine::metrics::render_openmetrics(),
-                        function_wasm_engine::metrics::OPENMETRICS_CONTENT_TYPE,
+                        guestfn_engine::metrics::render_openmetrics(),
+                        guestfn_engine::metrics::OPENMETRICS_CONTENT_TYPE,
                     )
                 };
                 format!(
@@ -184,7 +184,7 @@ fn warm_source(entry: &str) -> ModuleSource {
 mod tests {
     use super::*;
     use crate::cache::CacheOptions;
-    use function_wasm_engine::Config;
+    use guestfn_engine::Config;
 
     use crate::engine::Selected;
 

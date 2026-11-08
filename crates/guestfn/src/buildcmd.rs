@@ -7,8 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
-use function_wasm::manifest::Manifest;
-use function_wasm_engine::componentize;
+use guestfn_engine::componentize;
+use guestfn_runtime::manifest::Manifest;
 
 use crate::scaffold;
 
@@ -90,7 +90,7 @@ impl BuildCmd {
         };
         // The manifest is checked with the build so a broken guestfn.yaml
         // fails here rather than at push time.
-        let manifest_path = self.dir.join(function_wasm::manifest::FILE_NAME);
+        let manifest_path = self.dir.join(guestfn_runtime::manifest::FILE_NAME);
         let m = if manifest_path.is_file() {
             Some(Manifest::load(&manifest_path)?)
         } else {
@@ -101,7 +101,7 @@ impl BuildCmd {
         // just built here is a WebAssembly module, which an oci@1.0
         // manifest does not describe.
         if m.as_ref()
-            .is_some_and(|m| m.kind() == function_wasm::manifest::TYPE_OCI)
+            .is_some_and(|m| m.kind() == guestfn_runtime::manifest::TYPE_OCI)
         {
             return Err(format!(
                 "{} declares contract oci@1.0, an OCI image; guestfn build builds WebAssembly modules: build the image with docker build and publish it with guestfn push --image <ref@sha256:...>",
@@ -178,11 +178,11 @@ fn warn_example_config(dir: &Path, m: &Manifest) {
         Ok(None) => {}
         Ok(Some(step)) => {
             // The runtime's words on every request carrying such a step.
-            if function_wasm::input::is_legacy_group(&step.api_version) {
+            if guestfn_runtime::input::is_legacy_group(&step.api_version) {
                 println!(
                     "warning: {}: {}",
                     path.display(),
-                    function_wasm::input::renamed_group(&step.api_version)
+                    guestfn_runtime::input::renamed_group(&step.api_version)
                 );
             }
             if let Err(e) = m.validate_config(step.config.as_ref()) {
@@ -218,7 +218,7 @@ fn example_step(path: &Path) -> Result<Option<ExampleStep>, String> {
     for step in steps {
         let input = step.get("input").cloned().unwrap_or_default();
         let api_version = str_of(&input, "apiVersion");
-        if !function_wasm::input::is_input(&api_version, &str_of(&input, "kind")) {
+        if !guestfn_runtime::input::is_input(&api_version, &str_of(&input, "kind")) {
             continue;
         }
         return Ok(Some(ExampleStep {
@@ -448,7 +448,7 @@ fn which(name: &str, hint: &str) -> Result<(), String> {
 }
 
 /// Names the host imports a module uses, for the build line.
-pub(crate) fn imports_suffix(shape: &function_wasm_engine::Inspection) -> String {
+pub(crate) fn imports_suffix(shape: &guestfn_engine::Inspection) -> String {
     if shape.host_imports.is_empty() {
         return String::new();
     }
@@ -527,7 +527,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("composition.yaml");
         for (api_version, want) in [
-            (function_wasm::input::API_VERSION, true),
+            (guestfn_runtime::input::API_VERSION, true),
             ("wasm.fn.crossplane.io/v1", true),
             ("pt.fn.crossplane.io/v1beta1", false),
         ] {

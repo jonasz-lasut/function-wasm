@@ -6,8 +6,8 @@
 
 use std::sync::LazyLock;
 
-use function_wasm_e2e::k8s::{self, CROSSPLANE_NAMESPACE, FUNCTION_POD_SELECTOR};
-use function_wasm_e2e::prelude::*;
+use guestfn_e2e::k8s::{self, CROSSPLANE_NAMESPACE, FUNCTION_POD_SELECTOR};
+use guestfn_e2e::prelude::*;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Client;
 use kube::api::{Api, DeleteParams, ListParams};

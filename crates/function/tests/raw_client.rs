@@ -13,7 +13,7 @@ use function_sdk_rust::proto::v1::{
     CredentialData, Credentials, RequestMeta, RunFunctionRequest, credentials,
 };
 use function_sdk_rust::resource;
-use function_wasm::testing::{guests, runtime};
+use guestfn_runtime::testing::{guests, runtime};
 use prost::Message as _;
 
 /// A pass-through client codec: gRPC messages as raw bytes.
@@ -138,7 +138,7 @@ async fn the_served_runtime_is_byte_transparent() {
         ),
         ("grpc_method", "RunFunction"),
     ];
-    let sample = function_wasm_engine::metrics::sample;
+    let sample = guestfn_engine::metrics::sample;
     assert_eq!(
         sample("grpc_server_started_total", &labels),
         Some(1.0),

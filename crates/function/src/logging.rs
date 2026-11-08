@@ -4,7 +4,7 @@
 //! to DEBUG, so under `--debug` h2 logged every frame, wasmtime every section
 //! it skipped and cranelift every compile pass (2.2 GB for an 80 MB module,
 //! and timings skewed by the writes - #135). The filter here keeps `--debug`
-//! to the function_wasm crates, everything else at INFO, and lets a `RUST_LOG`
+//! to the guestfn crates, everything else at INFO, and lets a `RUST_LOG`
 //! that is set replace it in full, the tracing convention (the SDK's setup
 //! never read it). The formats stay the SDK's: JSON lines for the pod,
 //! human-readable under `--debug`, file and line on both.
@@ -15,8 +15,8 @@ use tracing_subscriber::EnvFilter;
 pub const RUST_LOG: &str = "RUST_LOG";
 
 /// The crates whose DEBUG lines `--debug` turns on, by tracing target: the
-/// `function` binary, the `function_wasm` library and the engine.
-const OWN_CRATES: [&str; 3] = ["function", "function_wasm", "function_wasm_engine"];
+/// `function` binary, the `guestfn_runtime` library and the engine.
+const OWN_CRATES: [&str; 3] = ["function", "guestfn_runtime", "guestfn_engine"];
 
 /// The filter directives for the process: `rust_log` verbatim when it is set
 /// and not blank (an operator asking for another crate's lines, cranelift's
@@ -67,7 +67,7 @@ mod tests {
     fn debug_names_the_runtimes_crates_only() {
         assert_eq!(
             directives(true, None),
-            "info,function=debug,function_wasm=debug,function_wasm_engine=debug"
+            "info,function=debug,guestfn_runtime=debug,guestfn_engine=debug"
         );
         let filter = EnvFilter::try_new(directives(true, None)).expect("valid directives");
         assert_eq!(

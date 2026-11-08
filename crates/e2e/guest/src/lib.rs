@@ -1,4 +1,4 @@
-//! function-wasm's end-to-end test module (crates/e2e, docs/project/testing.md):
+//! guestfn's end-to-end test module (crates/e2e, docs/project/testing.md):
 //! an ABI v2 guest whose composite resource's spec says which runtime feature
 //! to exercise. It composes provider-nop `NopResource`s, the way Crossplane's
 //! own end-to-end suite composes something that reconciles without a cloud,

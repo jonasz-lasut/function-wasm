@@ -13,7 +13,7 @@
 //! nothing protocol-specific.
 
 pub use crate::component::ABI_V2_WORLD;
-// What every engine shares lives in function-wasm-engine-api; re-exported
+// What every engine shares lives at the crate root; re-exported
 // here so this crate's users and tests read it from one place.
 use crate::{Config, Engine, Error, Extern, Inspection, RunOptions, concurrency, metrics};
 
@@ -554,7 +554,7 @@ impl Drop for RunningGuard<'_> {
 pub fn version() -> String {
     format!(
         "rust-v{}-{}-{}",
-        env!("FUNCTION_WASM_WASMTIME_VERSION"),
+        env!("GUESTFN_WASMTIME_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH
     )

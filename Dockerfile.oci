@@ -56,9 +56,9 @@ RUN --mount=target=.,rw \
     esac; \
     if [ "${BUILDARCH}" != "${TARGETARCH}" ]; then rustup target add "${target}"; fi; \
     rustup target add "${musl}"; \
-    cargo build --release --locked -p function-wasm --no-default-features --features oci --target "${target}" && \
+    cargo build --release --locked -p guestfn-runtime --no-default-features --features oci --target "${target}" && \
     cp "target/${target}/release/function" /function && \
-    cargo build --release --locked -p function-wasm-engine --no-default-features --bin guestfn-init --target "${musl}" && \
+    cargo build --release --locked -p guestfn-engine --no-default-features --bin guestfn-init --target "${musl}" && \
     cp "target/${musl}/release/guestfn-init" /guestfn-init
 
 # Firecracker and the guest kernel, fetched at their pinned versions and

@@ -9,9 +9,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use function_wasm_engine::oci::testing::fixture_image;
-use function_wasm_engine::oci::{Oci, Options};
-use function_wasm_engine::{Config, Engine, RunOptions};
+use guestfn_engine::oci::testing::fixture_image;
+use guestfn_engine::oci::{Oci, Options};
+use guestfn_engine::{Config, Engine, RunOptions};
 
 struct Tools {
     firecracker: PathBuf,
