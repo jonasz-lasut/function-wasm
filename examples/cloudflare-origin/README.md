@@ -2,7 +2,7 @@
 
 Only Cloudflare may reach this origin: a [Crossplane](https://crossplane.io)
 composition function, in async Rust compiled to a WebAssembly **component**
-(ABI v2), run by [function-wasm](https://github.com/jonasz-lasut/function-wasm).
+(ABI v2), run by [function-wasm](https://github.com/jonasz-lasut/guestfn).
 
 An `Origin` composite resource names a VPC and a port. The module composes
 the origin's AWS security group and, when `spec.exposure` is `cloudflare`,
@@ -126,5 +126,5 @@ v2 with its namespaced `ec2.aws.m.upbound.io` resources.
   are the rust scaffold's plumbing (`guestfn init --lang rust`), kept
   identical to it: crossplane's `RunFunction` contract, its prost build, the
   guest's `local:guest` world over the vendored
-  [ABI v2 world](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md)
+  [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
   and the WASI 0.3 WIT the client needs.

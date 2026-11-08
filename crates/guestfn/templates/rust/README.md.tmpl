@@ -3,7 +3,7 @@
 A [Crossplane](https://crossplane.io) composition function in async Rust,
 compiled to a WebAssembly **component** of about 240 KB implementing
 **ABI v2** and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm). Its `run`
+[function-wasm](https://github.com/jonasz-lasut/guestfn). Its `run`
 is an `async fn`; `config.greetingUrl` is fetched by awaiting
 `wasi:http/client@0.3.0` through the host's egress policy - real async
 networking, with no hand-written ABI glue (the canonical ABI owns what an
@@ -20,7 +20,7 @@ cargo runs here; delete the file once 1.100.0 is out.
 - `wit/world.wit` is this guest's own world, in a `local:guest` package -
   the contract plus the `wasi:http` client it fetches with. `wit/deps/`
   carries what it builds on: `wasmfn-function.wit`, the
-  [ABI v2 world](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md)
+  [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
   vendored byte-identical to the runtime's copy, and the wasi WIT the
   client needs.
 - `src/lib.rs` — `run_function` over the prost messages (edit this),

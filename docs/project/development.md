@@ -39,4 +39,4 @@ The workspace tests build every scaffold (what `guestfn init` writes) to WebAsse
 
 ## Where to go next
 
-[Testing](testing.md) says where a new test goes. [AGENTS.md](https://github.com/jonasz-lasut/function-wasm/blob/main/AGENTS.md) describes the source layout and conventions. [Design records](design-records.md) lists the design documents.
+[Testing](testing.md) says where a new test goes. [AGENTS.md](https://github.com/jonasz-lasut/guestfn/blob/main/AGENTS.md) describes the source layout and conventions. [Design records](design-records.md) lists the design documents.

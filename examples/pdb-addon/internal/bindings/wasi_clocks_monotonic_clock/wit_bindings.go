@@ -13,7 +13,7 @@
 package wasi_clocks_monotonic_clock
 
 import (
-	"github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wasi_io_poll"
+	"github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wasi_io_poll"
 )
 
 type Pollable = wasi_io_poll.Pollable

@@ -8,7 +8,7 @@ commands. See [Other languages](other-languages.md) for what differs.
 Install the CLI and scaffold a project:
 
 ```shell
-cargo install --git https://github.com/jonasz-lasut/function-wasm guestfn
+cargo install --git https://github.com/jonasz-lasut/guestfn guestfn
 
 guestfn init greeter --module github.com/example/greeter   # --lang go (default), rust, zig, c, ts or python
 cd greeter
@@ -35,7 +35,7 @@ calls your `RunFunction` and encodes the response. It also provides a
 bindings under `internal/bindings` are written by
 [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) and checked in.
 
-[`examples/pdb-addon`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/pdb-addon)
+[`examples/pdb-addon`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/pdb-addon)
 is a Go module built on what `guestfn init` writes. Its `internal/wasmfn`,
 `wit/` and `internal/bindings` are the scaffold's, byte for byte.
 

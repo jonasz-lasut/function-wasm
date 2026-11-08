@@ -6,7 +6,7 @@ A tenant add-on for a platform's Composition: a
 compiled to a WebAssembly component (ABI v2: `go build` emits a wasip1
 reactor over wit-bindgen's Go bindings, `guestfn build` embeds the world
 and wraps it) and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm).
+[function-wasm](https://github.com/jonasz-lasut/guestfn).
 
 The platform team ships a `WebApp` Composition. Its first step composes the
 workload every WebApp gets, a Deployment and a Service; its last step is

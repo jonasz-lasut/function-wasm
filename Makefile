@@ -16,7 +16,7 @@
 #
 # - The vendoring loops (vendor-proto, vendor-docs-highlight, gen-bindings):
 #   further down, unchanged by the submodule.
-PROJECT_NAME := function-wasm
+PROJECT_NAME := guestfn
 PROJECT_REPO := github.com/jonasz-lasut/$(PROJECT_NAME)
 # The runtime image's platforms; the suite builds the host's only.
 PLATFORMS ?= linux_amd64 linux_arm64
@@ -496,7 +496,7 @@ vendor-docs-highlight: ## Re-vendor the docs site's highlight.js core and Cedar 
 # export_wit_world. A generated Go file names the guest's module path in its
 # imports, so it becomes a .go.tmpl with the path as [[ .Module ]]; the rest
 # is copied as it is.
-GO_MODULE := github.com/jonasz-lasut/function-wasm/examples/pdb-addon
+GO_MODULE := github.com/jonasz-lasut/guestfn/examples/pdb-addon
 GO_BINDINGS := crates/guestfn/templates/go/internal/bindings
 gen-bindings: tools ## Regenerate hello-c's, hello-zig's, hello-odin's, pdb-addon's and hello-moonbit's wit-bindgen bindings with the pinned wit-bindgen, mirror the c, zig and go ones into their templates and refresh the goldens
 	$(WITH_TOOLS) $(MAKE) -C examples/hello-c gen-bindings

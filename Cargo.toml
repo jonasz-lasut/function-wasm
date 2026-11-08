@@ -9,7 +9,7 @@ exclude = ["examples/cloudflare-origin", "crates/e2e/guest"]
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/jonasz-lasut/function-wasm"
+repository = "https://github.com/jonasz-lasut/guestfn"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

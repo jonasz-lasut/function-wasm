@@ -2,14 +2,14 @@
 
 A [Crossplane](https://crossplane.io) composition function in
 [MoonBit](https://www.moonbitlang.com) on
-[ABI v2](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md):
+[ABI v2](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md):
 a WebAssembly component of about 107 KB, compiled by `moon` and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm). The one
+[function-wasm](https://github.com/jonasz-lasut/guestfn). The one
 `moon` binary is the compiler, the build system, the test runner and the
 package fetcher; `guestfn build` embeds the world into the core module it
 links and wraps that into the component - no wasm-tools, no adapter
 (nothing imports `wasi_snapshot_preview1`). An example only
-([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)):
+([#155](https://github.com/jonasz-lasut/guestfn/issues/155)):
 `guestfn build` detects and builds a MoonBit project by its `moon.mod`,
 `guestfn init` does not scaffold one.
 

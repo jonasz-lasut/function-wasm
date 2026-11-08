@@ -3,7 +3,7 @@
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
 * Status: implemented, revision 1.8 (the examples publish on their own, by hand, apart from the release, #245; rewritten in the present tense over the Rust workspace; the cluster-tier E2E question answered)
-* Tracking: https://github.com/jonasz-lasut/function-wasm/issues/112
+* Tracking: https://github.com/jonasz-lasut/guestfn/issues/112
 
 ## Context
 
@@ -58,12 +58,12 @@ An example belongs here when its use case needs at least one of these.
 
 | Example | Language | Use case | What it shows | Demand |
 |---|---|---|---|---|
-| [`cloudflare-origin`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/cloudflare-origin) | Rust (async, `wasi:http` 0.3) | Only Cloudflare may connect to an origin: a security group plus one ingress rule per range Cloudflare publishes, read at reconcile time | Egress through the host under both policy layers, the block list, conditional resources | [`crossplane#2712`](https://github.com/crossplane/crossplane/issues/2712) (conditional resources); Terraform's `data "http"` over Cloudflare's lists |
-| [`policy-gate`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/policy-gate) | TypeScript | The organisation's policy as the last step: mandatory tags, allowed regions and instance classes per environment | `requirements` through the wire-level proxy, fatal versus warning results | [`crossplane#1225`](https://github.com/crossplane/crossplane/issues/1225), [discussion #2617](https://github.com/crossplane/crossplane/discussions/2617), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
-| [`pdb-addon`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/pdb-addon) | Go (function-sdk-go) | A tenant add-on hook: a `WebApp` Composition's last step runs the module the XR names; this add-on derives a PodDisruptionBudget from the desired Deployment | `module.from`, `allowEmpty`, the `pullModule` fence, the default sandbox | [`function-go-templating#24`](https://github.com/crossplane-contrib/function-go-templating/issues/24), [`crossplane#6139`](https://github.com/crossplane/crossplane/issues/6139) (staggered rollout), [`crossplane#2524`](https://github.com/crossplane/crossplane/issues/2524) |
-| [`team-tags`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/team-tags) | Python | Team metadata from a CMDB, looked up with that team's own token from one shared Secret keyed by the XR's namespace | Step credentials, egress with an Authorization header, the composition layer fencing where tokens may go | [`crossplane#2099`](https://github.com/crossplane/crossplane/issues/2099), [`crossplane#7343`](https://github.com/crossplane/crossplane/issues/7343), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
-| [`dashboard-bundle`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/dashboard-bundle) | C# | Dashboards as code: a sha256-pinned zip of Grafana dashboards unpacked into one sidecar-labelled ConfigMap per dashboard | The private `/tmp`, egress, integrity pinning, refusing archive entries that escape | Grafana's dashboard sidecar, delivered as a versioned bundle |
-| [`cert-rotator`](https://github.com/jonasz-lasut/function-wasm/tree/main/examples/cert-rotator) | C++ (mbedTLS) | A TLS Secret's self-signed certificate kept fresh: read through the response's `requirements`, reissued with a fresh P-256 key once fewer than `renewBeforeDays` remain | The read fence and the output fence scoped together, `requires.resources` and `composes` in the manifest, a C adapter over the generated structs | Self-signed certificates for internal services, rotated without cert-manager |
+| [`cloudflare-origin`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/cloudflare-origin) | Rust (async, `wasi:http` 0.3) | Only Cloudflare may connect to an origin: a security group plus one ingress rule per range Cloudflare publishes, read at reconcile time | Egress through the host under both policy layers, the block list, conditional resources | [`crossplane#2712`](https://github.com/crossplane/crossplane/issues/2712) (conditional resources); Terraform's `data "http"` over Cloudflare's lists |
+| [`policy-gate`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/policy-gate) | TypeScript | The organisation's policy as the last step: mandatory tags, allowed regions and instance classes per environment | `requirements` through the wire-level proxy, fatal versus warning results | [`crossplane#1225`](https://github.com/crossplane/crossplane/issues/1225), [discussion #2617](https://github.com/crossplane/crossplane/discussions/2617), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
+| [`pdb-addon`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/pdb-addon) | Go (function-sdk-go) | A tenant add-on hook: a `WebApp` Composition's last step runs the module the XR names; this add-on derives a PodDisruptionBudget from the desired Deployment | `module.from`, `allowEmpty`, the `pullModule` fence, the default sandbox | [`function-go-templating#24`](https://github.com/crossplane-contrib/function-go-templating/issues/24), [`crossplane#6139`](https://github.com/crossplane/crossplane/issues/6139) (staggered rollout), [`crossplane#2524`](https://github.com/crossplane/crossplane/issues/2524) |
+| [`team-tags`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/team-tags) | Python | Team metadata from a CMDB, looked up with that team's own token from one shared Secret keyed by the XR's namespace | Step credentials, egress with an Authorization header, the composition layer fencing where tokens may go | [`crossplane#2099`](https://github.com/crossplane/crossplane/issues/2099), [`crossplane#7343`](https://github.com/crossplane/crossplane/issues/7343), [`provider-upjet-aws#169`](https://github.com/crossplane-contrib/provider-upjet-aws/issues/169) |
+| [`dashboard-bundle`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/dashboard-bundle) | C# | Dashboards as code: a sha256-pinned zip of Grafana dashboards unpacked into one sidecar-labelled ConfigMap per dashboard | The private `/tmp`, egress, integrity pinning, refusing archive entries that escape | Grafana's dashboard sidecar, delivered as a versioned bundle |
+| [`cert-rotator`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/cert-rotator) | C++ (mbedTLS) | A TLS Secret's self-signed certificate kept fresh: read through the response's `requirements`, reissued with a fresh P-256 key once fewer than `renewBeforeDays` remain | The read fence and the output fence scoped together, `requires.resources` and `composes` in the manifest, a C adapter over the generated structs | Self-signed certificates for internal services, rotated without cert-manager |
 
 Design choices to keep:
 
@@ -79,7 +79,7 @@ Design choices to keep:
   credential only where both policy layers permit `spendCredential`; the pull
   credential and every other step credential, which the runtime edits out of
   the request before the run
-  ([#122](https://github.com/jonasz-lasut/function-wasm/issues/122)). The
+  ([#122](https://github.com/jonasz-lasut/guestfn/issues/122)). The
   tokens' boundary is then egress, which the same two layers fence.
 
 ### Unpublished hello examples
@@ -88,7 +88,7 @@ Design choices to keep:
 guest in four more languages, each an ABI v2 component. Zig and C share their
 scaffolds' plumbing; Odin and MoonBit have no scaffold, and `guestfn build`
 detects the MoonBit one by its `moon.mod`
-([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)). Rust,
+([#155](https://github.com/jonasz-lasut/guestfn/issues/155)). Rust,
 Python, TypeScript and Go are covered by the use-case examples in the table.
 C# has only `dashboard-bundle`, C++ only `cert-rotator`. The language matrix is in
 [other languages](guests/other-languages.md).
@@ -101,7 +101,7 @@ C# has only `dashboard-bundle`, C++ only `cert-rotator`. The language matrix is 
   expectations over each: greetings, egress granted and refused, a guest-side
   fatal, logs. A scaffold has no lockfile. The suite resolves dependencies
   the way a user's first build does, which caught the Go 1.27 break in
-  [#117](https://github.com/jonasz-lasut/function-wasm/issues/117).
+  [#117](https://github.com/jonasz-lasut/guestfn/issues/117).
 - **Examples share only the plumbing with their scaffold**: the vendored ABI
   glue, the generated codecs, the proto and the WIT, held byte-identical by
   `examples_share_the_scaffold_plumbing`. The function, its manifest and its
@@ -145,7 +145,7 @@ published as CNCF Wasm OCI artifacts, with their module manifests:
   against a Sigstore trusted root (`--cosign-trusted-root`) and admits it
   where the operator's `trustSigner` rule names this repository's release
   workflow on a version tag
-  ([#116](https://github.com/jonasz-lasut/function-wasm/issues/116); the
+  ([#116](https://github.com/jonasz-lasut/guestfn/issues/116); the
   signatures page has the rule); an operator may still countersign with its
   own key instead.
 - **References:** the registry's: `repo:v<version>` for people, the digest
@@ -170,7 +170,7 @@ package declares only the `composition` capability, and `module.from` has no
 composite resource to read in an Operation.
 
 An AssemblyScript example and a TinyGo scaffold with `hello-tinygo` were
-retired on 2026-10-07 ([#114](https://github.com/jonasz-lasut/function-wasm/issues/114)).
+retired on 2026-10-07 ([#114](https://github.com/jonasz-lasut/guestfn/issues/114)).
 AssemblyScript has no component-model path, and #114's spike showed that
 hand-written canonical-ABI glue covers `run` and `log` but makes `wasi:http` a
 hand-maintained cost. TinyGo builds the world on its own `wasip2` target, but
@@ -180,10 +180,10 @@ build` embeds the world into and wraps.
 
 ## Open questions
 
-The world's publication ([#106](https://github.com/jonasz-lasut/function-wasm/issues/106)):
+The world's publication ([#106](https://github.com/jonasz-lasut/guestfn/issues/106)):
 the examples target `wasmfn:function@2.0.0`, frozen on 2026-10-07
-([#77](https://github.com/jonasz-lasut/function-wasm/issues/77)). The
+([#77](https://github.com/jonasz-lasut/guestfn/issues/77)). The
 `Publish WIT` workflow (`publish-wit.yml`) publishes it, run by hand and no
 earlier than when the `rust` scaffold's `rust-toolchain.toml`, which pins a beta
 channel (`beta-2026-10-05` today), is off beta and the scaffold builds on stable Rust
-([#129](https://github.com/jonasz-lasut/function-wasm/issues/129)).
+([#129](https://github.com/jonasz-lasut/guestfn/issues/129)).

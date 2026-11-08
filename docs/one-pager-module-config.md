@@ -20,7 +20,7 @@ runtime reads it, checks it against the chosen module's schema and hands the
 module the result. Static configuration goes. The record targets the
 WebAssembly runtime on `main`; the OCI runtime (the [OCI
 runtime](one-pager-oci-runtime.md) record, its code in
-[#251](https://github.com/jonasz-lasut/function-wasm/pull/251)) adopts it
+[#251](https://github.com/jonasz-lasut/guestfn/pull/251)) adopts it
 once that code has merged and its process contract has settled. Jonasz decided to drop the
 static value on 2026-11-07.
 

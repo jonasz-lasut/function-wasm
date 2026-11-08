@@ -1,9 +1,9 @@
 # my-fn
 
 A [Crossplane](https://crossplane.io) composition function in C on
-[ABI v2](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md):
+[ABI v2](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md):
 a WebAssembly component of about 65 KB, compiled by `zig cc` and run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm). No wasi-sdk:
+[function-wasm](https://github.com/jonasz-lasut/guestfn). No wasi-sdk:
 the one `zig` binary is the C toolchain, the build system and the package
 fetcher, and `guestfn build` wraps the core module it links into the
 component - no wasm-tools, no adapter download.

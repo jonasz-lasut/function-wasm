@@ -2,9 +2,9 @@
 
 A [Crossplane](https://crossplane.io) composition function in
 [Odin](https://odin-lang.org) on
-[ABI v2](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md):
+[ABI v2](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md):
 a WebAssembly component of about 70 KB, run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm). The Odin
+[function-wasm](https://github.com/jonasz-lasut/guestfn). The Odin
 guest implements the world through the `c` flavour's wit-bindgen C
 bindings, talks protobuf through nanopb over Odin's foreign interface, and
 reaches the host's HTTP egress through the `c` flavour's own client. `odin`
@@ -12,7 +12,7 @@ compiles the guest to one wasm32 object, `zig cc` compiles the C half and
 links the core module, and `guestfn build` wraps it into the component - no
 wasi-sdk, no wasm-tools, no adapter download. There is no `guestfn init
 --lang odin`: this example is the Odin path
-([#155](https://github.com/jonasz-lasut/function-wasm/issues/155)).
+([#155](https://github.com/jonasz-lasut/guestfn/issues/155)).
 
 - `wit/world.wit` and `wit/deps/` are the `c` flavour's: the
   `wasmfn:function` contract restated in a `local:guest` package with `run`

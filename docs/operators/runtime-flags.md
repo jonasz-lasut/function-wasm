@@ -127,4 +127,4 @@ spec:
             emptyDir: {medium: Memory, sizeLimit: 64Mi}
 ```
 
-A fuller example with every operator-authorable option is [`examples/deployment-runtime-config-cedar.yaml`](https://github.com/jonasz-lasut/function-wasm/blob/main/examples/deployment-runtime-config-cedar.yaml).
+A fuller example with every operator-authorable option is [`examples/deployment-runtime-config-cedar.yaml`](https://github.com/jonasz-lasut/guestfn/blob/main/examples/deployment-runtime-config-cedar.yaml).

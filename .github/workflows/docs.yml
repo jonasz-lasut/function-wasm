@@ -1,4 +1,4 @@
-# Copyright 2026 The function-wasm Authors.
+# Copyright 2026 The guestfn Authors.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 # The documentation site: the mdBook under docs/ (book.toml at the root,
 # docs/SUMMARY.md the table of contents), published to GitHub Pages at
-# https://jonasz-lasut.github.io/function-wasm/. A pull request that touches
+# https://jonasz-lasut.github.io/guestfn/. A pull request that touches
 # the book or the README builds it, checks every internal link and anchor
 # of the rendered site and lints the prose with Vale; a push to main builds
 # and deploys it.

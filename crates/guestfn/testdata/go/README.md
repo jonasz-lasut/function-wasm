@@ -1,9 +1,9 @@
 # my-fn
 
 A [Crossplane](https://crossplane.io) composition function written in Go on
-[ABI v2](https://github.com/jonasz-lasut/function-wasm/blob/main/docs/abi-v2.md):
+[ABI v2](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md):
 a WebAssembly component run by
-[function-wasm](https://github.com/jonasz-lasut/function-wasm).
+[function-wasm](https://github.com/jonasz-lasut/guestfn).
 
 `fn.go` is an ordinary [function-sdk-go](https://github.com/crossplane/function-sdk-go)
 function: edit `RunFunction`, keep the tests in `fn_test.go` passing, and never

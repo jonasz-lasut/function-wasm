@@ -282,7 +282,7 @@ mod tests {
                 ],
                 Options {
                     lang: LANG_GO.into(),
-                    module: "github.com/jonasz-lasut/function-wasm/examples/pdb-addon".into(),
+                    module: "github.com/jonasz-lasut/guestfn/examples/pdb-addon".into(),
                     go_version: "1.26.6".into(),
                     ..Default::default()
                 },

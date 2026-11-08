@@ -1,6 +1,6 @@
 # function-wasm
 
-[![CI](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml)
+[![CI](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml)
 
 > [!CAUTION]
 > **Experimental.** function-wasm is young: the sandbox hasn't had an
@@ -9,7 +9,7 @@
 > what [Compatibility](contract/compatibility.md) lists change only
 > through its deprecation policy; before it they could change between
 > minor releases. Try it, break it and
-> [open an issue](https://github.com/jonasz-lasut/function-wasm/issues),
+> [open an issue](https://github.com/jonasz-lasut/guestfn/issues),
 > but don't build a platform on it yet.
 
 This page is for Crossplane users deciding whether to run composition

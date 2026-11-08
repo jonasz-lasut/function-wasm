@@ -13,7 +13,7 @@
 package wit_exports
 
 import (
-	"github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/export_wit_world"
+	"github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/export_wit_world"
 	witRuntime "go.bytecodealliance.org/pkg/wit/runtime"
 	witTypes "go.bytecodealliance.org/pkg/wit/types"
 	"runtime"

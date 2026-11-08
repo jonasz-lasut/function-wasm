@@ -13,7 +13,7 @@
 package wasi_http_outgoing_handler
 
 import (
-	"github.com/jonasz-lasut/function-wasm/examples/pdb-addon/internal/bindings/wasi_http_types"
+	"github.com/jonasz-lasut/guestfn/examples/pdb-addon/internal/bindings/wasi_http_types"
 	witRuntime "go.bytecodealliance.org/pkg/wit/runtime"
 	witTypes "go.bytecodealliance.org/pkg/wit/types"
 	"runtime"

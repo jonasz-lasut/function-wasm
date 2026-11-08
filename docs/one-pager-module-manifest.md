@@ -161,7 +161,7 @@ request is empty, so by the model's default-deny the module gets only the
 default sandbox. That's safe, but it leaves an operator who legitimately runs a
 `Path` or `HTTP` module that needs egress, a private `/tmp` or a
 credential-sourced env var with no way to request it (tracked in
-[#30](https://github.com/jonasz-lasut/function-wasm/issues/30)).
+[#30](https://github.com/jonasz-lasut/guestfn/issues/30)).
 
 A manifest is only a request. A manifest-less source misses nothing but a
 place to put its `guestfn.yaml`: the document the module author already writes

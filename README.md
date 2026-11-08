@@ -1,16 +1,16 @@
 # function-wasm
 
-[![CI](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/function-wasm/actions/workflows/ci.yml)
-[![Docs](https://github.com/jonasz-lasut/function-wasm/actions/workflows/docs.yml/badge.svg)](https://jonasz-lasut.github.io/function-wasm/)
+[![CI](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml)
+[![Docs](https://github.com/jonasz-lasut/guestfn/actions/workflows/docs.yml/badge.svg)](https://jonasz-lasut.github.io/guestfn/)
 
 > [!CAUTION]
 > **Experimental.** function-wasm is young: the sandbox hasn't had an
 > independent security review, and nothing here has run in production yet.
 > From 1.0.0 the Input, the guest ABI, the runtime flags and the rest of
-> what [Compatibility](https://jonasz-lasut.github.io/function-wasm/contract/compatibility.html) lists change only
+> what [Compatibility](https://jonasz-lasut.github.io/guestfn/contract/compatibility.html) lists change only
 > through its deprecation policy; before it they could change between
 > minor releases. Try it, break it and
-> [open an issue](https://github.com/jonasz-lasut/function-wasm/issues),
+> [open an issue](https://github.com/jonasz-lasut/guestfn/issues),
 > but don't build a platform on it yet.
 
 function-wasm is a [Crossplane](https://crossplane.io) composition function
@@ -61,8 +61,8 @@ granted.
 A module has no network, filesystem or environment by default. Anything
 more needs the module's manifest to request it and both the Composition's
 `compositionPolicy` and the operator's policy to permit it.
-The [use cases](https://jonasz-lasut.github.io/function-wasm/use-cases.html) show where that fits, and the
-[trust model](https://jonasz-lasut.github.io/function-wasm/operators/trust-model.html) says what it protects.
+The [use cases](https://jonasz-lasut.github.io/guestfn/use-cases.html) show where that fits, and the
+[trust model](https://jonasz-lasut.github.io/guestfn/operators/trust-model.html) says what it protects.
 
 ## Install
 
@@ -80,7 +80,7 @@ The package is also published at `xpkg.upbound.io/jonasz-lasut/function-wasm`.
 ## Write a module
 
 ```shell
-cargo install --git https://github.com/jonasz-lasut/function-wasm guestfn
+cargo install --git https://github.com/jonasz-lasut/guestfn guestfn
 
 guestfn init greeter --module github.com/example/greeter   # --lang go (default), rust, zig, c, ts or python
 cd greeter
@@ -94,7 +94,7 @@ For Go, `guestfn init` writes a plain function-sdk-go `RunFunction`, a
 vendored `internal/wasmfn` glue the project owns and a `guestfn.yaml` manifest
 declaring what the module needs. `guestfn push` prints the `module:` block to
 paste into a Composition step. The
-[Guest authors](https://jonasz-lasut.github.io/function-wasm/guests/write-a-module.html) pages cover the full
+[Guest authors](https://jonasz-lasut.github.io/guestfn/guests/write-a-module.html) pages cover the full
 walk-through, local rendering and `function validate`.
 
 Each scaffold produces an [ABI v2](docs/abi-v2.md) component with the same
@@ -116,18 +116,18 @@ C#, C++, Odin and MoonBit exist as examples only
 [`examples/hello-odin`](examples/hello-odin),
 [`examples/hello-moonbit`](examples/hello-moonbit)). Any toolchain that
 produces a component for the world can target the runtime.
-[Other languages](https://jonasz-lasut.github.io/function-wasm/guests/other-languages.html) lists what each needs.
+[Other languages](https://jonasz-lasut.github.io/guestfn/guests/other-languages.html) lists what each needs.
 
 ## Documentation
 
-The manual at <https://jonasz-lasut.github.io/function-wasm/> comes from [`docs/`](docs), built with mdBook. Start from the page
+The manual at <https://jonasz-lasut.github.io/guestfn/> comes from [`docs/`](docs), built with mdBook. Start from the page
 for your role:
 
-- Evaluators - [Introduction](https://jonasz-lasut.github.io/function-wasm/introduction.html), [Use cases](https://jonasz-lasut.github.io/function-wasm/use-cases.html) and [A request, step by step](https://jonasz-lasut.github.io/function-wasm/how-a-request-runs.html).
-- Guest authors - [Write a module](https://jonasz-lasut.github.io/function-wasm/guests/write-a-module.html).
-- Operators - [Install](https://jonasz-lasut.github.io/function-wasm/operators/install.html) and [Troubleshooting](https://jonasz-lasut.github.io/function-wasm/operators/troubleshooting.html).
-- Anyone depending on a release - [Compatibility](https://jonasz-lasut.github.io/function-wasm/contract/compatibility.html).
-- Contributors - [Development](https://jonasz-lasut.github.io/function-wasm/project/development.html) and [Security policy](https://jonasz-lasut.github.io/function-wasm/project/security.html).
+- Evaluators - [Introduction](https://jonasz-lasut.github.io/guestfn/introduction.html), [Use cases](https://jonasz-lasut.github.io/guestfn/use-cases.html) and [A request, step by step](https://jonasz-lasut.github.io/guestfn/how-a-request-runs.html).
+- Guest authors - [Write a module](https://jonasz-lasut.github.io/guestfn/guests/write-a-module.html).
+- Operators - [Install](https://jonasz-lasut.github.io/guestfn/operators/install.html) and [Troubleshooting](https://jonasz-lasut.github.io/guestfn/operators/troubleshooting.html).
+- Anyone depending on a release - [Compatibility](https://jonasz-lasut.github.io/guestfn/contract/compatibility.html).
+- Contributors - [Development](https://jonasz-lasut.github.io/guestfn/project/development.html) and [Security policy](https://jonasz-lasut.github.io/guestfn/project/security.html).
 
 ## Development
 
@@ -137,5 +137,5 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 mdbook build                                        # the documentation site, from docs/ (book.toml)
 ```
 
-[Development](https://jonasz-lasut.github.io/function-wasm/project/development.html)
+[Development](https://jonasz-lasut.github.io/guestfn/project/development.html)
 has the rest. [AGENTS.md](AGENTS.md) has the layout and conventions.
