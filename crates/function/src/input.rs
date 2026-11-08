@@ -113,7 +113,8 @@ pub struct Input {
 pub struct ModuleSource {
     /// The kind of source: OCI (an artifact in a registry, the oci object),
     /// HTTP (a URL, the http object) or Path (a file under the runtime's
-    /// --module-dir, path).
+    /// --module-dir, path). function-oci serves OCI alone: an OCI module is
+    /// an image pulled from a registry, never a file or a URL.
     #[schemars(extend("enum" = ["OCI", "HTTP", "Path"]))]
     pub r#type: String,
     /// Pulls the module from an OCI registry. Set with type OCI, unless

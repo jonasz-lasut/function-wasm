@@ -164,8 +164,11 @@ way: `module … failed: run failed: module exceeded its execution deadline
 `crossplane render` works with `function-oci` as it does with
 `function-wasm` ([Render locally](../guests/render-locally.md)), on a Linux
 machine with `/dev/kvm`: run the runtime with `--insecure` and the three VM
-flags pointing at a Firecracker binary, a guest kernel and the init `make
-oci.tools` fetches and builds. A `module.path` source accepts an image
-layout tar (`docker buildx build -o type=oci,dest=image.tar .`). The loop
-then runs without a registry. A machine without KVM has no loop yet. The
-design record keeps the question open.
+flags pointing at a Firecracker binary, a guest kernel and the init that
+`make oci.tools` fetches and `make oci.init` builds. The loop needs a
+registry, because an OCI module comes from one alone (`module.type: OCI`:
+the runtime refuses a `Path` or `HTTP` source by name). Run a `registry:3`
+container on `127.0.0.1:5000`, which the runtime reaches over plain HTTP,
+then `docker push` the image there and `guestfn push --image` the module.
+A machine without KVM has no loop yet. The design record keeps the question
+open.

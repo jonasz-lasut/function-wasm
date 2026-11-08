@@ -40,7 +40,7 @@ The fields are:
 | field | type | description |
 |---|---|---|
 | `module` | object | Required. Where the module comes from |
-| `module.type` | string | Required. `OCI`, `HTTP` or `Path`. Exactly one of the object it names (`oci`, `http`, `path`) or `module.from` is set, and no object of another type may be present |
+| `module.type` | string | Required. `OCI`, `HTTP` or `Path`. Exactly one of the object it names (`oci`, `http`, `path`) or `module.from` is set, and no object of another type may be present. Under `function-oci` only `OCI`: an OCI module is an image pulled from a registry, never a file or a URL |
 | `module.oci.ref` | string | OCI artifact reference pinned to its manifest digest, `registry/repo@sha256:…`, as `guestfn push` prints it. See [OCI references](#oci-references) |
 | `module.oci.credentials` | string | name of the pipeline-step credential used to pull. See [Pull credentials](#pull-credentials) |
 | `module.http.url` | string | the HTTP or HTTPS URL the module is downloaded from |

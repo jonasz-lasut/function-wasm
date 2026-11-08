@@ -74,7 +74,9 @@ manifest as the one layer of an artifact under the type
 `application/vnd.guestfn.module.v1`. It prints the `module:` block for
 the Composition, pinned to the artifact's digest. Sign the artifact with
 cosign as you sign a WebAssembly module; the signature covers the manifest,
-and the manifest pins the image.
+and the manifest pins the image. An OCI module comes from a registry alone:
+the step's `module.type` is `OCI`, and `function-oci` refuses a `Path` or
+`HTTP` source by name.
 
 `guestfn inspect <ref>` describes the artifact and prints the image it
 pins. `function validate --resolve` pulls the image and prints the
@@ -92,6 +94,10 @@ refusal.
 
 A refusal states the module. The common ones:
 
+- A `Path` or `HTTP` source: `cannot resolve module: module.type Path is not
+  served by function-oci: an OCI module is an image pulled from a registry,
+  so module.type must be OCI`. Push the image to a registry; the development
+  loop uses a local one ([the OCI runtime](../operators/oci-runtime.md)).
 - `image has neither an entrypoint nor a command`: set `ENTRYPOINT` or
   `CMD` in the `Dockerfile`.
 - `image is built for linux/arm64, and this runtime runs on linux/amd64`:

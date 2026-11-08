@@ -513,7 +513,7 @@ impl Validator {
 
         // The runtime's admission, verbatim: the compositionPolicy compiled,
         // limits within the ceilings, the module source's shape.
-        let admitted = match admission::admit(&input, &self.ceilings) {
+        let admitted = match admission::admit(&input, &self.ceilings, Selected::KIND) {
             Ok(admitted) => admitted,
             Err(e) => refuse!(e),
         };

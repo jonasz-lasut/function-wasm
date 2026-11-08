@@ -138,7 +138,7 @@ impl WasmFunction {
         };
         // What the Composition asks of the runtime is settled before any
         // module is read or compiled: nothing will run if it is refused.
-        let admitted = match admission::admit(&input, &self.engine.config()) {
+        let admitted = match admission::admit(&input, &self.engine.config(), Selected::KIND) {
             Ok(admitted) => admitted,
             Err(e) => return Ok(raw_rsp(self.fatal(&req, OUTCOME_REFUSED, e))),
         };
