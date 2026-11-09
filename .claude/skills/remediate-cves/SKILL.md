@@ -94,7 +94,7 @@ what actually got fixed.
 `wasmtime-wasi` crates — that is the sandbox's own security
 patch and belongs in this flow. Every wasmtime release is a new Go major with
 a new crate major: `cargo update` (or bump the version in
-`crates/engine/Cargo.toml`) and update the
+`crates/engine-wasm/Cargo.toml`) and update the
 single import in `internal/engine`. Then run the full root test suite without
 `-short` — it builds `examples/function-wasm-go` to wasm and runs it through the new
 runtime — plus `go test ./...` in `examples/function-wasm-go`. Note that

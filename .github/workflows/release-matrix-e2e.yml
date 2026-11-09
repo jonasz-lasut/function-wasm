@@ -87,14 +87,14 @@ jobs:
           save-if: ${{ startsWith(github.ref, 'refs/heads/release-') }}
 
       - name: Build the Runtime and guestfn
-        run: cargo build --locked --release -p guestfn-runtime -p guestfn
+        run: cargo build --locked --release -p function-wasm -p guestfn
 
       - name: Upload the Runtime and guestfn
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-matrix-tools
           path: |
-            target/release/function
+            target/release/function-wasm
             target/release/guestfn
           if-no-files-found: error
           retention-days: 1
@@ -141,8 +141,8 @@ jobs:
 
       - name: Build the Runtime and the Init
         run: |
-          cargo build --locked --release -p guestfn-runtime --no-default-features --features oci
-          cargo build --locked --release -p guestfn-engine --no-default-features --bin guestfn-init --target x86_64-unknown-linux-musl
+          cargo build --locked --release -p function-oci
+          cargo build --locked --release -p guestfn-init --target x86_64-unknown-linux-musl
 
       # function-sdk-rust's TLS (aws-lc) has a C half that builds with
       # musl-gcc: the fixture and the end-to-end guest link it.
@@ -155,7 +155,7 @@ jobs:
       - name: Collect the Tools
         run: |
           mkdir -p "${RUNNER_TEMP}/release-matrix-oci-tools"
-          cp target/release/function "${RUNNER_TEMP}/release-matrix-oci-tools/"
+          cp target/release/function-oci "${RUNNER_TEMP}/release-matrix-oci-tools/function"
           cp target/x86_64-unknown-linux-musl/release/guestfn-init "${RUNNER_TEMP}/release-matrix-oci-tools/init"
           cp .cache/tools/oci/firecracker .cache/tools/oci/vmlinux "${RUNNER_TEMP}/release-matrix-oci-tools/"
           cp crates/e2e/guest/target/x86_64-unknown-linux-musl/release/e2e-guest-oci "${RUNNER_TEMP}/release-matrix-oci-tools/"
@@ -215,9 +215,9 @@ jobs:
 
       - name: Use the Prebuilt Tools
         run: |
-          chmod +x "${RUNNER_TEMP}/release-matrix-tools/function" "${RUNNER_TEMP}"/release-matrix-oci-tools/*
+          chmod +x "${RUNNER_TEMP}/release-matrix-tools/function-wasm" "${RUNNER_TEMP}"/release-matrix-oci-tools/*
           {
-            echo "FUNCTION_BIN=${RUNNER_TEMP}/release-matrix-tools/function"
+            echo "FUNCTION_BIN=${RUNNER_TEMP}/release-matrix-tools/function-wasm"
             echo "FUNCTION_OCI_TOOLS=${RUNNER_TEMP}/release-matrix-oci-tools"
             echo "E2E_OCI_GUEST=${RUNNER_TEMP}/release-matrix-oci-tools/e2e-guest-oci"
           } >> "$GITHUB_ENV"

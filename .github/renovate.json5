@@ -315,7 +315,7 @@
     // the crates is also the one that asks for the re-vendoring. So does
     // the wasip1 adapter provider: built in the wasmtime repository and
     // published at its version, it is the adapter guestfn build links into
-    // a component (crates/engine/src/componentize.rs) and must stay the one
+    // a component (crates/engine-wasm/src/componentize.rs) and must stay the one
     // the engine's wasmtime-wasi was released with.
     {
       matchManagers: ['cargo', 'custom.regex'],
@@ -324,7 +324,7 @@
       rangeStrategy: 'bump',
     },
     // wit-component, wasmparser and wit-parser are pinned to the versions
-    // wasmtime's own bindgen pulls (crates/engine/Cargo.toml), so no second
+    // wasmtime's own bindgen pulls (crates/engine-wasm/Cargo.toml), so no second
     // copy is compiled. Renovate leaves them alone: a bump on their own
     // would only add that copy (#140). They move by hand in the wasmtime
     // group's PR, to whatever `cargo tree -i wit-component` shows wasmtime

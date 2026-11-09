@@ -86,38 +86,8 @@ jobs:
           cargo fmt --all --check
           cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-  # The OCI build on its own. The lint above turns every feature on, and
-  # with both engines on wasm serves, so the code behind the oci feature
-  # alone is compiled here, and the init's Linux half with it. The VM tests
-  # skip without KVM: the comment-triggered e2e workflow runs them.
-  oci:
-    runs-on: ubuntu-26.04
-    needs: detect-noop
-    if: needs.detect-noop.outputs.noop != 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: stable
-          components: clippy
-
-      - name: Cache Rust Builds
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Lint
-        run: cargo clippy -p guestfn-runtime -p guestfn-engine --no-default-features --features oci,fixture --all-targets -- -D warnings
-
-      - name: Run Tests
-        env:
-          SKIP_GUEST_BUILDS: '1'
-        run: cargo test --locked -p guestfn-runtime -p guestfn-engine --no-default-features --features oci
-
-  # cargo test covers the whole workspace: the engine's WAT-fixture tests,
+  # cargo test covers the whole workspace: both engines' tests, the VM
+  # suite skipping without KVM (the comment-triggered e2e workflow runs it),
   # the runtime's unit and integration tests (the raw-client transparency
   # proof included), the conformance goldens - recorded the day the output
   # last diffed byte-identical against the Go runtime - and guestfn's

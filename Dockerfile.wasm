@@ -40,8 +40,8 @@ RUN --mount=target=.,rw \
       *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     if [ "${BUILDARCH}" != "${TARGETARCH}" ]; then rustup target add "${target}"; fi; \
-    cargo build --release --locked -p guestfn-runtime --target "${target}" && \
-    cp "target/${target}/release/function" /function
+    cargo build --release --locked -p function-wasm --target "${target}" && \
+    cp "target/${target}/release/function-wasm" /function
 
 # Produce the Function image. The binary links glibc dynamically, so the
 # base must ship glibc, libgcc_s and libstdc++: Chainguard's glibc-dynamic

@@ -92,7 +92,7 @@ include build/makelib/local.xpkg.mk
 # architecture (CI's build-tools job hands one over), wrapped by
 # Dockerfile.wasm.dev; without it the image is built from Dockerfile.wasm, which
 # compiles the workspace in a container. FUNCTION_OCI_TOOLS names a
-# directory of prebuilt function (the oci engine), init, firecracker and
+# directory of the prebuilt function-oci binary named function, init, firecracker and
 # vmlinux (CI's build-oci job hands one over), wrapped by Dockerfile.oci.dev;
 # without it they are built and fetched here.
 E2E_IMAGE := function-wasm-e2e:dev
@@ -226,15 +226,15 @@ e2e.wasm.install: xpkg.build.function-wasm local.xpkg.deploy.function.function-w
 oci.tools: ## Fetch the pinned Firecracker release and guest kernel under .cache/tools/oci
 	@hack/oci-tools.sh $(OCI_ARCH) $(OCI_TOOLS) || $(FAIL)
 
-oci.init: ## Build the guest init and the test fixture (the engine crate's binaries) static for musl
+oci.init: ## Build the guest init and the test fixture (crates/oci-init, crates/oci-fixture) static for musl
 	@rustup target add $(MUSL_TARGET) >/dev/null
-	@cargo build --release -p guestfn-engine --no-default-features --features fixture --bins --target $(MUSL_TARGET) || $(FAIL)
+	@cargo build --release -p guestfn-init -p guestfn-guest-fixture --target $(MUSL_TARGET) || $(FAIL)
 
 oci.test: oci.tools oci.init ## The OCI engine's suite over a real Firecracker VM (needs /dev/kvm)
 	@GUESTFN_FIRECRACKER=$(CURDIR)/$(OCI_TOOLS)/firecracker GUESTFN_KERNEL=$(CURDIR)/$(OCI_TOOLS)/vmlinux \
 	 GUESTFN_INIT=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-init \
 	 GUESTFN_FIXTURE=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-guest-fixture GUESTFN_VM_CONSOLE=1 \
-	 cargo test -p guestfn-engine --no-default-features --features oci -- --nocapture --test-threads=1 || $(FAIL)
+	 cargo test -p guestfn-engine-oci -- --nocapture --test-threads=1 || $(FAIL)
 
 # The test module as a process, static for musl, on the guest's own pinned
 # toolchain (its rust-toolchain.toml). A Linux host builds it natively. Any
