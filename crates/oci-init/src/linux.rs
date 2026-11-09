@@ -54,14 +54,8 @@ fn run() -> Result<(), String> {
     mount_base()?;
     loopback_up()?;
     let mut sock = connect_host()?;
-    write_json(
-        &mut sock,
-        Kind::Hello,
-        &Hello {
-            version: guestfn_oci_protocol::VERSION,
-        },
-    )
-    .map_err(|e| format!("cannot greet the host: {e}"))?;
+    write_json(&mut sock, Kind::Hello, &Hello {})
+        .map_err(|e| format!("cannot greet the host: {e}"))?;
     // The host answers with the run, or parks the init first: it is about
     // to snapshot the VM. A parked init waits on the connection it has,
     // sending nothing, so the VM is still when it is frozen. A restore
@@ -84,14 +78,8 @@ fn run() -> Result<(), String> {
             let _ = read_frame(&mut sock);
             drop(sock);
             sock = connect_vsock(PORT, 2_000, Duration::from_millis(1))?;
-            write_json(
-                &mut sock,
-                Kind::Hello,
-                &Hello {
-                    version: guestfn_oci_protocol::VERSION,
-                },
-            )
-            .map_err(|e| format!("cannot greet the host: {e}"))?;
+            write_json(&mut sock, Kind::Hello, &Hello {})
+                .map_err(|e| format!("cannot greet the host: {e}"))?;
             let description: Description =
                 read_json(&mut sock, Kind::Run).map_err(|e| format!("cannot read the run: {e}"))?;
             refresh(&description);

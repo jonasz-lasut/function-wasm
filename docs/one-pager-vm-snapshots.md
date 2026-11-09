@@ -142,11 +142,9 @@ snapshots in the engine's scratch directory for the life of the process.
 
 ### The protocol
 
-The protocol between the init and the host is version 2. `Park` (host to
-init, in place of `Run`) and `Parked` (the answer) are new frame kinds. The
-description gains `now_unix_ns` and `seed`, both empty for a booted run.
-The init and the engine come from one image, and an engine that meets
-another version refuses the run and reports both versions.
+`Park` (host to init, in place of `Run`) and `Parked` (the answer) are new
+frame kinds. The description gains `now_unix_ns` and `seed`, both empty for
+a booted run. The init and the engine come from one image.
 
 ## Measurements
 
