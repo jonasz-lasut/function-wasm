@@ -116,6 +116,9 @@ impl Firecracker {
                 "guest_cid": GUEST_CID,
                 "uds_path": uds,
             },
+            // Without it a booted guest's randomness comes from its own
+            // kernel alone.
+            "entropy": {},
         })
     }
 

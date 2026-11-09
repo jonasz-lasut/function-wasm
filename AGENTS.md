@@ -615,7 +615,7 @@ crates/oci-init/            the guest init (package and binary guestfn-init, on 
                             nothing in the image
 crates/oci-fixture/         the function the VM tests run (package and binary guestfn-guest-fixture, on
                             function-sdk-rust): echo, refuse, exit, stderr, spin, grow, env, cwd, id,
-                            tmp, hostname, silent
+                            tmp, hostname, rng, silent
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package guestfn-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library

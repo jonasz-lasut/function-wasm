@@ -171,6 +171,21 @@ fn the_process_runs_as_the_image_says() {
 }
 
 #[test]
+fn the_guest_has_the_hosts_randomness() {
+    let Some(t) = tools() else { return };
+    let e = engine(&t, Config::default());
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "rng"],
+            "",
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(ask(&e, &m, "", opts()).unwrap().trim(), "virtio_rng.0");
+}
+
+#[test]
 fn the_root_filesystem_is_writable_and_discarded() {
     let Some(t) = tools() else { return };
     let e = engine(&t, Config::default());
