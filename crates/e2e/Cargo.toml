@@ -55,7 +55,7 @@ serde-saphyr = { version = "2", optional = true }
 sha2 = { version = "0.11", optional = true }
 # The public-good trusted root the default profile merges with the test
 # instance's.
-sigstore-trust-root = { version = "0.15.1", default-features = false, features = ["aws-lc-rs"], optional = true }
+sigstore-trust-root = { version = "0.16.0", default-features = false, features = ["aws-lc-rs"], optional = true }
 # The oci profile's test image: one tar layer around the module as a process.
 tar = { version = "0.4", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"], optional = true }
