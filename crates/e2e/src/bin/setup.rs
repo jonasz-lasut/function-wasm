@@ -33,6 +33,9 @@ use serde_json::json;
 /// and large enough for the lifecycle profile's warm-up and cache cases to
 /// be observable.
 const PUBLISHED_WASM: &str = "ghcr.io/jonasz-lasut/guestfn/examples/wasm-go@sha256:253aadf6a20a3fa8c487fa57e1f0133d39e66093ee4b25ba4433a00247e1c159";
+/// The published `examples/function-oci-go`: a module image for both
+/// platforms the runtime serves, under the same signer.
+const PUBLISHED_OCI: &str = "ghcr.io/jonasz-lasut/guestfn/examples/oci-go@sha256:83f5bac9b73db9f3781f14722db279c4e1cd147c8fb464613f558f17a5c11ccc";
 const REGISTRY_IMAGE: &str = "registry:3";
 /// The device plugin that admits the node's /dev/kvm into function-oci's
 /// pod (docs/oci/install.md, "Node requirements"), and the
@@ -376,6 +379,7 @@ async fn main() -> Result<()> {
         trusted_identity: guest::TRUSTED_IDENTITY.to_string(),
         untrusted_identity: guest::UNTRUSTED_IDENTITY.to_string(),
         published_wasm: PUBLISHED_WASM.to_string(),
+        published_oci: PUBLISHED_OCI.to_string(),
         oci_variants,
         oci_image,
         kvm: kvm_gid.is_some(),

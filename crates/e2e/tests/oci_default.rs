@@ -6,6 +6,8 @@
 //! serve yet (egress) is refused by name.
 
 use guestfn_e2e::prelude::*;
+use k8s_openapi::api::core::v1::ConfigMap;
+use kube::api::{Api, ListParams};
 
 const WAIT: Duration = Duration::from_secs(240);
 
@@ -32,6 +34,43 @@ async fn an_image_module_composes_nop_resources() -> Result<()> {
         let status = guest.wait_status(WAIT, |_| true).await?;
         assert_eq!(status.module, "e2e-guest");
         Ok(())
+    })
+    .await
+}
+
+/// The published example, `examples/function-oci-go`: a module image for
+/// two platforms, signed keyless by this repository's Publish Examples
+/// workflow. The runtime resolves the node's platform from the index and
+/// verifies the signature against the public-good half of the merged
+/// trusted root, and the process composes its ConfigMap greeting the Guest.
+#[tokio::test]
+async fn the_published_example_greets_the_guest() -> Result<()> {
+    with_temp_ns("oci-published", |ns| async move {
+        ns.ensure_profile(Profile::OciDefault).await?;
+        let step = Step::oci_public(&ns.state.published_oci);
+        let guest = ns.guest("probe", &step, json!({})).await?;
+        guest.wait_synced(WAIT).await?;
+        let configmaps: Api<ConfigMap> = Api::namespaced(ns.client.clone(), &ns.name);
+        let want = format!("hello {}", guest.name);
+        let deadline = std::time::Instant::now() + WAIT;
+        loop {
+            let greetings: Vec<String> = configmaps
+                .list(&ListParams::default())
+                .await
+                .context("listing ConfigMaps")?
+                .items
+                .into_iter()
+                .filter_map(|c| c.data?.remove("greeting"))
+                .collect();
+            if greetings.contains(&want) {
+                return Ok(());
+            }
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "no ConfigMap greets the guest with {want:?}: {greetings:?}"
+            );
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
     })
     .await
 }

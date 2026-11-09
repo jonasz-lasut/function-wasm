@@ -24,6 +24,9 @@ pub struct State {
     /// The published function-wasm-go example, pinned: the real keyless
     /// signature and the lifecycle profile's warm-up module.
     pub published_wasm: String,
+    /// The published function-oci-go example, pinned: a module image for
+    /// two platforms under the same signer.
+    pub published_oci: String,
     /// The oci profile's variants (docs/one-pager-oci-runtime.md): the
     /// wrapping artifacts around the test module as a process, pushed when
     /// setup had the image (E2E_OCI_GUEST); empty otherwise.
