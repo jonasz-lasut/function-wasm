@@ -12,7 +12,7 @@ The implementation is a Rust workspace (ported from a Go implementation in 2026-
 
 | deliverable | where | what |
 |---|---|---|
-| the runtime (host) | `crates/function` (package `guestfn-runtime`, binary `function`) + `crates/engine` (`guestfn-engine`) | the gRPC function: resolves the module named by the Input, compiles and caches it, runs it per request; `function validate` runs the same admission offline |
+| the runtime (host) | `crates/function` (package `guestfn-runtime`, a library generic over the engine), `crates/function-wasm` and `crates/function-oci` (each package's `main`; binaries `function-wasm` and `function-oci`, at `/function` in each image), `crates/engine` (`guestfn-engine`, the trait) and the engines `crates/engine-wasm` and `crates/engine-oci` | the gRPC function: resolves the module named by the Input, compiles and caches it, runs it per request; `function validate` runs the same admission offline |
 | the guest glue | vendored per guest (the Go scaffold writes `internal/wasmfn` and wit-bindgen's Go bindings under `internal/bindings`; the example is `examples/function-wasm-go/internal/wasmfn`) | linked into a user's `.wasm`: the world's `run` export, request/response codec, a `logging.Logger` over the typed `log` import, `GetConfig`, `HTTPClient` over `wasi:http@0.2`. Not a published module - each guest owns its copy, like Rust/Zig/C own theirs |
 | the CLI | `crates/guestfn` (binary `guestfn`) | `guestfn init` scaffolds a guest project (with its `guestfn.yaml` manifest), `guestfn build` compiles it (and checks its ABI with the runtime's engine, and its manifest), `guestfn inspect` shows what the runtime sees in a module or an artifact, `guestfn push` publishes module and manifest (refusing a module the runtime would refuse), `guestfn manifest validate\|show`, `guestfn scaffold composition` writes a Composition step from a manifest |
 
@@ -70,7 +70,7 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       bytes less every step credential not granted (spendCredential)         │
 │  7. step_slots.acquire(digest, limits.concurrency)   per-step semaphore      │
 │       (0 = skip); waits are capped by the request's gRPC deadline            │
-│  8. engine.run(module, raw request bytes, opts)             crates/engine    │
+│  8. engine.run(module, raw request bytes, opts)             crates/engine-*  │
 │       run slot (fair round-robin by digest) and memory reservation first     │
 │       when bounded; fresh Store: WASI argv=["function"], no net; fs and env  │
 │       only as granted (a private /tmp made before and removed after the      │
@@ -116,20 +116,13 @@ Crossplane RunFunctionResponse (whatever the module produced)
 ### Key Components
 
 ```
-crates/function/            the runtime crate (package `guestfn-runtime`): a library (everything below) + the `function` binary
-  src/engine.rs               the engine behind the runtime, behind the engine crate's Engine
-                              trait: a Cargo feature selects it (`wasm`, the default: Wasmtime;
-                              `oci`: the OCI engine, the engine crate's feature of the same
-                              name, built --no-default-features --features oci; both on, the lint's
-                              --all-features, wasm serves) and the crate names it only as
-                              `engine::Selected` and `engine::Module`, so a second engine is a
-                              second feature and no other change here; `engine::EngineArgs`
-                              are the engine's own flags (none for wasm; --vmm, --guest-kernel,
-                              --guest-init, --vm-vcpus and the alpha --enable-vm-snapshots for oci), flattened into serve's and
-                              validate's, and `engine::new` builds it. `Selected::KIND` is the
-                              module type the package serves (the resolver fetches by it, the
-                              manifest's check_type refuses the other type's manifest by name)
-  src/main.rs                 clap CLI: serve (default) + validate subcommand; every ceiling flag
+crates/function/            the runtime crate (package `guestfn-runtime`): a library generic over
+                            `E: Engine`, depending on neither engine outside its dev-dependencies
+                            and the testutil feature (the Wasmtime engine, for the testing module)
+  src/cli.rs                  clap CLI: serve (default) + validate subcommand, behind cli::run, which
+                              each package's binary calls with its engine's flags as a clap::Args
+                              type (none for wasm; --vmm, --guest-kernel, --guest-init, --vm-vcpus
+                              and the alpha --enable-vm-snapshots for oci) and a builder; every ceiling flag
                               (module-dir, max-module-size, module-timeout, module-memory-limit,
                               module-stack-limit, module-compile-timeout, sandbox-policy-file, cosign-key,
                               cosign-trusted-root, cosign-trust-instance, cosign-tuf-refresh,
@@ -233,7 +226,7 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               artifact store, single-flight loads with compile slots; cache events
   src/store.rs                the content-addressed disk stores (modules, compiled/<version>,
                               manifests), verify-on-read, the LRU sweep to --max-cache-size,
-                              stale-version reaping; the engine crate's ArtifactStore over the
+                              stale-version reaping; guestfn-engine's ArtifactStore over the
                               compiled store (begin, seal, sealed, used: a file written in
                               place, signed and verified by a streamed MAC - the OCI engine's
                               VM snapshots), an entry sized by what the disk allocated for it
@@ -256,23 +249,24 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
   egress_rules.rs,            required-credential shapes, quantity/duration parsing, env
   sandboxenv.rs, quantity.rs  materialization and the required credentials held against the request
   src/ops.rs                  /livez + /readyz (warm-up gated) and /metrics on plain HTTP; warm()
-  tests/conformance.rs        the golden conformance suite (see "Conformance goldens" below)
   tests/guests.rs             the guest behavioural suite over every scaffold (see "Testing")
   tests/raw_client.rs         a raw-codec gRPC client proving byte transparency end to end
   testdata/validate/          the validate fixture corpus (one file per refusal family, policies, XR)
   testdata/conformance/       the recorded goldens
-crates/engine/              the engines, one crate (guestfn-engine): what every engine
-                            shares and what the runtime holds one to at its root, always
-                            compiled; the Wasmtime engine under the `wasm` feature (the default,
-                            the only code in the workspace that imports wasmtime); the OCI
-                            engine under `oci` (src/oci/, below); and the OCI runtime's guest
-                            init and test fixture as the crate's two binaries, built static for
-                            musl, the fixture under its `fixture` feature (make oci.init)
+crates/function-wasm/       function-wasm's `main` (package and binary `function-wasm`, /function in
+                            its image): cli::run over the Wasmtime engine
+  tests/conformance.rs        the golden conformance suite over this binary, reading the runtime
+                              crate's testdata (see "Conformance goldens" below)
+  tests/logging.rs            what --debug and RUST_LOG turn on, over this binary
+crates/function-oci/        function-oci's `main` (package and binary `function-oci`, /function in
+                            its image): cli::run over the OCI engine, with the engine's flags
+crates/engine/              what the engines share (package guestfn-engine), with no engine and no
+                            Cargo feature of its own
   src/lib.rs                  the Engine trait (compile, inspect, serialize, deserialize_file,
                               stored - the module once the runtime stored its artifact, a
                               no-op but for the OCI engine, which continues from the stored
                               root filesystem - warm - what warm-up makes ready for a first
-                              run, the OCI engine's VM snapshot - run, version, config; KIND the module type the
+                              run, the OCI engine's VM snapshot - keep_in - the compiled store for what it derives from a stored module, a no-op but for the OCI engine - run, version, config; KIND the module type the
                               engine serves, CONTRACT the manifest contract it implements),
                               ArtifactStore (where an engine keeps files it derives from a
                               module at run time, implemented by the runtime's compiled store),
@@ -283,11 +277,16 @@ crates/engine/              the engines, one crate (guestfn-engine): what every 
   concurrency.rs,             the fair run slots, the memory pool and the per-digest step slots,
   duration.rs, metrics.rs     Go-style durations, the Prometheus series (names, labels and
                               buckets are contract; see "Metrics"). No WebAssembly here
-  src/protocol.rs             what the guest init and the host say to each other over vsock:
-                              Hello, Run with the Description (argv, env, cwd, uid, gid, groups,
-                              hostname, and for a restored clone the host's clock and a seed),
-                              Stdout, Stderr, Finish, Exit (status, signal, oom, error),
-                              Park and Parked around a snapshot; framed, feature-free
+  src/grpc.rs, layout.rs      the pass-through gRPC codec (the runtime's server, the OCI engine's
+                              client) and the writing half of the OCI image layout (the resolver
+                              assembles one, the OCI engine's fixtures write one)
+crates/oci-protocol/        what the guest init and the host say to each other over vsock (package guestfn-oci-protocol, on serde and serde_json alone):
+                            Hello, Run with the Description (argv, env, cwd, uid, gid, groups,
+                            hostname, and for a restored clone the host's clock and a seed),
+                            Stdout, Stderr, Finish, Exit (status, signal, oom, error),
+                            Park and Parked around a snapshot; framed, feature-free
+crates/engine-wasm/         the Wasmtime engine (package guestfn-engine-wasm): the only code in the
+                            workspace that imports wasmtime
   src/wasm.rs                 Wasmtime (compile + checkABI, inspect → the full module shape, leases,
                               fair scheduler, memory pool, on-demand epoch ticker), RunOptions
                               (limits + private tmp/env + HTTP + deadline), version() namespacing
@@ -316,10 +315,7 @@ crates/engine/              the engines, one crate (guestfn-engine): what every 
                               + wit-component; StringEncoding::Utf8 for the go scaffold, whose
                               wit-bindgen bindings are Go source only, Utf16 for a MoonBit
                               guest, whose strings are UTF-16 in linear memory)
-  src/sandbox.rs, wire.rs,    the private /tmp and env wiring, the egress seam (the request and
-  duration.rs,                response of one send and the HttpRequester trait the runtime's egress
-  concurrency.rs, metrics.rs  client implements), Go-style duration parse/format, per-digest step
-                              slots and the Prometheus series (names, labels and buckets are contract)
+  src/sandbox.rs              the private /tmp and env wiring
   tests/engine.rs,            the engine's integration suites over WAT fixtures (components with a
   componentize.rs,            sync-lifted run, WASI 0.2 imports lowered by hand), guestfn build's
   pooling_bench.rs            wrap and embed, and the hand-run pooling-allocator benchmark
@@ -573,52 +569,53 @@ examples/function-oci-go      the hello function as an oci@0.1 module (#263, pha
                             publishes the module into the same repository as its one tag. The build-oci-go job vets and tests it and builds
                             the image. Its render needs function-oci on a Linux machine with
                             /dev/kvm, so it has no render target.
-  src/oci/                    the OCI engine of the function-oci runtime (docs/one-pager-oci-runtime.md,
-                              docs/oci/install.md), feature `oci`: mod.rs implements
-                              the Engine trait as `Oci` over a `Sandbox` seam (sandbox.rs;
-                              firecracker.rs the first VMM, one process per run from a config
-                              file, no API, the init's vsock port on a Unix socket; with
-                              Options::snapshots (#255, a prototype) the first run of an image
-                              parks the init and snapshots the VM through the API socket, the
-                              memory file rewritten sparse, and every later run restores it
-                              into a fresh process, the description carrying the host's clock
-                              and a seed for the init to set; a stored
-                              image's snapshot is two entries of the compiled store under the
-                              root filesystem's name, the machine shape and a fingerprint of
-                              Firecracker, the kernel and the init (docs/one-pager-vm-snapshots.md),
-                              the memo of made snapshots on the loaded Image (sandbox.rs
-                              SnapshotMemo), a missing or refused one made again, a failed one
-                              costing the run a boot, one taken at warm-up for the default
-                              machine (Sandbox::prepare), and a run that finds one in the
-                              making booting instead of waiting). A module
-                              is an OCI image layout tar (layout.rs: index, platform manifest,
-                              config and layers, every blob verified, plus the Writer the
-                              resolver assembles one with), compiled by applying the layers
-                              with their whiteouts into a tree and writing a squashfs
-                              (rootfs.rs, backhand, gzip, ownership from the tar headers, the
-                              image config with the user resolved inside it at
-                              /.guestfn/config.json) that is the compiled store's artifact and
-                              the VM's read-only block device; image.rs is the config, the
-                              contract check (a command, this platform) and the run's
-                              Description; initrd.rs the cpio around the init; run.rs the
-                              slot, the whole-VM memory reservation, the stderr lines logged
-                              (JSON level/msg typed) and the fatal wording (`run returned an error`, `process exited
-                              with status N before answering the call: <last line>`, the deadline family, the memory
-                              limit); testing.rs the image fixtures and the fake sandbox.
-                              tests/vm.rs runs the fixture function in real VMs when
-                              GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set (make oci.test),
-                              skipping otherwise unless GUESTFN_REQUIRE_KVM
-  src/bin/guestfn-init.rs     the guest init's entry point; guestfn-init/linux.rs is the init,
-                              Linux alone (elsewhere the binary says so and exits, so the
-                              workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
-                              on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
-                              host, loopback up, chroot, the process as the described user, its
-                              server once serving bridged to the host over a second vsock port, stdout/stderr relayed as frames, the exit with an OOM
-                              check of /dev/kmsg, then power off. Static (musl), depends on
-                              nothing in the image
-  src/bin/guestfn-guest-fixture.rs  the function the VM tests run, on function-sdk-rust (feature
-                              fixture): echo, refuse, exit, stderr, spin, grow, env, cwd, id, tmp,
-                              hostname, silent
+crates/engine-oci/          the OCI engine of the function-oci runtime (package guestfn-engine-oci; docs/one-pager-oci-runtime.md,
+                            docs/oci/install.md): lib.rs implements
+                            the Engine trait as `Oci` over a `Sandbox` seam (sandbox.rs;
+                            firecracker.rs the first VMM, one process per run from a config
+                            file, no API, the init's vsock port on a Unix socket; with
+                            Options::snapshots (#255, a prototype) the first run of an image
+                            parks the init and snapshots the VM through the API socket, the
+                            memory file rewritten sparse, and every later run restores it
+                            into a fresh process, the description carrying the host's clock
+                            and a seed for the init to set; a stored
+                            image's snapshot is two entries of the compiled store under the
+                            root filesystem's name, the machine shape and a fingerprint of
+                            Firecracker, the kernel and the init (docs/one-pager-vm-snapshots.md),
+                            the memo of made snapshots on the loaded Image (sandbox.rs
+                            SnapshotMemo), a missing or refused one made again, a failed one
+                            costing the run a boot, one taken at warm-up for the default
+                            machine (Sandbox::prepare), and a run that finds one in the
+                            making booting instead of waiting). A module
+                            is an OCI image layout tar (layout.rs: index, platform manifest,
+                            config and layers, every blob verified, over the Writer of
+                            guestfn-engine's layout module), compiled by applying the layers
+                            with their whiteouts into a tree and writing a squashfs
+                            (rootfs.rs, backhand, gzip, ownership from the tar headers, the
+                            image config with the user resolved inside it at
+                            /.guestfn/config.json) that is the compiled store's artifact and
+                            the VM's read-only block device; image.rs is the config, the
+                            contract check (a command, this platform) and the run's
+                            Description; initrd.rs the cpio around the init; run.rs the
+                            slot, the whole-VM memory reservation, the stderr lines logged
+                            (JSON level/msg typed) and the fatal wording (`run returned an error`, `process exited
+                            with status N before answering the call: <last line>`, the deadline family, the memory
+                            limit); testing.rs the image fixtures and the fake sandbox.
+                            tests/vm.rs runs the fixture function in real VMs when
+                            GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set (make oci.test),
+                            skipping otherwise unless GUESTFN_REQUIRE_KVM
+crates/oci-init/            the guest init (package and binary guestfn-init, on libc and the protocol
+                            alone): src/main.rs is the entry point and src/linux.rs the init,
+                            Linux alone (elsewhere the binary says so and exits, so the
+                            workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
+                            on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
+                            host, loopback up, chroot, the process as the described user, its
+                            server once serving bridged to the host over a second vsock port, stdout/stderr relayed as frames, the exit with an OOM
+                            check of /dev/kmsg, then power off. Static (musl), depends on
+                            nothing in the image
+crates/oci-fixture/         the function the VM tests run (package and binary guestfn-guest-fixture, on
+                            function-sdk-rust): echo, refuse, exit, stderr, spin, grow, env, cwd, id,
+                            tmp, hostname, silent
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package guestfn-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library
@@ -680,16 +677,21 @@ Makefile                    the end-to-end targets (e2e.up - one cluster, functi
                             xpkg.build.function-wasm, xpkg.build.function-oci,
                             local.xpkg.deploy.function.%, print-crossplane-version; oci.tools -
                             hack/oci-tools.sh fetching Firecracker and the kernel at the pins
-                            Dockerfile.oci writes, oci.init, oci.test) over the
+                            crates/function-oci/Dockerfile writes, oci.init, oci.test) over the
                             submodule, with the CROSSPLANE_VERSION default Renovate moves (the
                             current Crossplane; the release matrix's two older pins live in
                             release-matrix-e2e.yml), then the vendoring loops (vendor-proto,
                             vendor-docs-highlight, gen-bindings)
-Dockerfile.wasm,            the function-wasm release image (the workspace compiled in a Rust
-Dockerfile.wasm.dev         build stage) and the same image around a prebuilt binary (CI's e2e job wraps the
+crates/function-wasm/Dockerfile,
+crates/function-wasm/Dockerfile.dev
+                            the function-wasm release image (the workspace compiled in a Rust
+                            build stage, the repository root its build context) and the same image
+                            around a prebuilt binary (CI's e2e job wraps the
                             binary build-tools compiled; make e2e.image uses it under FUNCTION_BIN)
-Dockerfile.oci,             the function-oci image: the runtime built --no-default-features
-Dockerfile.oci.dev          --features oci, the init for musl, the pinned Firecracker release
+crates/function-oci/Dockerfile,
+crates/function-oci/Dockerfile.dev
+                            the function-oci image: the function-oci binary, the init for musl,
+                            the pinned Firecracker release
                             and the kernel Firecracker's CI publishes under /usr/lib/guestfn
                             (the engine flags' defaults); the .dev one wraps prebuilt files
                             (make e2e.oci.image, FUNCTION_OCI_TOOLS)
@@ -726,7 +728,7 @@ There is no `sandbox` field: what a module gets beyond the default sandbox is de
 
 ### ABI v2
 
-The guest contract, the one ABI the runtime serves since 1.0.0 (`docs/abi-v2.md`, design in `docs/one-pager-abi-v2.md`, tracking issue #65): a guest is a WebAssembly **component** targeting the WIT world `wasmfn:function@2.0.0` (`wit/wasmfn-function.wit`) - export `run: async func(list<u8>) -> result<list<u8>, string>` (protobuf `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out), a typed `log` import, WASI 0.3+0.2 linked under the sandbox. The ABI check is the world typecheck at load (`engine/src/component.rs`, the bindgen `FunctionPre`), over wasmtime's decoded types - the one check, whose verdict `engine.inspect` reports to `guestfn build`/`push`/`inspect` and `function validate --resolve`; a sync-lifted `run` satisfies the async world (what the WAT fixtures use). Egress is wasi:http - 0.3 `client.send` and 0.2 `outgoing-handler` both - bridged onto the same `HttpRequester` grant (`engine/src/wasihttp.rs`, the `WasiHttpHooks::send_request` seam, unified across the two generations, with wasmtime-wasi-http's default client compiled out); host-reported failures reach the guest as `internal-error` carrying the egress client's refusal string (contract, held by the conformance goldens), and send waits are credited back to the compute deadline. A component reserves nothing from the memory pool up front (no top-level memory): its whole footprint, the initial memory included, is charged incrementally. A guest `err(string)` from `run` becomes `module <desc> failed: run returned an error: <s>`. Payload evolution is protobuf's job; a mechanics change is a new world version. The engine accepts WebAssembly 2.0 plus extended const and deterministic relaxed SIMD and refuses the other 3.0 proposals at compile (threads and the GC set compiled out by the crate features in `crates/engine/Cargo.toml`, exceptions, tail calls, multi-memory and memory64 off in the `Config`): none of the nine guests uses one, measured with `wasm-tools validate` on 2026-10-28 (the 1.0 audit's F-8); enabling one later is a minor. ABI v1 - a wasip1 core module exporting `memory`, `wasmfn_alloc` and `wasmfn_run`, with the JSON `wasmfn.log`/`wasmfn.http` imports - was deprecated in v0.6.0 and removed in 1.0.0 (#114, #129): the engine tells a core module from a component by the binary format (the layer bytes) and refuses it at compile, at an artifact read and in `inspect` with one sentence, `engine::CORE_MODULE_REFUSAL` (`module is a core module, which function-wasm 1.0.0 no longer runs (ABI v1 was removed); build it as an ABI v2 component (docs/abi-v2.md)`), which the runtime wraps as `cannot load module <desc>: …` and `validate --resolve`, `guestfn build` and `guestfn inspect` print as their verdict (the conformance goldens pin it); a manifest declaring `abi: 1` is refused by `manifest.rs` before the module is looked at. Every scaffold and example here has been a v2 component since 2026-10-07 (#114).
+The guest contract, the one ABI the runtime serves since 1.0.0 (`docs/abi-v2.md`, design in `docs/one-pager-abi-v2.md`, tracking issue #65): a guest is a WebAssembly **component** targeting the WIT world `wasmfn:function@2.0.0` (`wit/wasmfn-function.wit`) - export `run: async func(list<u8>) -> result<list<u8>, string>` (protobuf `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out), a typed `log` import, WASI 0.3+0.2 linked under the sandbox. The ABI check is the world typecheck at load (`engine-wasm/src/component.rs`, the bindgen `FunctionPre`), over wasmtime's decoded types - the one check, whose verdict `engine.inspect` reports to `guestfn build`/`push`/`inspect` and `function validate --resolve`; a sync-lifted `run` satisfies the async world (what the WAT fixtures use). Egress is wasi:http - 0.3 `client.send` and 0.2 `outgoing-handler` both - bridged onto the same `HttpRequester` grant (`engine-wasm/src/wasihttp.rs`, the `WasiHttpHooks::send_request` seam, unified across the two generations, with wasmtime-wasi-http's default client compiled out); host-reported failures reach the guest as `internal-error` carrying the egress client's refusal string (contract, held by the conformance goldens), and send waits are credited back to the compute deadline. A component reserves nothing from the memory pool up front (no top-level memory): its whole footprint, the initial memory included, is charged incrementally. A guest `err(string)` from `run` becomes `module <desc> failed: run returned an error: <s>`. Payload evolution is protobuf's job; a mechanics change is a new world version. The engine accepts WebAssembly 2.0 plus extended const and deterministic relaxed SIMD and refuses the other 3.0 proposals at compile (threads and the GC set compiled out by the crate features in `crates/engine-wasm/Cargo.toml`, exceptions, tail calls, multi-memory and memory64 off in the `Config`): none of the nine guests uses one, measured with `wasm-tools validate` on 2026-10-28 (the 1.0 audit's F-8); enabling one later is a minor. ABI v1 - a wasip1 core module exporting `memory`, `wasmfn_alloc` and `wasmfn_run`, with the JSON `wasmfn.log`/`wasmfn.http` imports - was deprecated in v0.6.0 and removed in 1.0.0 (#114, #129): the engine tells a core module from a component by the binary format (the layer bytes) and refuses it at compile, at an artifact read and in `inspect` with one sentence, `guestfn_engine_wasm::CORE_MODULE_REFUSAL` (`module is a core module, which function-wasm 1.0.0 no longer runs (ABI v1 was removed); build it as an ABI v2 component (docs/abi-v2.md)`), which the runtime wraps as `cannot load module <desc>: …` and `validate --resolve`, `guestfn build` and `guestfn inspect` print as their verdict (the conformance goldens pin it); a manifest declaring `abi: 1` is refused by `manifest.rs` before the module is looked at. Every scaffold and example here has been a v2 component since 2026-10-07 (#114).
 
 ### The transparent proxy is wire-level
 
@@ -738,7 +740,7 @@ The runtime was ported from a Go implementation in 2026-08, and the Go versions 
 
 ### Conformance goldens
 
-`crates/function/tests/conformance.rs` runs `function validate` over the fixture corpus and generated modules/servers/registries and compares stdout, stderr and exit codes against goldens under `testdata/conformance/`. The goldens are the wording contract. A change fails the suite until re-recorded deliberately with `UPDATE_GOLDENS=1 cargo test -p guestfn-runtime --test conformance` — treat a re-record as a user-visible behaviour change and say so in the commit.
+`crates/function-wasm/tests/conformance.rs` runs `function validate` over the fixture corpus and generated modules/servers/registries and compares stdout, stderr and exit codes against goldens under `testdata/conformance/`. The goldens are the wording contract. A change fails the suite until re-recorded deliberately with `UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` — treat a re-record as a user-visible behaviour change and say so in the commit.
 
 `docs/contract/compatibility.md` ("Compatibility" on the documentation site) is the 1.x promise the goldens enforce: the pinned wording, the Input's fields, the flags and their defaults, `function validate`'s exit codes and JSON field names change only at a major, and a minor may only add or widen. A deprecation runs for at least one minor with a `function validate` warning and one runtime line per load or request before the next major removes it: `input::V1BETA1_DEPRECATION` is the pattern, ABI v1 the precedent.
 
@@ -775,15 +777,15 @@ Design documents under `docs/one-pager-*.md` follow one pattern: the H1 is the f
 ### Building
 
 ```bash
-cargo build --workspace                # engine, runtime, guestfn
-cargo run -p guestfn-runtime -- --insecure --module-dir=examples/function-wasm-go
+cargo build --workspace                # the engines, the runtime, both functions, guestfn
+cargo run -p function-wasm -- --insecure --module-dir=examples/function-wasm-go
 cargo run -p guestfn -- inspect examples/function-wasm-go/fn.wasm
 
 # The example guest (with its vendored internal/wasmfn glue) must also build for wasm
 (cd examples/function-wasm-go && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -ldflags=-checklinkname=0 -o /dev/null .)
 
 # The runtime image (multi-arch; GUESTFN_VERSION stamps a release)
-docker buildx build --platform linux/amd64,linux/arm64 --target image .
+docker buildx build -f crates/function-wasm/Dockerfile --platform linux/amd64,linux/arm64 --target image .
 
 # A Crossplane package
 crossplane xpkg build -f package --embed-runtime-image=runtime
@@ -795,8 +797,10 @@ Two tiers (docs/project/testing.md): Rust unit and component tests under `cargo 
 
 ```bash
 cargo test --workspace                    # the first tier: everything below
-cargo test -p guestfn-engine        # the engine over WAT fixtures, and the committed e2e guest with a fake requester
-cargo test -p guestfn-runtime               # runtime units, conformance goldens, guest suite, raw client
+cargo test -p guestfn-engine-wasm   # the Wasmtime engine over WAT fixtures, and the committed e2e guest with a fake requester
+cargo test -p guestfn-engine-oci    # the OCI engine's units; the VM suite skips without its tools (make oci.test)
+cargo test -p guestfn-runtime               # runtime units, guest suite, raw client
+cargo test -p function-wasm                 # the conformance goldens and the log filter, over the binary
 cargo test -p guestfn                     # scaffold goldens, the examples' shared plumbing, CLI against an in-memory registry
 make e2e                                  # the second tier: kind + Crossplane + the packages, every profile in turn, teardown
 make e2e.up && make e2e.wasm-profile.default   # or strict, lifecycle; e2e.up adds function-oci on a node with /dev/kvm (E2E_OCI=auto, the default) for e2e.oci-profile.default; make e2e.down when done
@@ -811,13 +815,13 @@ make -C examples/function-wasm-csharp test    # dotnet test (in the .NET SDK con
 
 `crates/function/tests/guests.rs` builds every language's scaffold - its golden under `crates/guestfn/testdata`, copied fresh into the OS temp dir (outside the workspace), so the suite proves what `guestfn init` writes and runs each through the whole host with the same expectations: default and configured greeting, a greeting fetched through the host's egress (via an OCI manifest layer and via `module.manifestPath`) and refused without a grant, guest-side fatal on a bad config, guest logs. The guests must stay behaviourally identical; the examples under `examples/` are free to solve their own use cases and are checked by their render jobs - C#, whose only guest is the function-wasm-csharp example (it does not greet), Odin, whose only guest is the function-wasm-odin example (no scaffold), and Zig and C, whose scaffolds retired in #264 (function-wasm-zig and function-wasm-c are examples alone), have no place in the suite and are covered by their examples' unit tests and build jobs. A scaffold has no lockfile, so the suite resolves dependencies the way a user's first build does (`go mod tidy`, `npm install`, a fresh `Cargo.lock`). A guest whose toolchain is not on PATH is skipped, naming the guest, unless `GUESTFN_REQUIRE_TOOLCHAINS=1` (set by the `/e2e` guest-suite job) turns the skip into a failure. Toolchains: the rust scaffold's `rust-toolchain.toml` brings its own pinned toolchain with `wasm32-wasip3`, installed by rustup on first use; `protoc` for the rust scaffold's prost-build and the codec regeneration targets; Zig 0.16 only for the function-wasm-zig, function-wasm-c, function-wasm-cpp and function-wasm-odin examples; `nanopb_generator` (`pip install nanopb==0.4.9.1`) only for `zig build gen-proto` in function-wasm-c and function-wasm-odin; `wit-bindgen-cli` 0.62.0 only for `zig build gen-bindings` in function-wasm-c, function-wasm-zig and function-wasm-odin and `make gen-bindings` in function-wasm-go and function-wasm-moonbit (`make gen-bindings` at the root installs it pinned, regenerates all five, mirrors the go result into its template and refreshes the goldens); Odin (dev-2026-10) only for function-wasm-odin; `moon` (0.1.20260920, the official installer, then `moon update` once for the registry index) only for function-wasm-moonbit, whose `make gen-proto` runs `protoc-gen-mbt` 0.2.0 through `moonx` (no install).
 
-Goldens, one variable: `UPDATE_GOLDENS=1 cargo test -p guestfn-runtime --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
+Goldens, one variable: `UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` re-records the conformance goldens (deliberate behaviour changes only); `UPDATE_GOLDENS=1 cargo test -p guestfn` regenerates the scaffold goldens after a template change.
 
-CI runs lint (`--all-features`, so `crates/e2e` is checked), the toolchain-free workspace tests, an `oci` job that lints and tests the OCI build on its own (with `--all-features` wasm serves, so nothing else compiles that path) and `cargo deny` over `Cargo.lock` against `deny.toml` (advisories, bans, licenses, sources; the advisories check also runs weekly in `grype-scan.yml`) on every push and PR (`ci.yml`). `e2e.yml`, hand-triggered by commenting `/e2e` on a pull request (the run acknowledges the comment with a reaction and reports three commit statuses on the PR's head: `e2e/wasm` and `e2e/oci`, each naming the jobs of its runtime that did not pass, and the overall `e2e`, which branch protection names), runs the rest: `build-tools` compiles the release runtime and `guestfn` once; `guest-suite` runs the full guest behavioural suite with `GUESTFN_REQUIRE_TOOLCHAINS=1`; one `build-<lang>` job per example toolchain builds, tests and lints that example and checks its generated codec and bindings for drift (no render); `build-oci` compiles the runtime with the `oci` engine, the init and the fixture (musl) and the test module as a process, fetches the pinned Firecracker and kernel and then runs the OCI engine's suite in real VMs under the runner's KVM over those files; `e2e-cluster-wasm` wraps the prebuilt runtime into the image with `Dockerfile.wasm.dev`, runs `make e2e.up E2E_OCI=0` (kind, Crossplane at `CROSSPLANE_VERSION`, provider-nop, the registry, the package), the three wasm profiles (`make e2e.wasm-profile.default`, `strict`, `lifecycle`) in turn, uploads `make e2e.dump`'s output on failure and tears the cluster down; and `e2e-cluster-oci` does the same with function-oci alone installed (`make e2e.up E2E_WASM=0 E2E_OCI=1`, the node's `/dev/kvm` from the udev rule) and the oci profiles (`make e2e.test.oci`), so the two cluster jobs share kind, Crossplane and the setup and nothing else. Its jobs cache the Rust builds (rust-cache) and the guests' dependencies (Go modules and build cache, npm, pip, zig's global cache, NuGet, the rust scaffold's pinned toolchain) under keys prefixed `e2e-`, a namespace no trusted workflow restores (ci.yml's rust-cache and the release matrix stay on the default `v0-rust` prefix, and save only on `main` and the release branches: a pull request's run restores main's cache and writes no copy under its own ref, which is what kept the repository under GitHub's 10 GiB cache limit and the e2e caches from eviction): an issue_comment run writes caches in the default branch's scope, so the e2e caches are shared by every pull request's run and read by this workflow alone. GitHub hands an issue_comment run a read-only cache token (the event is one anyone may fire), under which every save is skipped, so the workflow declares `cache-mode: write` at the top level, the documented opt-in that the namespace makes acceptable. `release-matrix-e2e.yml` (#189) runs on every push to a `release-function-*` branch (and by `workflow_dispatch` on any ref, to try it): `make e2e E2E_OCI=1` three times in parallel, both packages on every cluster from the pieces its own `build-tools` and `build-oci` jobs hand over (the udev rule installed on each leg), on the Makefile's `CROSSPLANE_VERSION` default and on the two older Crossplane minors pinned in its `env` (`CROSSPLANE_PREVIOUS`, `CROSSPLANE_OLDEST`), the three minors Crossplane maintains; Renovate moves the default to any release and the two pins to patches of their own minor only, and a PR moving the default to a new minor is the signal to shift the pins by hand in it. The end-to-end suite and the matrix are documented in `docs/project/testing.md`.
+CI runs lint (`--all-features`, so `crates/e2e` is checked), the toolchain-free workspace tests and `cargo deny` over `Cargo.lock` against `deny.toml` (advisories, bans, licenses, sources; the advisories check also runs weekly in `grype-scan.yml`) on every push and PR (`ci.yml`). `e2e.yml`, hand-triggered by commenting `/e2e` on a pull request (the run acknowledges the comment with a reaction and reports three commit statuses on the PR's head: `e2e/wasm` and `e2e/oci`, each naming the jobs of its runtime that did not pass, and the overall `e2e`, which branch protection names), runs the rest: `build-tools` compiles the release runtime and `guestfn` once; `guest-suite` runs the full guest behavioural suite with `GUESTFN_REQUIRE_TOOLCHAINS=1`; one `build-<lang>` job per example toolchain builds, tests and lints that example and checks its generated codec and bindings for drift (no render); `build-oci` compiles `function-oci`, the init and the fixture (musl) and the test module as a process, fetches the pinned Firecracker and kernel and then runs the OCI engine's suite in real VMs under the runner's KVM over those files; `e2e-cluster-wasm` wraps the prebuilt runtime into the image with `crates/function-wasm/Dockerfile.dev`, runs `make e2e.up E2E_OCI=0` (kind, Crossplane at `CROSSPLANE_VERSION`, provider-nop, the registry, the package), the three wasm profiles (`make e2e.wasm-profile.default`, `strict`, `lifecycle`) in turn, uploads `make e2e.dump`'s output on failure and tears the cluster down; and `e2e-cluster-oci` does the same with function-oci alone installed (`make e2e.up E2E_WASM=0 E2E_OCI=1`, the node's `/dev/kvm` from the udev rule) and the oci profiles (`make e2e.test.oci`), so the two cluster jobs share kind, Crossplane and the setup and nothing else. Its jobs cache the Rust builds (rust-cache) and the guests' dependencies (Go modules and build cache, npm, pip, zig's global cache, NuGet, the rust scaffold's pinned toolchain) under keys prefixed `e2e-`, a namespace no trusted workflow restores (ci.yml's rust-cache and the release matrix stay on the default `v0-rust` prefix, and save only on `main` and the release branches: a pull request's run restores main's cache and writes no copy under its own ref, which is what kept the repository under GitHub's 10 GiB cache limit and the e2e caches from eviction): an issue_comment run writes caches in the default branch's scope, so the e2e caches are shared by every pull request's run and read by this workflow alone. GitHub hands an issue_comment run a read-only cache token (the event is one anyone may fire), under which every save is skipped, so the workflow declares `cache-mode: write` at the top level, the documented opt-in that the namespace makes acceptable. `release-matrix-e2e.yml` (#189) runs on every push to a `release-function-*` branch (and by `workflow_dispatch` on any ref, to try it): `make e2e E2E_OCI=1` three times in parallel, both packages on every cluster from the pieces its own `build-tools` and `build-oci` jobs hand over (the udev rule installed on each leg), on the Makefile's `CROSSPLANE_VERSION` default and on the two older Crossplane minors pinned in its `env` (`CROSSPLANE_PREVIOUS`, `CROSSPLANE_OLDEST`), the three minors Crossplane maintains; Renovate moves the default to any release and the two pins to patches of their own minor only, and a PR moving the default to a new minor is the signal to shift the pins by hand in it. The end-to-end suite and the matrix are documented in `docs/project/testing.md`.
 
 ### Test Patterns
 
-Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration suites under `tests/`. The stage a test builds comes from two `testutil`-feature modules, never from a literal of its own: `guestfn_engine::testing` holds the WAT fixtures (the component builders `fixed_component`, `component_with_run`, `component_importing`, `grow_guest`, `spinning_guest`, and the ready-made `tiny_component`, `echo_component` and `logging_component`), and `guestfn_runtime::testing` the rest: `registry::Registry` (the in-memory distribution registry assembled by name: `module`, `blob`, `manifest`, `attach`, `bearer`, `basic`, `referrers_api`, `serve`), `runtime::builder()` (the in-process `WasmFunction` with `module_dir`, `policy`, `verifier`, `allow_loopback`) and `runtime::serve` (the TCP variant), `http::greeting_server`, `policy::permissive`, `tuf::Repository` (a local TUF repository with seeded keys and consistent snapshots that publishes trusted roots, expires its timestamp or goes offline, for `tests/trustroot.rs`), and the signers (`TestKey`, `Sigstore`, `attach`) re-exported. Guest modules for tests are WAT fixtures assembled with the `wat` crate: components implementing the world with a sync-lifted `run` (the engine's tests carry fixtures that misbehave in one way each; the sandbox is tested through WASI 0.2 interfaces lowered by hand - `wasi:cli/environment`, `wasi:filesystem/preopens`, `wasi:cli/exit`, `wasi:clocks/monotonic-clock` - against a `$libc` core instance whose memory the main module imports; the one core-module fixture proves the ABI v1 refusal), plus the end-to-end suite's committed guest (`crates/e2e/guest/fn.wasm`), the one real wasi:http guest the engine's tests drive, with a fake `HttpRequester`. Registry-backed tests use `oci::testregistry` (feature `testutil`): an in-memory distribution registry that serves and accepts artifacts, optionally behind the Bearer token flow, with OCI 1.1 referrers through the referrers API (`referrers_api: true`) or the tag schema (`push_referrer` maintains the `sha256-<hex>` index); `cosign::testutil` signs cosign-3-shaped key-based Sigstore bundles into it, and `testsigstore::Instance` (feature `testutil`; rcgen, x509-cert and time are its dependencies) is an in-memory Sigstore instance - a Fulcio CA, a CT log and a Rekor log from fixed seeds - that issues keyless bundles (ten-minute certificate with an embedded SCT, Rekor dsse 0.0.1 entry with SET, inclusion proof and checkpoint) at a fixed past time and publishes the trusted root that verifies them, so the keyless path is covered offline and deterministically (`validate_resolve_keyless_cosign_matches_the_goldens`). Expected `RunFunctionResponse`s are constructed whole and compared with `assert_eq!` on the prost types, including fatal cases, whose per-guest message wording is blanked before the comparison.
+Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration suites under `tests/`. The stage a test builds comes from two `testutil`-feature modules, never from a literal of its own: `guestfn_engine_wasm::testing` holds the WAT fixtures (the component builders `fixed_component`, `component_with_run`, `component_importing`, `grow_guest`, `spinning_guest`, and the ready-made `tiny_component`, `echo_component` and `logging_component`), and `guestfn_runtime::testing` the rest: `registry::Registry` (the in-memory distribution registry assembled by name: `module`, `blob`, `manifest`, `attach`, `bearer`, `basic`, `referrers_api`, `serve`), `runtime::builder()` (the in-process `WasmFunction` with `module_dir`, `policy`, `verifier`, `allow_loopback`) and `runtime::serve` (the TCP variant), `http::greeting_server`, `policy::permissive`, `tuf::Repository` (a local TUF repository with seeded keys and consistent snapshots that publishes trusted roots, expires its timestamp or goes offline, for `tests/trustroot.rs`), and the signers (`TestKey`, `Sigstore`, `attach`) re-exported. Guest modules for tests are WAT fixtures assembled with the `wat` crate: components implementing the world with a sync-lifted `run` (the engine's tests carry fixtures that misbehave in one way each; the sandbox is tested through WASI 0.2 interfaces lowered by hand - `wasi:cli/environment`, `wasi:filesystem/preopens`, `wasi:cli/exit`, `wasi:clocks/monotonic-clock` - against a `$libc` core instance whose memory the main module imports; the one core-module fixture proves the ABI v1 refusal), plus the end-to-end suite's committed guest (`crates/e2e/guest/fn.wasm`), the one real wasi:http guest the engine's tests drive, with a fake `HttpRequester`. Registry-backed tests use `oci::testregistry` (feature `testutil`): an in-memory distribution registry that serves and accepts artifacts, optionally behind the Bearer token flow, with OCI 1.1 referrers through the referrers API (`referrers_api: true`) or the tag schema (`push_referrer` maintains the `sha256-<hex>` index); `cosign::testutil` signs cosign-3-shaped key-based Sigstore bundles into it, and `testsigstore::Instance` (feature `testutil`; rcgen, x509-cert and time are its dependencies) is an in-memory Sigstore instance - a Fulcio CA, a CT log and a Rekor log from fixed seeds - that issues keyless bundles (ten-minute certificate with an embedded SCT, Rekor dsse 0.0.1 entry with SET, inclusion proof and checkpoint) at a fixed past time and publishes the trusted root that verifies them, so the keyless path is covered offline and deterministically (`validate_resolve_keyless_cosign_matches_the_goldens`). Expected `RunFunctionResponse`s are constructed whole and compared with `assert_eq!` on the prost types, including fatal cases, whose per-guest message wording is blanked before the comparison.
 
 ### Linting
 
@@ -839,7 +843,7 @@ make vale                                           # hack/design-records.sh (th
 - Rust edition 2024; comments explain *why*, as the existing ones do; prefer self-documenting code.
 - English only; inclusive terminology (allowlist/blocklist, primary/replica, main branch).
 - Conventional commits: `<type>(<scope>): <subject>`, imperative, ≤ 50 chars, one logical change per commit.
-- Only `crates/engine` imports `wasmtime`/`wasmtime-wasi` — the engine is the seam if the runtime ever changes.
+- Only `crates/engine-wasm` imports `wasmtime`/`wasmtime-wasi`; `crates/function` names only the `Engine` trait, so the engine is the seam if the runtime ever changes.
 - Only `crates/function/src/authz.rs` imports `cedar-policy`.
 - Errors that reach users are `String`s carrying the runtime's exact refusal wording — the wording is contract (conformance goldens); route new refusals through the same phrasing patterns.
 - The `internal/wasmfn` glue must stay buildable natively (portable `Register`/`NewLogger`/`GetConfig`/`HTTPClient`) so a guest's own tests run natively; only the world's wiring (`host_wasip2.go`: the run export's slot, the typed `log` import, `wasi:http@0.2` behind `HTTPClient`, over the bindings under `internal/bindings`) is `//go:build wasip1`. Edit it in `examples/function-wasm-go/internal/wasmfn`, then mirror to `crates/guestfn/templates/go/internal/wasmfn/*.go.tmpl`; the examples-share-the-scaffold-plumbing test keeps them in step.
@@ -858,7 +862,7 @@ The user manual is an mdBook under `docs/`: `book.toml` at the repository root (
 
 ### Adding a host import
 
-A guest reaches the host through the world (`wit/wasmfn-function.wit`, final at `2.0.0`: a 2.x minor may only add imports a guest may use, `docs/abi-v2.md` "Versioning", and every scaffold's vendored copy or restatement moves with it - see "Changing the scaffold") or through a WASI interface the linker provides (`engine/src/component.rs`). `engine/src/wasihttp.rs` is the worked example: `wasi:http` 0.3 `client.send` and 0.2 `outgoing-handler` are put on one `HttpRequester` grant through wasmtime-wasi-http's `WasiHttpHooks::send_request` seam, the policy itself staying in the runtime (`crates/function/src/egress.rs` implements the trait), with host failures as `internal-error` carrying the egress client's refusal string (contract):
+A guest reaches the host through the world (`wit/wasmfn-function.wit`, final at `2.0.0`: a 2.x minor may only add imports a guest may use, `docs/abi-v2.md` "Versioning", and every scaffold's vendored copy or restatement moves with it - see "Changing the scaffold") or through a WASI interface the linker provides (`engine-wasm/src/component.rs`). `engine-wasm/src/wasihttp.rs` is the worked example: `wasi:http` 0.3 `client.send` and 0.2 `outgoing-handler` are put on one `HttpRequester` grant through wasmtime-wasi-http's `WasiHttpHooks::send_request` seam, the policy itself staying in the runtime (`crates/function/src/egress.rs` implements the trait), with host failures as `internal-error` carrying the egress client's refusal string (contract):
 
 1. Prefer a WASI interface the guest's toolchain already speaks over a new world import: it costs the guests nothing. Link it in `component::linker`; reach per-run state through the store data (`component::Ctx`: the `CallState`, the hooks) and pass what it needs in `RunOptions`; keep failures inside the interface's own error type (never a trap for a refusal), and keep the policy in the runtime behind a trait the engine owns, as `HttpRequester` is
 2. A new world import changes the contract: add it to `wit/wasmfn-function.wit`, implement it on `component::Ctx` through the bindgen (`FunctionImports`), and carry it into every scaffold's `wit/` and glue (the `go` bindings through `make gen-bindings`, which regenerates the c, zig, odin and moonbit examples' bindings too, the rust scaffold's vendored copy byte for byte, the ts and python restatements by hand) - see "Changing the scaffold"; an addition is a 2.x minor of the world (a guest that does not import it is unaffected), while a change to `run`, to `log` or to an existing import's type is `3.0.0`, since the typecheck then refuses every guest built before it
@@ -880,12 +884,12 @@ make -C examples/function-wasm-odin render        # the Odin guest (odin and zig
 make -C examples/function-wasm-moonbit render     # the MoonBit guest (moon on PATH: moon builds the core module, guestfn embeds the world UTF-16 and wraps it)
 ```
 
-By hand: `cargo run -p guestfn-runtime -- --insecure --debug --module-dir=examples/function-wasm-go`, then in the example: `cargo run -p guestfn -- build` and `crossplane render example/xr.yaml example/composition.yaml example/functions.yaml --include-function-results`. `functions.yaml` uses the Development runtime, so the function must be running locally; the render engine itself runs in Docker.
+By hand: `cargo run -p function-wasm -- --insecure --debug --module-dir=examples/function-wasm-go`, then in the example: `cargo run -p guestfn -- build` and `crossplane render example/xr.yaml example/composition.yaml example/functions.yaml --include-function-results`. `functions.yaml` uses the Development runtime, so the function must be running locally; the render engine itself runs in Docker.
 
 ## Key Dependencies
 
-- `wasmtime` / `wasmtime-wasi` — the sandbox (Cranelift, pure Rust). Each major may change APIs; only `crates/engine` touches them, and `engine::version()` re-namespaces the compiled cache automatically on a bump. `crates/engine/Cargo.toml` lists wasmtime's default features explicitly, less `cache` (the runtime has its own, and the feature pulls zstd into the binary) and `threads` (the engine refuses shared memories): a bump that adds a default feature is checked against that list by hand.
-- `wit-component` / `wit-parser` / `wasi-preview1-component-adapter-provider`: `guestfn build`'s componentizing (`engine::componentize`): the wrap of a core module carrying wit-bindgen's component-type section, the embed of that section from a Go guest's `wit/` (`embed_world`), and the wasip1 reactor adapter it links in. Pinned in `crates/engine` beside wasmtime: the adapter is published at wasmtime's version and must be the one the engine's wasmtime-wasi was released with, and wit-component and wit-parser (with wasmparser) are the versions wasmtime's own bindgen already pulls, so no second copy is compiled; Renovate moves the adapter with the wasmtime group and ignores wit-component, wasmparser and wit-parser, which are bumped by hand in that PR to what `cargo tree -i wit-component` shows wasmtime pulling.
+- `wasmtime` / `wasmtime-wasi` — the sandbox (Cranelift, pure Rust). Each major may change APIs; only `crates/engine-wasm` touches them, and `engine::version()` re-namespaces the compiled cache automatically on a bump. `crates/engine-wasm/Cargo.toml` lists wasmtime's default features explicitly, less `cache` (the runtime has its own, and the feature pulls zstd into the binary) and `threads` (the engine refuses shared memories): a bump that adds a default feature is checked against that list by hand.
+- `wit-component` / `wit-parser` / `wasi-preview1-component-adapter-provider`: `guestfn build`'s componentizing (`guestfn_engine_wasm::componentize`): the wrap of a core module carrying wit-bindgen's component-type section, the embed of that section from a Go guest's `wit/` (`embed_world`), and the wasip1 reactor adapter it links in. Pinned in `crates/engine-wasm` beside wasmtime: the adapter is published at wasmtime's version and must be the one the engine's wasmtime-wasi was released with, and wit-component and wit-parser (with wasmparser) are the versions wasmtime's own bindgen already pulls, so no second copy is compiled; Renovate moves the adapter with the wasmtime group and ignores wit-component, wasmparser and wit-parser, which are bumped by hand in that PR to what `cargo tree -i wit-component` shows wasmtime pulling.
 - `function-sdk-rust` — the gRPC/protobuf types (prost), `request`/`response`/`resource` helpers and the CLI `Args`; the generated FunctionRunnerService *client* types serve tests, while serving goes through the raw codec.
 - `cedar-policy` — both policy layers.
 - `sigstore-verify`, `sigstore-trust-root`, `sigstore-types`, `sigstore-tuf` (sigstore/sigstore-rust 0.15, `default-features = false` plus `aws-lc-rs`, which rustls already brings): keyless bundle verification and `TrustedRoot::from_json`, with `sigstore_verify::crypto::VerificationKey` for the key path; sigstore-trust-root's `tuf` feature for the instances' embedded TUF roots and sigstore-tuf's `Updater` (over its `HttpRepository`, given the runtime's own reqwest client, and its `FileStore` cache) for `trustroot.rs`, the one place the runtime fetches anything but a module. Registry fetching stays on the runtime's own registry client, and `cosign.rs` keeps its own serde structs for the key path and the key-or-certificate check. Pre-1.0: minor bumps are breaking, so a Renovate PR for them is a code change. The `sigstore` crate (sigstore-rs) is no longer used.
@@ -915,14 +919,15 @@ The decisions below, the ones taken before the port included, describe the produ
 - **Memory-export ABI, not stdin/stdout**; **fresh instance per request** (hermetic, no reentrancy; the expensive compile is cached by content digest in memory and as a wasmtime artifact on disk); **digests are stated, not discovered** (OCI refs `@sha256:`-pinned, `http.digest` required, no tags alone, no request-time resolution).
 - **Disk caches are bounded by LRU sweep, not per-entry policy**: `--max-cache-size` (off by default) removes least recently used entries across the stores at startup and every ten minutes; entries are immutable and reproducible, so removal is always safe.
 - **No shared guest SDK module; every guest owns its glue** (Jonasz, 2026-08-19): the Go scaffold vendors package `wasmfn` into each project under `internal/wasmfn` (and, since ABI v2, wit-bindgen's Go bindings under `internal/bindings`, whose runtime `go.bytecodealliance.org/pkg` is the one module dependency the glue adds, pinned at the generator's version); Rust/Zig/C carry the vendored proto and their own glue. No published module, no version pin on the glue, no lockstep tags. A glue fix reaches existing guests only by re-scaffolding or copying - fine for stable plumbing.
-- **Go guests reach ABI v2 through `guestfn build`'s embed and wrap, not componentize-go** (Jonasz, 2026-10-07, #114): mainline Go has no wasip2 port, so the guest stays a wasip1 reactor (`go build -buildmode=c-shared -ldflags=-checklinkname=0`, the ldflag admitting the bindings runtime's linkname to `runtime.sbrk`); wit-bindgen's Go backend writes the bindings (checked in, `make gen-bindings`), the world is sync-lifted on stock Go with `wasi:http@0.2` behind the same `*http.Client`, and guestfn embeds the world from the project's `wit/` (`engine::componentize::embed_world`) and links the runtime's own adapter - the shape the Go spike proved with componentize-go, with no componentize-go install for users or CI; `fn.go`, `fn_test.go` and `main.go` did not change. Size and compile cost stayed v1's (~75 MB, ~2 s). With Go moved, no scaffold is left on ABI v1. The same embed-and-wrap serves the MoonBit example (#155, 2026-10-07): `embed_world` states the guest's string encoding, UTF-16 for MoonBit, so the canonical ABI transcodes what the guest lowers; `guestfn build` detects a `moon.mod` and takes `--lang moonbit`, while `guestfn init` scaffolds no MoonBit project.
+- **Go guests reach ABI v2 through `guestfn build`'s embed and wrap, not componentize-go** (Jonasz, 2026-10-07, #114): mainline Go has no wasip2 port, so the guest stays a wasip1 reactor (`go build -buildmode=c-shared -ldflags=-checklinkname=0`, the ldflag admitting the bindings runtime's linkname to `runtime.sbrk`); wit-bindgen's Go backend writes the bindings (checked in, `make gen-bindings`), the world is sync-lifted on stock Go with `wasi:http@0.2` behind the same `*http.Client`, and guestfn embeds the world from the project's `wit/` (`guestfn_engine_wasm::componentize::embed_world`) and links the runtime's own adapter - the shape the Go spike proved with componentize-go, with no componentize-go install for users or CI; `fn.go`, `fn_test.go` and `main.go` did not change. Size and compile cost stayed v1's (~75 MB, ~2 s). With Go moved, no scaffold is left on ABI v1. The same embed-and-wrap serves the MoonBit example (#155, 2026-10-07): `embed_world` states the guest's string encoding, UTF-16 for MoonBit, so the canonical ABI transcodes what the guest lowers; `guestfn build` detects a `moon.mod` and takes `--lang moonbit`, while `guestfn init` scaffolds no MoonBit project.
 - **C guests build with `zig cc`, not wasi-sdk, and talk protobuf through nanopb with `fallback_type:FT_POINTER`** (Jonasz, 2026-08-19), **and on ABI v2 run over wit-bindgen's C bindings** (Jonasz, 2026-10-07, #114: the sync-lifted world with `wasi:http@0.2`, the bindings checked in beside the codec, `zig build` emitting the core module that `guestfn build` wraps - no wasm-tools, no adapter download - and cJSON gone with v1's JSON host payloads), **and Zig guests consume the same bindings through translate-c** (Jonasz, 2026-10-07, #114: `function.h` translated into the `bindings` module, `function.c` compiled beside `src/wasmfn.zig`, which implements `exports_function_run` and serves the generated C's `realloc`/`free`/`abort`/`strlen` from the guest's bump heap - `free` a no-op, which is what makes `cabi_post_run` safe - so the core module links no libc and imports no preview1; a hand-written canonical ABI also worked in the spike but has no reason to exist beside the generator); **TinyGo guests used vtprotobuf** (protobuf-go's codec panics under TinyGo; the tinygo scaffold retired 2026-10-07, #114); **WASI argv is always `["function"]`** (an empty argv traps at `_initialize` because klog's init indexes `os.Args[0]`).
 - **A `guestfn init` template exists for a language with an official `function-sdk-<lang>`** (Jonasz, 2026-11-08, #264): go, rust, ts and python, the languages a function author expects a Crossplane project to support. The zig and c templates retired with their goldens and guest-suite cases; `function-wasm-zig` and `function-wasm-c` stay as examples alone, owning their plumbing like Odin, MoonBit, C# and C++, and `guestfn build` still detects a `build.zig` project (`--lang zig|c`).
 - **Warm-up runs while the server listens, health NOT_SERVING until it is done**: a closed port for minutes of compiling would fail a liveness probe and tell a probe nothing; an early request is simply cold. Failures never hold readiness back.
 - **The run bound is the engine's, taken after the load and outside the run metric**; fair round-robin per module digest so one hot module cannot take every slot; a request cut short while waiting never ran and is not counted.
 - **`function validate` lives in the runtime binary**: the checks are the operator's — the same flags, env, policy file and version as the pod (`docker run <package image> validate …` works: the package image is the runtime image).
-- **No local-loop machinery** (Jonasz, 2026-08-17): the loop is `guestfn build` + `crossplane render` against `cargo run -p guestfn-runtime -- --insecure --module-dir=.` (`examples/render.sh`, `make render`) and `function validate`. Guest stderr stays the pod's.
+- **No local-loop machinery** (Jonasz, 2026-08-17): the loop is `guestfn build` + `crossplane render` against `cargo run -p function-wasm -- --insecure --module-dir=.` (`examples/render.sh`, `make render`) and `function validate`. Guest stderr stays the pod's.
 - **The project is guestfn, the packages keep their names** (Jonasz, 2026-11-08, #252): the repository (`jonasz-lasut/guestfn`), the crates (`guestfn-runtime`, `guestfn-engine`, `guestfn-e2e`), the metric series (`guestfn_*`), the cache directory (`/tmp/guestfn-cache`), the stamped `GUESTFN_VERSION`, the test switches (`GUESTFN_REQUIRE_TOOLCHAINS`, `GUESTFN_REQUIRE_KVM`) and the e2e group (`e2e.guestfn.io`) moved at 0.6 with no alias, the 0.x rule the OCI record set for the manifest file, the media types and the Input group; `docs/contract/compatibility.md` freezes the new names. `function-wasm` and `function-oci` are the products, so every name of theirs stays: the packages and their registry paths, the e2e Functions and image tags, the Function names in fixtures, the refusal strings that say which package serves what, and the published examples' and the WIT world's registry paths. A keyless signer identity records the repository as it was at signing time, so the e2e policies and the signatures page keep the `function-wasm` identities for the versions published before the rename beside today's.
+- **A crate per engine and per function** (Jonasz, 2026-11-09): the two engines, the OCI guest's pieces and each package's `main` are crates, and the runtime is generic over `E: Engine`, its binaries supplying the engine through `cli::run` (a builder, since a binary cannot implement a runtime trait for an engine it does not own). Cargo features that exclude each other meant `--all-features`, the lint's, never compiled the OCI build; with crates, `cargo clippy` and `cargo test --workspace` cover both functions and the dependency graph enforces what was a convention.
 - Historical (Go era, superseded by the port but kept for context): wasmtime-go over wazero; not Extism; the Chainguard `glibc-dynamic` base over distroless (still the runtime image base - it scanned clean); the Input's `policy`/`sandbox` fields deleted for the three-layer model; sandbox types before behaviour.
 
 ## Releasing
@@ -930,7 +935,7 @@ The decisions below, the ones taken before the port included, describe the produ
 Each component has its own versions, tags and releases: git tags and GitHub releases `function-wasm-vX.Y.Z`, `function-oci-vX.Y.Z`, `guestfn-vX.Y.Z` and `wit-vX.Y.Z`, release branches `release-function-wasm-X.Y` and so on, and an OCI artifact's tag is the version alone (`function-wasm:vX.Y.Z`, the WIT world's the bare `X.Y.Z`). Releases are driven by two skills; use them rather than improvising the branch/tag/publish sequence:
 
 - **`/cut-release`** — a new minor or major version of one component from `main` HEAD: new `release-<component>-X.Y` branch, whose push runs the release matrix (`release-matrix-e2e.yml`: the end-to-end suite on the three Crossplane minors the project supports; the skill waits for it and a red version blocks the release), tag (`.github/workflows/tag.yml`), GitHub release, package publish (`Publish Function` in `publish-function.yml`, which takes the function, `function-wasm` or `function-oci`, and the version → `ghcr.io/jonasz-lasut/<function>`, mirrored to `xpkg.upbound.io/jonasz-lasut/<function>`; the version is stamped into the binary as `GUESTFN_VERSION`), signing/attestation (`supplychain.yml`). The bump size is the user's choice, never inferred.
-- **`/remediate-cves`**: a patch release on a `release-<function>-X.Y` branch (the latest by default) for CVEs found by `grype-scan.yml`: weekly, one matrix leg per function, each under its own code scanning category, each against its newest `<function>-vX.Y.Z` release (ending green with a notice while it has none). Grype sees the base image's packages alone: the crates inside the Rust binaries are `cargo deny`'s, and Firecracker and the guest kernel in function-oci's image are outside any scan, tracked by the pins in `Dockerfile.oci`, Renovate's Firecracker pull request and the kernel moved by hand with it (`SECURITY.md`). Through 0.x only the latest release branch is kept; from 1.0.0 on superseded release branches stay, so an older line can be patched when asked (Jonasz, 2026-10-07). A wasmtime crate bump is in scope there (it is the sandbox's own security fix): `crates/engine` only.
+- **`/remediate-cves`**: a patch release on a `release-<function>-X.Y` branch (the latest by default) for CVEs found by `grype-scan.yml`: weekly, one matrix leg per function, each under its own code scanning category, each against its newest `<function>-vX.Y.Z` release (ending green with a notice while it has none). Grype sees the base image's packages alone: the crates inside the Rust binaries are `cargo deny`'s, and Firecracker and the guest kernel in function-oci's image are outside any scan, tracked by the pins in `crates/function-oci/Dockerfile`, Renovate's Firecracker pull request and the kernel moved by hand with it (`SECURITY.md`). Through 0.x only the latest release branch is kept; from 1.0.0 on superseded release branches stay, so an older line can be patched when asked (Jonasz, 2026-10-07). A wasmtime crate bump is in scope there (it is the sandbox's own security fix): `crates/engine` only.
 
 `Publish guestfn` (`publish-guestfn.yml`), run by hand from a `guestfn-vX.Y.Z` tag once its GitHub release exists, builds the CLI for Linux (static, musl) and macOS, amd64 and arm64, stamps `GUESTFN_CLI_VERSION` (what `guestfn --version` prints, apart from the runtimes' `GUESTFN_VERSION`), and attaches the binaries, `SHA256SUMS` and its Sigstore bundle to the release, with SLSA provenance on the binaries (#284). `Publish WIT` (`publish-wit.yml`), run by hand from a `wit-vX.Y.Z` tag, publishes the ABI v2 world (`wit/wasmfn-function.wit`, built with a pinned `wkg`) to `ghcr.io/jonasz-lasut/wasmfn/function:<world version>`, signs and attests it, and refuses a pre-release world version (#106). It has no beta hold for the rust scaffold's `rust-toolchain.toml` and no published-tag check, and attaches no tarball to a release, so whoever runs it checks that the world version is final, that the scaffold builds on stable Rust (#129's Rust 1.100 step) and that the tag is not already in the registry. The use-case examples publish apart from the release, on their own lifecycle (#245): `publish-examples.yml` (`Publish Examples`), run by hand from `main` (guestfn built once by `build-guestfn`), builds the examples that work as published (`function-wasm-rust`, `function-wasm-ts`, `function-wasm-go`, and `function-oci-go`, whose image `docker buildx` pushes for amd64 and arm64 before `guestfn push --image` appends the manifest) and pushes them with their manifests to `ghcr.io/jonasz-lasut/guestfn/examples/<runtime>-<lang>:v<version>` (the directory less its `function-` prefix: `wasm-rust`, `oci-go`; the artifacts published through 0.6 under `ghcr.io/jonasz-lasut/wasmfn/examples/<name>` retired on 2026-11-09 with the first publish under the new names, and the e2e profiles pin `wasm-go` and `oci-go`) (the version in each `guestfn.yaml`, independent of the runtime's), signed keyless and attested - only a version not yet in the registry, so bump an example's `guestfn.yaml` version and run the workflow to publish a change; a keyless signature's identity is `publish-examples.yml@refs/heads/main` under the repository's name, the one identity the `trustSigner` rules state (the signatures page, the e2e profiles; `docs/one-pager-use-case-examples.md`). `SECURITY.md` is the dependency CVE policy these follow: the runtime is patched through `/remediate-cves`, the scaffold templates' pins are refreshed by `/cut-release` at every `guestfn` release, and the examples are refreshed by Renovate's monthly examples batch (`.github/renovate.json5`), gated by `/e2e`.
 

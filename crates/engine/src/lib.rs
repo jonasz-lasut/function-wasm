@@ -1,49 +1,22 @@
-//! The engines of guestfn, behind one `Engine` trait: what the
+//! What the engines of guestfn share, behind one `Engine` trait: what the
 //! runtime holds an engine to (compile, inspect, run, version), the
 //! ceilings (`Config`), one run's narrowing and grants (`RunOptions`), the
 //! inspection a tool reads, the egress seam (`wire::HttpRequester`), the
-//! run slots and the memory pool (`concurrency`), the Go-style durations
-//! and the Prometheus series (`metrics`) - always compiled, with no
-//! WebAssembly in them. A Cargo feature adds an engine: `wasm`, the
-//! Wasmtime engine (`Wasmtime`, the only code in the workspace that
-//! imports wasmtime) and `oci`, the OCI engine of
-//! docs/one-pager-oci-runtime.md (`oci::Oci`, a Firecracker microVM per
-//! request). The crate's two binaries are the OCI runtime's guest init and
-//! the fixture function its VM tests run, built static for musl, the
-//! init with no feature at all and the fixture under `fixture`; `protocol`
-//! is what the init and the host say to each other.
+//! run slots and the memory pool (`concurrency`), the Go-style durations,
+//! the Prometheus series (`metrics`), the pass-through gRPC codec (`grpc`)
+//! and the writing half of the OCI image layout (`layout`). An engine is a
+//! crate of its own beside this one: guestfn-engine-wasm, the Wasmtime
+//! engine, and guestfn-engine-oci, the OCI engine of
+//! docs/one-pager-oci-runtime.md (a Firecracker microVM per request).
 
 pub mod concurrency;
 pub mod duration;
-#[cfg(feature = "raw-codec")]
 pub mod grpc;
+pub mod layout;
 pub mod metrics;
-pub mod protocol;
 pub mod wire;
 
 pub use wire::HttpRequester;
-
-#[cfg(feature = "wasm")]
-mod component;
-#[cfg(feature = "wasm")]
-pub mod componentize;
-#[cfg(feature = "wasm")]
-mod run;
-#[cfg(feature = "wasm")]
-mod sandbox;
-#[cfg(all(feature = "wasm", any(test, feature = "testutil")))]
-pub mod testing;
-#[cfg(feature = "wasm")]
-mod wasihttp;
-#[cfg(feature = "wasm")]
-mod wasm;
-#[cfg(feature = "wasm")]
-pub use wasm::{ABI_V2_WORLD, CORE_MODULE_REFUSAL, Module, Wasmtime, version};
-#[cfg(feature = "wasm")]
-pub(crate) use wasm::{ARGV0, CallState, EPOCH_TICK, HostTimer, PoolHold, RunLimiter, first_line};
-
-#[cfg(feature = "oci")]
-pub mod oci;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -242,6 +215,12 @@ pub trait Engine: Send + Sync + 'static {
     fn warm(&self, _m: &Self::Module) -> Result<(), Error> {
         Ok(())
     }
+
+    /// Hands the engine the runtime's compiled store, for what it derives
+    /// from a stored module at run time: the OCI engine keeps an image's
+    /// VM snapshots there, under the store's key, bound and gauge. The
+    /// default derives nothing and ignores it.
+    fn keep_in(&self, _store: Arc<dyn ArtifactStore>) {}
 
     /// Runs one request through a module under the run's options and
     /// returns the response bytes; every failure is an `Error` whose

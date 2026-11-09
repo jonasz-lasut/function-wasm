@@ -384,7 +384,10 @@ fn a_core_module_is_refused_by_name() {
     let (_, stderr, ok) = guestfn(dir.path(), &["inspect", "fn.wasm"]);
     assert!(!ok);
     assert!(
-        stderr.contains(&format!("fn.wasm: {}", guestfn_engine::CORE_MODULE_REFUSAL)),
+        stderr.contains(&format!(
+            "fn.wasm: {}",
+            guestfn_engine_wasm::CORE_MODULE_REFUSAL
+        )),
         "{stderr}"
     );
 
@@ -396,7 +399,7 @@ fn a_core_module_is_refused_by_name() {
         "{stderr}"
     );
     assert!(
-        stderr.contains(guestfn_engine::CORE_MODULE_REFUSAL),
+        stderr.contains(guestfn_engine_wasm::CORE_MODULE_REFUSAL),
         "{stderr}"
     );
 }
@@ -409,18 +412,18 @@ fn a_core_module_with_the_section_is_told_to_build() {
     let dir = tempfile::tempdir().expect("tempdir");
     let bare = wat::parse_str(CORE_MODULE_WAT).expect("wat");
     let wit = concat!(env!("CARGO_MANIFEST_DIR"), "/../../wit");
-    let with_section = guestfn_engine::componentize::embed_world(
+    let with_section = guestfn_engine_wasm::componentize::embed_world(
         &bare,
         std::path::Path::new(wit),
         "function",
-        guestfn_engine::componentize::StringEncoding::Utf8,
+        guestfn_engine_wasm::componentize::StringEncoding::Utf8,
     )
     .expect("embed the world");
     std::fs::write(dir.path().join("fn.wasm"), with_section).expect("write");
     let (_, stderr, ok) = guestfn(dir.path(), &["inspect", "fn.wasm"]);
     assert!(!ok);
     assert!(
-        stderr.contains(guestfn_engine::CORE_MODULE_REFUSAL),
+        stderr.contains(guestfn_engine_wasm::CORE_MODULE_REFUSAL),
         "{stderr}"
     );
     assert!(

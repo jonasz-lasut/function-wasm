@@ -1,0 +1,83 @@
+[package]
+name = "guestfn-engine-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Wasmtime engine of function-wasm, behind guestfn-engine's Engine trait: the only crate in the workspace that imports wasmtime"
+publish = false
+
+[dependencies]
+bytes = "1"
+guestfn-engine = { path = "../engine" }
+http = "1"
+http-body-util = "0.1"
+serde_json.workspace = true
+tempfile = "3"
+tracing.workspace = true
+# wasmtime's default features less cache (the runtime keeps its own
+# compiled-artifact cache and never sets Config::cache, and the feature pulls
+# zstd into the binary), threads and the gc set (the proposals the engine
+# refuses, compiled out where the crate lets them be; see the Config in
+# wasm.rs). A wasmtime bump that adds a default feature is checked by hand
+# against this list.
+wasmtime = { version = "50.0.1", default-features = false, features = [
+    "addr2line",
+    "anyhow",
+    "async",
+    "backtrace",
+    "call-hook",
+    "compile-time-builtins",
+    "component-model",
+    "component-model-async",
+    "coredump",
+    "cranelift",
+    "debug",
+    "debug-builtins",
+    "demangle",
+    "parallel-compilation",
+    "pooling-allocator",
+    "profiling",
+    "runtime",
+    "stack-switching",
+    "std",
+    "wat",
+    "wit-parser",
+] }
+# p1 stays off: the runtime serves components only (WASI 0.2 and 0.3), so
+# the preview1 host and its wiggle dependency are not built.
+wasmtime-wasi = { version = "50.0.1", default-features = false, features = ["p2", "p3"] }
+# default-send-request stays off on purpose: the compiler then requires the
+# egress hooks implementation - a run can never fall through to an
+# unpoliced default HTTP client.
+wasmtime-wasi-http = { version = "50.0.1", default-features = false, features = ["p2", "p3"] }
+# guestfn build's componentizing (componentize.rs) moves with wasmtime: the
+# wasip1 adapter is built in the wasmtime repository and published at its
+# version, so the adapter linked into a guest is always the one the
+# wasmtime-wasi that serves it was released with; wit-component, wit-parser
+# (the embed of a Go guest's world from its wit/ directory) and wasmparser
+# are the versions wasmtime's own bindgen already pulls, so no second copy is
+# compiled. Renovate moves the adapter with the wasmtime group and ignores the
+# other three: bump them by hand in that PR to what `cargo tree -i wit-component`
+# shows wasmtime pulling.
+wasi-preview1-component-adapter-provider = "50.0.1"
+wasmparser = { version = "0.258.3", default-features = false }
+wit-component = "0.258.3"
+wit-parser = "0.258.3"
+# The WAT fixtures of the testing module (feature testutil) are assembled
+# with wat.
+wat = { version = "1", optional = true }
+
+[dev-dependencies]
+function-sdk-rust = "0.4.0"
+# The crate's own tests use its testing module.
+guestfn-engine-wasm = { path = ".", features = ["testutil"] }
+prost = "0.14"
+# The committed-guest tests build the composite resource a RunFunctionRequest
+# carries (function-sdk-rust's Struct is pbjson's, serde-capable).
+pbjson-types = "0.9"
+
+[features]
+# The testing module: the WAT component fixtures every suite in the workspace
+# drives the Wasmtime engine with (docs/project/testing.md).
+testutil = ["dep:wat"]

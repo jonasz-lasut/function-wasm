@@ -10,10 +10,10 @@
   ],
   // The dependency surfaces: the Cargo workspace, the workflows (actions and
   // the CLI versions in their env), the Dockerfiles and the build submodule.
-  // The Dockerfile's rust:1 build stage floats by design; the runtime base
+  // The Dockerfiles' rust:1 build stages float by design; the runtime base
   // (cgr.dev/chainguard/glibc-dynamic, a `latest`-only image) is digest-pinned
-  // in Dockerfile.wasm, Dockerfile.wasm.dev and the dockerfile manager keeps
-  // the digests current.
+  // in crates/function-wasm and crates/function-oci, in each one's Dockerfile
+  // and Dockerfile.dev, and the dockerfile manager keeps the digests current.
   //
   // The scaffold goldens are NOT a surface, and the example guests are one
   // only once a month: both mirror the templates under
@@ -116,8 +116,9 @@
     },
     {
       // The Firecracker release the OCI runtime boots a VM with
-      // (docs/one-pager-oci-runtime.md), pinned in Dockerfile.oci and read
-      // from there by hack/oci-tools.sh, so one file moves. The version
+      // (docs/one-pager-oci-runtime.md), pinned in
+      // crates/function-oci/Dockerfile and read from there by
+      // hack/oci-tools.sh, so one file moves. The version
       // comes from the release tag; the two checksums (one per
       // architecture) come from the release's <asset>.sha256.txt attachments,
       // which github-release-attachments reads to update a currentDigest.
@@ -131,8 +132,8 @@
       // bucket with no datasource: the Firecracker PR is the signal to move
       // it by hand to the kernel that release's CI built.
       customType: 'regex',
-      description: 'the Firecracker release Dockerfile.oci pins, version and per-architecture checksum',
-      managerFilePatterns: ['/^Dockerfile\\.oci$/'],
+      description: 'the Firecracker release crates/function-oci/Dockerfile pins, version and per-architecture checksum',
+      managerFilePatterns: ['/^crates/function-oci/Dockerfile$/'],
       matchStrings: [
         'ARG FIRECRACKER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\n(?:#[^\\n]*\\n)*ARG FIRECRACKER_SHA256_AMD64=(?<currentDigest>[0-9a-f]{64})',
         '# renovate: firecracker (?<currentValue>v\\d+\\.\\d+\\.\\d+) arm64\\nARG FIRECRACKER_SHA256_ARM64=(?<currentDigest>[0-9a-f]{64})',
@@ -284,8 +285,9 @@
       matchDepNames: ['zig'],
       groupName: 'zig',
     },
-    // The two Firecracker matches of Dockerfile.oci (one checksum per
-    // architecture, each with the version beside it) are one dependency:
+    // The two Firecracker matches of crates/function-oci/Dockerfile (one
+    // checksum per architecture, each with the version beside it) are one
+    // dependency:
     // one PR moves the version and both digests, and it is the signal for
     // the kernel bump by hand.
     {
@@ -315,7 +317,7 @@
     // the crates is also the one that asks for the re-vendoring. So does
     // the wasip1 adapter provider: built in the wasmtime repository and
     // published at its version, it is the adapter guestfn build links into
-    // a component (crates/engine/src/componentize.rs) and must stay the one
+    // a component (crates/engine-wasm/src/componentize.rs) and must stay the one
     // the engine's wasmtime-wasi was released with.
     {
       matchManagers: ['cargo', 'custom.regex'],
@@ -324,7 +326,7 @@
       rangeStrategy: 'bump',
     },
     // wit-component, wasmparser and wit-parser are pinned to the versions
-    // wasmtime's own bindgen pulls (crates/engine/Cargo.toml), so no second
+    // wasmtime's own bindgen pulls (crates/engine-wasm/Cargo.toml), so no second
     // copy is compiled. Renovate leaves them alone: a bump on their own
     // would only add that copy (#140). They move by hand in the wasmtime
     // group's PR, to whatever `cargo tree -i wit-component` shows wasmtime

@@ -106,7 +106,7 @@ deliberate re-record.
   the Go runtime's cosign 2 `.sig` format isn't read, the one divergence
   beyond wording.
 - `wasi:http` budgets. Budgets that counted whole responses count bytes on
-  the stream (`crates/engine/src/wasihttp.rs`).
+  the stream (`crates/engine-wasm/src/wasihttp.rs`).
 - Specification and toolchain youth. Churn did land: ABI v1 was removed
   rather than served indefinitely, because Go reached v2 through
   `guestfn build`'s embed and wrap (#114), and the `rust` scaffold still

@@ -36,7 +36,7 @@ pub struct Admitted {
     pub composition: Option<Arc<CompositionPolicy>>,
 }
 
-/// `kind` is the engine's module type (`Selected::KIND`, wasm or oci): the
+/// `kind` is the engine's module type (`Engine::KIND`, wasm or oci): the
 /// sources it serves are part of admission, so `function validate` built
 /// for either package gives the same verdict as its runtime.
 pub fn admit(

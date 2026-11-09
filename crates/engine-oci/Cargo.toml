@@ -1,0 +1,41 @@
+[package]
+name = "guestfn-engine-oci"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The OCI engine of function-oci, behind guestfn-engine's Engine trait: one Firecracker microVM per request"
+publish = false
+
+[dependencies]
+# The root filesystem is a squashfs written in pure Rust (gzip through
+# zlib-rs, so no C), kept read-only on the VM's block device under a tmpfs
+# overlay; the layers and the image layout are tar.
+backhand = { version = "0.25.5", default-features = false, features = ["gzip"] }
+flate2 = "1"
+guestfn-engine = { path = "../engine" }
+guestfn-oci-protocol = { path = "../oci-protocol" }
+hex = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+tar = "0.4"
+tempfile = "3"
+tracing.workspace = true
+
+# The call to the function's gRPC server over vsock.
+http = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time", "sync"] }
+tonic = "0.14"
+tower = { version = "0.5", features = ["util"] }
+
+[dev-dependencies]
+function-sdk-rust = "0.4.0"
+# The crate's own tests use its testing module.
+guestfn-engine-oci = { path = ".", features = ["testutil"] }
+prost = "0.14"
+
+[features]
+# The testing module: the image fixtures and the fake sandbox.
+testutil = []

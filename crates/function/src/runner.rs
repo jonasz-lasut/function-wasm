@@ -7,12 +7,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::engine::{Engine as _, RunOptions, Selected};
 use function_sdk_rust::proto::v1::function_runner_service_server::FunctionRunnerService;
 use function_sdk_rust::proto::v1::{
     ResponseMeta, RunFunctionRequest, RunFunctionResponse, Severity,
 };
 use function_sdk_rust::{request, response};
+use guestfn_engine::{Engine, RunOptions};
 use prost::Message;
 use tonic::{Request, Response, Status};
 
@@ -33,9 +33,9 @@ const OUTCOME_REFUSED: &str = "refused";
 const OUTCOME_ERROR: &str = "error";
 const OUTCOME_SKIPPED: &str = "skipped";
 
-pub struct WasmFunction {
-    pub engine: Arc<Selected>,
-    pub cache: Arc<ModuleCache>,
+pub struct WasmFunction<E: Engine> {
+    pub engine: Arc<E>,
+    pub cache: Arc<ModuleCache<E>>,
     pub resolver: Arc<Resolver>,
     pub ttl: Duration,
     /// The operator's grant policy (--sandbox-policy-file), the sole
@@ -54,7 +54,7 @@ pub struct WasmFunction {
     pub verifier: Option<Arc<crate::cosign::Verifier>>,
 }
 
-impl WasmFunction {
+impl<E: Engine> WasmFunction<E> {
     /// Turns a refusal or failure into the request's fatal result and makes
     /// it visible on the runtime side too: one log line with the reason, so
     /// an operator of a shared runtime can see what is being refused without
@@ -108,7 +108,7 @@ impl WasmFunction {
     }
 }
 
-impl WasmFunction {
+impl<E: Engine> WasmFunction<E> {
     /// The raw request path: the caller's bytes in, response bytes out. The
     /// guest receives the caller's own bytes - fields newer than this
     /// runtime's vendored proto included, which a prost decode cannot
@@ -138,7 +138,7 @@ impl WasmFunction {
         };
         // What the Composition asks of the runtime is settled before any
         // module is read or compiled: nothing will run if it is refused.
-        let admitted = match admission::admit(&input, &self.engine.config(), Selected::KIND) {
+        let admitted = match admission::admit(&input, &self.engine.config(), E::KIND) {
             Ok(admitted) => admitted,
             Err(e) => return Ok(raw_rsp(self.fatal(&req, OUTCOME_REFUSED, e))),
         };
@@ -382,7 +382,7 @@ impl WasmFunction {
             }
         };
         if let Some(m) = &manifest
-            && let Err(e) = m.check_type(Selected::KIND)
+            && let Err(e) = m.check_type(E::KIND)
         {
             return Ok(raw_rsp(self.fatal(
                 &req,
@@ -665,7 +665,7 @@ fn raw_rsp(rsp: RunFunctionResponse) -> Vec<u8> {
 }
 
 #[tonic::async_trait]
-impl FunctionRunnerService for WasmFunction {
+impl<E: Engine> FunctionRunnerService for WasmFunction<E> {
     async fn run_function(
         &self,
         request: Request<RunFunctionRequest>,
@@ -768,6 +768,7 @@ mod tests {
     };
     use function_sdk_rust::resource;
     use guestfn_engine::Config;
+    use guestfn_engine_wasm::Wasmtime;
 
     // A component implementing the world whose run returns an empty
     // response.
@@ -785,8 +786,8 @@ mod tests {
         (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
     )"#;
 
-    fn function(dir: Option<std::path::PathBuf>) -> WasmFunction {
-        let engine = Arc::new(Selected::new(Config::default()).expect("engine"));
+    fn function(dir: Option<std::path::PathBuf>) -> WasmFunction<Wasmtime> {
+        let engine = Arc::new(Wasmtime::new(Config::default()).expect("engine"));
         WasmFunction {
             cache: Arc::new(ModuleCache::new(
                 Arc::clone(&engine),
@@ -813,7 +814,7 @@ mod tests {
         })
     }
 
-    async fn run(f: &WasmFunction, input: serde_json::Value) -> RunFunctionResponse {
+    async fn run(f: &WasmFunction<Wasmtime>, input: serde_json::Value) -> RunFunctionResponse {
         f.run_function(request(input))
             .await
             .expect("never a gRPC error")
@@ -1161,7 +1162,7 @@ mod tests {
             .collect()
     }
 
-    fn granting_function(dir: Option<&std::path::Path>) -> WasmFunction {
+    fn granting_function(dir: Option<&std::path::Path>) -> WasmFunction<Wasmtime> {
         let mut f = function(dir.map(std::path::Path::to_owned));
         f.policy = Some(Arc::new(
             crate::authz::OperatorPolicy::new(
@@ -1175,7 +1176,7 @@ mod tests {
     }
 
     async fn run_with_credentials(
-        f: &WasmFunction,
+        f: &WasmFunction<Wasmtime>,
         module: serde_json::Value,
         names: &[&str],
     ) -> Vec<u8> {
@@ -1523,7 +1524,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
             dir.path().join("fn.wasm"),
-            wat::parse_str(guestfn_engine::testing::fixed_component(&bytes)).expect("wat"),
+            wat::parse_str(guestfn_engine_wasm::testing::fixed_component(&bytes)).expect("wat"),
         )
         .expect("write");
         (dir, bytes)

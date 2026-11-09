@@ -94,7 +94,7 @@ what actually got fixed.
 `wasmtime-wasi` crates — that is the sandbox's own security
 patch and belongs in this flow. Every wasmtime release is a new Go major with
 a new crate major: `cargo update` (or bump the version in
-`crates/engine/Cargo.toml`) and update the
+`crates/engine-wasm/Cargo.toml`) and update the
 single import in `internal/engine`. Then run the full root test suite without
 `-short` — it builds `examples/function-wasm-go` to wasm and runs it through the new
 runtime — plus `go test ./...` in `examples/function-wasm-go`. Note that
@@ -114,7 +114,8 @@ For everything else, Grype scans the built ghcr image, so the fix is one of:
   `publish-function.yml` reads it to pick the `golang:<version>` image the runtime
   is built with, so nothing else needs editing.
 - **Base image CVE** (`cgr.dev/chainguard/glibc-dynamic:latest@sha256:…`, one
-  digest in `Dockerfile.wasm`, `Dockerfile.oci` and their `.dev` variants) →
+  digest in `crates/function-wasm/Dockerfile`, `crates/function-oci/Dockerfile` and their
+  `.dev` variants) →
   bump the pinned digest in all four to the current `latest`
   (`docker buildx imagetools inspect cgr.dev/chainguard/glibc-dynamic:latest`;
   Renovate's `runtime image` group opens these bumps too). One bump fixes
@@ -127,9 +128,9 @@ base, each fixed its own way:
 - **The runtime and the init** (`/function`, `/usr/lib/guestfn/init`): crates
   of the same `Cargo.lock`, so a crate advisory is the `cargo update` above
   and patches both functions. `cargo deny` checks the graph with every
-  feature on, the `oci` engine's crates included.
+  feature on, the OCI engine's crates included.
 - **Firecracker** (`/usr/lib/guestfn/firecracker`): move `FIRECRACKER_VERSION`
-  in `Dockerfile.oci` to the fixed release with both `FIRECRACKER_SHA256_*`
+  in `crates/function-oci/Dockerfile` to the fixed release with both `FIRECRACKER_SHA256_*`
   checksums (Renovate's `firecracker` pull request does this), and with it
   `KERNEL_CI`, `KERNEL_VERSION` and both `KERNEL_SHA256_*` to the kernel that
   release's CI built. `hack/oci-tools.sh` reads the same pins, so
@@ -150,7 +151,7 @@ Then run what CI runs, in this order:
 ```bash
 cargo build --workspace --locked && cargo test --workspace
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
-git status --porcelain                  # only Cargo.toml/Cargo.lock/Dockerfile.* should have moved
+git status --porcelain                  # only Cargo.toml/Cargo.lock/crates/function-*/Dockerfile* should have moved
 ```
 
 `go generate ./...` regenerates the Input CRD and the `guestfn` scaffold golden
@@ -193,8 +194,8 @@ Compare what got fixed against the full CVE list from step 2.
   ```
   WARNING - no upstream fix yet!
   <CVE/GHSA ID> in function-oci's <Firecracker|guest kernel> has no fixed
-  release. Not applied by this flow. Move the pins in Dockerfile.oci when
-  one exists (Renovate's firecracker pull request is the signal).
+  release. Not applied by this flow. Move the pins in
+  crates/function-oci/Dockerfile when one exists (Renovate's firecracker pull request is the signal).
   ```
 
 - **Nothing was fixed — no open CVE was a dependency bump** →
@@ -306,6 +307,6 @@ its warning block.
   a query bug. Always pass `ref=refs/tags/<tag>` in the request itself.
 - Reading a clean function-oci scan as covering Firecracker or the guest
   kernel: Grype sees neither. Check Firecracker's security advisories and
-  the pins in `Dockerfile.oci`.
+  the pins in `crates/function-oci/Dockerfile`.
 - Bumping Firecracker without moving the kernel pins with it: the kernel is
   the one that Firecracker release's CI built.

@@ -94,7 +94,7 @@ layer from disk. A `guestfn.yaml` under `--module-dir` is never cached: it's
 the development loop.
 
 The compiled store is namespaced by `engine::version()`
-(`crates/engine/src/lib.rs`): the Wasmtime crate version `build.rs` reads
+(`crates/engine-wasm/src/wasm.rs`): the Wasmtime crate version `build.rs` reads
 from `Cargo.lock`, plus the OS and architecture. A serialized artifact loads
 only in the Wasmtime that produced it on the same host type, and a bump moves the namespace on its own. The `rust-v`
 prefix keeps the namespace apart from any directory an earlier runtime left on

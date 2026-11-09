@@ -215,15 +215,15 @@ fn go_version() -> String {
 /// Compiles wasm with a throwaway engine and reports its shape, ABI verdict
 /// included - the runtime's own view.
 pub(crate) fn inspect_module(wasm: &[u8]) -> Result<guestfn_engine::Inspection, String> {
-    let engine = guestfn_engine::Wasmtime::new(guestfn_engine::Config::default())
+    let engine = guestfn_engine_wasm::Wasmtime::new(guestfn_engine::Config::default())
         .map_err(|e| e.to_string())?;
     engine.inspect(wasm).map_err(|e| {
         let e = e.to_string();
         // A core module that carries wit-bindgen's component-type section
         // is a guest built outside guestfn (zig build, go build): one wrap
         // away, which is worth more than the refusal alone.
-        if e == guestfn_engine::CORE_MODULE_REFUSAL
-            && guestfn_engine::componentize::carries_component_type(wasm)
+        if e == guestfn_engine_wasm::CORE_MODULE_REFUSAL
+            && guestfn_engine_wasm::componentize::carries_component_type(wasm)
         {
             format!("{e}; {WRAP_HINT}")
         } else {

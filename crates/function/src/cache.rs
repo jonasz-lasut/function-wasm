@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::engine::{Engine as _, Module, Selected};
+use guestfn_engine::Engine;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell, Semaphore};
 
 use crate::store::Store;
@@ -44,25 +44,25 @@ pub struct CacheOptions {
     pub max_concurrent_compiles: usize,
 }
 
-pub struct ModuleCache {
-    engine: Arc<Selected>,
+pub struct ModuleCache<E: Engine> {
+    engine: Arc<E>,
     disk: Option<Arc<Store>>,
     ttl: Duration,
     no_memory: bool,
     max_entries: usize,
     compiles: Arc<Semaphore>,
     compile_timeout: Option<Duration>,
-    entries: Mutex<HashMap<String, Entry>>,
-    loading: AsyncMutex<HashMap<String, Arc<OnceCell<Module>>>>,
+    entries: Mutex<HashMap<String, Entry<E::Module>>>,
+    loading: AsyncMutex<HashMap<String, Arc<OnceCell<E::Module>>>>,
 }
 
-struct Entry {
-    module: Module,
+struct Entry<M> {
+    module: M,
     last_used: Instant,
 }
 
-impl ModuleCache {
-    pub fn new(engine: Arc<Selected>, o: CacheOptions) -> Self {
+impl<E: Engine> ModuleCache<E> {
+    pub fn new(engine: Arc<E>, o: CacheOptions) -> Self {
         ModuleCache {
             engine,
             disk: o.disk,
@@ -78,7 +78,7 @@ impl ModuleCache {
 
     /// Returns the compiled module for digest, calling fetch for its bytes
     /// only when neither memory nor disk has it.
-    pub async fn get<F>(&self, digest: &str, fetch: F) -> Result<Module, String>
+    pub async fn get<F>(&self, digest: &str, fetch: F) -> Result<E::Module, String>
     where
         F: FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
     {
@@ -109,7 +109,7 @@ impl ModuleCache {
         result
     }
 
-    async fn load<F>(&self, digest: &str, fetch: F) -> Result<Module, String>
+    async fn load<F>(&self, digest: &str, fetch: F) -> Result<E::Module, String>
     where
         F: FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
     {
@@ -174,7 +174,7 @@ impl ModuleCache {
                     m = engine.stored(m, &path);
                 }
             }
-            Ok::<Module, String>(m)
+            Ok::<E::Module, String>(m)
         });
         let joined = match self.compile_timeout {
             // Wasmtime cannot cancel a compile in progress: past the bound the
@@ -198,7 +198,7 @@ impl ModuleCache {
         Ok(m)
     }
 
-    fn memory_get(&self, digest: &str) -> Option<Module> {
+    fn memory_get(&self, digest: &str) -> Option<E::Module> {
         if self.no_memory {
             return None;
         }
@@ -210,7 +210,7 @@ impl ModuleCache {
         Some(e.module.clone())
     }
 
-    fn memory_put(&self, digest: &str, module: Module) {
+    fn memory_put(&self, digest: &str, module: E::Module) {
         if self.no_memory {
             return;
         }
@@ -239,9 +239,10 @@ impl ModuleCache {
 mod tests {
     use super::*;
     use guestfn_engine::Config;
+    use guestfn_engine_wasm::Wasmtime;
 
-    fn engine() -> Arc<Selected> {
-        Arc::new(Selected::new(Config::default()).expect("engine"))
+    fn engine() -> Arc<Wasmtime> {
+        Arc::new(Wasmtime::new(Config::default()).expect("engine"))
     }
 
     #[tokio::test(flavor = "multi_thread")]

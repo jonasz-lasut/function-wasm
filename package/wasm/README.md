@@ -115,6 +115,6 @@ produces a component for the world can target the runtime.
 `crossplane.yaml` is the package's metadata and `input/` the Input's CRD,
 generated from the runtime's types for tooling and editors (Crossplane
 never installs a function's Input CRD; the runtime enforces every rule
-itself). The package image is `Dockerfile.wasm` at the repository root, and
+itself). `crates/function-wasm/Dockerfile` builds the package image, and
 `extensions/function-wasm/` holds the icon the marketplace shows beside
 this file.

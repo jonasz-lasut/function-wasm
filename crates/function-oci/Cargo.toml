@@ -1,0 +1,13 @@
+[package]
+name = "function-oci"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The function-oci package's binary: the guestfn runtime over the OCI engine"
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+guestfn-engine-oci = { path = "../engine-oci" }
+guestfn-runtime = { path = "../function" }

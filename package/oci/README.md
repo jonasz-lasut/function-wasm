@@ -92,7 +92,7 @@ contract and the refusals.
 ## This directory
 
 `crossplane.yaml` is the package's metadata and `input/` the Input's CRD,
-held equal to function-wasm's. The package image is `Dockerfile.oci` at the
-repository root (the runtime built with its `oci` engine, the init, the
-pinned Firecracker and guest kernel), and `extensions/function-oci/` holds
-the icon the marketplace shows beside this file.
+held equal to function-wasm's. `crates/function-oci/Dockerfile` builds the
+package image (the `function-oci` binary, the init, the pinned Firecracker
+and guest kernel), and `extensions/function-oci/` holds the icon the
+marketplace shows beside this file.

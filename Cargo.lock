@@ -1481,6 +1481,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "function-oci"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "guestfn-engine-oci",
+ "guestfn-runtime",
+]
+
+[[package]]
 name = "function-sdk-rust"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1508,6 +1517,25 @@ dependencies = [
  "tower-service",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "function-wasm"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "clap",
+ "function-sdk-rust",
+ "guestfn-engine",
+ "guestfn-engine-wasm",
+ "guestfn-runtime",
+ "hex",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tokio",
+ "tonic",
+ "wat",
 ]
 
 [[package]]
@@ -1691,6 +1719,7 @@ dependencies = [
  "clap",
  "flate2",
  "guestfn-engine",
+ "guestfn-engine-wasm",
  "guestfn-runtime",
  "hex",
  "include_dir",
@@ -1729,29 +1758,56 @@ dependencies = [
 name = "guestfn-engine"
 version = "0.1.0"
 dependencies = [
- "backhand",
  "bytes",
- "clap",
+ "hex",
+ "prometheus-client",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "thiserror",
+ "tonic",
+]
+
+[[package]]
+name = "guestfn-engine-oci"
+version = "0.1.0"
+dependencies = [
+ "backhand",
  "flate2",
  "function-sdk-rust",
  "guestfn-engine",
+ "guestfn-engine-oci",
+ "guestfn-oci-protocol",
  "hex",
  "http",
- "http-body-util",
  "hyper-util",
- "libc",
- "pbjson-types",
- "prometheus-client",
  "prost",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "tar",
  "tempfile",
- "thiserror",
  "tokio",
  "tonic",
  "tower",
+ "tracing",
+]
+
+[[package]]
+name = "guestfn-engine-wasm"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "function-sdk-rust",
+ "guestfn-engine",
+ "guestfn-engine-wasm",
+ "http",
+ "http-body-util",
+ "pbjson-types",
+ "prost",
+ "serde_json",
+ "tempfile",
  "tracing",
  "wasi-preview1-component-adapter-provider",
  "wasmparser 0.258.3",
@@ -1761,6 +1817,34 @@ dependencies = [
  "wat",
  "wit-component 0.258.3",
  "wit-parser 0.258.3",
+]
+
+[[package]]
+name = "guestfn-guest-fixture"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "function-sdk-rust",
+ "libc",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
+name = "guestfn-init"
+version = "0.1.0"
+dependencies = [
+ "guestfn-oci-protocol",
+ "libc",
+ "serde_json",
+]
+
+[[package]]
+name = "guestfn-oci-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1775,6 +1859,7 @@ dependencies = [
  "function-sdk-rust",
  "getrandom 0.4.3",
  "guestfn-engine",
+ "guestfn-engine-wasm",
  "guestfn-runtime",
  "hex",
  "hmac",

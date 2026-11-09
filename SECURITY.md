@@ -39,10 +39,10 @@ package metadata, which in these images is the Chainguard base's alone:
 the C library, the GCC runtime libraries and the CA certificates. It
 doesn't see the crates inside the Rust binaries, which `cargo deny` checks
 instead, and it reports nothing for Firecracker or the guest kernel.
-`Dockerfile.oci` pins both by checksum. Renovate opens a pull request for
-each Firecracker release, and the maintainers move the kernel by hand in
-that pull request, to the kernel the release's CI built. No scan in this
-repository alerts on a CVE in either.
+`crates/function-oci/Dockerfile` pins both by checksum. Renovate opens a
+pull request for each Firecracker release, and the maintainers move the
+kernel by hand in that pull request, to the kernel the release's CI built.
+No scan in this repository alerts on a CVE in either.
 
 ## Scaffolded projects
 

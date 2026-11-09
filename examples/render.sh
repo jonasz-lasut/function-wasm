@@ -55,8 +55,8 @@ if [[ -n "${FUNCTION_BIN:-}" ]]; then
   cp "$FUNCTION_BIN" "$work/function"
 else
   echo "==> building the runtime" >&2
-  (cd "$root" && cargo build --release -p guestfn-runtime >&2)
-  cp "$root/target/release/function" "$work/function"
+  (cd "$root" && cargo build --release -p function-wasm >&2)
+  cp "$root/target/release/function-wasm" "$work/function"
 fi
 
 runtime_flags=(--module-dir="$here")
