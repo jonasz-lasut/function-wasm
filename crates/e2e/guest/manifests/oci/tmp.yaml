@@ -3,6 +3,8 @@
 # image, which setup does by hand.
 # The test module requiring a private /tmp.
 contract: oci@0.1
+oci:
+  args: ["--insecure"]
 name: e2e-guest
 version: 0.1.0-tmp
 description: guestfn's end-to-end test module, requiring a private /tmp

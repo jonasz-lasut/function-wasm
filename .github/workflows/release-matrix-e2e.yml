@@ -144,6 +144,11 @@ jobs:
           cargo build --locked --release -p guestfn-runtime --no-default-features --features oci
           cargo build --locked --release -p guestfn-engine --no-default-features --bin guestfn-init --target x86_64-unknown-linux-musl
 
+      # function-sdk-rust's TLS (aws-lc) has a C half that builds with
+      # musl-gcc: the fixture and the end-to-end guest link it.
+      - name: Install the musl Toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
+
       - name: Build the End-to-End Guest as a Process
         run: make e2e.oci.guest
 

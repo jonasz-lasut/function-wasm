@@ -176,17 +176,21 @@ fn boot_and_run(
         snapshots: &image.snapshots,
         store: store_of(engine, image),
     })?;
-    log_stderr(&outcome.stderr, opts);
+    log_lines(&outcome.log, opts);
     if !outcome.console.is_empty() {
         tracing::debug!(module = %opts.module, digest = %opts.digest, console = %outcome.console, "VM console");
     }
-    let last_line = last_line(&outcome.stderr);
+    let last_line = last_line(&outcome.log);
     match outcome.end {
         Ended::Deadline => Err(Error(format!(
             "run failed: module exceeded its execution deadline ({})",
             duration::format(budget)
         ))),
         Ended::Lost(why) => Err(Error(format!("run failed: {why}"))),
+        Ended::Answered(response) => Ok(response),
+        Ended::Refused { code, message } => Err(Error(format!(
+            "run returned an error: {message} (gRPC status {code})"
+        ))),
         Ended::Exit(exit) => {
             if !exit.error.is_empty() {
                 return Err(Error(format!("cannot start the process: {}", exit.error)));
@@ -204,22 +208,12 @@ fn boot_and_run(
                 )));
             }
             match exit.status {
-                Some(0) => {}
-                Some(n) => {
-                    return Err(Error(with_last(
-                        format!("process exited with status {n}"),
-                        &last_line,
-                    )));
-                }
-                None => return Err(Error("process ended without an exit status".to_string())),
+                Some(n) => Err(Error(with_last(
+                    format!("process exited with status {n} before answering the call"),
+                    &last_line,
+                ))),
+                None => Err(Error("process ended without an exit status".to_string())),
             }
-            if outcome.stdout.is_empty() {
-                return Err(Error(
-                    "process exited with status 0 and wrote no response to its standard output"
-                        .to_string(),
-                ));
-            }
-            Ok(outcome.stdout)
         }
     }
 }
@@ -232,8 +226,8 @@ fn with_last(head: String, last: &str) -> String {
     }
 }
 
-fn last_line(stderr: &[u8]) -> String {
-    String::from_utf8_lossy(stderr)
+fn last_line(log: &[u8]) -> String {
+    String::from_utf8_lossy(log)
         .lines()
         .rev()
         .map(str::trim)
@@ -242,12 +236,12 @@ fn last_line(stderr: &[u8]) -> String {
         .to_string()
 }
 
-/// The process's stderr as the runtime's log: a line that parses as a
+/// The process's output as the runtime's log: a line that parses as a
 /// JSON object with `level` and `msg` is a typed line with its other keys
 /// as fields, any other line is info, each with the module and its digest
 /// attached as the typed `log` import's lines are.
-fn log_stderr(stderr: &[u8], opts: &RunOptions) {
-    for line in String::from_utf8_lossy(stderr).lines() {
+fn log_lines(log: &[u8], opts: &RunOptions) {
+    for line in String::from_utf8_lossy(log).lines() {
         let line = line.trim_end();
         if line.is_empty() {
             continue;

@@ -45,7 +45,7 @@ permit. The manual page is [Module manifests](guests/module-manifests.md).
 The source is `guestfn.yaml` in the project (every scaffold includes one):
 
 ```yaml
-contract: wasm@1.0                       # required; the world of docs/abi-v2.md (oci@0.1: the process contract)
+contract: wasm@1.0                       # required; the world of docs/abi-v2.md (oci@0.1: the gRPC contract)
 name: greeter                            # → org.opencontainers.image.title
 version: 0.1.0                           # → …image.version; guestfn push --module-version overrides
 source: https://github.com/example/greeter   # → …image.source (optional)

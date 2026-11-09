@@ -245,7 +245,7 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
   src/manifest.rs             the module manifest: parse (artifact layer), load (guestfn.yaml,
                               unknown top-level fields refused), the Contract enum
                               (`<engine>@<major>.<minor>`: wasm@1.0 the component world, oci@0.1
-                              the process contract, parsed as it is read, a version no engine
+                              the gRPC contract of an image, parsed as it is read, a version no engine
                               implements refused; `abi`, an integer, through 0.6, replaced with
                               no alias), validate (contract declared, image the digest-pinned
                               image of an oci module alone), check_type (the other package's
@@ -267,7 +267,7 @@ crates/engine/              the engines, one crate (guestfn-engine): what every 
                             the only code in the workspace that imports wasmtime); the OCI
                             engine under `oci` (src/oci/, below); and the OCI runtime's guest
                             init and test fixture as the crate's two binaries, built static for
-                            musl with no feature on (make oci.init)
+                            musl, the fixture under its `fixture` feature (make oci.init)
   src/lib.rs                  the Engine trait (compile, inspect, serialize, deserialize_file,
                               stored - the module once the runtime stored its artifact, a
                               no-op but for the OCI engine, which continues from the stored
@@ -286,7 +286,7 @@ crates/engine/              the engines, one crate (guestfn-engine): what every 
   src/protocol.rs             what the guest init and the host say to each other over vsock:
                               Hello, Run with the Description (argv, env, cwd, uid, gid, groups,
                               hostname, and for a restored clone the host's clock and a seed),
-                              Stdin/StdinEnd, Stdout, Stderr, Exit (status, signal, oom, error),
+                              Stdout, Stderr, Finish, Exit (status, signal, oom, error),
                               Park and Parked around a snapshot; framed, feature-free
   src/wasm.rs                 Wasmtime (compile + checkABI, inspect → the full module shape, leases,
                               fair scheduler, memory pool, on-demand epoch ticker), RunOptions
@@ -563,10 +563,8 @@ examples/function-wasm-cpp       the C++ use case (example only: no scaffold; gu
                             Secret crossplane render supplies. Tests: src/rotator_test.cpp and
                             src/fn_test.c natively (zig build test); the build-cpp job. ~160 KB
 examples/function-oci-go      the hello function as an oci@0.1 module (#263, phase 6 of #239): a Go
-                            process on function-sdk-go's types behind main.go's process contract
-                            (RunFunctionRequest bytes on stdin, RunFunctionResponse bytes on
-                            stdout, the logger's JSON lines on stderr, a non-zero status with one
-                            plain line for a request it cannot answer), built by its Dockerfile
+                            function on function-sdk-go behind the SDK's gRPC server (main.go),
+                            its manifest's oci.args passing --insecure, built by its Dockerfile
                             into a static binary in an empty image under a numeric user; no
                             scaffold plumbing, since the contract needs none. make push pushes the
                             image to REGISTRY (127.0.0.1:5000, the development loop's registry:3)
@@ -604,22 +602,23 @@ examples/function-oci-go      the hello function as an oci@0.1 module (#263, pha
                               contract check (a command, this platform) and the run's
                               Description; initrd.rs the cpio around the init; run.rs the
                               slot, the whole-VM memory reservation, the stderr lines logged
-                              (JSON level/msg typed) and the fatal wording (`process exited
-                              with status N: <last line>`, the deadline family, the memory
+                              (JSON level/msg typed) and the fatal wording (`run returned an error`, `process exited
+                              with status N before answering the call: <last line>`, the deadline family, the memory
                               limit); testing.rs the image fixtures and the fake sandbox.
-                              tests/vm.rs runs the fixture process in real VMs when
+                              tests/vm.rs runs the fixture function in real VMs when
                               GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set (make oci.test),
                               skipping otherwise unless GUESTFN_REQUIRE_KVM
   src/bin/guestfn-init.rs     the guest init's entry point; guestfn-init/linux.rs is the init,
                               Linux alone (elsewhere the binary says so and exits, so the
                               workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
                               on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
-                              host, chroot, the process as the described user with the request
-                              on stdin, stdout/stderr relayed as frames, the exit with an OOM
+                              host, loopback up, chroot, the process as the described user, its
+                              server once serving bridged to the host over a second vsock port, stdout/stderr relayed as frames, the exit with an OOM
                               check of /dev/kmsg, then power off. Static (musl), depends on
                               nothing in the image
-  src/bin/guestfn-guest-fixture.rs  the process the VM tests run: echo, exit, stderr, spin, grow,
-                              env, cwd, id, tmp, hostname, silent
+  src/bin/guestfn-guest-fixture.rs  the function the VM tests run, on function-sdk-rust (feature
+                              fixture): echo, refuse, exit, stderr, spin, grow, env, cwd, id, tmp,
+                              hostname, silent
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package guestfn-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library
@@ -802,7 +801,7 @@ cargo test -p guestfn                     # scaffold goldens, the examples' shar
 make e2e                                  # the second tier: kind + Crossplane + the packages, every profile in turn, teardown
 make e2e.up && make e2e.wasm-profile.default   # or strict, lifecycle; e2e.up adds function-oci on a node with /dev/kvm (E2E_OCI=auto, the default) for e2e.oci-profile.default; make e2e.down when done
 (cd examples/function-wasm-go && go test -race ./...)
-(cd examples/function-oci-go && go test -race ./...)   # the OCI example: the function and the process contract, natively
+(cd examples/function-oci-go && go test -race ./...)   # the OCI example: the function, natively
 (cd examples/function-wasm-zig && zig build test)
 (cd examples/function-wasm-c && zig build test)
 (cd examples/function-wasm-odin && zig build test)       # odin and zig on PATH

@@ -21,7 +21,7 @@ module the result. Static configuration goes. The record targets the
 WebAssembly runtime on `main`; the OCI runtime (the [OCI
 runtime](one-pager-oci-runtime.md) record, its code in
 [#251](https://github.com/jonasz-lasut/guestfn/pull/251)) adopts it
-once that code has merged and its process contract has settled. Jonasz decided to drop the
+once that code has merged and its contract has settled. Jonasz decided to drop the
 static value on 2026-11-07.
 
 ## Who knows what about a configuration
@@ -206,9 +206,8 @@ write.
 4. The use-case examples (`function-wasm-python`'s `cmdbUrl`, the hello guests'
    greeting) moved to their composite resources and definitions.
 5. The OCI runtime, after its code merges: the same `config` object,
-   delivered the way its process contract then says (the record is
-   weighing a gRPC server in place of standard input, which would make
-   this the same wire-level edit).
+   delivered in the request the runtime passes to its gRPC server, the
+   same wire-level edit.
 
 ## Alternatives
 

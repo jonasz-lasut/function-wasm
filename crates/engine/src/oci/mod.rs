@@ -6,8 +6,8 @@
 //! microVM the `Sandbox` seam boots (`sandbox.rs`; Firecracker in
 //! `firecracker.rs`), where the init the engine packs into an initramfs
 //! (`initrd.rs`, the `guestfn-init` binary) runs the image's process under
-//! the process contract: the request on stdin, the response on stdout,
-//! logs on stderr, the exit status the verdict (`run.rs`).
+//! the contract: the image serves `FunctionRunnerService`, the host calls
+//! `RunFunction` on it, and its output is the log (`run.rs`).
 
 pub mod firecracker;
 pub mod image;
@@ -373,12 +373,8 @@ mod tests {
                 .push((spec.rootfs.to_path_buf(), spec.store.is_some()));
             spec.snapshots.turn_off();
             Outcome {
-                stdout: spec.request.to_vec(),
-                stderr: Vec::new(),
-                end: Ended::Exit(Exit {
-                    status: Some(0),
-                    ..Default::default()
-                }),
+                log: Vec::new(),
+                end: Ended::Answered(spec.request.to_vec()),
                 console: String::new(),
             }
         });
@@ -432,12 +428,8 @@ mod tests {
     fn compiles_inspects_stores_and_runs_an_image() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let fake = FakeSandbox::new(Arc::clone(&seen), |spec: &VmSpec<'_>| Outcome {
-            stdout: spec.request.to_vec(),
-            stderr: b"a line\n{\"level\":\"warn\",\"msg\":\"typed\",\"k\":1}\n".to_vec(),
-            end: Ended::Exit(Exit {
-                status: Some(0),
-                ..Default::default()
-            }),
+            log: b"a line\n{\"level\":\"warn\",\"msg\":\"typed\",\"k\":1}\n".to_vec(),
+            end: Ended::Answered(spec.request.to_vec()),
             console: String::new(),
         });
         let e = engine(fake);
@@ -497,7 +489,7 @@ mod tests {
                     ..Default::default()
                 }),
                 b"warming up\nout of ideas\n".to_vec(),
-                "process exited with status 3: out of ideas",
+                "process exited with status 3 before answering the call: out of ideas",
             ),
             (
                 Ended::Exit(Exit {
@@ -530,16 +522,23 @@ mod tests {
                     ..Default::default()
                 }),
                 vec![],
-                "process exited with status 0 and wrote no response to its standard output",
+                "process exited with status 0 before answering the call",
+            ),
+            (
+                Ended::Refused {
+                    code: "FailedPrecondition".into(),
+                    message: "not this time".into(),
+                },
+                vec![],
+                "run returned an error: not this time (gRPC status FailedPrecondition)",
             ),
         ];
-        for (end, stderr, want) in cases {
+        for (end, log, want) in cases {
             let end = std::sync::Mutex::new(Some(end));
             let fake = FakeSandbox::new(
                 Arc::new(std::sync::Mutex::new(Vec::new())),
                 move |_: &VmSpec<'_>| Outcome {
-                    stdout: Vec::new(),
-                    stderr: stderr.clone(),
+                    log: log.clone(),
                     end: end.lock().unwrap().take().unwrap(),
                     console: String::new(),
                 },

@@ -513,6 +513,10 @@ impl WasmFunction {
             private_tmp: caps.private_tmp,
             env,
             http,
+            args: manifest
+                .as_ref()
+                .map(|m| m.args().to_vec())
+                .unwrap_or_default(),
             module: resolved.description.clone(),
             digest: resolved.digest.clone(),
         };

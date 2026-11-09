@@ -1,7 +1,7 @@
 # The hello function as an image function-oci boots: a static Go binary,
 # cross-compiled on the build platform for the target, in an empty image.
-# The process contract needs the image's command and nothing else; the
-# runtime mounts a fresh /tmp itself. The Go version is go.mod's.
+# The contract needs the image's command and nothing else; the runtime
+# mounts a fresh /tmp itself. The Go version is go.mod's.
 FROM --platform=${BUILDPLATFORM} golang:1.27.3 AS build
 ARG TARGETOS
 ARG TARGETARCH

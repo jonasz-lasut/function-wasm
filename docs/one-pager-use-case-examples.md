@@ -118,11 +118,10 @@ C# has only `function-wasm-csharp`, C++ only `function-wasm-cpp`. The language m
 `function-oci-go` is the hello function as an `oci@0.1` module
 ([#263](https://github.com/jonasz-lasut/function-wasm/issues/263), phase 6
 of the [OCI runtime record](one-pager-oci-runtime.md)). An ordinary
-function-sdk-go function sits behind a `main` that reads the request from
-standard input and writes the response to standard output. Its
+function-sdk-go function sits behind the SDK's server. Its
 `Dockerfile` cross-compiles it into an empty image, and `guestfn push
 --image` appends the manifest. It doesn't share plumbing with a scaffold,
-because the process contract needs none. The `build-oci-go` job vets and
+because the contract needs none. The `build-oci-go` job vets and
 tests it and builds the image. Once it's published, the `oci` e2e profile gets the case the
 `wasm` lifecycle profile has with the published Go example: the module
 pulled from `ghcr.io` with its real signature.

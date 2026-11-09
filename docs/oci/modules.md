@@ -2,42 +2,47 @@
 
 This page is for authors publishing an OCI image as a module for
 `function-oci`, the OCI runtime ([design record](../one-pager-oci-runtime.md),
-[the install page](install.md)). It covers the process
-contract the image's command follows, the manifest and the artifact
+[the install page](install.md)). It covers the contract the image's
+function follows, the manifest and the artifact
 `guestfn push` publishes, and how the runtime runs the image. A
 WebAssembly module follows [Write a module](../wasm/write-a-module.md) instead.
 
-## The process contract
+## The contract
 
-The runtime runs the image's configured entrypoint and command once per
-request, as the image's configured user, in its configured working
-directory, with its configured environment. The contract is four streams:
+An image is an ordinary Crossplane function: its command starts a
+`FunctionRunnerService` gRPC server on port 9443, and a function built with a
+Crossplane SDK doesn't need an adapter. The runtime starts the image's entrypoint
+and command once per request, as the image's configured user, in its
+configured working directory, with its configured environment, and calls
+`RunFunction` once the port accepts a connection.
 
-| stream | content |
+| part | content |
 |---|---|
-| standard input | the raw `RunFunctionRequest` bytes, then end of file |
-| standard output | the raw `RunFunctionResponse` bytes. The runtime returns them unchanged, and appends `meta` when the response leaves it out |
-| standard error | log lines. A line that parses as a JSON object with `level` and `msg` becomes a log line of that level with its other keys as fields. Any other line logs at info. The runtime attaches the module and its digest |
-| exit status | zero with a response on standard output is a run. Anything else is a fatal result with the status and the last line of standard error |
+| the request | the bytes the runtime received, unchanged |
+| the response | returned unchanged. The runtime appends `meta` when the response leaves it out |
+| a status other than OK | a fatal result with the status's message |
+| standard output and standard error | log lines. A line that parses as a JSON object with `level` and `msg` becomes a log line of that level with its other keys as fields. Any other line logs at info. The runtime attaches the module and its digest |
+| the process ending before it answers | a fatal result with the exit status and the last log line |
 
-A twenty-line `main` around the language's function SDK meets it. It
-decodes the request from standard input and writes the function's encoded
-response to standard output. The process gets the image's own arguments
-and nothing more. The runtime resolves the step's `config.from` before the
-run, as for a component: `input.config` in the request bytes is the
-configuration object from the composite resource. The runtime sends it no signal before the deadline; at
-the deadline it stops the VM.
+The server listens without TLS, since the call stays inside the VM. A
+function on a Crossplane SDK demands mTLS otherwise. Its manifest sets
+`oci.args` to `["--insecure"]`, a flag Crossplane's design for functions
+guarantees. The runtime resolves the step's `config.from` before the run, as
+for a component: `input.config` in the request is the configuration object
+from the composite resource. The call has the run's deadline. The
+runtime sends the process no signal before it, and at the deadline it stops
+the VM.
 
 [`examples/function-oci-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go)
-is that `main` around function-sdk-go, with the hello function behind it
-and a manifest like the one below. Its `Dockerfile` puts a static binary
+is function-sdk-go's server around the hello function, with a manifest
+like the one below. Its `Dockerfile` puts a static binary
 into an empty image under a numeric user. Its `Makefile` has a `push`
 target that runs the two commands of [Build and publish](#build-and-publish)
 against a local registry.
 
 The process sees `/tmp` writable and empty, and the rest of its root
 filesystem writable through an overlay the VM discards on exit. It sees
-its own kernel, no network interface, the host's clock and randomness, and
+its own kernel, a loopback interface and no other, the host's clock and randomness, and
 the environment variables its manifest's `requires.env` bindings bound.
 The step credentials its manifest's `requires.credentials` names travel in
 the request bytes, as for a component.
@@ -48,6 +53,8 @@ the request bytes, as for a component.
 contract: oci@0.1
 name: tagger
 version: 0.3.0
+oci:
+  args: ["--insecure"]
 requires:
   credentials: [cmdb]
 config:
@@ -55,11 +62,13 @@ config:
     type: object
 ```
 
-`contract: oci@0.1` names the process contract and its version, and
+`contract: oci@0.1` names the contract and its version, and
 [Compatibility](../contract/compatibility.md#function-oci-at-0x) says what
 the version means.
-`image` pins the image by digest; `guestfn push --image` writes it, so the
-file may leave it out. The other fields keep their meaning from
+`oci.args` are the arguments for the function's binary: they replace the
+image's command and keep its entrypoint, as a Kubernetes container's `args`
+do. `oci.image` pins the image by digest; `guestfn push --image` writes it,
+so the file may leave it out. The other fields keep their meaning from
 [Module manifests](../guests/module-manifests.md). The runtime refuses
 `requires.egress` for now: the VM has no network, and the proxy is a later
 phase of the design.
@@ -119,10 +128,12 @@ A refusal states the module. The common ones:
   `CMD` in the `Dockerfile`.
 - `image is built for linux/arm64, and this runtime runs on linux/amd64`:
   build for the node's platform, or push a multi-platform index.
-- `process exited with status 1: <line>`: the process failed; the line is
-  the last one it wrote to standard error.
-- `process exited with status 0 and wrote no response to its standard
-  output`: the process must write the response bytes before it exits.
+- `process exited with status 1 before answering the call: <line>`: the
+  process ended before it answered. The line is the last one it logged. An
+  SDK server without `--insecure` ends this way: check the manifest's
+  `oci.args`.
+- `run returned an error: <message> (gRPC status <code>)`: the function
+  answered the call with an error.
 - `run failed: module exceeded its execution deadline (30s)`: the step's
   `limits.timeout`, or the runtime's `--module-timeout`, bounds the run,
   boot included.

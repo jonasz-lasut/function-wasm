@@ -25,7 +25,7 @@ pub const TYPE_OCI: &str = "oci";
 /// The contracts this workspace's engines implement, by kind: the
 /// component world of docs/abi-v2.md as `wasm@1.0` (the one WebAssembly
 /// contract since function-wasm 1.0.0 removed the core-module ABI), the
-/// process contract as `oci@0.1`. From a contract's 1.0 a minor adds what
+/// gRPC contract of an image as `oci@0.1`. From a contract's 1.0 a minor adds what
 /// a module may use and a major changes what the engine does with a
 /// module; at 0.x a minor may change anything.
 pub const WASM_CONTRACTS: [Version; 1] = [Version { major: 1, minor: 0 }];
@@ -44,9 +44,28 @@ impl std::fmt::Display for Version {
     }
 }
 
+/// What only an `oci@0.1` manifest says.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OciSettings {
+    /// The image the module was built from, pinned by digest
+    /// (`ghcr.io/acme/tagger@sha256:…`): the one `guestfn push --image`
+    /// appended the manifest layer to, written into the published manifest
+    /// as provenance.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub image: String,
+    /// The arguments for the function's binary. They replace the image's
+    /// command and keep its entrypoint, as a Kubernetes container's `args`
+    /// do. A function on a Crossplane SDK usually needs `--insecure`:
+    /// its server demands mTLS otherwise, and the host's call stays inside
+    /// the VM.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+}
+
 /// The contract a module implements, `<engine>@<major>.<minor>`: the
 /// engine kind that serves it and the version of that engine's contract.
-/// `wasm@1.0` is the component world, `oci@0.1` the process contract.
+/// `wasm@1.0` is the component world, `oci@0.1` the gRPC contract of an image.
 /// Required. Named `abi` (an integer) through 0.6, replaced with no alias
 /// (docs/one-pager-oci-runtime.md, decision 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +75,7 @@ pub enum Contract {
 }
 
 /// What a wrong contract says: the shape, and the two this workspace has.
-const CONTRACT_SHAPE: &str = "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the process contract)";
+const CONTRACT_SHAPE: &str = "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the gRPC contract)";
 
 impl Contract {
     /// Parses `wasm@1.0`; a version this workspace's engines do not
@@ -155,12 +174,11 @@ pub struct Manifest {
     pub name: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub version: String,
-    /// The image an `oci@0.1` module was built from, pinned by digest
-    /// (`ghcr.io/acme/tagger@sha256:…`): the one `guestfn push --image`
-    /// appended the manifest layer to, written into the published manifest
-    /// as provenance. A `wasm@1.0` manifest must not carry it.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub image: String,
+    /// What only an OCI module says: keys specific to a contract are
+    /// nested under its engine's name. A `wasm@1.0` manifest must not
+    /// carry this section.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oci: Option<OciSettings>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub source: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -327,6 +345,16 @@ pub fn runtime_version() -> &'static str {
 }
 
 impl Manifest {
+    /// The image an OCI module was built from, empty where none is named.
+    pub fn image(&self) -> &str {
+        self.oci.as_ref().map_or("", |o| o.image.as_str())
+    }
+
+    /// The arguments for an OCI module's binary, empty where none are.
+    pub fn args(&self) -> &[String] {
+        self.oci.as_ref().map_or(&[], |o| o.args.as_slice())
+    }
+
     /// Decodes a manifest layer's JSON payload, at most MAX_SIZE. Unknown
     /// top-level fields are ignored, so a module built by a newer guestfn
     /// still loads; an unknown field anywhere under requires is refused, so
@@ -345,7 +373,7 @@ impl Manifest {
                 "contract",
                 "name",
                 "version",
-                "image",
+                "oci",
                 "source",
                 "description",
                 "requires",
@@ -356,6 +384,13 @@ impl Manifest {
             for key in map.keys() {
                 if !KNOWN.contains(&key.as_str()) {
                     return Err(format!("{}: unknown field {key:?}", path.display()));
+                }
+            }
+            if let Some(oci) = map.get("oci").and_then(|v| v.as_object()) {
+                for key in oci.keys() {
+                    if !["image", "args"].contains(&key.as_str()) {
+                        return Err(format!("{}: unknown field \"oci.{key}\"", path.display()));
+                    }
                 }
             }
             // The author's file is read strictly here, where a typo can be
@@ -439,19 +474,19 @@ impl Manifest {
         };
         match contract {
             Contract::Wasm(_) => {
-                if !self.image.is_empty() {
+                if self.oci.is_some() {
                     return Err(
-                        "image names an OCI image, which only an oci contract's manifest carries"
+                        "oci holds an OCI module's settings, which only an oci contract's manifest carries"
                             .to_string(),
                     );
                 }
             }
             Contract::Oci(_) => {
-                if !self.image.is_empty()
-                    && let Err(e) = crate::location::parse_oci_reference(&self.image)
+                if !self.image().is_empty()
+                    && let Err(e) = crate::location::parse_oci_reference(self.image())
                 {
                     return Err(format!(
-                        "image must be an OCI reference pinned by digest (registry/repository@sha256:…): {e}"
+                        "oci.image must be an OCI reference pinned by digest (registry/repository@sha256:…): {e}"
                     ));
                 }
             }
@@ -550,8 +585,11 @@ impl Manifest {
         }
         if let Some(c @ Contract::Oci(_)) = self.contract {
             parts.push(format!("contract {c}"));
-            if !self.image.is_empty() {
-                parts.push(format!("image {}", self.image));
+            if !self.image().is_empty() {
+                parts.push(format!("image {}", self.image()));
+            }
+            if !self.args().is_empty() {
+                parts.push(format!("args {}", self.args().join(" ")));
             }
         }
         if let Some(r) = &self.requires {
@@ -921,7 +959,7 @@ mod tests {
             r#"{"contract":"wasm@1.0","name":"greeter"}"#
         );
         let oci = manifest(
-            r#"{"contract":"oci@0.1","name":"tagger","version":"0.3.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#,
+            r#"{"contract":"oci@0.1","name":"tagger","version":"0.3.0","oci":{"image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}}"#,
         );
         assert_eq!(oci.kind(), TYPE_OCI);
         assert!(oci.validate().is_ok());
@@ -967,14 +1005,14 @@ mod tests {
         // The image is the OCI module's, pinned, and no WebAssembly
         // module's.
         assert!(
-            err(r#"{"contract":"oci@0.1","image":"ghcr.io/acme/tagger:v1"}"#)
-                .starts_with("image must be an OCI reference pinned by digest")
+            err(r#"{"contract":"oci@0.1","oci":{"image":"ghcr.io/acme/tagger:v1"}}"#)
+                .starts_with("oci.image must be an OCI reference pinned by digest")
         );
         assert_eq!(
             err(
-                r#"{"contract":"wasm@1.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#
+                r#"{"contract":"wasm@1.0","oci":{"image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}}"#
             ),
-            "image names an OCI image, which only an oci contract's manifest carries"
+            "oci holds an OCI module's settings, which only an oci contract's manifest carries"
         );
     }
 
@@ -1001,7 +1039,7 @@ mod tests {
             // the module's own refusal.
             (
                 r#"{"abi":1}"#,
-                "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the process contract); the manifest declares none",
+                "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the gRPC contract); the manifest declares none",
             ),
             (
                 r#"{"contract":"wasm@1.0","requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,

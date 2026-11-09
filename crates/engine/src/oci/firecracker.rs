@@ -3,10 +3,11 @@
 //! process per run, configured from a file and started with no API
 //! socket, booting the kernel with the init's initramfs, the root
 //! filesystem as a read-only block device, a vsock device and no network
-//! device. The init connects back to the host port, which Firecracker
-//! maps onto a Unix socket next to its own; the run is driven through the
-//! protocol over that connection, and the VM is killed when the run ends
-//! or the deadline passes, whichever comes first.
+//! device. The init connects back to the host's ports, which Firecracker
+//! maps onto Unix sockets next to its own: the run is driven through the
+//! protocol over the first connection and the function is called over the
+//! second, and the VM is killed when the run ends or the deadline passes,
+//! whichever comes first.
 
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -16,9 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::Error;
-use crate::protocol::{
-    Exit, Hello, Kind, read_frame, read_json, write_chunked, write_frame, write_json,
-};
+use crate::protocol::{Exit, Hello, Kind, read_frame, read_json, write_frame, write_json};
 
 use crate::metrics;
 use crate::oci::sandbox::{Ended, Outcome, Sandbox, Snapshot, VmSpec};
@@ -30,6 +29,11 @@ const GUEST_CID: u32 = 3;
 const BOOT_ARGS: &str = "console=ttyS0 reboot=k panic=1 pci=off nomodules random.trust_cpu=on i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd quiet loglevel=4";
 /// Most of the serial console kept for the debug log.
 const CONSOLE_CAP: usize = 64 << 10;
+/// The largest response a function may answer with.
+const MAX_RESPONSE: usize = 64 << 20;
+/// How long the init gets, after the call, to stop the process and flush
+/// what it logged, and how long a broken call waits to learn why.
+const FINISH_GRACE: Duration = Duration::from_secs(2);
 
 pub struct Firecracker {
     binary: PathBuf,
@@ -45,6 +49,14 @@ pub struct Firecracker {
 struct Snapshots {
     next: std::sync::atomic::AtomicU64,
     fingerprint: std::sync::OnceLock<String>,
+}
+
+/// The two host ports the guest connects to.
+struct GuestPorts {
+    /// The init's connection: the protocol.
+    control: UnixListener,
+    /// The bridge to the function's server: the gRPC call.
+    grpc: UnixListener,
 }
 
 /// A lock attempt's guard, or None while the lock is taken.
@@ -107,26 +119,33 @@ impl Firecracker {
         })
     }
 
-    /// The VM's directory with the guest's port bound in it. Unix socket
+    /// The VM's directory with the guest's ports bound in it. Unix socket
     /// paths are short-limited (108 bytes): the scratch directory is the
     /// engine's, under the temp dir.
-    fn workdir(spec: &VmSpec<'_>) -> Result<(tempfile::TempDir, PathBuf, UnixListener), Error> {
+    fn workdir(spec: &VmSpec<'_>) -> Result<(tempfile::TempDir, PathBuf, GuestPorts), Error> {
         let dir = tempfile::Builder::new()
             .prefix("vm-")
             .tempdir_in(spec.scratch)
             .map_err(|e| Error(format!("cannot create the VM's directory: {e}")))?;
         let uds = dir.path().join("v.sock");
-        let host_port = dir.path().join(format!("v.sock_{}", crate::protocol::PORT));
-        let listener = UnixListener::bind(&host_port).map_err(|e| {
-            Error(format!(
-                "cannot listen for the guest on {}: {e}",
-                host_port.display()
-            ))
-        })?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| Error(format!("cannot configure the guest listener: {e}")))?;
-        Ok((dir, uds, listener))
+        let bind = |port: u32| -> Result<UnixListener, Error> {
+            let host_port = dir.path().join(format!("v.sock_{port}"));
+            let listener = UnixListener::bind(&host_port).map_err(|e| {
+                Error(format!(
+                    "cannot listen for the guest on {}: {e}",
+                    host_port.display()
+                ))
+            })?;
+            listener
+                .set_nonblocking(true)
+                .map_err(|e| Error(format!("cannot configure the guest listener: {e}")))?;
+            Ok(listener)
+        };
+        let ports = GuestPorts {
+            control: bind(crate::protocol::PORT)?,
+            grpc: bind(crate::protocol::GRPC_PORT)?,
+        };
+        Ok((dir, uds, ports))
     }
 
     /// Drives the run over the guest's connection, then stops the VM
@@ -134,7 +153,7 @@ impl Firecracker {
     fn finish(
         &self,
         mut child: Child,
-        listener: &UnixListener,
+        ports: &GuestPorts,
         spec: &VmSpec<'_>,
         started: Instant,
         how: &str,
@@ -171,7 +190,7 @@ impl Firecracker {
             Arc::clone(&console),
         );
         let mut connected = None;
-        let result = drive(listener, &mut child, spec, &mut connected);
+        let result = drive(ports, &mut child, spec, &mut connected);
         let driven = Instant::now();
         let usage = process_usage(child.id());
         let _ = child.kill();
@@ -212,19 +231,14 @@ impl Firecracker {
                 usage.1,
             );
         }
-        let (stdout, stderr, end) = result;
-        Outcome {
-            stdout,
-            stderr,
-            end,
-            console,
-        }
+        let (log, end) = result;
+        Outcome { log, end, console }
     }
 
     /// A boot: the VM from its configuration file, with no API socket.
     fn boot(&self, spec: &VmSpec<'_>) -> Result<Outcome, Error> {
         let started = Instant::now();
-        let (dir, uds, listener) = Self::workdir(spec)?;
+        let (dir, uds, ports) = Self::workdir(spec)?;
         let config_path = dir.path().join("vm.json");
         std::fs::write(
             &config_path,
@@ -242,7 +256,7 @@ impl Firecracker {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| Error(format!("cannot start {}: {e}", self.binary.display())))?;
-        Ok(self.finish(child, &listener, spec, started, "boot"))
+        Ok(self.finish(child, &ports, spec, started, "boot"))
     }
 
     /// The names a stored image's snapshot goes by in the store: the root
@@ -367,7 +381,8 @@ impl Firecracker {
                 (keep.join("state"), keep.join("mem"))
             }
         };
-        let (dir, uds, listener) = Self::workdir(spec).map_err(|e| e.0)?;
+        let (dir, uds, ports) = Self::workdir(spec).map_err(|e| e.0)?;
+        let listener = ports.control;
         let config_path = dir.path().join("vm.json");
         std::fs::write(
             &config_path,
@@ -492,7 +507,7 @@ impl Firecracker {
     /// host's clock and fresh randomness for the init to set.
     fn restore(&self, spec: &VmSpec<'_>, snapshot: &Snapshot) -> Result<Outcome, String> {
         let started = Instant::now();
-        let (dir, uds, listener) = Self::workdir(spec).map_err(|e| e.0)?;
+        let (dir, uds, ports) = Self::workdir(spec).map_err(|e| e.0)?;
         let api = dir.path().join("api.sock");
         let mut child = Command::new(&self.binary)
             .arg("--api-sock")
@@ -537,7 +552,7 @@ impl Firecracker {
             description: &description,
             ..*spec
         };
-        Ok(self.finish(child, &listener, &spec, started, "restore"))
+        Ok(self.finish(child, &ports, &spec, started, "restore"))
     }
 }
 
@@ -721,36 +736,29 @@ pub const GUEST_NEVER_CONNECTED: &str = "the guest did not connect before the de
 /// running out is the sandbox's failure, not the module's: a guest that
 /// never connects, or connects and sends no hello, never ran the process.
 fn drive(
-    listener: &UnixListener,
+    ports: &GuestPorts,
     child: &mut Child,
     spec: &VmSpec<'_>,
     connected: &mut Option<Instant>,
-) -> (Vec<u8>, Vec<u8>, Ended) {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
+) -> (Vec<u8>, Ended) {
+    let mut log = Vec::new();
     let stream = loop {
-        match listener.accept() {
+        match ports.control.accept() {
             Ok((s, _)) => break s,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
             Err(e) => {
                 return (
-                    stdout,
-                    stderr,
+                    log,
                     Ended::Lost(format!("cannot accept the guest's connection: {e}")),
                 );
             }
         }
         if Instant::now() >= spec.deadline {
-            return (
-                stdout,
-                stderr,
-                Ended::Lost(GUEST_NEVER_CONNECTED.to_string()),
-            );
+            return (log, Ended::Lost(GUEST_NEVER_CONNECTED.to_string()));
         }
         if let Ok(Some(status)) = child.try_wait() {
             return (
-                stdout,
-                stderr,
+                log,
                 Ended::Lost(format!(
                     "the VMM exited before the guest connected ({status})"
                 )),
@@ -759,14 +767,14 @@ fn drive(
         std::thread::sleep(Duration::from_millis(1));
     };
     *connected = Some(Instant::now());
-    let end = match talk(stream, spec, &mut stdout, &mut stderr) {
-        Ok(exit) => Ended::Exit(exit),
+    let end = match talk(stream, &ports.grpc, spec, &mut log) {
+        Ok(end) => end,
         Err(Talk::Deadline) => Ended::Deadline,
         Err(Talk::Lost(e)) => Ended::Lost(e),
     };
     // The stream is dropped here: the init reads the close as its cue to
     // power off, after every frame it sent has been drained.
-    (stdout, stderr, end)
+    (log, end)
 }
 
 enum Talk {
@@ -789,22 +797,143 @@ fn io_err(e: std::io::Error, what: &str) -> Talk {
     }
 }
 
+fn arm(stream: &UnixStream, deadline: Instant) -> Result<(), Talk> {
+    let left = remaining(deadline)?;
+    stream
+        .set_read_timeout(Some(left))
+        .and_then(|()| stream.set_write_timeout(Some(left)))
+        .map_err(|e| Talk::Lost(format!("cannot configure the guest's connection: {e}")))
+}
+
+/// The init's frames until the process's exit: what it logs is kept, and
+/// how the connection ended goes to the call.
+fn read_frames(
+    mut stream: UnixStream,
+    deadline: Instant,
+    log: &mut Vec<u8>,
+    ended: tokio::sync::oneshot::Sender<Result<Exit, Talk>>,
+) {
+    let result = loop {
+        if let Err(e) = arm(&stream, deadline) {
+            break Err(e);
+        }
+        match read_frame(&mut stream) {
+            Ok((Kind::Stdout | Kind::Stderr, payload)) => log.extend_from_slice(&payload),
+            Ok((Kind::Exit, payload)) => {
+                break serde_json::from_slice(&payload)
+                    .map_err(|e| Talk::Lost(format!("cannot read the exit: {e}")));
+            }
+            Ok((other, _)) => {
+                break Err(Talk::Lost(format!(
+                    "unexpected {other:?} frame from the init"
+                )));
+            }
+            Err(e) => break Err(io_err(e, "the guest's connection ended")),
+        }
+    };
+    let _ = ended.send(result);
+}
+
+/// How the call over the guest's bridge ended.
+enum Call {
+    Answered(Vec<u8>),
+    Refused {
+        code: String,
+        message: String,
+    },
+    /// The connection went away under the call: the process's exit says why.
+    Broken(String),
+    /// The init reported first.
+    Ended(Result<Exit, Talk>),
+    Deadline,
+}
+
+fn ended_of(result: Result<Result<Exit, Talk>, tokio::sync::oneshot::error::RecvError>) -> Call {
+    Call::Ended(result.unwrap_or_else(|_| Err(Talk::Lost("the guest's connection ended".into()))))
+}
+
+/// Waits for the init's bridge to the function's server, then calls
+/// `RunFunction` over it with the request's bytes, as they came. The
+/// function is untrusted: the run's deadline and MAX_RESPONSE bound what it
+/// can make the host do.
+async fn call(
+    grpc: UnixListener,
+    spec: &VmSpec<'_>,
+    ended: &mut tokio::sync::oneshot::Receiver<Result<Exit, Talk>>,
+) -> Call {
+    let deadline = tokio::time::Instant::from_std(spec.deadline);
+    let listener = match tokio::net::UnixListener::from_std(grpc) {
+        Ok(l) => l,
+        Err(e) => return Call::Broken(format!("cannot listen for the function: {e}")),
+    };
+    let bridge = tokio::select! {
+        accepted = listener.accept() => match accepted {
+            Ok((stream, _)) => stream,
+            Err(e) => return Call::Broken(format!("cannot accept the function's connection: {e}")),
+        },
+        exit = &mut *ended => return ended_of(exit),
+        () = tokio::time::sleep_until(deadline) => return Call::Deadline,
+    };
+    let once = Arc::new(Mutex::new(Some(bridge)));
+    let connector = tower::service_fn(move |_: http::Uri| {
+        let bridge = once.lock().expect("poisoned").take();
+        async move {
+            bridge
+                .map(hyper_util::rt::TokioIo::new)
+                .ok_or_else(|| std::io::Error::other("the guest's one connection is gone"))
+        }
+    });
+    let request = spec.request.to_vec();
+    let left = spec.deadline.saturating_duration_since(Instant::now());
+    let rpc = async move {
+        let channel = tonic::transport::Endpoint::from_static("http://guest")
+            .connect_with_connector(connector)
+            .await
+            .map_err(|e| tonic::Status::from_error(Box::new(e)))?;
+        let mut client = tonic::client::Grpc::new(channel)
+            .max_decoding_message_size(MAX_RESPONSE)
+            .max_encoding_message_size(usize::MAX);
+        client
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::from_error(Box::new(e)))?;
+        let mut request = tonic::Request::new(request);
+        request.set_timeout(left);
+        client
+            .unary(
+                request,
+                http::uri::PathAndQuery::from_static(crate::grpc::RUN_FUNCTION),
+                crate::grpc::RawCodec,
+            )
+            .await
+    };
+    tokio::select! {
+        answer = rpc => match answer {
+            Ok(response) => Call::Answered(response.into_inner().to_vec()),
+            Err(status) if status.code() == tonic::Code::DeadlineExceeded => Call::Deadline,
+            // A status the transport made up, not one the function sent.
+            Err(status) if std::error::Error::source(&status).is_some() => {
+                Call::Broken(format!("the connection to the function ended: {}", status.message()))
+            }
+            Err(status) => Call::Refused {
+                code: format!("{:?}", status.code()),
+                message: status.message().to_string(),
+            },
+        },
+        exit = &mut *ended => ended_of(exit),
+        () = tokio::time::sleep_until(deadline) => Call::Deadline,
+    }
+}
+
 fn talk(
     mut stream: UnixStream,
+    grpc: &UnixListener,
     spec: &VmSpec<'_>,
-    stdout: &mut Vec<u8>,
-    stderr: &mut Vec<u8>,
-) -> Result<Exit, Talk> {
+    log: &mut Vec<u8>,
+) -> Result<Ended, Talk> {
     stream
         .set_nonblocking(false)
         .map_err(|e| Talk::Lost(format!("cannot configure the guest's connection: {e}")))?;
-    let arm = |stream: &UnixStream, deadline: Instant| -> Result<(), Talk> {
-        let left = remaining(deadline)?;
-        stream
-            .set_read_timeout(Some(left))
-            .and_then(|()| stream.set_write_timeout(Some(left)))
-            .map_err(|e| Talk::Lost(format!("cannot configure the guest's connection: {e}")))
-    };
     arm(&stream, spec.deadline)?;
     let hello: Hello = read_json(&mut stream, Kind::Hello).map_err(|e| match io_err(e, "cannot read the init's hello") {
         Talk::Deadline => Talk::Lost(
@@ -822,30 +951,53 @@ fn talk(
     }
     write_json(&mut stream, Kind::Run, spec.description)
         .map_err(|e| io_err(e, "cannot send the run"))?;
-    write_chunked(&mut stream, Kind::Stdin, spec.request)
-        .map_err(|e| io_err(e, "cannot send the request"))?;
-    write_frame(&mut stream, Kind::StdinEnd, &[])
-        .map_err(|e| io_err(e, "cannot send the request"))?;
-    loop {
-        arm(&stream, spec.deadline)?;
-        let (kind, payload) =
-            read_frame(&mut stream).map_err(|e| io_err(e, "the guest's connection ended"))?;
-        match kind {
-            Kind::Stdout => stdout.extend_from_slice(&payload),
-            Kind::Stderr => stderr.extend_from_slice(&payload),
-            Kind::Exit => {
-                let exit: Exit = serde_json::from_slice(&payload)
-                    .map_err(|e| Talk::Lost(format!("cannot read the exit: {e}")))?;
-                let _ = stream.flush();
-                return Ok(exit);
+    let mut control = stream
+        .try_clone()
+        .map_err(|e| Talk::Lost(format!("cannot share the guest's connection: {e}")))?;
+    let grpc = grpc
+        .try_clone()
+        .map_err(|e| Talk::Lost(format!("cannot share the function's port: {e}")))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Talk::Lost(format!("cannot start the call's runtime: {e}")))?;
+    let (ended_tx, mut ended) = tokio::sync::oneshot::channel();
+    let deadline = spec.deadline;
+    std::thread::scope(|scope| {
+        let reader = scope.spawn(move || read_frames(stream, deadline, log, ended_tx));
+        let outcome = runtime.block_on(call(grpc, spec, &mut ended));
+        // Waits for the init's exit, for what the process logged or for
+        // why the call broke.
+        let mut exit_within_grace = || {
+            runtime
+                .block_on(async { tokio::time::timeout(FINISH_GRACE, &mut ended).await })
+                .ok()
+                .and_then(Result::ok)
+        };
+        let end = match outcome {
+            Call::Answered(response) => {
+                let _ = write_frame(&mut control, Kind::Finish, &[]);
+                let _ = exit_within_grace();
+                Ok(Ended::Answered(response))
             }
-            other => {
-                return Err(Talk::Lost(format!(
-                    "unexpected {other:?} frame from the init"
-                )));
+            Call::Refused { code, message } => {
+                let _ = write_frame(&mut control, Kind::Finish, &[]);
+                let _ = exit_within_grace();
+                Ok(Ended::Refused { code, message })
             }
-        }
-    }
+            Call::Broken(why) => match exit_within_grace() {
+                Some(Ok(exit)) => Ok(Ended::Exit(exit)),
+                _ => Ok(Ended::Lost(why)),
+            },
+            Call::Ended(Ok(exit)) => Ok(Ended::Exit(exit)),
+            Call::Ended(Err(talk)) => Err(talk),
+            Call::Deadline => Ok(Ended::Deadline),
+        };
+        // Ends the reader's wait, whatever the run came to.
+        let _ = control.shutdown(std::net::Shutdown::Both);
+        let _ = reader.join();
+        end
+    })
 }
 
 #[cfg(test)]
@@ -973,8 +1125,15 @@ mod tests {
     #[test]
     fn a_guest_that_never_connects_is_lost_not_late() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let listener = UnixListener::bind(dir.path().join("vsock")).expect("listener");
-        listener.set_nonblocking(true).expect("nonblocking");
+        let bind = |name: &str| {
+            let listener = UnixListener::bind(dir.path().join(name)).expect("listener");
+            listener.set_nonblocking(true).expect("nonblocking");
+            listener
+        };
+        let ports = GuestPorts {
+            control: bind("vsock"),
+            grpc: bind("grpc"),
+        };
         // Stands in for the VMM: alive for as long as the wait lasts.
         let mut child = Command::new("sleep")
             .arg("30")
@@ -996,10 +1155,10 @@ mod tests {
             snapshots: &Default::default(),
             store: None,
         };
-        let (stdout, stderr, end) = drive(&listener, &mut child, &spec, &mut None);
+        let (log, end) = drive(&ports, &mut child, &spec, &mut None);
         let _ = child.kill();
         let _ = child.wait();
-        assert!(stdout.is_empty() && stderr.is_empty());
+        assert!(log.is_empty());
         match end {
             Ended::Lost(why) => assert_eq!(why, GUEST_NEVER_CONNECTED),
             other => panic!("expected a lost run, got {other:?}"),

@@ -108,8 +108,7 @@ inspect <ref>` prints the digest-pinned reference for a Composition.
   capabilities its manifest requests.
 - [`examples/function-oci-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go) (Go, an OCI
   module): the hello function as an image that `function-oci`, the OCI
-  runtime, boots in a microVM once per request. `main.go` is the process
-  contract, the request on standard input and the response on standard
-  output, around an ordinary function-sdk-go function, and `guestfn push
+  runtime, boots in a microVM once per request. `main.go` starts
+  function-sdk-go's server around an ordinary function, and `guestfn push
   --image` appends the manifest to the image
   ([OCI modules](oci/modules.md)).

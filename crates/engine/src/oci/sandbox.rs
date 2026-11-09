@@ -81,7 +81,11 @@ pub struct VmSpec<'a> {
 /// How a run ended.
 #[derive(Debug)]
 pub enum Ended {
-    /// The init reported the process's exit.
+    /// The function answered the call: the response's bytes, as they came.
+    Answered(Vec<u8>),
+    /// The function answered the call with a gRPC status other than OK.
+    Refused { code: String, message: String },
+    /// The init reported the process's exit, before an answer.
     Exit(Exit),
     /// The deadline passed first; the VM was stopped.
     Deadline,
@@ -92,8 +96,8 @@ pub enum Ended {
 
 #[derive(Debug)]
 pub struct Outcome {
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
+    /// What the process wrote to its standard output and standard error.
+    pub log: Vec<u8>,
     pub end: Ended,
     /// The serial console's output: the kernel's and the init's own
     /// lines, for the debug log.

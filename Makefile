@@ -228,7 +228,7 @@ oci.tools: ## Fetch the pinned Firecracker release and guest kernel under .cache
 
 oci.init: ## Build the guest init and the test fixture (the engine crate's binaries) static for musl
 	@rustup target add $(MUSL_TARGET) >/dev/null
-	@cargo build --release -p guestfn-engine --no-default-features --bins --target $(MUSL_TARGET) || $(FAIL)
+	@cargo build --release -p guestfn-engine --no-default-features --features fixture --bins --target $(MUSL_TARGET) || $(FAIL)
 
 oci.test: oci.tools oci.init ## The OCI engine's suite over a real Firecracker VM (needs /dev/kvm)
 	@GUESTFN_FIRECRACKER=$(CURDIR)/$(OCI_TOOLS)/firecracker GUESTFN_KERNEL=$(CURDIR)/$(OCI_TOOLS)/vmlinux \
@@ -254,7 +254,7 @@ else
 	@docker run --rm -v $(CURDIR):/src -w /src/$(E2E_GUEST_DIR) \
 		-v guestfn-cargo-registry:/usr/local/cargo/registry -v guestfn-rustup:/usr/local/rustup \
 		-e CARGO_TARGET_DIR=/src/$(E2E_GUEST_DIR)/target/linux -e RUSTUP_AUTO_INSTALL=1 -e DEBIAN_FRONTEND=noninteractive rust:1 \
-		sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev >/dev/null && rustup target add $(MUSL_TARGET) && cargo build --release --features process --bin e2e-guest-oci --target $(MUSL_TARGET)' || $(FAIL)
+		sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev musl-tools cmake >/dev/null && rustup target add $(MUSL_TARGET) && cargo build --release --features process --bin e2e-guest-oci --target $(MUSL_TARGET)' || $(FAIL)
 endif
 	@$(OK) building $(E2E_OCI_GUEST)
 
