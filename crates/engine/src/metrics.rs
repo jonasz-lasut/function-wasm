@@ -26,6 +26,9 @@ pub const CACHE_COMPILED: &str = "compiled";
 pub const CACHE_COMPILED_DISK: &str = "compiled-disk";
 /// The on-disk store of fetched modules.
 pub const CACHE_BLOB: &str = "blob";
+/// The OCI engine's VM snapshots: a hit is a run restored from one, a miss
+/// a snapshot made, stale one that was gone or refused when asked for.
+pub const CACHE_SNAPSHOT: &str = "snapshot";
 pub const EVENT_HIT: &str = "hit";
 pub const EVENT_MISS: &str = "miss";
 /// A compiled-disk lookup that found an artifact wasmtime refused (another
@@ -160,6 +163,14 @@ pub static COMPILE_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
 });
 
 /// How long fetching module bytes took, by source kind.
+pub static SNAPSHOT_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
+    plain_histogram(
+        "guestfn_module_snapshot_duration_seconds",
+        "Time spent making a VM snapshot of an image: the boot, the pause and the files (snapshot misses only).",
+        &[0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+    )
+});
+
 pub static FETCH_DURATION: LazyLock<LabeledHistogram> = LazyLock::new(|| {
     LabeledHistogram::new(
         "guestfn_module_fetch_duration_seconds",

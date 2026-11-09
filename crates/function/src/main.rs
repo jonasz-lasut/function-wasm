@@ -358,6 +358,12 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         std::process::exit(1);
     }
     let compiled = Arc::new(open(compiled_parent.join(&version), false).with_key(cache_key));
+    // What a previous process left half written is no entry, and nothing
+    // of this process writes yet. The engine keeps what it derives from a
+    // stored module here too (the OCI engine's VM snapshots), under the
+    // same key, bound and gauge.
+    compiled.remove_unfinished();
+    engine::keep_in(&engine, Arc::clone(&compiled));
     let compiled_store = Arc::clone(&compiled);
     let _modules = Arc::new(open(cache_dir.join(store::MODULES_DIR), true));
     // The resolver's manifest cache writes this store, keyed by the

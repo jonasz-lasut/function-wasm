@@ -11,7 +11,7 @@ use crate::concurrency::{MemPool, format_bytes};
 use crate::{Error, RunOptions, duration, metrics};
 
 use crate::oci::sandbox::{Ended, VmSpec};
-use crate::oci::{Image, Oci};
+use crate::oci::{Image, Oci, Rootfs};
 
 /// What the VM gets beyond the process's limit: the guest kernel, the
 /// init, the root filesystem's overlay and the squashfs page cache. The
@@ -111,6 +111,16 @@ fn boot_and_run(
     }
     let mut description = image.config.describe(opts);
     description.memory_max = process_mib << 20;
+    // A stored root filesystem is read from the store's file by every run:
+    // each one is a use, or the sweep would take a busy image's file for
+    // the least recently used.
+    let store = match &image.rootfs {
+        Rootfs::Stored(path) => engine.store.get().map(|store| {
+            store.used(path);
+            store.as_ref()
+        }),
+        Rootfs::Scratch(_) => None,
+    };
     let outcome = engine.sandbox.run(VmSpec {
         kernel: &engine.options.kernel,
         initrd: engine.initrd.as_ref(),
@@ -121,6 +131,8 @@ fn boot_and_run(
         request,
         deadline,
         scratch: engine.scratch.path(),
+        snapshots: &image.snapshots,
+        store,
     })?;
     log_stderr(&outcome.stderr, opts);
     if !outcome.console.is_empty() {
