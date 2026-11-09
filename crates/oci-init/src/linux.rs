@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use guestfn_engine::protocol::{
+use guestfn_oci_protocol::{
     Description, Exit, GRPC_PORT, Hello, Kind, PORT, SERVER_PORT, read_frame, read_json,
     write_frame, write_json,
 };
@@ -58,7 +58,7 @@ fn run() -> Result<(), String> {
         &mut sock,
         Kind::Hello,
         &Hello {
-            version: guestfn_engine::protocol::VERSION,
+            version: guestfn_oci_protocol::VERSION,
         },
     )
     .map_err(|e| format!("cannot greet the host: {e}"))?;
@@ -88,7 +88,7 @@ fn run() -> Result<(), String> {
                 &mut sock,
                 Kind::Hello,
                 &Hello {
-                    version: guestfn_engine::protocol::VERSION,
+                    version: guestfn_oci_protocol::VERSION,
                 },
             )
             .map_err(|e| format!("cannot greet the host: {e}"))?;
@@ -533,7 +533,7 @@ fn connect_vsock(port: u32, tries: u32, pause: Duration) -> Result<UnixStream, S
         // SAFETY: sockaddr_vm is plain data; zeroed is a valid value.
         let mut addr: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
         addr.svm_family = libc::AF_VSOCK as libc::sa_family_t;
-        addr.svm_cid = guestfn_engine::protocol::HOST_CID;
+        addr.svm_cid = guestfn_oci_protocol::HOST_CID;
         addr.svm_port = port;
         // SAFETY: a valid fd and address of the stated length.
         let rc = unsafe {

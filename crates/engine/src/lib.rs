@@ -8,17 +8,13 @@
 //! Wasmtime engine (`Wasmtime`, the only code in the workspace that
 //! imports wasmtime) and `oci`, the OCI engine of
 //! docs/one-pager-oci-runtime.md (`oci::Oci`, a Firecracker microVM per
-//! request). The crate's two binaries are the OCI runtime's guest init and
-//! the fixture function its VM tests run, built static for musl, the
-//! init with no feature at all and the fixture under `fixture`; `protocol`
-//! is what the init and the host say to each other.
+//! request).
 
 pub mod concurrency;
 pub mod duration;
 #[cfg(feature = "raw-codec")]
 pub mod grpc;
 pub mod metrics;
-pub mod protocol;
 pub mod wire;
 
 pub use wire::HttpRequester;
@@ -44,6 +40,8 @@ pub(crate) use wasm::{ARGV0, CallState, EPOCH_TICK, HostTimer, PoolHold, RunLimi
 
 #[cfg(feature = "oci")]
 pub mod oci;
+#[cfg(feature = "oci")]
+pub(crate) use guestfn_oci_protocol as protocol;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

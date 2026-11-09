@@ -1,5 +1,5 @@
 //! The OCI runtime's guest init: the entry point of the `guestfn-init`
-//! binary. The init itself is `guestfn-init/linux.rs`, Linux alone: it
+//! binary. The init itself is `linux.rs`, Linux alone: it
 //! mounts, pivots, opens a vsock and powers the VM off through libc calls
 //! that exist nowhere else, and it runs as PID 1 of a microVM, never on a
 //! developer's host. This shim keeps the workspace building on every host
@@ -7,7 +7,6 @@
 //! the binary say what it is when run elsewhere.
 
 #[cfg(target_os = "linux")]
-#[path = "guestfn-init/linux.rs"]
 mod linux;
 
 #[cfg(target_os = "linux")]

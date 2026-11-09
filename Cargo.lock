@@ -1731,15 +1731,14 @@ version = "0.1.0"
 dependencies = [
  "backhand",
  "bytes",
- "clap",
  "flate2",
  "function-sdk-rust",
  "guestfn-engine",
+ "guestfn-oci-protocol",
  "hex",
  "http",
  "http-body-util",
  "hyper-util",
- "libc",
  "pbjson-types",
  "prometheus-client",
  "prost",
@@ -1761,6 +1760,34 @@ dependencies = [
  "wat",
  "wit-component 0.258.3",
  "wit-parser 0.258.3",
+]
+
+[[package]]
+name = "guestfn-guest-fixture"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "function-sdk-rust",
+ "libc",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
+name = "guestfn-init"
+version = "0.1.0"
+dependencies = [
+ "guestfn-oci-protocol",
+ "libc",
+ "serde_json",
+]
+
+[[package]]
+name = "guestfn-oci-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

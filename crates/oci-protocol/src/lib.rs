@@ -1,5 +1,5 @@
 //! The protocol between the OCI runtime's engine (the host) and the init
-//! it boots as the microVM's first process (`src/bin/guestfn-init.rs`), over one vsock
+//! it boots as the microVM's first process (`crates/oci-init`), over one vsock
 //! connection the init opens to the host (docs/one-pager-oci-runtime.md,
 //! "The sandbox"). Frames carry a kind byte, a big-endian length and the
 //! payload. The init says hello; the host answers with the run's
