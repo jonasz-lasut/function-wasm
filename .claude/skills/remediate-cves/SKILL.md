@@ -1,15 +1,33 @@
 ---
 name: remediate-cves
-description: Use when asked to remediate CVEs, security vulnerabilities, or GitHub code-scanning/Grype findings against a function-wasm release — e.g. "fix the CVEs from grype", "patch the vulnerabilities on the latest release", a security alert on a release tag, or a request to cut a security patch release.
+description: Use when asked to remediate CVEs, security vulnerabilities, or GitHub code-scanning/Grype findings against a function-wasm or function-oci release (a Firecracker or guest-kernel advisory included) — e.g. "fix the CVEs from grype", "patch the vulnerabilities on the latest release", a security alert on a release tag, or a request to cut a security patch release.
 ---
 
 # Remediating CVEs
 
 ## Overview
 
-`.github/workflows/grype-scan.yml` runs weekly (Mondays 05:00 UTC), scans the
-ghcr image of the **latest GitHub release** with Grype, and uploads the SARIF
-results to GitHub code scanning against `refs/tags/<that release's tag>`.
+`.github/workflows/grype-scan.yml` runs weekly (Mondays 05:00 UTC) and scans
+each function's latest release image with Grype, one matrix leg per function,
+uploading the SARIF results to GitHub code scanning against
+`refs/tags/<that tag>` under the leg's own category:
+
+- **function-wasm**: the ghcr image of the **latest GitHub release** (the
+  repository's releases are function-wasm's).
+- **function-oci**: the newest `vX.Y.Z` tag of `ghcr.io/jonasz-lasut/function-oci`,
+  since it has no release of its own yet and the monorepo tag scheme is
+  undecided (#281). With no such tag the leg ends green with a notice. It
+  files results only under a git tag of the image tag's name that contains
+  `Dockerfile.oci`, and fails when there is none: then the scan has to
+  follow whatever tag scheme was decided.
+
+Grype reads the package metadata of the Chainguard base both images share
+(Wolfi's glibc, libgcc, libstdc++, CA certificates). It sees no crate inside
+the `function` binary or function-oci's init (built without `cargo auditable`;
+`cargo deny` covers them through `Cargo.lock`), and nothing in the Firecracker
+binary or the guest kernel `vmlinux` in function-oci's image: a CVE in those
+two arrives as an advisory or a Renovate pull request, never as an alert.
+
 Remediating a CVE found this way means patching the released version's branch
 and shipping a new patch release end to end: branch → fix → tag → release →
 publish → sign. What ships is decided by the completeness gate in step 4.
@@ -22,6 +40,8 @@ publish → sign. What ships is decided by the completeness gate in step 4.
   (that's ordinary `chore(deps)` / Renovate work).
 - Bumping the `wasmtime` crate **is** in scope — see step 3;
   an wasm bump is a minor release from `main` (`/cut-release`), never a patch.
+- A Firecracker or guest-kernel advisory against function-oci's image **is**
+  in scope, though no scan reports one: see step 3.
 
 ## Procedure
 
@@ -42,6 +62,14 @@ release branches are kept (`cut-release` step 11), so an older line can be
 patched when the user asks for it: set `TAG` to that line's latest tag
 (`gh release list`) and derive `BRANCH` from it the same way.
 
+The commands above find function-wasm's release. A function-oci finding
+targets the image tag the scan's function-oci leg printed. Before
+function-oci's first release there is no release to patch: the fix lands on
+`main` like any change. After it, which branch and tag a function-oci patch
+uses, and whether it shares function-wasm's, depends on the monorepo tag
+scheme (#281), which is undecided: ask the user for `TAG` and `BRANCH`
+rather than deriving them.
+
 ### 2. Pull the CVE list from code scanning
 
 Pass `ref` as an actual **query parameter**, not a client-side filter. The
@@ -53,8 +81,12 @@ result even when open alerts exist for the tag:
 ```bash
 gh api "repos/{owner}/{repo}/code-scanning/alerts?ref=refs/tags/${TAG}&state=open" \
   --paginate \
-  --jq ".[] | {number, rule: .rule.id, severity: .rule.security_severity_level, desc: .rule.description}"
+  --jq ".[] | {number, category: .most_recent_instance.category, rule: .rule.id, severity: .rule.security_severity_level, desc: .rule.description}"
 ```
+
+On a tag both legs filed results under, the category tells the functions
+apart: `.github/workflows/grype-scan.yml:scan` is function-wasm's,
+`.github/workflows/grype-scan.yml:scan/function-oci` function-oci's.
 
 For full detail (affected package, fixed-in version) on one alert:
 `gh api repos/{owner}/{repo}/code-scanning/alerts/{alert_number}`. Triage
@@ -86,18 +118,44 @@ For everything else, Grype scans the built ghcr image, so the fix is one of:
   the single source of truth: `ci.yml` sets up Go from it and
   `publish-function.yml` reads it to pick the `golang:<version>` image the runtime
   is built with, so nothing else needs editing.
-- **Base image CVE** (`cgr.dev/chainguard/glibc-dynamic:latest@sha256:…` in
-  the Dockerfile) → bump the pinned digest to the current `latest`
+- **Base image CVE** (`cgr.dev/chainguard/glibc-dynamic:latest@sha256:…`, one
+  digest in `Dockerfile.wasm`, `Dockerfile.oci` and their `.dev` variants) →
+  bump the pinned digest in all four to the current `latest`
   (`docker buildx imagetools inspect cgr.dev/chainguard/glibc-dynamic:latest`;
-  Renovate opens these bumps too). Its glibc must stay at least as new as
-  the one `golang:<version>` builds against.
+  Renovate's `runtime image` group opens these bumps too). One bump fixes
+  both functions. Its glibc must stay at least as new as the one the `rust`
+  build stage links against.
+
+**function-oci's image** adds the init and the microVM pieces to the same
+base, each fixed its own way:
+
+- **The runtime and the init** (`/function`, `/usr/lib/guestfn/init`): crates
+  of the same `Cargo.lock`, so a crate advisory is the `cargo update` above
+  and patches both functions. `cargo deny` checks the graph with every
+  feature on, the `oci` engine's crates included.
+- **Firecracker** (`/usr/lib/guestfn/firecracker`): move `FIRECRACKER_VERSION`
+  in `Dockerfile.oci` to the fixed release with both `FIRECRACKER_SHA256_*`
+  checksums (Renovate's `firecracker` pull request does this), and with it
+  `KERNEL_CI`, `KERNEL_VERSION` and both `KERNEL_SHA256_*` to the kernel that
+  release's CI built. `hack/oci-tools.sh` reads the same pins, so
+  `make oci.test` on a Linux host with `/dev/kvm` runs the engine's VM suite
+  against them, and the push in step 5 runs the release matrix, whose oci
+  profile boots them.
+- **The guest kernel** (`/usr/lib/guestfn/vmlinux`): Firecracker's CI builds
+  it, so a fix is a newer kernel from that CI, moved by hand with its two
+  checksums as above.
+
+This repository can't fix a Firecracker advisory with no fixed release, a
+kernel CVE that no kernel from Firecracker's CI fixes yet, or anything in the
+host's kernel and KVM, which the image doesn't contain. Report those as
+skipped in step 4.
 
 Then run what CI runs, in this order:
 
 ```bash
 cargo build --workspace --locked && cargo test --workspace
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
-git status --porcelain                  # only go.mod/go.sum/Dockerfile should have moved
+git status --porcelain                  # only Cargo.toml/Cargo.lock/Dockerfile.* should have moved
 ```
 
 `go generate ./...` regenerates the Input CRD and the `guestfn` scaffold golden
@@ -134,6 +192,16 @@ Compare what got fixed against the full CVE list from step 2.
   /cut-release; the weekly scan of that release will confirm.
   ```
 
+  A function-oci finding this repository can't fix (step 3) is skipped the
+  same way and reported as:
+
+  ```
+  WARNING - no upstream fix yet!
+  <CVE/GHSA ID> in function-oci's <Firecracker|guest kernel> has no fixed
+  release. Not applied by this flow. Move the pins in Dockerfile.oci when
+  one exists (Renovate's firecracker pull request is the signal).
+  ```
+
 - **Nothing was fixed — no open CVE was a dependency bump** →
   **stop here.** Do not push, and do not trigger `Tag`, `Publish
   Function`, or `Supply Chain and Xpkg Extensions` — an empty patch release
@@ -153,6 +221,9 @@ NEW_VERSION=$(echo "$TAG" | awk -F. -v OFS=. '{$NF+=1} 1')   # v1.0.0 -> v1.0.1
 gh workflow run Tag --ref "$BRANCH" -f version="$NEW_VERSION" \
   -f message="Security patch: <CVE/GHSA summary>"
 ```
+
+This is function-wasm's tag. A function-oci patch's tag and version depend
+on the undecided tag scheme (#281): take them from the user, as in step 1.
 
 ### 7. Create the GitHub release
 
@@ -177,7 +248,7 @@ gh workflow run "Publish Function" --ref "$NEW_VERSION" -f function=function-was
 Must run from the **tag**, not the branch — it builds the runtime image from
 that exact tagged source, with the Go version that tag's `go.mod` declares.
 `function-oci` is published the same way, with `-f function=function-oci`,
-when its first release comes.
+once it has a release; a fix that patches both functions publishes each.
 
 ### 9. Sign & attest — `Supply Chain and Xpkg Extensions`, from `main`
 
@@ -190,6 +261,7 @@ anything from the ref it runs on. It signs/attests the image already
 published to ghcr/xpkg.upbound.io by tag and appends Marketplace extensions
 (SBOM, README, release notes), so it should use the newest signing logic on
 `main` rather than whatever was frozen on the release branch at cut time.
+A function-oci package gets the same run with `-f function=function-oci`.
 
 ### 10. Sequencing, verification, and reporting
 
@@ -200,7 +272,8 @@ Find each run with `gh run list --workflow="<name>" --limit 1` and wait on it
 until-loop pattern is the sanctioned way to poll rather than a manual sleep
 loop. Once all three conclude, optionally trigger `Grype Vulnerability Scan`
 manually to confirm the new tag's image is clean (apart from any
-wasm-exception findings), then report the CVE/GHSA IDs remediated, the new
+wasm-exception findings; for function-oci, Grype's view covers the base and
+nothing in Firecracker or the kernel), then report the CVE/GHSA IDs remediated, the new
 version released, and every finding skipped under the wasm exception with
 its warning block.
 
@@ -210,9 +283,9 @@ its warning block.
 |---|---|---|
 | `Tag` | release branch (`release-X.Y`) | `version`, `message` |
 | (n/a) `gh release create` | — | tag name, `--target` branch |
-| `Publish Function` | the new tag (`vX.Y.Z+1`) | `function` (`function-wasm`), `version` |
-| `Supply Chain and Xpkg Extensions` | `main` | `function` (`function-wasm`), `version` |
-| `Grype Vulnerability Scan` | `main` (scans the latest release) | — |
+| `Publish Function` | the new tag (`vX.Y.Z+1`) | `function` (`function-wasm` or `function-oci`), `version` |
+| `Supply Chain and Xpkg Extensions` | `main` | `function` (`function-wasm` or `function-oci`), `version` |
+| `Grype Vulnerability Scan` | `main` (scans each function's latest release image) | — |
 
 ## Common mistakes
 
@@ -237,3 +310,8 @@ its warning block.
   by `most_recent_instance.ref` afterward — this returns an empty list even
   when the tag has real open alerts, reading as "no CVEs found" instead of
   a query bug. Always pass `ref=refs/tags/<tag>` in the request itself.
+- Reading a clean function-oci scan as covering Firecracker or the guest
+  kernel: Grype sees neither. Check Firecracker's security advisories and
+  the pins in `Dockerfile.oci`.
+- Bumping Firecracker without moving the kernel pins with it: the kernel is
+  the one that Firecracker release's CI built.

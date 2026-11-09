@@ -40,33 +40,109 @@ jobs:
         with:
           command: check advisories
 
+  # The latest release image of each function. Grype reads the package
+  # metadata of the images' base: it sees no crate inside the Rust binaries
+  # (the advisories job covers those) and neither the Firecracker binary
+  # nor the guest kernel of function-oci's image (SECURITY.md).
   scan:
+    name: Scan ${{ matrix.function }}
     runs-on: ubuntu-latest
+    strategy:
+      # A function with no image, or no tag to file its results under, says
+      # nothing about the other function's image.
+      fail-fast: false
+      matrix:
+        include:
+          # Each function files its results under its own code scanning
+          # category, so neither replaces the other's on a tag they share.
+          # function-wasm keeps the category its analyses had before the
+          # matrix (the job's key), so its open alerts stay one
+          # configuration.
+          - function: function-wasm
+            category: .github/workflows/grype-scan.yml:scan
+          - function: function-oci
+            category: .github/workflows/grype-scan.yml:scan/function-oci
 
     steps:
-      - name: Get Latest Release
+      - name: Find Latest Release Image
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FUNCTION: ${{ matrix.function }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          TAG=$(gh release view --repo ${{ github.repository }} --json tagName -q .tagName)
-          SHA=$(gh api repos/${{ github.repository }}/commits/"${TAG}" --jq .sha)
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          case "${FUNCTION}" in
+            function-wasm)
+              # The repository's releases are function-wasm's: the latest
+              # one's tag names the image and the ref of the results.
+              TAG=$(gh release view --repo "${REPOSITORY}" --json tagName -q .tagName)
+              ;;
+            function-oci)
+              # function-oci has no release yet, and the tag scheme of two
+              # functions in one repository is undecided (#281): its image
+              # is the newest vX.Y.Z tag of its own registry repository,
+              # whatever function-wasm's latest release is. GHCR refuses
+              # a repository it doesn't serve anonymously (403 today, 401
+              # and 404 read the same), which Grype couldn't pull either.
+              ghcr() { curl -sS -o "${RUNNER_TEMP}/ghcr.json" -w '%{http_code}' "$@"; }
+              TAG=
+              STATUS=$(ghcr "https://ghcr.io/token?scope=repository:jonasz-lasut/${FUNCTION}:pull&service=ghcr.io")
+              if [ "${STATUS}" = 200 ]; then
+                TOKEN=$(jq -r .token "${RUNNER_TEMP}/ghcr.json")
+                STATUS=$(ghcr -H "Authorization: Bearer ${TOKEN}" "https://ghcr.io/v2/jonasz-lasut/${FUNCTION}/tags/list?n=1000")
+              fi
+              case "${STATUS}" in
+                200)
+                  TAG=$(jq -r '.tags // [] | .[] | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' "${RUNNER_TEMP}/ghcr.json" \
+                    | sort -V | tail -n 1)
+                  ;;
+                401|403|404) ;;
+                *)
+                  echo "::error::ghcr.io answered HTTP ${STATUS} for the tags of ${FUNCTION}"
+                  exit 1
+                  ;;
+              esac
+              if [ -z "${TAG}" ]; then
+                echo "::notice title=No ${FUNCTION} image::ghcr.io/jonasz-lasut/${FUNCTION} has no public release image (a vX.Y.Z tag) to scan yet"
+                echo "found=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              # The results go to the git tag of the image's name, as
+              # function-wasm's do, and only to a tag that can build
+              # function-oci: function-wasm's tags through v0.6.0 have no
+              # Dockerfile.oci, so a function-oci v0.1.0 published under
+              # another tag scheme is never filed under function-wasm's
+              # v0.1.0.
+              if ! gh api "repos/${REPOSITORY}/contents/Dockerfile.oci?ref=${TAG}" --silent; then
+                echo "::error title=No source tag for ${FUNCTION}::ghcr.io/jonasz-lasut/${FUNCTION}:${TAG} has no git tag ${TAG} with a Dockerfile.oci to file its results under; the scan has to follow the release tag scheme (#281)"
+                exit 1
+              fi
+              ;;
+          esac
+          SHA=$(gh api repos/"${REPOSITORY}"/commits/"${TAG}" --jq .sha)
+          {
+            echo "found=true"
+            echo "tag=${TAG}"
+            echo "sha=${SHA}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install Grype
+        if: steps.release.outputs.found == 'true'
         uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         id: grype-install
 
       - name: Scan Latest Release Image
+        if: steps.release.outputs.found == 'true'
         run: |
-          ${{ steps.grype-install.outputs.cmd }} ghcr.io/jonasz-lasut/function-wasm:${{ steps.release.outputs.tag }} \
+          ${{ steps.grype-install.outputs.cmd }} ghcr.io/jonasz-lasut/${{ matrix.function }}:${{ steps.release.outputs.tag }} \
             -o table \
             -o sarif=grype-results.sarif
 
       - name: Upload SARIF Report
+        if: steps.release.outputs.found == 'true'
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: grype-results.sarif
           ref: refs/tags/${{ steps.release.outputs.tag }}
           sha: ${{ steps.release.outputs.sha }}
+          category: ${{ matrix.category }}
