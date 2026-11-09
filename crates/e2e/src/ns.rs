@@ -181,7 +181,9 @@ impl TempNs {
     }
 
     /// A Composition for step and a Guest whose spec drives the module.
-    pub async fn guest(&self, name: &str, step: &Step, spec: Value) -> Result<Guest> {
+    /// The Composition of step under this namespace's name, ready for a
+    /// Guest to use.
+    async fn valid_composition(&self, name: &str, step: &Step) -> Result<String> {
         if step
             .credentials
             .iter()
@@ -197,6 +199,40 @@ impl TempNs {
         // can use it; a Guest created earlier reconciles once against the
         // unknown verdict and shows it as a transient Synced=False.
         self.wait_valid_pipeline(&composition).await?;
+        Ok(composition)
+    }
+
+    /// Guests of one step, `<prefix>-0` onwards, created at once once
+    /// their Composition is valid, so their first reconciles overlap.
+    /// Returns their names.
+    pub async fn guests_at_once(
+        &self,
+        prefix: &str,
+        count: usize,
+        step: &Step,
+        spec: Value,
+    ) -> Result<Vec<String>> {
+        let composition = self.valid_composition(prefix, step).await?;
+        let names: Vec<String> = (0..count).map(|i| format!("{prefix}-{i}")).collect();
+        let mut applies = tokio::task::JoinSet::new();
+        for name in &names {
+            let api = dynamic(
+                &self.client,
+                fixtures::API_VERSION,
+                fixtures::KIND,
+                Some(&self.name),
+            );
+            let guest = fixtures::guest(&self.name, name, &composition, spec.clone());
+            applies.spawn(async move { apply(&api, &guest).await });
+        }
+        while let Some(applied) = applies.join_next().await {
+            applied.context("applying a Guest")??;
+        }
+        Ok(names)
+    }
+
+    pub async fn guest(&self, name: &str, step: &Step, spec: Value) -> Result<Guest> {
+        let composition = self.valid_composition(name, step).await?;
         self.apply(&fixtures::guest(&self.name, name, &composition, spec))
             .await?;
         Ok(Guest {
