@@ -14,9 +14,14 @@ use crate::oci::sandbox::{Ended, VmSpec};
 use crate::oci::{Image, Oci};
 
 /// What the VM gets beyond the process's limit: the guest kernel, the
-/// init and the root filesystem's overlay. The process's own cap is the
-/// step's `limits.memory`, held by a cgroup the init puts it in.
-pub const VM_OVERHEAD_MIB: u64 = 32;
+/// init, the root filesystem's overlay and the squashfs page cache. The
+/// process's own cap is the step's `limits.memory`, held by a cgroup the
+/// init puts it in, and the overhead must leave that cgroup room to be
+/// the enforcer: at 32 MiB the guest's own use passed it, and the kernel's
+/// global OOM killer ended a growing process at 82 MiB of a 96Mi limit
+/// (#272, the engine suite on 2026-11-08), short of what the module was
+/// promised.
+pub const VM_OVERHEAD_MIB: u64 = 64;
 /// The least a process is capped at: below it the kernel's own needs
 /// would end every run.
 pub const MIN_PROCESS_MIB: u64 = 16;
