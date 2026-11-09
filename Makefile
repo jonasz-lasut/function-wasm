@@ -333,7 +333,7 @@ e2e.guest:
 #
 # Re-vendoring crossplane/crossplane's proto/fn/v1/run_function.proto (AGENTS.md
 # "Changing the scaffold"). Every tracked proto/run_function.proto - the files
-# Renovate's version-header rule reads: five templates, five goldens, seven
+# Renovate's version-header rule reads: three templates, three goldens, nine
 # examples - is the upstream file byte for byte under a five-line header whose
 # first line names the release. A Renovate bump moves that version in every
 # header but can neither re-download the file nor regenerate the codecs checked
@@ -344,17 +344,17 @@ e2e.guest:
 # `make vendor-proto PROTO_VERSION=vX.Y.Z` vendors one Renovate has not proposed.
 #
 # `make gen-bindings` is the same loop for the wit-bindgen bindings: the c,
-# zig and odin guests' C bindings (examples/function-wasm-c/src/gen,
-# examples/function-wasm-zig/src/gen and examples/function-wasm-odin/src/gen: one generator's
-# output over one world, which the guestfn tests hold identical), the go
-# guest's Go bindings (examples/function-wasm-go/internal/bindings, over its own
-# world) and the moonbit example's MoonBit bindings (examples/function-wasm-moonbit/src,
-# over the c world again; no template). It runs the pinned wit-bindgen in
-# each, mirrors each scaffold's result into its template (the go one with the
-# module path templated as [[ .Module ]]) and refreshes the goldens - after a
-# change to a world, a re-vendoring of the WASI WIT, or a wit-bindgen bump
-# (the generated files' header names the version; e2e.yml's drift checks
-# install the same one).
+# zig and odin examples' C bindings (examples/function-wasm-c/src/gen,
+# examples/function-wasm-zig/src/gen and examples/function-wasm-odin/src/gen: one
+# generator's output over one world, each example's own since the zig and c
+# templates retired, #264), the go guest's Go bindings
+# (examples/function-wasm-go/internal/bindings, over its own world) and the
+# moonbit example's MoonBit bindings (examples/function-wasm-moonbit/src, over
+# the c world again; no template). It runs the pinned wit-bindgen in each,
+# mirrors the go result into its template (the module path templated as
+# [[ .Module ]]) and refreshes the goldens - after a change to a world, a
+# re-vendoring of the WASI WIT, or a wit-bindgen bump (the generated files'
+# header names the version; e2e.yml's drift checks install the same one).
 .PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens vendor-docs-highlight gen-bindings tools tools-clean vale design-records
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:
@@ -430,15 +430,15 @@ vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(PROTO_VE
 		echo "  $$f"; \
 	done
 
-# rust and rust-v2 have no checked-in codec (build.rs runs prost-build); the
-# zig, c, ts and python codecs are mirrored into their guestfn
-# templates, which examples_share_the_scaffold_plumbing holds identical to
-# the examples (function-wasm-odin regenerates the c codec over its own copy of the
-# proto, and the same test holds it to the c template's). The ts and python
-# codecs are copied file by file: a gen/ directory may hold a __pycache__ the
-# templates must not embed. The moonbit codec has no template: function-wasm-moonbit's
-# gen-proto runs the pinned protoc-gen-mbt through moonx, so moon must be on
-# PATH.
+# rust has no checked-in codec (build.rs runs prost-build); the ts and python
+# codecs are mirrored into their guestfn templates, which
+# examples_share_the_scaffold_plumbing holds identical to the examples, file
+# by file: a gen/ directory may hold a __pycache__ the templates must not
+# embed. The zig, c, odin, moonbit and csharp codecs have no template (the
+# zig and c templates retired, #264): each example regenerates its own over
+# its copy of the proto, and its build job in e2e.yml fails on drift.
+# function-wasm-moonbit's gen-proto runs the pinned protoc-gen-mbt through
+# moonx, so moon must be on PATH.
 vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the pinned generators and mirror them into the templates
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-zig gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-c gen-proto
@@ -447,8 +447,6 @@ vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the p
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-python gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-ts gen-proto
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-csharp gen-proto
-	rm -rf crates/guestfn/templates/zig/src/fnv1 && cp -R examples/function-wasm-zig/src/fnv1 crates/guestfn/templates/zig/src/fnv1
-	rm -rf crates/guestfn/templates/c/src/fnv1 && cp -R examples/function-wasm-c/src/fnv1 crates/guestfn/templates/c/src/fnv1
 	for f in run_function_pb.js run_function_pb.d.ts; do \
 		cp "examples/function-wasm-ts/src/gen/$$f" "crates/guestfn/templates/ts/src/gen/$$f"; \
 	done
@@ -489,23 +487,21 @@ vendor-docs-highlight: ## Re-vendor the docs site's highlight.js core and Cedar 
 	curl -fsSL -o $(dir $(HLJS_CEDAR))NOTICE '$(HLJS_CEDAR_URL)/NOTICE'
 	@echo "vendored highlight.js $(HLJS_VERSION) and highlightjs-cedar $(HLJS_CEDAR_VERSION): review git diff, then check the Cedar pages under mdbook serve"
 
-# The bindings are mirrored whole: wit-bindgen writes exactly the three files
-# the c and zig templates carry (function.c, function.h,
-# function_component_type.o), and for go a wit_bindings.go and an empty.s
-# per package plus wit_exports, beside the hand-written slot package
-# export_wit_world. A generated Go file names the guest's module path in its
-# imports, so it becomes a .go.tmpl with the path as [[ .Module ]]; the rest
-# is copied as it is.
+# The go bindings are mirrored whole: wit-bindgen writes a wit_bindings.go
+# and an empty.s per package plus wit_exports, beside the hand-written slot
+# package export_wit_world. A generated Go file names the guest's module path
+# in its imports, so it becomes a .go.tmpl with the path as [[ .Module ]];
+# the rest is copied as it is. The C bindings (function.c, function.h,
+# function_component_type.o) stay where the generator writes them, in the
+# c, zig and odin examples: no template carries them.
 GO_MODULE := github.com/jonasz-lasut/guestfn/examples/function-wasm-go
 GO_BINDINGS := crates/guestfn/templates/go/internal/bindings
-gen-bindings: tools ## Regenerate function-wasm-c's, function-wasm-zig's, function-wasm-odin's, function-wasm-go's and function-wasm-moonbit's wit-bindgen bindings with the pinned wit-bindgen, mirror the c, zig and go ones into their templates and refresh the goldens
+gen-bindings: tools ## Regenerate function-wasm-c's, function-wasm-zig's, function-wasm-odin's, function-wasm-go's and function-wasm-moonbit's wit-bindgen bindings with the pinned wit-bindgen, mirror the go ones into their template and refresh the goldens
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-c gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-zig gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-odin gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-go gen-bindings
 	$(WITH_TOOLS) $(MAKE) -C examples/function-wasm-moonbit gen-bindings
-	rm -rf crates/guestfn/templates/c/src/gen && cp -R examples/function-wasm-c/src/gen crates/guestfn/templates/c/src/gen
-	rm -rf crates/guestfn/templates/zig/src/gen && cp -R examples/function-wasm-zig/src/gen crates/guestfn/templates/zig/src/gen
 	rm -rf $(GO_BINDINGS) && cp -R examples/function-wasm-go/internal/bindings $(GO_BINDINGS)
 	@set -e; \
 	for f in $$(find $(GO_BINDINGS) -name '*.go' -not -path '*/export_wit_world/*'); do \

@@ -4,8 +4,8 @@
 # core module zig links into the component the runtime loads (no wasm-tools;
 # the wasip1 adapter guestfn carries is linked in for the clock and the
 # randomness wasi-libc imports). wit-bindgen 0.62.0 is only needed to
-# regenerate the checked-in bindings (make gen-bindings; the root Makefile's
-# gen-bindings mirrors the c template's, which these are byte for byte) and
+# regenerate the checked-in bindings (make gen-bindings; the same generator
+# over the same world as function-wasm-c's, so the two outputs match) and
 # nanopb_generator (pip install nanopb) the checked-in codec (make
 # gen-proto). Render needs the crossplane CLI and Docker. GUESTFN and
 # FUNCTION_BIN (read by ../render.sh) can name prebuilt binaries instead.

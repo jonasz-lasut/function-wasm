@@ -22,6 +22,14 @@ const GUEST_WORLD: &str = "function";
 /// moon still reads): an example here, not a scaffold yet (#155).
 const LANG_MOONBIT: &str = "moonbit";
 
+/// The Zig toolchain, detected by its build.zig: the zig, c, cpp and odin
+/// examples, and any guest built with `zig build`. An example's toolchain
+/// since the zig and c scaffolds retired (#264), so the names live here
+/// rather than in scaffold::LANGS; `--lang c` is a spelling of the same
+/// build.
+const LANG_ZIG: &str = "zig";
+const LANG_C: &str = "c";
+
 /// moon's build directory, passed explicitly (--target-dir) because its
 /// default moved from target/ to _build/ between moon releases.
 const MOON_TARGET_DIR: &str = "_build";
@@ -143,7 +151,7 @@ enum Output {
     /// toolchain's bytes, untouched.
     AsBuilt(Vec<u8>),
     /// The toolchain left a core module carrying wit-bindgen's
-    /// component-type section (what the c and zig flavours link in, and what
+    /// component-type section (what the zig and c examples link in, and what
     /// the go build embeds from the project's wit/); the engine wrapped it,
     /// with the wasip1 adapter when the module imported
     /// wasi_snapshot_preview1.
@@ -237,7 +245,7 @@ fn detect_lang(dir: &Path) -> Result<String, String> {
         return Ok(scaffold::LANG_RUST.to_string());
     }
     if dir.join("build.zig").exists() {
-        return Ok(scaffold::LANG_ZIG.to_string());
+        return Ok(LANG_ZIG.to_string());
     }
     if dir.join("package.json").exists() {
         return Ok(scaffold::LANG_TS.to_string());
@@ -422,7 +430,7 @@ fn build_guest(lang: &str, dir: &Path, out: &Path) -> Result<(), String> {
             .map_err(|e| format!("built {}, but {e}", built.display()))?;
             std::fs::write(out, embedded).map_err(|e| e.to_string())?;
         }
-        scaffold::LANG_ZIG | scaffold::LANG_C => {
+        LANG_ZIG | LANG_C => {
             which(
                 "zig",
                 "install it from https://ziglang.org/download/ (it builds both the zig and c guests)",
@@ -499,7 +507,7 @@ mod tests {
     fn the_language_is_told_from_the_project() {
         let cases: [(&str, &str); 7] = [
             ("Cargo.toml", scaffold::LANG_RUST),
-            ("build.zig", scaffold::LANG_ZIG),
+            ("build.zig", LANG_ZIG),
             ("package.json", scaffold::LANG_TS),
             ("requirements.txt", scaffold::LANG_PYTHON),
             ("go.mod", scaffold::LANG_GO),

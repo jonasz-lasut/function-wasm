@@ -1,14 +1,14 @@
-//! Renders a new guest project in one of six flavours: Go with
-//! function-sdk-go (its ABI glue vendored in internal/wasmfn over
+//! Renders a new guest project in one of four flavours, the languages with
+//! an official function-sdk under the crossplane organisation (#264): Go
+//! with function-sdk-go (its ABI glue vendored in internal/wasmfn over
 //! wit-bindgen's Go bindings, the core module componentized by guestfn
-//! build), Rust with prost, Zig with zig-protobuf and C with nanopb - both
-//! over wit-bindgen's C bindings (Zig through translate-c), built by zig
-//! into a core module that guestfn build componentizes - TypeScript with
-//! protobuf-es (componentized by jco), or Python with protobuf
-//! (componentized by componentize-py). Each
+//! build), Rust with prost, TypeScript with protobuf-es (componentized by
+//! jco), or Python with protobuf (componentized by componentize-py). Each
 //! template set is a minimal greeting project; the example guests of this
 //! repository solve their own use cases on the same plumbing (the vendored
-//! glue, codecs, proto and WIT), which tests keep identical.
+//! glue, codecs, proto and WIT), which tests keep identical. Zig, C and
+//! the other languages under examples/ are examples alone: guestfn build
+//! still builds them, guestfn init does not scaffold them.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -19,13 +19,11 @@ static TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
 pub const LANG_GO: &str = "go";
 pub const LANG_RUST: &str = "rust";
-pub const LANG_ZIG: &str = "zig";
-pub const LANG_C: &str = "c";
 pub const LANG_TS: &str = "ts";
 pub const LANG_PYTHON: &str = "python";
 
 /// The scaffoldable languages, default first.
-pub const LANGS: [&str; 6] = [LANG_GO, LANG_RUST, LANG_ZIG, LANG_C, LANG_TS, LANG_PYTHON];
+pub const LANGS: [&str; 4] = [LANG_GO, LANG_RUST, LANG_TS, LANG_PYTHON];
 
 /// Options parameterise a scaffold.
 #[derive(Debug, Default, Clone)]
@@ -33,8 +31,7 @@ pub struct Options {
     /// The template set; empty means go.
     pub lang: String,
     /// The Go module path of the guest, e.g. github.com/me/my-fn. Required
-    /// for Go; Rust, Zig, C, TypeScript and Python projects have no module
-    /// path.
+    /// for Go; Rust, TypeScript and Python projects have no module path.
     pub module: String,
     /// The guest's short name: the crate name for Rust, the package name
     /// for TypeScript, and what docs and the example Composition call the
@@ -112,8 +109,7 @@ fn collect(
 
 /// Executes a template with [[ ]] delimiters, so source code in the
 /// templates keeps its braces. The surface is exactly what the template
-/// sets use: the four fields, one conditional block, and the two zig
-/// helpers.
+/// sets use: the four fields and one conditional block.
 fn template(name: &str, text: &str, o: &Options) -> Result<String, String> {
     let mut out = text.to_string();
     // The one conditional: go.mod's require block for offline scaffolds.
@@ -131,8 +127,6 @@ fn template(name: &str, text: &str, o: &Options) -> Result<String, String> {
         ("[[ .Name ]]", o.name.clone()),
         ("[[ .GoVersion ]]", o.go_version.clone()),
         ("[[ .SDKVersion ]]", o.sdk_version.clone()),
-        ("[[ zigid .Name ]]", zig_ident(&o.name)),
-        ("[[ zigfp .Name ]]", zig_fingerprint(&o.name)),
     ] {
         out = out.replace(token, &value);
     }
@@ -146,29 +140,6 @@ fn template(name: &str, text: &str, o: &Options) -> Result<String, String> {
         ));
     }
     Ok(out)
-}
-
-/// Turns a project name into a valid Zig identifier (build.zig.zon's .name
-/// is an enum literal, so kebab-case dashes and other non-identifier bytes
-/// become underscores).
-fn zig_ident(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-/// The build.zig.zon fingerprint, whose high 32 bits Zig requires to be the
-/// CRC-32 of the identifier (the low 32 are a package id, fixed here since a
-/// wasm guest is never published as a Zig package).
-fn zig_fingerprint(s: &str) -> String {
-    let crc = crc32fast::hash(zig_ident(s).as_bytes());
-    format!("0x{:016x}", (u64::from(crc)) << 32 | 0x8f36eb28)
 }
 
 /// Writes rendered files under dir, creating it. It refuses to overwrite
@@ -264,14 +235,16 @@ mod tests {
     /// the generated codecs, the proto and the WIT - and must carry it byte
     /// for byte, so a plumbing fix lands in the template and the example
     /// together. Everything else (the function itself, guestfn.yaml, the
-    /// README, the example manifests) is the example's own. function-wasm-moonbit has
-    /// no scaffold of its own: its wit/ is the c scaffold's (wit-bindgen's
-    /// MoonBit generator reads the same world), and its proto copy is held
-    /// by the root Makefile's glob and Renovate's header rule under its own
-    /// header, like function-wasm-csharp's.
+    /// README, the example manifests) is the example's own. Four pairs, one
+    /// per scaffold: go, rust, ts and python. The other examples (zig, c,
+    /// cpp, odin, moonbit, csharp) have no scaffold and own their plumbing
+    /// (the zig and c templates retired in #264): their proto copies are
+    /// held by the root Makefile's glob and Renovate's header rule under
+    /// their own headers, their generated codecs and bindings by their
+    /// build jobs' drift checks.
     #[test]
     fn examples_share_the_scaffold_plumbing() {
-        let examples: [(&str, &[&str], Options); 9] = [
+        let examples: [(&str, &[&str], Options); 4] = [
             (
                 "function-wasm-go",
                 &[
@@ -293,80 +266,6 @@ mod tests {
                 Options {
                     lang: LANG_RUST.into(),
                     name: "function-wasm-rust".into(),
-                    ..Default::default()
-                },
-            ),
-            (
-                "function-wasm-zig",
-                &[
-                    "proto/",
-                    "wit/",
-                    "src/fnv1/",
-                    "src/gen/",
-                    "src/libc-shim/",
-                    "src/wasmfn.zig",
-                    "build.zig",
-                ],
-                Options {
-                    lang: LANG_ZIG.into(),
-                    name: "function-wasm-zig".into(),
-                    ..Default::default()
-                },
-            ),
-            (
-                "function-wasm-c",
-                &[
-                    "proto/",
-                    "wit/",
-                    "src/fnv1/",
-                    "src/gen/",
-                    "src/structpb.",
-                    "src/wasmfn.",
-                    "build.zig",
-                ],
-                Options {
-                    lang: LANG_C.into(),
-                    name: "function-wasm-c".into(),
-                    ..Default::default()
-                },
-            ),
-            // The C++ example has no scaffold of its own either: its C
-            // adapter and glue are the c flavour's byte for byte, its
-            // logic is its own.
-            (
-                "function-wasm-cpp",
-                &[
-                    "proto/",
-                    "wit/",
-                    "src/fnv1/",
-                    "src/gen/",
-                    "src/structpb.",
-                    "src/wasmfn.",
-                ],
-                Options {
-                    lang: LANG_C.into(),
-                    name: "function-wasm-cpp".into(),
-                    ..Default::default()
-                },
-            ),
-            // The Odin example has no scaffold of its own: it implements
-            // the world through the c flavour's bindings and codec, which
-            // it carries byte for byte; its glue and build are its own.
-            (
-                "function-wasm-odin",
-                &["proto/", "wit/", "src/fnv1/", "src/gen/"],
-                Options {
-                    lang: LANG_C.into(),
-                    name: "function-wasm-odin".into(),
-                    ..Default::default()
-                },
-            ),
-            (
-                "function-wasm-moonbit",
-                &["wit/"],
-                Options {
-                    lang: LANG_C.into(),
-                    name: "function-wasm-moonbit".into(),
                     ..Default::default()
                 },
             ),
@@ -414,36 +313,6 @@ mod tests {
         }
     }
 
-    /// The c and zig scaffolds are one world: both consume wit-bindgen's C
-    /// bindings over the same `wit/` (Zig through translate-c), so their
-    /// `wit/` and `src/gen/` are held identical here, as the vendored proto
-    /// copies are, and one `make gen-bindings` regenerates both.
-    #[test]
-    fn c_and_zig_share_the_bindings() {
-        fn bindings(files: &BTreeMap<String, Vec<u8>>) -> BTreeMap<&String, &Vec<u8>> {
-            files
-                .iter()
-                .filter(|(name, _)| name.starts_with("wit/") || name.starts_with("src/gen/"))
-                .collect()
-        }
-        let c = render(golden(LANG_C)).expect("render c");
-        let zig = render(golden(LANG_ZIG)).expect("render zig");
-        let (c, zig) = (bindings(&c), bindings(&zig));
-        assert!(!c.is_empty(), "no bindings rendered");
-        assert_eq!(
-            c.keys().collect::<Vec<_>>(),
-            zig.keys().collect::<Vec<_>>(),
-            "the c and zig templates carry different wit/ or src/gen/ files"
-        );
-        for (name, content) in &c {
-            assert!(
-                zig.get(name) == Some(content),
-                "templates/zig/{name} differs from templates/c/{name} (one world, one wit-bindgen \
-                 output: make gen-bindings regenerates both)"
-            );
-        }
-    }
-
     /// The rust scaffold vendors the ABI v2 world the engine compiles
     /// (wit/wasmfn-function.wit) byte for byte as a dependency of the
     /// guest's own world; the golden and plumbing tests above carry that on
@@ -482,20 +351,8 @@ mod tests {
         .expect_err("unknown language");
         assert_eq!(
             err,
-            "unsupported language \"cobol\"; one of go, rust, zig, c, ts, python"
+            "unsupported language \"cobol\"; one of go, rust, ts, python"
         );
-
-        // The C flavour builds with zig, so build.zig.zon gets the project's
-        // identifier and fingerprint.
-        let files = render(Options {
-            lang: LANG_C.into(),
-            name: "my-fn".into(),
-            ..Default::default()
-        })
-        .expect("render");
-        let zon = String::from_utf8_lossy(&files["build.zig.zon"]).into_owned();
-        assert!(zon.contains(".name = .my_fn,"), "{zon}");
-        assert!(zon.contains(".fingerprint = 0x"), "{zon}");
 
         // The name defaults to the module's last element.
         let files = render(Options {

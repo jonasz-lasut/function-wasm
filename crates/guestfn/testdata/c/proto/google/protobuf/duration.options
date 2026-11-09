@@ -1,3 +1,0 @@
-# nanopb options, as for run_function.proto: dynamic-length fields on the heap,
-# which also breaks the Value/Struct/ListValue recursion with pointers.
-* fallback_type:FT_POINTER

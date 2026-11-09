@@ -20,9 +20,9 @@ function-wasm is a [Crossplane](https://crossplane.io) composition function
 that runs a WebAssembly module in a [Wasmtime](https://wasmtime.dev) sandbox.
 A module follows the contract of a native function,
 `RunFunction(RunFunctionRequest) → RunFunctionResponse`. You write an ordinary
-function, in Go with
-[function-sdk-go](https://github.com/crossplane/function-sdk-go) or in Rust,
-Zig, C, TypeScript or Python, compile it to WebAssembly, publish the module
+function in Go (with
+[function-sdk-go](https://github.com/crossplane/function-sdk-go)), Rust,
+TypeScript or Python, compile it to WebAssembly, publish the module
 and point a Composition step at it.
 
 It fits when a pipeline step's logic should change without a new Function

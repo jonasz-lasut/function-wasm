@@ -187,7 +187,7 @@
     {
       // The wasmtime-wasi-http release every vendored WASI WIT file under a
       // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
-      // and function-wasm-rust, its wit/deps for the python, c, zig and go
+      // and function-wasm-rust, its wit/deps for the python and go
       // scaffolds, function-wasm-python, function-wasm-c, function-wasm-zig, function-wasm-odin, function-wasm-moonbit,
       // function-wasm-go and function-wasm-csharp (templates and goldens included: the
       // files are plain .wit in all of them). Same tripwire as the proto: a
@@ -267,9 +267,9 @@
   packageRules: [
     {
       // The two zig lines of e2e.yml are one dependency: one PR moves both.
-      // A new minor of Zig 0.x is a new language version: the zig and c
-      // templates and the examples are written for 0.16, so a minor moves
-      // with them by hand at release time; a patch release flows.
+      // A new minor of Zig 0.x is a new language version: the zig, c, cpp
+      // and odin examples are written for 0.16, so a minor moves with them
+      // by hand at release time; a patch release flows.
       matchDepNames: ['zig'],
       groupName: 'zig',
       matchUpdateTypes: ['major', 'minor'],
@@ -399,7 +399,7 @@
       groupName: 'crossplane e2e',
     },
     // The WASI WIT headers, for the same reason: one dep across the rust,
-    // python, c, zig and go templates, their goldens, function-wasm-rust,
+    // python and go templates, their goldens, function-wasm-rust,
     // function-wasm-python, function-wasm-c, function-wasm-zig, function-wasm-odin, function-wasm-moonbit, function-wasm-go and
     // function-wasm-csharp.
     // Their group is the wasmtime one above.
@@ -510,10 +510,10 @@
     // time (the cut-release skill), never in this batch - pip_requirements
     // is not an enabled manager.
     //
-    // function-wasm-zig, function-wasm-c and function-wasm-odin name their dependencies in
-    // build.zig.zon by URL and content hash, which no Renovate manager
-    // reads: they move by hand, with the zig and c templates, at release
-    // time (function-wasm-odin's nanopb pin is function-wasm-c's). function-wasm-moonbit's one
+    // function-wasm-zig, function-wasm-c, function-wasm-cpp and function-wasm-odin name
+    // their dependencies in build.zig.zon by URL and content hash, which no
+    // Renovate manager reads: they move by hand at release time (the
+    // cut-release skill; function-wasm-odin's nanopb pin is function-wasm-c's). function-wasm-moonbit's one
     // dependency (moonbitlang/protobuf in moon.mod.json) has no Renovate
     // manager either: it moves by hand, with the generator pins in its
     // Makefile, at release time.

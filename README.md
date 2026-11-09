@@ -17,9 +17,9 @@ function-wasm is a [Crossplane](https://crossplane.io) composition function
 that runs a WebAssembly module in a [Wasmtime](https://wasmtime.dev) sandbox.
 A module follows the contract of a native function,
 `RunFunction(RunFunctionRequest) → RunFunctionResponse`. You write an ordinary
-function, in Go with
-[function-sdk-go](https://github.com/crossplane/function-sdk-go) or in Rust,
-Zig, C, TypeScript or Python, compile it to WebAssembly, publish the module
+function in Go (with
+[function-sdk-go](https://github.com/crossplane/function-sdk-go)), Rust,
+TypeScript or Python, compile it to WebAssembly, publish the module
 and point a Composition step at it.
 
 It fits when a pipeline step's logic should change without a new Function
@@ -82,7 +82,7 @@ The package is also published at `xpkg.upbound.io/jonasz-lasut/function-wasm`.
 ```shell
 cargo install --git https://github.com/jonasz-lasut/guestfn guestfn
 
-guestfn init greeter --module github.com/example/greeter   # --lang go (default), rust, zig, c, ts or python
+guestfn init greeter --module github.com/example/greeter   # --lang go (default), rust, ts or python
 cd greeter
 go test ./...                                   # unit tests run natively
 guestfn build                                   # fn.wasm (an ABI v2 component); prints the ABI verdict and the manifest summary
@@ -105,13 +105,13 @@ the toolchain, the scaffolded module's size and an example.
 |---|---|---|---|
 | `go` (default) | Go + function-sdk-go | ~75 MB | [`examples/function-wasm-go`](examples/function-wasm-go) |
 | `rust` | Rust 1.100+, `wasm32-wasip3` | ~240 KB | [`examples/function-wasm-rust`](examples/function-wasm-rust) |
-| `zig` | Zig 0.16 | ~60 KB | [`examples/function-wasm-zig`](examples/function-wasm-zig) |
-| `c` | C via `zig cc` | ~62 KB | [`examples/function-wasm-c`](examples/function-wasm-c) |
 | `ts` | node + npm (esbuild, jco) | ~14 MB | [`examples/function-wasm-ts`](examples/function-wasm-ts) |
 | `python` | `python3` (componentize-py) | ~21 MB | [`examples/function-wasm-python`](examples/function-wasm-python) |
 
-C#, C++, Odin and MoonBit exist as examples only
-([`examples/function-wasm-csharp`](examples/function-wasm-csharp),
+Zig, C, C#, C++, Odin and MoonBit exist as examples only
+([`examples/function-wasm-zig`](examples/function-wasm-zig),
+[`examples/function-wasm-c`](examples/function-wasm-c),
+[`examples/function-wasm-csharp`](examples/function-wasm-csharp),
 [`examples/function-wasm-cpp`](examples/function-wasm-cpp),
 [`examples/function-wasm-odin`](examples/function-wasm-odin),
 [`examples/function-wasm-moonbit`](examples/function-wasm-moonbit)). Any toolchain that

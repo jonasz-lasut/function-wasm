@@ -7,7 +7,6 @@ repository.workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
-crc32fast = "1"
 # The manifest layer guestfn push appends to an OCI image: a gzip tar.
 flate2 = "1"
 guestfn-runtime = { path = "../function" }

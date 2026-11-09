@@ -55,9 +55,10 @@ permissions:
 # e2e- namespace makes the opt-in acceptable).
 cache-mode: write
 
-# The Zig every guest job installs (the zig and c scaffolds and the odin
-# example build with it; the guest suite builds their goldens), one pin per
-# runner architecture as <version>@<sha256 of the tarball>. Renovate moves
+# The Zig the example jobs install (the zig, c, cpp and odin examples build
+# with it; the guest suite needs none since the zig and c scaffolds retired,
+# #264), one pin per runner architecture as <version>@<sha256 of the
+# tarball>. Renovate moves
 # each line, version and checksum together, through the custom.zig-*
 # datasources in renovate.json5, which read ziglang.org's download index;
 # the two lines must name one version.
@@ -182,26 +183,6 @@ jobs:
           cache: false
           go-version-file: examples/function-wasm-go/go.mod
 
-      # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
-      # below: the setup action picks a community mirror and has hung for
-      # a quarter of an hour on one; the runner's architecture selects the
-      # tarball (guest-suite runs on arm64).
-      - name: Setup Zig
-        run: |
-          arch=$(uname -m)
-          case "$arch" in
-            x86_64) pin="${ZIG_X86_64_LINUX}" ;;
-            aarch64) pin="${ZIG_AARCH64_LINUX}" ;;
-            *) echo "no zig pin for ${arch}" >&2; exit 1 ;;
-          esac
-          version="${pin%@*}"
-          sha="${pin#*@}"
-          curl -fsSL -o "${RUNNER_TEMP}/zig.tar.xz" \
-            "https://ziglang.org/download/${version}/zig-${arch}-linux-${version}.tar.xz"
-          echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
-          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
-
       - name: Setup protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
@@ -219,9 +200,9 @@ jobs:
           cache-on-failure: true
 
       # What the scaffolds download on a first build: Go modules and the Go
-      # build cache, npm's and pip's package caches, zig's global cache, and
-      # the rust scaffold's pinned toolchain, which rustup installs on first
-      # use. The templates' pins key it.
+      # build cache, npm's and pip's package caches, and the rust scaffold's
+      # pinned toolchain, which rustup installs on first use. The templates'
+      # pins key it.
       - name: Cache the Scaffolds' Dependencies
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -230,9 +211,8 @@ jobs:
             ~/.cache/go-build
             ~/.npm
             ~/.cache/pip
-            ~/.cache/zig
             ~/.rustup/toolchains/beta-*
-          key: e2e-guests-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/guestfn/templates/go/go.mod.tmpl', 'crates/guestfn/templates/ts/package.json.tmpl', 'crates/guestfn/templates/python/requirements.txt', 'crates/guestfn/templates/zig/build.zig.zon.tmpl', 'crates/guestfn/templates/c/build.zig.zon.tmpl', 'crates/guestfn/templates/rust/rust-toolchain.toml', 'crates/guestfn/templates/rust/Cargo.toml.tmpl') }}
+          key: e2e-guests-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/guestfn/templates/go/go.mod.tmpl', 'crates/guestfn/templates/ts/package.json.tmpl', 'crates/guestfn/templates/python/requirements.txt', 'crates/guestfn/templates/rust/rust-toolchain.toml', 'crates/guestfn/templates/rust/Cargo.toml.tmpl') }}
           restore-keys: |
             e2e-guests-${{ runner.os }}-${{ runner.arch }}-
 
@@ -459,7 +439,7 @@ jobs:
       # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
       # below: the setup action picks a community mirror and has hung for
       # a quarter of an hour on one; the runner's architecture selects the
-      # tarball (guest-suite runs on arm64).
+      # tarball (a job may run on either architecture).
       - name: Setup Zig
         run: |
           arch=$(uname -m)
@@ -558,7 +538,7 @@ jobs:
       # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
       # below: the setup action picks a community mirror and has hung for
       # a quarter of an hour on one; the runner's architecture selects the
-      # tarball (guest-suite runs on arm64).
+      # tarball (a job may run on either architecture).
       - name: Setup Zig
         run: |
           arch=$(uname -m)
@@ -672,7 +652,7 @@ jobs:
       # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
       # below: the setup action picks a community mirror and has hung for
       # a quarter of an hour on one; the runner's architecture selects the
-      # tarball (guest-suite runs on arm64).
+      # tarball (a job may run on either architecture).
       - name: Setup Zig
         run: |
           arch=$(uname -m)
@@ -791,7 +771,7 @@ jobs:
       # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
       # below: the setup action picks a community mirror and has hung for
       # a quarter of an hour on one; the runner's architecture selects the
-      # tarball (guest-suite runs on arm64).
+      # tarball (a job may run on either architecture).
       - name: Setup Zig
         run: |
           arch=$(uname -m)

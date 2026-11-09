@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.9 (the examples named `function-<runtime>-<lang>` and the `function-oci-go` example, #263; the examples publish on their own, by hand, apart from the release, #245)
+* Status: implemented, revision 1.10 (the Zig and C scaffolds retired, #264; the examples named `function-<runtime>-<lang>` and the `function-oci-go` example, #263; the examples publish on their own, by hand, apart from the release, #245)
 * Tracking: https://github.com/jonasz-lasut/guestfn/issues/112
 
 ## Context
@@ -97,10 +97,14 @@ Design choices to keep:
 ### Unpublished hello examples
 
 `function-wasm-zig`, `function-wasm-c`, `function-wasm-odin` and `function-wasm-moonbit` are the same greeting
-guest in four more languages, each an ABI v2 component. Zig and C share their
-scaffolds' plumbing; Odin and MoonBit have no scaffold, and `guestfn build`
-detects the MoonBit one by its `moon.mod`
-([#155](https://github.com/jonasz-lasut/guestfn/issues/155)). Rust,
+guest in four more languages, each an ABI v2 component and none with a
+scaffold. The Zig and C templates retired on 2026-11-08
+([#264](https://github.com/jonasz-lasut/guestfn/issues/264)). Each of the four
+examples has its plumbing in its own tree. The vendored proto and WIT are
+checked in, and its `gen-proto` and `gen-bindings` targets write the codec and
+the bindings. `guestfn build`
+detects the first three by their `build.zig` and the MoonBit one by its
+`moon.mod` ([#155](https://github.com/jonasz-lasut/guestfn/issues/155)). Rust,
 Python, TypeScript and Go are covered by the use-case examples in the table.
 C# has only `function-wasm-csharp`, C++ only `function-wasm-cpp`. The language matrix is in
 [other languages](wasm/other-languages.md).
@@ -130,8 +134,11 @@ pulled from `ghcr.io` with its real signature.
   [#117](https://github.com/jonasz-lasut/guestfn/issues/117).
 - **Examples share only the plumbing with their scaffold**: the vendored ABI
   glue, the generated codecs, the proto and the WIT, held byte-identical by
-  `examples_share_the_scaffold_plumbing`. The function, its manifest and its
-  example manifests are the example's own.
+  `examples_share_the_scaffold_plumbing` for the four pairs, Go, Rust,
+  TypeScript and Python. The function, its manifest and its example manifests
+  are the example's own. An example with no scaffold has the plumbing in its
+  own tree, and its build job's drift check holds the generated code to the
+  pinned generators.
 - **Each example has unit tests in its language**, covering each fatal path.
 - **Each example has a `build-<lang>` job** in the `/e2e` workflow (`e2e.yml`):
   its toolchain, the build, test and lint targets, and a drift check of its
@@ -209,6 +216,16 @@ hand-maintained cost. TinyGo builds the world on its own `wasip2` target, but
 its bindings generator is unmaintained and the Go flavour can't share it. The
 `go` scaffold and `function-wasm-go` instead build a wasip1 reactor that `guestfn
 build` embeds the world into and wraps.
+
+The Zig and C scaffolds retired on 2026-11-08
+([#264](https://github.com/jonasz-lasut/guestfn/issues/264)). A `guestfn init`
+template exists for a language with an official `function-sdk-<lang>` under the
+`crossplane` GitHub organisation (Go, Rust, TypeScript and Python), the
+languages a function author expects a project to support. Zig and C have none, and the
+project maintained two template sets, their goldens and two guest-suite cases
+for a scaffold nobody asked for. `function-wasm-zig` and `function-wasm-c` stay
+as examples, checked by their build jobs, like Odin, MoonBit, C# and C++, and
+`guestfn build` still builds a `build.zig` project.
 
 ## Open questions
 
