@@ -196,7 +196,8 @@ Jonasz settled these on 2026-11-09, with these measurements:
   [#279](https://github.com/jonasz-lasut/guestfn/issues/279) continues
   from it.
 - Snapshots are in 0.1 as an alpha feature, and the flag is
-  `--enable-vm-snapshots`.
+  `--enable-vm-snapshots`. It's off by default in alpha and on by default
+  in beta and later.
 - A snapshot belongs to one image. Its key is the image and the VM size,
   since `limits.memory` resizes the VM.
 - Restore goes through the release binary's API socket, and the engine
@@ -234,14 +235,10 @@ Jonasz settled these on 2026-11-09, with these measurements:
   the process starts.
 - **A `userfaultfd` handler.** Firecracker can hand a clone's page faults
   to a handler, which could load the recorded working set at once. The
-  measured gain doesn't need it.
-  [#279](https://github.com/jonasz-lasut/guestfn/issues/279) reopens it if
-  a runner's numbers show that the clone's slower process phase matters.
+  measured gain doesn't need it: on a GitHub runner a restored run took 87
+  and 122 ms, against 297 and 350 ms for a boot.
 
 ## What's left
 
-[#279](https://github.com/jonasz-lasut/guestfn/issues/279) tracks it:
-
-- the 4 s or more a snapshot's memory file takes on a GitHub runner
-- restores under load, which the measurements ran one at a time
-- whether the flag is on by default once the feature leaves alpha
+[#279](https://github.com/jonasz-lasut/guestfn/issues/279) tracks the 4 s
+or more a snapshot's memory file takes on a GitHub runner.

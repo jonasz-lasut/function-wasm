@@ -3,12 +3,17 @@
 //! warmed. The oracle is the function pod's own snapshot counters and what
 //! the restored processes compose and report.
 
+use guestfn_e2e::k8s;
 use guestfn_e2e::prelude::*;
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::api::{Api, ListParams};
 
 const WAIT: Duration = Duration::from_secs(240);
 const PROFILE: Profile = Profile::OciSnapshots;
+/// How many Guests restore side by side in the load test.
+const GUESTS: usize = 8;
+/// What the runtime logs when a restore fails and its run boots instead.
+const RESTORE_FAILED: &str = "cannot restore the VM's snapshot";
 
 async fn scrape(ns: &TempNs) -> Result<String> {
     metrics::scrape_of(&ns.client, &PROFILE.pod_selector()).await
@@ -23,6 +28,30 @@ fn snapshots(scraped: &str, event: &str) -> f64 {
         &[("cache", "snapshot"), ("event", event)],
     )
     .unwrap_or_default()
+}
+
+/// Waits for a ConfigMap of the namespace to hold each of the greetings.
+async fn wait_greetings(ns: &TempNs, wants: &[String]) -> Result<()> {
+    let configmaps: Api<ConfigMap> = Api::namespaced(ns.client.clone(), &ns.name);
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        let greetings: Vec<String> = configmaps
+            .list(&ListParams::default())
+            .await
+            .context("listing ConfigMaps")?
+            .items
+            .into_iter()
+            .filter_map(|c| c.data?.remove("greeting"))
+            .collect();
+        if wants.iter().all(|want| greetings.contains(want)) {
+            return Ok(());
+        }
+        ensure!(
+            std::time::Instant::now() < deadline,
+            "no ConfigMaps hold all of {wants:?}: {greetings:?}"
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
 }
 
 /// The profile's readiness probe reads /readyz, so a ready pod has warmed
@@ -62,32 +91,54 @@ async fn the_warmed_example_runs_from_its_snapshot() -> Result<()> {
         let step = Step::oci_public(&ns.state.published_oci);
         let guest = ns.guest("probe", &step, json!({})).await?;
         guest.wait_synced(WAIT).await?;
-        let configmaps: Api<ConfigMap> = Api::namespaced(ns.client.clone(), &ns.name);
-        let want = format!("hello {}", guest.name);
-        let deadline = std::time::Instant::now() + WAIT;
-        loop {
-            let greetings: Vec<String> = configmaps
-                .list(&ListParams::default())
-                .await
-                .context("listing ConfigMaps")?
-                .items
-                .into_iter()
-                .filter_map(|c| c.data?.remove("greeting"))
-                .collect();
-            if greetings.contains(&want) {
-                break;
-            }
-            ensure!(
-                std::time::Instant::now() < deadline,
-                "no ConfigMap greets the guest with {want:?}: {greetings:?}"
-            );
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        }
+        wait_greetings(&ns, &[format!("hello {}", guest.name)]).await?;
         let scraped = scrape(&ns).await?;
         ensure!(
             snapshots(&scraped, "hit") >= 1.0,
             "no run was restored from a snapshot\n{scraped}"
         );
+        Ok(())
+    })
+    .await
+}
+
+/// Guests created at once reconcile together, so their runs restore the
+/// warm-up's snapshot side by side. Each Guest gets its own greeting, the
+/// pod counts at least one restored run per Guest, and no restore failed
+/// and fell back to a boot: a hit is counted before the restore is tried,
+/// so only the log says whether it worked.
+#[tokio::test]
+async fn guests_created_at_once_restore_the_warmed_snapshot() -> Result<()> {
+    with_temp_ns("snap-load", |ns| async move {
+        ns.ensure_profile(PROFILE).await?;
+        let before = snapshots(&scrape(&ns).await?, "hit");
+        let step = Step::oci_public(&ns.state.published_oci);
+        let names = ns.guests_at_once("load", GUESTS, &step, json!({})).await?;
+        let greetings: Vec<String> = names.iter().map(|n| format!("hello {n}")).collect();
+        wait_greetings(&ns, &greetings).await?;
+        // Later reconciles restore too, so one run that boots beside a
+        // restore doesn't decide this.
+        let deadline = std::time::Instant::now() + WAIT;
+        loop {
+            let scraped = scrape(&ns).await?;
+            let restored = snapshots(&scraped, "hit") - before;
+            if restored >= GUESTS as f64 {
+                break;
+            }
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "{restored} restored runs for {GUESTS} Guests\n{scraped}"
+            );
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        for pod in k8s::function_pods_of(&ns.client, &PROFILE.pod_selector()).await? {
+            let name = pod.metadata.name.context("a pod with no name")?;
+            let log = k8s::function_log(&ns.client, &name).await?;
+            ensure!(
+                !log.contains(RESTORE_FAILED),
+                "a restore failed in {name}:\n{log}"
+            );
+        }
         Ok(())
     })
     .await
