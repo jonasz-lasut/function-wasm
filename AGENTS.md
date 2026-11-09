@@ -125,7 +125,7 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               `engine::Selected` and `engine::Module`, so a second engine is a
                               second feature and no other change here; `engine::EngineArgs`
                               are the engine's own flags (none for wasm; --vmm, --guest-kernel,
-                              --guest-init, --vm-vcpus for oci), flattened into serve's and
+                              --guest-init, --vm-vcpus and the prototype --vm-snapshots for oci), flattened into serve's and
                               validate's, and `engine::new` builds it. `Selected::KIND` is the
                               module type the package serves (the resolver fetches by it, the
                               manifest's check_type refuses the other type's manifest by name)
@@ -275,8 +275,9 @@ crates/engine/              the engines, one crate (guestfn-engine): what every 
                               buckets are contract; see "Metrics"). No WebAssembly here
   src/protocol.rs             what the guest init and the host say to each other over vsock:
                               Hello, Run with the Description (argv, env, cwd, uid, gid, groups,
-                              hostname), Stdin/StdinEnd, Stdout, Stderr, Exit (status, signal,
-                              oom, error); framed, feature-free
+                              hostname, and for a restored clone the host's clock and a seed),
+                              Stdin/StdinEnd, Stdout, Stderr, Exit (status, signal, oom, error),
+                              Park and Parked around a snapshot; framed, feature-free
   src/wasm.rs                 Wasmtime (compile + checkABI, inspect → the full module shape, leases,
                               fair scheduler, memory pool, on-demand epoch ticker), RunOptions
                               (limits + private tmp/env + HTTP + deadline), version() namespacing
@@ -566,7 +567,12 @@ examples/function-oci-go      the hello function as an oci@1.0 module (#263, pha
                               docs/oci/install.md), feature `oci`: mod.rs implements
                               the Engine trait as `Oci` over a `Sandbox` seam (sandbox.rs;
                               firecracker.rs the first VMM, one process per run from a config
-                              file, no API, the init's vsock port on a Unix socket). A module
+                              file, no API, the init's vsock port on a Unix socket; with
+                              Options::snapshots (#255, a prototype) the first run of an image
+                              parks the init and snapshots the VM through the API socket, the
+                              memory file rewritten sparse, and every later run restores it
+                              into a fresh process, the description carrying the host's clock
+                              and a seed for the init to set). A module
                               is an OCI image layout tar (layout.rs: index, platform manifest,
                               config and layers, every blob verified, plus the Writer the
                               resolver assembles one with), compiled by applying the layers

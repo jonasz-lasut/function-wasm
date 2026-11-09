@@ -131,6 +131,7 @@ memory before it boots.
 | `--guest-kernel` | `/usr/lib/guestfn/vmlinux` | the guest kernel, an uncompressed `vmlinux` |
 | `--guest-init` | `/usr/lib/guestfn/init` | the init the runtime boots as the VM's first process |
 | `--vm-vcpus` | `1` | vCPUs per VM |
+| `--vm-snapshots` | off | restore a snapshot of the booted VM per image in place of a boot. A prototype: the [design record](../one-pager-oci-runtime.md#snapshots) has what it does and what it measured |
 
 The package image includes the three files. `--module-stack-limit` has no
 meaning for a process and the runtime ignores it. `--module-timeout` and a
