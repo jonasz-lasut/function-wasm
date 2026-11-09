@@ -28,13 +28,11 @@ use kube::Client;
 use kube::api::{Api, ListParams};
 use serde_json::json;
 
-/// The published pdb-addon: signed keyless by this repository's release
-/// workflow (the real keyless signature) and large enough for the
-/// lifecycle profile's warm-up and cache cases to be observable. The
-/// example is `examples/function-wasm-go` since #263; the pin moves to the
-/// repository of that name with the first `Publish Examples` run after the
-/// rename, and keeps the published name until then.
-const PDB_ADDON: &str = "ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon@sha256:f80a8364a61555f02d1429a17af9feaf0e9e8505c8fbb0d64589f84b05b14346";
+/// The published `examples/function-wasm-go`: signed keyless by this
+/// repository's `Publish Examples` workflow (the real keyless signature)
+/// and large enough for the lifecycle profile's warm-up and cache cases to
+/// be observable.
+const PUBLISHED_WASM: &str = "ghcr.io/jonasz-lasut/guestfn/examples/wasm-go@sha256:253aadf6a20a3fa8c487fa57e1f0133d39e66093ee4b25ba4433a00247e1c159";
 const REGISTRY_IMAGE: &str = "registry:3";
 /// The device plugin that admits the node's /dev/kvm into function-oci's
 /// pod (docs/oci/install.md, "Node requirements"), and the
@@ -377,7 +375,7 @@ async fn main() -> Result<()> {
         trusted_issuer: guest::TRUSTED_ISSUER.to_string(),
         trusted_identity: guest::TRUSTED_IDENTITY.to_string(),
         untrusted_identity: guest::UNTRUSTED_IDENTITY.to_string(),
-        pdb_addon: PDB_ADDON.to_string(),
+        published_wasm: PUBLISHED_WASM.to_string(),
         oci_variants,
         oci_image,
         kvm: kvm_gid.is_some(),

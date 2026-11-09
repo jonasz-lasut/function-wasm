@@ -5,15 +5,12 @@
 // examples must be signed. A key-based signature verifies with the
 // --cosign-key the profile mounts; a keyless one counts when its signer is
 // trusted for the repository - the suite's release identity for the e2e
-// repository, this repository's release workflow for the published examples.
-// A certificate names the repository as it was at signing time, so the
-// examples published while the repository was function-wasm (through 0.6)
-// keep that identity beside today's.
+// repository, this repository's Publish Examples workflow for the published
+// examples.
 permit (principal, action == Action::"requireSignature", resource)
 when {
   resource in Repository::"registry.e2e.svc:5000" ||
-  (resource in Repository::"ghcr.io/jonasz-lasut/guestfn/examples" ||
-   resource in Repository::"ghcr.io/jonasz-lasut/wasmfn/examples")
+  resource in Repository::"ghcr.io/jonasz-lasut/guestfn/examples"
 };
 
 permit (principal, action == Action::"trustSigner", resource)
@@ -25,12 +22,9 @@ when {
 
 permit (principal, action == Action::"trustSigner", resource)
 when {
-  (resource in Repository::"ghcr.io/jonasz-lasut/guestfn/examples" ||
-   resource in Repository::"ghcr.io/jonasz-lasut/wasmfn/examples") &&
+  resource in Repository::"ghcr.io/jonasz-lasut/guestfn/examples" &&
   context.issuer == "https://token.actions.githubusercontent.com" &&
-  (context.identity like "https://github.com/jonasz-lasut/guestfn/.github/workflows/publish-examples.yml@refs/heads/main" ||
-   context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-examples.yml@refs/heads/main" ||
-   context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-pkg.yml@refs/tags/v*")
+  context.identity == "https://github.com/jonasz-lasut/guestfn/.github/workflows/publish-examples.yml@refs/heads/main"
 };
 
 // Egress: GET on the registry host, which resolves into kind's service

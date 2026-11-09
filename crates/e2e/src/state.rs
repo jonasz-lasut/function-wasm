@@ -21,9 +21,9 @@ pub struct State {
     pub trusted_issuer: String,
     pub trusted_identity: String,
     pub untrusted_identity: String,
-    /// The published pdb-addon, pinned: the real keyless signature and the
-    /// lifecycle profile's warm-up module.
-    pub pdb_addon: String,
+    /// The published function-wasm-go example, pinned: the real keyless
+    /// signature and the lifecycle profile's warm-up module.
+    pub published_wasm: String,
     /// The oci profile's variants (docs/one-pager-oci-runtime.md): the
     /// wrapping artifacts around the test module as a process, pushed when
     /// setup had the image (E2E_OCI_GUEST); empty otherwise.

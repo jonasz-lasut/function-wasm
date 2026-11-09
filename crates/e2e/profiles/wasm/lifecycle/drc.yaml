@@ -1,5 +1,5 @@
-# The lifecycle profile: --debug, the published pdb-addon warmed at
-# startup (a 75 MB module: a visible warm-up and a cache entry the sweep has
+# The lifecycle profile: --debug, the published function-wasm-go warmed at
+# startup (a 77 MiB module: a visible warm-up and a cache entry the sweep has
 # to remove), the caches on a volume that outlives the pod, bounded below
 # that module's size so the startup sweep has work, and the trusted root
 # fetched over TUF from the public-good instance (no root file mounted),
@@ -23,8 +23,8 @@ spec:
             - --debug
             - --sandbox-policy-file=/etc/guestfn/policy/policy.cedar
             - --cosign-trust-instance=public-good
-            - --warm-modules=ghcr.io/jonasz-lasut/wasmfn/examples/pdb-addon@sha256:f80a8364a61555f02d1429a17af9feaf0e9e8505c8fbb0d64589f84b05b14346
-            # In MiB: below the warmed module's 74 MB, so the startup sweep
+            - --warm-modules=ghcr.io/jonasz-lasut/guestfn/examples/wasm-go@sha256:253aadf6a20a3fa8c487fa57e1f0133d39e66093ee4b25ba4433a00247e1c159
+            # In MiB: below the warmed module's 77 MiB, so the startup sweep
             # (which runs before the warm-up) has to remove it.
             - --max-cache-size=64
             env:
