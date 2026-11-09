@@ -40,8 +40,10 @@ plugin](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-ne
 the plugin advertises the node's `/dev/kvm` as a resource and the
 kubelet admits the device into the container of a pod that requests one.
 A plugin that advertises any device path is
-[generic-device-plugin](https://github.com/squat/generic-device-plugin);
-run it as a DaemonSet with the device named:
+[generic-device-plugin](https://github.com/squat/generic-device-plugin).
+Apply its
+[manifest](https://github.com/squat/generic-device-plugin/blob/main/manifests/generic-device-plugin.yaml)
+with the container's `--device` arguments replaced by this one:
 
 ```yaml
 args:
@@ -55,8 +57,13 @@ args:
 ```
 
 `count` is how many pods may hold the device at once, since every one of
-them shares the one `/dev/kvm`. Then request it through a
-`DeploymentRuntimeConfig`:
+them shares the one `/dev/kvm`.
+
+The kubelet gives the container the node's device node unchanged, owner
+and mode included, `root:kvm 0660` on most node images, and the
+container runs as the package's non-root user, who isn't in that group.
+A `DeploymentRuntimeConfig` requests the device and puts the node's `kvm`
+group among the pod's `supplementalGroups`:
 
 ```yaml
 apiVersion: pkg.crossplane.io/v1beta1
@@ -70,6 +77,8 @@ spec:
       strategy: {}
       template:
         spec:
+          securityContext:
+            supplementalGroups: [994]
           containers:
           - name: package-runtime
             resources:
@@ -77,16 +86,17 @@ spec:
                 devic.es/kvm: "1"
 ```
 
-The kubelet gives the container the node's device node unchanged, owner
-and mode included, `root:kvm 0660` on most node images, and the
-container runs as the package's non-root user, who isn't in that group.
-Put the node's `kvm` group among the pod's `supplementalGroups`:
+Point the Function at it:
 
 ```yaml
-      template:
-        spec:
-          securityContext:
-            supplementalGroups: [994]
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-oci
+spec:
+  package: ghcr.io/jonasz-lasut/function-oci:v<version>
+  runtimeConfigRef:
+    name: function-oci
 ```
 
 The gid is the node image's (994 on the end-to-end suite's kind node;
@@ -96,10 +106,11 @@ images differ), so read it once per node pool, through the API alone:
 kubectl debug node/<node> -it --image=busybox -- stat -c %g /host/dev/kvm
 ```
 
+Delete the `node-debugger-*` pod `kubectl debug` leaves behind.
+
 The pod doesn't need `privileged` or any capability. A privileged
-DaemonSet with the node's `/dev` mounted, which the device plugin already
-is, can set the device to `0666` in an init container instead, which is
-what KubeVirt does. A `privileged: true` function container gets every
+DaemonSet with the node's `/dev` mounted can set the device to `0666` in
+an init container instead, which is what KubeVirt does. A `privileged: true` function container gets every
 device of the node admitted, at the cost of the boundary the pod keeps
 otherwise. The end-to-end suite's setup
 runs the plugin and patches the kind node's gid into the `oci` profile's
@@ -108,7 +119,7 @@ runtime config (`crates/e2e/cluster/kvm-device-plugin.yaml`,
 start without the device and says so:
 
 ```text
-cannot open /dev/kvm: No such file or directory; the OCI runtime boots a microVM per request and needs the device granted to its pod
+cannot open /dev/kvm: No such file or directory; the OCI runtime boots a microVM per request and needs the device granted to its pod (docs/oci/install.md)
 ```
 
 `Operation not permitted` in place of `No such file or directory` is the
@@ -141,23 +152,27 @@ step's `limits.timeout` bound the whole run, the boot included.
 
 ## Refusals
 
-- A WebAssembly artifact: `module oci … is a WebAssembly module (type
-  wasm), which function-oci does not serve; function-wasm serves it`.
-  Install `function-wasm` beside `function-oci` and point the step at it.
+- A WebAssembly artifact: `module oci … is a WebAssembly artifact, which
+  function-oci does not serve; function-wasm serves it`, or, for a manifest
+  that declares one, `… is a WebAssembly module (wasm@1.0) by its manifest,
+  which function-oci does not serve; function-wasm serves it`. Install
+  `function-wasm` beside `function-oci` and point the step at it.
 - An image for another platform: `cannot load module …: image is built for
   linux/arm64, and this runtime runs on linux/amd64`.
 - An image without a command: `cannot load module …: image has neither an
-  entrypoint nor a command`.
-- A manifest that requires egress: `module … requires egress, which
-  function-oci does not serve yet`. The VM has no network device, and the
-  proxy the design record describes is a later phase.
+  entrypoint nor a command: the contract runs the image's configured command
+  (docs/one-pager-oci-runtime.md)`.
+- A manifest that requires egress: `module … requires egress
+  (requires.egress.http), which function-oci does not serve yet: the VM has
+  no network device (docs/one-pager-oci-runtime.md)`. The proxy the design
+  record describes is a later phase.
 - A layer compressed with zstd: `cannot load module …: layer is compressed
-  with zstd, which the OCI runtime does not unpack yet`. Build the image
-  with gzip layers, the default of every builder.
+  with zstd, which the OCI runtime does not unpack yet; build the image with
+  gzip layers (the default)`.
 
 A process that exits before answering the call, or an error from the
 function, is a fatal result on the step, as a component's error is: `module … failed: process exited with status 3 before answering
-the call: <the last line it logged>`. The deadline and the memory limit end the run the same
+the call: <the last line it logged>`. A process the init can't start is `module … failed: cannot start the process: <error>`, and one a signal ended is `module … failed: process was killed by signal 9: <the last line it logged>`. The deadline and the memory limit end the run the same
 way: `module … failed: run failed: module exceeded its execution deadline
 (30s)` and `module … failed: process was killed: the run's memory limit of
 512Mi was exceeded`. A VM whose init never reaches the host before the
@@ -165,6 +180,25 @@ deadline is the runtime's failure, not the module's: `module … failed: run
 failed: the guest did not connect before the deadline: the VM booted but
 its init never reached the host`. The VM's serial console, which `--debug`
 logs with the run, says how far the boot got.
+
+## Try it in a kind cluster
+
+From a checkout of the repository, on a machine with `/dev/kvm`:
+
+```shell
+git submodule update --init build
+make e2e.up E2E_WASM=0 E2E_OCI=1
+```
+
+It brings up a kind cluster with Crossplane, the device plugin, a registry
+and `function-oci` built from the checkout, installed with
+`make local.xpkg.deploy.function.function-oci` on the runtime config
+`e2e-oci-default`. `make e2e.down` removes the cluster.
+
+On a Mac, Colima with nested virtualization
+(`colima start --vm-type vz --nested-virtualization`) gives the kind node
+the VM's `/dev/kvm`, at about 5 s per run. function-oci 0.1 runs on KVM
+only, and Docker Desktop doesn't expose it.
 
 ## The development loop
 
@@ -175,6 +209,10 @@ flags pointing at a Firecracker binary, a guest kernel and the init that
 `make oci.tools` fetches and `make oci.init` builds. The loop needs a
 registry, because an OCI module comes from one alone (`module.type: OCI`:
 the runtime refuses a `Path` or `HTTP` source by name). Run a `registry:3`
-container on `127.0.0.1:5000`, which the runtime reaches over plain HTTP,
-then `docker push` the image there and `guestfn push --image` the module.
-A machine without KVM has no loop: function-oci 0.1 runs on KVM only.
+container on `127.0.0.1:5000`, then `docker push` the image there and
+`guestfn push --image` the module. The runtime speaks plain HTTP to
+`localhost`, `127.0.0.1` and `[::1]` alone. A registry in a cluster needs a
+certificate the pod trusts, through `SSL_CERT_FILE` on the function's
+container, as the end-to-end suite's registry does
+(`crates/e2e/profiles/oci/default/drc.yaml`). To try your own module in a
+cluster, push it to a registry with a public certificate, such as GHCR.

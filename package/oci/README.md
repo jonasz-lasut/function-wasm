@@ -19,8 +19,9 @@ discards, and `/tmp`, with no network device.
 > [!CAUTION]
 > **Alpha.** function-oci is 0.x, and until 1.0.0 a release may break
 > anything ([Compatibility](https://jonasz-lasut.github.io/guestfn/contract/compatibility.html#function-oci-at-0x)).
-> The pod needs `/dev/kvm`, and the sandbox has had no independent security
-> review.
+> The pod needs `/dev/kvm`. function-oci 0.1 has no egress and refuses a
+> manifest that requires it ([#280](https://github.com/jonasz-lasut/guestfn/issues/280)).
+> The sandbox has had no independent security review.
 
 ```yaml
 apiVersion: apiextensions.crossplane.io/v1
@@ -64,10 +65,11 @@ metadata:
   name: function-oci
 spec:
   package: ghcr.io/jonasz-lasut/function-oci:v<version>
+  runtimeConfigRef:
+    name: function-oci
 ```
 
-The pod must open `/dev/kvm`, which a device plugin or a host path grants
-it. The container's memory limit must cover one VM per concurrent run.
+The pod must open `/dev/kvm`, which a device plugin grants it. The container's memory limit must cover one VM per concurrent run.
 [Install function-oci](https://jonasz-lasut.github.io/guestfn/oci/install.html)
 has the node requirements, the flags and the sizing.
 
