@@ -49,7 +49,7 @@ include build/makelib/local.xpkg.mk
 #
 # make e2e            up, every profile in turn, down (the library's e2e
 #                     pipeline: e2e.init, e2e.run, e2e.done)
-# make e2e.up         one cluster for both runtimes: kind + Crossplane
+# make e2e.up         one cluster for one runtime or both: kind + Crossplane
 #                     (controlplane.up, then e2e.crossplane waits for its
 #                     deployment and the package CRDs its init container
 #                     registers), the suite's setup (crates/e2e's e2e-setup
@@ -57,10 +57,13 @@ include build/makelib/local.xpkg.mk
 #                     the test module pushed and signed under every variant,
 #                     the profiles' ConfigMaps, Secrets and runtime configs,
 #                     the kvm device plugin when the node has /dev/kvm, the
-#                     XRD), function-wasm's image and package installed from
-#                     it, and function-oci beside it when the kind node has
-#                     /dev/kvm (E2E_OCI=auto, the default; 1 requires it, 0
-#                     leaves it out, what CI's two cluster jobs set)
+#                     XRD), then function-wasm's image and package installed
+#                     from it (E2E_WASM=1, the default; 0 leaves it out, as
+#                     CI's oci cluster job sets) and function-oci when the
+#                     kind node has /dev/kvm (E2E_OCI=auto, the default; 1
+#                     requires it, as CI's oci cluster job and the release
+#                     matrix set; 0 leaves it out, as CI's wasm cluster job
+#                     sets)
 # make e2e.wasm-profile.<p>
 #                     one wasm profile's suite (default, strict, lifecycle):
 #                     cargo test --test wasm_<p>, which switches function-wasm
@@ -69,7 +72,7 @@ include build/makelib/local.xpkg.mk
 #                     one oci profile's suite (default): cargo test --test
 #                     oci_<p>, which switches function-oci the same way
 # make e2e.test.wasm  the wasm profiles in turn; e2e.test.oci the oci ones;
-#                     e2e.test both, the oci ones when the node has /dev/kvm
+#                     e2e.test every profile of the runtimes the cluster has
 # make e2e.down       delete the cluster
 # make e2e.dump       the cluster's state for a failed run, the function pods
 #                     described and logged first
@@ -106,11 +109,21 @@ FUNCTION_PKG_EXAMPLES := examples/function-wasm-go/example
 # Function with; the function-oci target sets its own below.
 FUNCTION_IMAGE := $(E2E_IMAGE)
 FUNCTION_RUNTIME_CONFIG := e2e-wasm-default
+# Whether function-wasm is part of the cluster: 1 (the default) installs
+# it, 0 leaves it out, which CI's oci cluster job sets so that each cluster
+# job installs its own runtime alone. Setup pushes every variant either way
+# (the oci suite's wrong-type case names the plain wasm one) and writes the
+# wasm default policy either way (the oci runtime config mounts it); 0
+# skips the package, the wasm profiles' runtime configs and the lifecycle
+# cache volume.
+E2E_WASM ?= 1
+e2e_wasm_wanted = [ "$(E2E_WASM)" = "1" ]
 # Whether function-oci is part of the cluster: `auto` (the default)
 # installs it when the kind node has /dev/kvm, which the pod opens there
 # and the node inherits from the host (a Linux host with KVM has it, and
 # so does Colima with nested virtualization; Docker Desktop has not); 1
-# requires it and 0 leaves it out, which CI's two cluster jobs set.
+# requires it (CI's oci cluster job and the release matrix) and 0 leaves it
+# out (CI's wasm cluster job).
 E2E_OCI ?= auto
 E2E_NODE_HAS_KVM := docker exec $(KIND_CLUSTER_NAME)-control-plane test -c /dev/kvm
 e2e_oci_wanted = { [ "$(E2E_OCI)" = "1" ] || { [ "$(E2E_OCI)" = "auto" ] && $(E2E_NODE_HAS_KVM) 2>/dev/null; }; }
@@ -131,7 +144,7 @@ HOST_IS_LINUX := $(filter Linux,$(shell uname -s))
 # the host's own builds of the guest never mix with Linux ones.
 E2E_OCI_GUEST ?= $(E2E_GUEST_DIR)/$(if $(HOST_IS_LINUX),target,target/linux)/$(MUSL_TARGET)/release/e2e-guest-oci
 
-.PHONY: e2e.up e2e.crossplane e2e.setup e2e.image e2e.test e2e.test.wasm e2e.test.oci e2e.down e2e.guest e2e.dump xpkg.build.function-wasm print-crossplane-version
+.PHONY: e2e.up e2e.crossplane e2e.setup e2e.image e2e.wasm.install e2e.test e2e.test.wasm e2e.test.oci e2e.down e2e.guest e2e.dump xpkg.build.function-wasm print-crossplane-version
 .PHONY: oci.tools oci.init oci.test e2e.oci.guest e2e.oci.image e2e.oci.install xpkg.build.function-oci
 print-crossplane-version:
 	@echo $(CROSSPLANE_VERSION)
@@ -145,9 +158,9 @@ e2e.done: e2e.down
 # (setup fails under E2E_OCI=1 on a node without /dev/kvm).
 e2e.up: controlplane.up e2e.crossplane
 	@if $(e2e_oci_wanted); then [ -f $(E2E_OCI_GUEST) ] || $(MAKE) e2e.oci.guest; fi
-	@$(MAKE) e2e.setup xpkg.build.function-wasm local.xpkg.deploy.function.function-wasm
-	@$(INFO) waiting for function-wasm to become healthy
-	@$(KUBECTL) wait function.pkg.crossplane.io/function-wasm --for=condition=Healthy --timeout=300s || $(FAIL)
+	@$(MAKE) e2e.setup
+	@if $(e2e_wasm_wanted); then $(MAKE) e2e.wasm.install; \
+	else echo "function-wasm is left out (E2E_WASM=0); the wasm profiles are skipped"; fi
 	@if $(e2e_oci_wanted); then $(MAKE) e2e.oci.install; \
 	else echo "function-oci is left out (E2E_OCI=$(E2E_OCI): auto installs it when the kind node has /dev/kvm, 1 requires it); the oci profiles are skipped"; fi
 	@$(OK) the end-to-end cluster is up: make e2e.test runs every profile, make e2e.wasm-profile.default or e2e.oci-profile.default one
@@ -163,10 +176,11 @@ e2e.crossplane: $(KUBECTL)
 
 # E2E_OCI_GUEST, when the file exists, adds the oci image and variants to
 # what setup pushes; KIND_CLUSTER_NAME names the node setup reads the
-# /dev/kvm group from, E2E_OCI what it does about the device.
+# /dev/kvm group from, E2E_OCI what it does about the device, E2E_WASM
+# whether the wasm profiles' runtime configs and volume are wanted.
 e2e.setup:
 	@$(INFO) setting up the registry, provider-nop, the test module and the profiles
-	@PROVIDER_NOP_VERSION=$(PROVIDER_NOP_VERSION) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) E2E_OCI=$(E2E_OCI) $(if $(wildcard $(E2E_OCI_GUEST)),E2E_OCI_GUEST=$(E2E_OCI_GUEST),) $(E2E_CARGO) --bin e2e-setup || $(FAIL)
+	@PROVIDER_NOP_VERSION=$(PROVIDER_NOP_VERSION) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) E2E_WASM=$(E2E_WASM) E2E_OCI=$(E2E_OCI) $(if $(wildcard $(E2E_OCI_GUEST)),E2E_OCI_GUEST=$(E2E_OCI_GUEST),) $(E2E_CARGO) --bin e2e-setup || $(FAIL)
 	@$(OK) setting up the registry, provider-nop, the test module and the profiles
 
 e2e.image:
@@ -200,6 +214,13 @@ local.xpkg.deploy.function.%: $(KIND) $(KUBECTL) local.xpkg.sync
 	@$(KIND) load docker-image $(FUNCTION_IMAGE) -n $(KIND_CLUSTER_NAME) || $(FAIL)
 	@echo '{"apiVersion":"pkg.crossplane.io/v1","kind":"Function","metadata":{"name":"$*"},"spec":{"package":"xpkg.crossplane.internal/dev/$*@$(LOCAL_XPKG_DIGEST)","skipDependencyResolution":true,"packagePullPolicy":"Never","runtimeConfigRef":{"name":"$(FUNCTION_RUNTIME_CONFIG)"}}}' | $(KUBECTL) apply -f - || $(FAIL)
 	@$(OK) deploying function package $* $(VERSION)
+
+# function-wasm from its image, on the wasm default profile (setup applied
+# every wanted profile's DeploymentRuntimeConfig).
+e2e.wasm.install: xpkg.build.function-wasm local.xpkg.deploy.function.function-wasm
+	@$(INFO) waiting for function-wasm to become healthy
+	@$(KUBECTL) wait function.pkg.crossplane.io/function-wasm --for=condition=Healthy --timeout=300s || $(FAIL)
+	@$(OK) waiting for function-wasm to become healthy
 
 # The OCI runtime's targets.
 oci.tools: ## Fetch the pinned Firecracker release and guest kernel under .cache/tools/oci
@@ -287,15 +308,9 @@ $(foreach p,$(E2E_OCI_PROFILES),$(eval $(call e2e.profile,oci,$(p))))
 e2e.test.wasm: $(addprefix e2e.wasm-profile.,$(E2E_WASM_PROFILES))
 e2e.test.oci: $(addprefix e2e.oci-profile.,$(E2E_OCI_PROFILES))
 
-# The wasm profiles under their old names, e2e.test.<p>: a comment-started
-# /e2e run reads e2e.yml from main, which calls these until the workflow
-# with the per-runtime names has merged. Remove them after that.
-define e2e.test.alias
-.PHONY: e2e.test.$(1)
-e2e.test.$(1): e2e.wasm-profile.$(1)
-endef
-$(foreach p,$(E2E_WASM_PROFILES),$(eval $(call e2e.test.alias,$(p))))
-e2e.test: e2e.test.wasm
+e2e.test:
+	@if $(e2e_wasm_wanted); then $(MAKE) e2e.test.wasm; \
+	else echo "function-wasm is not in this cluster (E2E_WASM=0); the wasm profiles are skipped"; fi
 	@if $(e2e_oci_wanted); then $(MAKE) e2e.test.oci; \
 	else echo "function-oci is not in this cluster (E2E_OCI=$(E2E_OCI)); the oci profiles are skipped"; fi
 

@@ -11,7 +11,7 @@ second.
 | Tier | Runs | What it covers |
 |---|---|---|
 | unit and component | `cargo test --workspace`, on every push and on a pull request that changes code | the engine, the runtime and `function validate` against in-memory stand-ins and recorded goldens, and every scaffold built and run through the host (the guest suite) |
-| end-to-end | `make e2e`, `/e2e` on a pull request, the [release matrix](#the-release-matrix) on a release branch | the package installed by Crossplane in a kind cluster, as an XR author and an operator see it |
+| end-to-end | `make e2e`, `/e2e` on a pull request, the [release matrix](#the-release-matrix) on a release branch | each function's package installed by Crossplane in a kind cluster, as an XR author and an operator see it |
 
 ## The tier for a new test
 
@@ -67,6 +67,14 @@ the suite's own setup binary, in three steps:
    names, on the `oci` runtime's `default` profile. `E2E_OCI` decides:
    `auto` (the default) installs it when the kind node has `/dev/kvm`, `1`
    requires it and `0` leaves it out, the two values CI's cluster jobs set.
+   `E2E_WASM` decides the same for `function-wasm`: `1` (the default)
+   installs it and `0` leaves it out, which CI's `oci` cluster job sets.
+   Each cluster job installs its own runtime alone. Setup pushes every
+   variant either way (the `oci` suite's wrong-type case names the `wasm`
+   runtime's `plain` variant) and writes the `wasm/default` policy either
+   way (the `oci` profile's `DeploymentRuntimeConfig` mounts it); `0` skips
+   the package, the `wasm` profiles' runtime configs and the lifecycle
+   cache volume.
    The test module as a process is built in a `rust` container on any host
    but Linux.
 
@@ -166,28 +174,42 @@ the whole suite on another Crossplane, given as the chart version without a
 `ci.yml` runs lint with `--all-features` and `cargo test --workspace` on every
 push, and on a pull request unless it touches only Markdown, JSON or SVG files.
 
-A `/e2e` comment on a pull request runs `e2e.yml`:
+A `/e2e` comment on a pull request runs `e2e.yml`. Every job proves one of
+the two functions. For `function-wasm`:
 
 - the guest suite, with `GUESTFN_REQUIRE_TOOLCHAINS=1` so a missing
   toolchain fails instead of skipping
 - one build job per example toolchain: build, unit tests, lint, and codec and
-  bindings drift
+  bindings drift, each module wrapped by the `guestfn` the `build-tools` job
+  compiled with the runtime
 - the `wasm` cluster job, which runs the three `wasm` profiles one after another
   on one kind cluster at the Makefile's `CROSSPLANE_VERSION` with
   `function-oci` left out (`E2E_OCI=0`), and uploads `make e2e.dump` on failure
-- the OCI jobs: a build job that compiles the runtime with the `oci` engine,
-  the init and the test module as a process (musl) and fetches the pinned
-  Firecracker and kernel (`make oci.tools`), an engine job that runs the OCI
-  engine's suite in real VMs under the runner's KVM (`GUESTFN_REQUIRE_KVM=1`,
-  so a missing tool fails instead of skipping), and a second cluster job that
-  installs both runtimes (`E2E_OCI=1`) and runs the `oci` profiles
+
+For `function-oci`:
+
+- the `oci-go` build job, which vets and tests the process guest and builds
+  its image, pushing nothing
+- a build job that compiles the runtime with the `oci` engine,
+  the init and the test module as a process (musl), fetches the pinned
+  Firecracker and kernel (`make oci.tools`) and then runs the OCI engine's
+  suite in real VMs under the runner's KVM over those files
+  (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of skipping); while
+  issue #272 is open, the `e2e/oci` status names the suite's verdict in its
+  description and never fails on it
+- the `oci` cluster job, which installs `function-oci` alone
+  (`E2E_WASM=0 E2E_OCI=1`) and runs the `oci` profiles
+
+The run posts three commit statuses on the pull request's head: `e2e/wasm`
+and `e2e/oci`, each naming the jobs of its runtime that didn't pass, and
+`e2e`, the whole run's verdict, which branch protection names.
 
 The jobs cache under `e2e-` keys that no trusted workflow restores, and the
 workflow sets `cache-mode: write` because a comment-started run gets a
 read-only cache token.
 
-GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs
-install, and the kind node inherits it. The node's device is `root:kvm 0660`
+GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs and
+the release matrix's legs install, and the kind node inherits it. The node's device is `root:kvm 0660`
 whatever the rule says, and the pod's user is the package's. The suite's
 setup installs the device plugin
 (`crates/e2e/cluster/kvm-device-plugin.yaml`), reads the node's `kvm`
@@ -206,9 +228,18 @@ the function supports the same three. Every `/e2e` run tests the current minor, 
 adds the two before it.
 
 `release-matrix-e2e.yml` runs on every push to a `release-X.Y` branch. It
-builds the runtime from the branch and runs `make e2e` three times in parallel,
-one kind cluster per version, and uploads the cluster dump for a failed
-version. `gh workflow run "Release Matrix E2E" --ref <ref>` runs it by hand on
+builds both runtimes from the branch once: `function-wasm`'s in
+`build-tools`, and `function-oci`'s pieces in `build-oci` (the runtime with
+the `oci` engine, the init, the test module as a process, the pinned
+Firecracker and kernel), as the `e2e.yml` jobs of the same names do. It then
+runs `make e2e E2E_OCI=1` three times in parallel, one kind cluster per
+version with both packages installed from those pieces and every profile of
+both runtimes, after the udev rule that gives the runner's kind node
+`/dev/kvm`, and uploads the cluster dump for a failed version. One cluster
+per version runs both runtimes. The matrix checks that the release works on
+that Crossplane; a leg per runtime would double the runners for no new
+proof. Both functions leave through `Publish Function`. A red leg blocks
+either. `gh workflow run "Release Matrix E2E" --ref <ref>` runs it by hand on
 any ref.
 
 The Makefile's `CROSSPLANE_VERSION` default names the current version. The

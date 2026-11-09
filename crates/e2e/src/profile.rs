@@ -107,9 +107,19 @@ impl Profile {
         }
     }
 
+    /// The profile whose policy ConfigMap this profile's runtime config
+    /// mounts: itself, or the wasm default for the oci default (its
+    /// drc.yaml names e2e-policy-wasm-default). Setup writes a policy when
+    /// a wanted profile mounts it, so the oci cluster needs no wasm profile.
+    pub fn policy_source(self) -> Profile {
+        match self {
+            Profile::OciDefault => Profile::WasmDefault,
+            own => own,
+        }
+    }
+
     /// The operator policy the profile owns; a profile whose runtime config
-    /// mounts another profile's policy (the oci default mounts the wasm
-    /// default's) has none of its own.
+    /// mounts another profile's policy (`policy_source`) has none of its own.
     pub fn policy(self) -> Option<&'static str> {
         match self {
             Profile::WasmDefault => Some(include_str!("../profiles/wasm/default/policy.cedar")),
@@ -208,5 +218,32 @@ async fn switch(client: &kube::Client, profile: Profile) -> Result<()> {
             );
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every profile mounts a policy that exists, and the one it mounts is
+    /// named in its runtime config: what setup relies on to write the
+    /// policies of the wanted profiles alone.
+    #[test]
+    fn every_profile_mounts_an_existing_policy() {
+        for profile in Profile::ALL {
+            let source = profile.policy_source();
+            assert!(
+                source.policy().is_some(),
+                "{}: mounts {}'s policy, which has none",
+                profile.name(),
+                source.name()
+            );
+            let mount = format!("e2e-policy-{}", source.name());
+            assert!(
+                profile.drc_yaml().contains(&mount),
+                "{}: drc.yaml does not name {mount}",
+                profile.name()
+            );
+        }
     }
 }
