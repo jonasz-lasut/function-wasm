@@ -55,7 +55,9 @@ config:
     type: object
 ```
 
-`contract: oci@1.0` names the process contract and its version.
+`contract: oci@1.0` names the process contract and its version, and
+[Compatibility](../contract/compatibility.md#function-oci-at-0x) says what
+the version means.
 `image` pins the image by digest; `guestfn push --image` writes it, so the
 file may leave it out. The other fields keep their meaning from
 [Module manifests](../guests/module-manifests.md). The runtime refuses

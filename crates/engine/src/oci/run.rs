@@ -1,8 +1,9 @@
 //! The bounds around one run - the run slot, the memory reservation and
 //! the run metric - the run's description for the init, and the
 //! translation of how the VM ended into the fatal results operators read
-//! (their wording is contract: the runtime prefixes them with `module
-//! <desc> failed: `, as it does the Wasmtime engine's).
+//! (the runtime prefixes them with `module <desc> failed: `, as it does
+//! the Wasmtime engine's; their wording is for the reader and is no
+//! contract, docs/contract/compatibility.md).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
