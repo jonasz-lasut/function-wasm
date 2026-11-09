@@ -56,8 +56,44 @@ fn run() -> Result<(), String> {
         },
     )
     .map_err(|e| format!("cannot greet the host: {e}"))?;
-    let description: Description =
-        read_json(&mut sock, Kind::Run).map_err(|e| format!("cannot read the run: {e}"))?;
+    // The host answers with the run, or parks the init first: it is about
+    // to snapshot the VM. A parked init waits on the connection it has,
+    // sending nothing, so the VM is still when it is frozen. A restore
+    // resets every vsock connection, which ends that wait in the clone,
+    // after the guest's driver has handled the reset: the init then
+    // connects to the clone's host as after a boot. The clone's clock and
+    // random state are the snapshot's until the run's description
+    // refreshes them.
+    let (kind, payload) = read_frame(&mut sock).map_err(|e| format!("cannot read the run: {e}"))?;
+    let description: Description = match kind {
+        Kind::Run => {
+            serde_json::from_slice(&payload).map_err(|e| format!("cannot read the run: {e}"))?
+        }
+        Kind::Park => {
+            eprintln!("guestfn-init: parked");
+            write_frame(&mut sock, Kind::Parked, &[])
+                .map_err(|e| format!("cannot answer the park: {e}"))?;
+            // Whatever ends the wait, an error or a close, the connection
+            // is gone and the next host is the one to greet.
+            let _ = read_frame(&mut sock);
+            drop(sock);
+            sock = connect_host_within(2_000, Duration::from_millis(1))?;
+            write_json(
+                &mut sock,
+                Kind::Hello,
+                &Hello {
+                    version: guestfn_engine::protocol::VERSION,
+                },
+            )
+            .map_err(|e| format!("cannot greet the host: {e}"))?;
+            let description: Description =
+                read_json(&mut sock, Kind::Run).map_err(|e| format!("cannot read the run: {e}"))?;
+            refresh(&description);
+            eprintln!("guestfn-init: resumed");
+            description
+        }
+        other => return Err(format!("unexpected {other:?} frame in place of the run")),
+    };
     // The whole request before the process starts: it is small (a
     // RunFunctionRequest), and the process then reads it without waiting
     // on the host.
@@ -337,8 +373,72 @@ fn set_hostname(name: &str) {
 /// Connects to the host on the well-known port; the host listens before
 /// the VM boots, and the retries cover the vsock driver coming up.
 fn connect_host() -> Result<UnixStream, String> {
+    connect_host_within(200, Duration::from_millis(25))
+}
+
+/// What a restored clone must not share with its siblings or keep from the
+/// snapshot's moment: the wall clock, set to the host's, and the kernel's
+/// random state, reseeded with the host's fresh bytes. Best effort: a
+/// failure leaves the guest as the snapshot had it, which the console says.
+fn refresh(d: &Description) {
+    if d.now_unix_ns != 0 {
+        let ts = libc::timespec {
+            tv_sec: (d.now_unix_ns / 1_000_000_000) as _,
+            tv_nsec: (d.now_unix_ns % 1_000_000_000) as _,
+        };
+        // SAFETY: a valid timespec; PID 1 may set the clock.
+        if unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) } != 0 {
+            eprintln!(
+                "guestfn-init: cannot set the clock: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+    let seed: Vec<u8> = (0..d.seed.len() / 2)
+        .filter_map(|i| u8::from_str_radix(d.seed.get(2 * i..2 * i + 2)?, 16).ok())
+        .take(64)
+        .collect();
+    if seed.is_empty() {
+        return;
+    }
+    // RNDADDENTROPY credits the bytes to the input pool and RNDRESEEDCRNG
+    // makes the generator take them now rather than at its next interval.
+    const RNDADDENTROPY: u64 = 0x4008_5203;
+    const RNDRESEEDCRNG: u64 = 0x5207;
+    #[repr(C)]
+    struct Pool {
+        entropy_count: libc::c_int,
+        buf_size: libc::c_int,
+        buf: [u8; 64],
+    }
+    let mut pool = Pool {
+        entropy_count: (seed.len() * 8) as libc::c_int,
+        buf_size: seed.len() as libc::c_int,
+        buf: [0; 64],
+    };
+    pool.buf[..seed.len()].copy_from_slice(&seed);
+    match std::fs::OpenOptions::new().write(true).open("/dev/urandom") {
+        Ok(f) => {
+            use std::os::unix::io::AsRawFd as _;
+            // SAFETY: a valid fd and a rand_pool_info of the stated size.
+            let added = unsafe { libc::ioctl(f.as_raw_fd(), RNDADDENTROPY as _, &pool) };
+            // SAFETY: a valid fd; the request takes no argument.
+            let reseeded = unsafe { libc::ioctl(f.as_raw_fd(), RNDRESEEDCRNG as _, 0) };
+            if added != 0 || reseeded != 0 {
+                eprintln!(
+                    "guestfn-init: cannot reseed the kernel's randomness: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        Err(e) => eprintln!("guestfn-init: cannot open /dev/urandom to reseed: {e}"),
+    }
+}
+
+/// Connects to the host's port, trying again after each refusal.
+fn connect_host_within(tries: u32, pause: Duration) -> Result<UnixStream, String> {
     let mut last = String::new();
-    for _ in 0..200 {
+    for _ in 0..tries {
         // SAFETY: socket(2) with constant arguments.
         let fd = unsafe { libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
         if fd < 0 {
@@ -369,7 +469,7 @@ fn connect_host() -> Result<UnixStream, String> {
         last = std::io::Error::last_os_error().to_string();
         // SAFETY: the fd is ours and not used again.
         unsafe { libc::close(fd) };
-        std::thread::sleep(Duration::from_millis(25));
+        std::thread::sleep(pause);
     }
     Err(format!("cannot connect to the host over vsock: {last}"))
 }

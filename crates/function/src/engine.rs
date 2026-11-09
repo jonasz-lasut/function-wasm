@@ -57,6 +57,14 @@ pub struct EngineArgs {
     /// vCPUs per VM.
     #[arg(long, default_value_t = 1, env = "GUESTFN_VM_VCPUS")]
     pub vm_vcpus: u8,
+
+    /// Restore a VM snapshot per image in place of a boot: the first run
+    /// of an image boots and snapshots the VM with its init waiting, every
+    /// later run restores it into a fresh VM. A prototype (#255), off by
+    /// default: the snapshots live in the engine's scratch directory for
+    /// the process's life.
+    #[arg(long, env = "GUESTFN_VM_SNAPSHOTS")]
+    pub vm_snapshots: bool,
 }
 
 #[cfg(all(feature = "oci", not(feature = "wasm")))]
@@ -67,6 +75,7 @@ impl Default for EngineArgs {
             guest_kernel: "/usr/lib/guestfn/vmlinux".into(),
             guest_init: "/usr/lib/guestfn/init".into(),
             vm_vcpus: 1,
+            vm_snapshots: false,
         }
     }
 }
@@ -86,6 +95,7 @@ pub fn new(config: Config, args: &EngineArgs) -> Result<Selected, Error> {
             kernel: args.guest_kernel.clone(),
             init: args.guest_init.clone(),
             vcpus: args.vm_vcpus,
+            snapshots: args.vm_snapshots,
         },
     )
 }

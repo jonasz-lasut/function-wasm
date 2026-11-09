@@ -51,6 +51,10 @@ fn tools() -> Option<Tools> {
 }
 
 fn engine(t: &Tools, config: Config) -> Oci {
+    engine_with(t, config, false)
+}
+
+fn engine_with(t: &Tools, config: Config, snapshots: bool) -> Oci {
     Oci::new(
         config,
         Options {
@@ -58,6 +62,7 @@ fn engine(t: &Tools, config: Config) -> Oci {
             kernel: t.kernel.clone(),
             init: t.init.clone(),
             vcpus: 1,
+            snapshots,
         },
     )
     .expect("engine")
@@ -229,4 +234,151 @@ fn the_memory_limit_kills_a_growing_process() {
             || err.starts_with("process was killed by signal 9"),
         "{err}"
     );
+}
+
+/// With snapshots on (#255), the first run of an image boots and
+/// snapshots the VM with its init parked, and every later run restores
+/// it: the process contract is the same on both paths.
+#[test]
+fn a_restored_clone_runs_like_a_boot() {
+    let Some(t) = tools() else { return };
+    let e = engine_with(&t, Config::default(), true);
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "echo"],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    for (i, request) in [vec![7u8; 300_000], b"again".to_vec(), b"and again".to_vec()]
+        .into_iter()
+        .enumerate()
+    {
+        let started = std::time::Instant::now();
+        let out = e.run(&m, &request, opts()).unwrap();
+        // The first run boots and snapshots; the others restore.
+        eprintln!("snapshots on: run {i} took {:?}", started.elapsed());
+        assert_eq!(out, request);
+    }
+    let booting = engine(&t, Config::default());
+    let booted = booting
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "echo"],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    let started = std::time::Instant::now();
+    assert_eq!(booting.run(&booted, b"again", opts()).unwrap(), b"again");
+    eprintln!("snapshots off: a run took {:?}", started.elapsed());
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "exit", "3"],
+            "",
+            &[],
+        ))
+        .unwrap();
+    let err = e.run(&m, b"", opts()).unwrap_err().0;
+    assert!(err.starts_with("process exited with status 3"), "{err}");
+}
+
+/// A restored clone is as fresh as a boot: its random state is its own,
+/// its clock is the host's, and nothing one clone wrote reaches the next.
+#[test]
+fn restored_clones_share_nothing() {
+    let Some(t) = tools() else { return };
+    let e = engine_with(&t, Config::default(), true);
+    let random = e
+        .compile(&fixture_image(&t.fixture, &["/fixture", "random"], "", &[]))
+        .unwrap();
+    let draws: Vec<Vec<u8>> = (0..4)
+        .map(|_| e.run(&random, b"", opts()).unwrap())
+        .collect();
+    for (i, a) in draws.iter().enumerate() {
+        assert_eq!(a.len(), 32, "{:?}", String::from_utf8_lossy(a));
+        for b in &draws[i + 1..] {
+            assert_ne!(a, b, "two clones drew the same randomness");
+        }
+    }
+    let clock = e
+        .compile(&fixture_image(&t.fixture, &["/fixture", "clock"], "", &[]))
+        .unwrap();
+    // The first run made the snapshot a moment ago; wait, so a clock left
+    // at the snapshot's moment would show.
+    let _ = e.run(&clock, b"", opts()).unwrap();
+    std::thread::sleep(Duration::from_secs(3));
+    let guest: u64 = String::from_utf8(e.run(&clock, b"", opts()).unwrap())
+        .unwrap()
+        .parse()
+        .unwrap();
+    let host = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    assert!(
+        host.abs_diff(guest) <= 1,
+        "guest clock {guest}, host {host}"
+    );
+    let leftover = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "leftover"],
+            "",
+            &[],
+        ))
+        .unwrap();
+    for _ in 0..3 {
+        let seen = e.run(&leftover, b"", opts()).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&seen),
+            "tmp=absent root=absent",
+            "a clone saw what another wrote"
+        );
+    }
+}
+
+/// Boot against restore, by hand (#255):
+///
+///   GUESTFN_VM_TIMING=1 cargo test -p guestfn-engine --no-default-features \
+///     --features oci,testutil --release --test vm -- --ignored --nocapture boot_against_restore
+///
+/// with the suite's GUESTFN_* files set. Prints each path's whole-run
+/// latency over the echo fixture; GUESTFN_VM_TIMING adds the sandbox's
+/// phases per run.
+#[test]
+#[ignore = "a hand-run benchmark"]
+fn boot_against_restore() {
+    let Some(t) = tools() else { return };
+    let runs: usize = std::env::var("GUESTFN_BENCH_RUNS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+    let image = fixture_image(&t.fixture, &["/fixture", "echo"], "app", &[]);
+    for (name, snapshots) in [("boot", false), ("restore", true)] {
+        let e = engine_with(&t, Config::default(), snapshots);
+        let m = e.compile(&image).unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(e.run(&m, b"warm", opts()).unwrap(), b"warm");
+        let first = started.elapsed();
+        let mut millis: Vec<f64> = (0..runs)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                assert_eq!(e.run(&m, b"request", opts()).unwrap(), b"request");
+                started.elapsed().as_secs_f64() * 1e3
+            })
+            .collect();
+        millis.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let at = |q: f64| millis[((millis.len() - 1) as f64 * q).round() as usize];
+        eprintln!(
+            "bench {name}: first {:.0} ms; then n={runs} min {:.0} p50 {:.0} p90 {:.0} max {:.0} ms",
+            first.as_secs_f64() * 1e3,
+            at(0.0),
+            at(0.5),
+            at(0.9),
+            at(1.0),
+        );
+    }
 }

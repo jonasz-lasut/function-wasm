@@ -242,9 +242,8 @@ proxy settings). It starts the process and pipes the request to its stdin.
 It streams stderr to the host as it arrives and collects stdout to end of
 file. After the exit it reports the status. The runtime then kills the VM,
 which discards every change the run made, and a fresh instance per request
-holds. A later revision may snapshot a booted VM per image digest and
-restore it per request where the VMM supports it. The record puts it under
-Alternatives until measurements ask for it.
+holds. `--vm-snapshots` restores a snapshot of the booted VM in place of
+the boot ([Snapshots](#snapshots)).
 
 **Bounds.** `limits.timeout` is the VM's wall clock, the boot included.
 `limits.memory` is the process's memory. The init runs it in a cgroup
@@ -361,6 +360,13 @@ same `Sandbox` seam next, and the measurements decide.
   Alternatives. The status stays `draft` until the first `function-oci`
   package, which makes it `implemented, revision 1.0`. gVisor stays the candidate for a cluster without
   `/dev/kvm`, behind the same `Sandbox` trait, if demand appears.
+
+### Snapshots
+
+`--vm-snapshots` restores a snapshot of an image's booted VM in place of a
+boot. It's a prototype, off by default and Firecracker's alone. On a
+laptop's nested KVM the median run went from 1123 ms to 250 ms.
+[Per-image microVM snapshots](one-pager-vm-snapshots.md) is its design record.
 
 ### Offline validation and the CLI
 
@@ -528,9 +534,6 @@ package starts alpha on the shared release train.
   client finds the function's headless Service empty, which the e2e
   profile's first run showed. The device plugin admits the device, and
   the operator page keeps the symptom for the reader who meets it.
-- **Snapshot and restore per image digest.** Firecracker restores a booted
-  VM in tens of milliseconds, and libkrun has no snapshots. Deferred until
-  cold boot measurements ask for it. The `Sandbox` trait leaves room.
 - **A separate repository.** The policy, proxy and tooling code is most of
   the product and changes together. Rejected.
 
@@ -620,3 +623,8 @@ Open:
    (`Dockerfile.oci`), its package root (`package/oci`) and its operators
    page are in the tree. Left: the `oci` e2e case that pulls the published
    example from `ghcr.io`, after the first publish.
+7. A prototype ([#255](https://github.com/jonasz-lasut/guestfn/issues/255)):
+   snapshots per image behind `--vm-snapshots`
+   ([Per-image microVM snapshots](one-pager-vm-snapshots.md)).
+   [#279](https://github.com/jonasz-lasut/guestfn/issues/279) has what's
+   left.

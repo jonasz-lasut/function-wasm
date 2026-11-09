@@ -40,6 +40,10 @@ pub struct Options {
     pub init: PathBuf,
     /// vCPUs per VM.
     pub vcpus: u8,
+    /// Restore a snapshot per image in place of a boot (#255, a
+    /// prototype): the first run of an image boots and snapshots the VM
+    /// with its init parked, every later run restores it.
+    pub snapshots: bool,
 }
 
 /// The device every VM needs; the engine refuses to start without it.
@@ -90,7 +94,11 @@ impl Oci {
     /// packed, and `/dev/kvm` opened once so a node without it fails at
     /// startup with one sentence rather than at the first request.
     pub fn new(config: Config, options: Options) -> Result<Oci, Error> {
-        let sandbox = Box::new(firecracker::Firecracker::new(options.vmm.clone()));
+        let sandbox = Box::new(if options.snapshots {
+            firecracker::Firecracker::with_snapshots(options.vmm.clone())
+        } else {
+            firecracker::Firecracker::new(options.vmm.clone())
+        });
         for (what, path) in [("--vmm", &options.vmm), ("--guest-kernel", &options.kernel)] {
             if !path.is_file() {
                 return Err(Error(format!(
@@ -291,6 +299,7 @@ mod tests {
             kernel: dir.path().join("vmlinux"),
             init,
             vcpus: 1,
+            snapshots: false,
         };
         let e = Oci::with_sandbox(Config::default(), options, Box::new(sandbox)).unwrap();
         // The temp dir goes; the engine read the init already.
