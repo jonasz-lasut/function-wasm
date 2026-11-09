@@ -947,7 +947,7 @@ A new refusal gets its entry there, beside its fixture under `testdata/validate/
 - `docs/one-pager-abi-v2.md` — ABI v2 on the component model and this Rust host (the port delivered its phases 1-4; the v2 spike is issue #65)
 - `docs/one-pager-three-layer-authz.md`, `docs/one-pager-read-fence.md`, `docs/one-pager-trust-model.md`, `docs/one-pager-sandbox.md` — the authorization and sandbox model
 - `docs/one-pager-cache.md`, `docs/one-pager-resource-governance.md` — caches, bounds, fairness and the egress rate limit
-- `docs/one-pager-oci-runtime.md`, `docs/one-pager-vm-snapshots.md` - the OCI runtime, and its per-image VM snapshots behind `--enable-vm-snapshots` (the design, the measurements, the decisions; #279 has what is left)
+- `docs/one-pager-oci-runtime.md`, `docs/one-pager-vm-snapshots.md` - the OCI runtime, and its per-image VM snapshots behind `--enable-vm-snapshots` (the design, the measurements, the decisions)
 - `docs/one-pager-module-source-schema.md`, `docs/one-pager-module-manifest.md` — the Input and the manifest (manifests by reference included)
 - `docs/project/testing.md` - the two test tiers, where a new test goes, the end-to-end suite's profiles, module and workflow
 - `docs/one-pager-use-case-examples.md` - the use-case examples: why these, how they are tested (scaffold goldens, shared plumbing, unit tests, the build jobs), how they are published

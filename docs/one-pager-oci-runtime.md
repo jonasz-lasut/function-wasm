@@ -63,10 +63,8 @@ the evaluation planned didn't run.
 
 ## Non-goals
 
-- **Running the image as a plain container in production.** A container
-  shares the host kernel. Whether a container sandbox serves the
-  development loop on machines without KVM is open (decision 9), and the
-  runtime would refuse it in a cluster without an explicit flag.
+- **Running the image as a plain container.** A container shares the host
+  kernel, and `function-oci` 0.1 runs on KVM only (decision 9).
 - **A second ABI for WebAssembly.** The component world remains the one
   WebAssembly contract. The OCI contract is a process contract.
 - **Scaffolding and building the image.** The author writes the project
@@ -305,12 +303,8 @@ pod's cgroup is the jail, without `privileged` and without
 
 **The development loop.** The loop runs on a Linux machine with
 `/dev/kvm`, where the runtime boots the VM it boots in the pod.
-Firecracker has no macOS port, and a machine without KVM has no loop. A
-container sandbox behind `--insecure` would
-give it one: it would run the image through the Docker daemon or a
-rootless `crun` with the same init protocol over a Unix socket, with a
-warning at startup and under every step `function validate` prints.
-Whether 0.1 needs that fallback is open (decision 9).
+Firecracker has no macOS port, and a machine without KVM has no loop
+(decision 9).
 
 ### Sandbox evaluation
 
@@ -572,6 +566,13 @@ package starts alpha. The scheme for its tags and releases is open
 - **A separate repository.** The policy, proxy and tooling code is most of
   the product and changes together. Rejected.
 
+- **A container sandbox for machines without KVM.** A sandbox behind
+  `--insecure` would run the image through the Docker daemon or a rootless
+  `crun`, with the same init protocol over a Unix socket and a warning at
+  startup and under every step `function validate` prints. It would give
+  a machine without KVM a development loop, and 0.1 goes without it
+  (decision 9).
+
 ## Decisions
 
 The owner settled these on 2026-11-05:
@@ -631,8 +632,9 @@ The owner decided these the same day:
     design and the image-independent snapshot it rejected.
 14. **The egress design.** The proxy gets a design of its own first, in
     [#280](https://github.com/jonasz-lasut/guestfn/issues/280), before
-    phase 5. Decision 3 remains its direction. Whether 0.1 waits for the
-    proxy isn't decided.
+    phase 5. Decision 3 remains its direction, and the design enforces the
+    manifest's method and path rules. 0.1 doesn't wait for the proxy: it
+    refuses a manifest that requires egress, by name.
 15. **Tags and releases.** The repository's tags and releases get cleaned
     up for a monorepo. The scheme is an open item of
     [#281](https://github.com/jonasz-lasut/guestfn/issues/281).
@@ -645,11 +647,11 @@ The owner decided these the same day:
     waits for function-wasm's 1.0.0
     ([Compatibility](contract/compatibility.md#function-oci-at-0x)).
 
-Open:
+The owner decided this the same day:
 
 9. **The development loop without KVM.** Firecracker has no macOS port,
-   and a machine without KVM has no loop. Whether 0.1 needs a container
-   fallback behind `--insecure` is open.
+   and a machine without KVM has no loop. 0.1 has no container fallback
+   and runs on KVM only.
 
 ## Phases
 
@@ -697,5 +699,3 @@ order from these phases to 0.1, the package's first release.
    snapshots per image behind `--enable-vm-snapshots`
    ([Per-image microVM snapshots](one-pager-vm-snapshots.md)), in 0.1 as
    an alpha feature (decision 13).
-   [#279](https://github.com/jonasz-lasut/guestfn/issues/279) has what's
-   left.
