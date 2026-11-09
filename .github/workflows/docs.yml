@@ -28,6 +28,7 @@ on:
       - 'docs/**'
       - 'book.toml'
       - 'README.md'
+      - 'package/*/README.md'
       - 'SECURITY.md'
       - '.vale.ini'
       - '.vale/**'
@@ -39,6 +40,7 @@ on:
       - 'docs/**'
       - 'book.toml'
       - 'README.md'
+      - 'package/*/README.md'
       - 'SECURITY.md'
       - '.vale.ini'
       - '.vale/**'
@@ -93,6 +95,8 @@ jobs:
             --exclude-path book/404.html
             'book/**/*.html'
             README.md
+            package/wasm/README.md
+            package/oci/README.md
           fail: true
           failIfEmpty: true
 

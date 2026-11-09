@@ -402,7 +402,7 @@ VALE_OS := $(if $(filter Darwin,$(shell uname -s)),macOS,Linux)
 VALE_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,64-bit)
 VALE := $(TOOLS)/vale-$(VALE_VERSION)/vale
 VALE_SYNCED := .vale/styles/.synced
-VALE_PATHS := docs README.md SECURITY.md
+VALE_PATHS := docs README.md SECURITY.md package/wasm/README.md package/oci/README.md
 
 PROTO_COPIES := $(shell git ls-files '*/proto/run_function.proto')
 PROTO_VERSION_FILE := crates/guestfn/templates/rust/proto/run_function.proto
