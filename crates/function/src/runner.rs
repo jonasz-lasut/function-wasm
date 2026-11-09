@@ -408,11 +408,7 @@ impl WasmFunction {
             }
         };
         if let Some(m) = &manifest
-            && let Err(e) = m.check(
-                &caps.grants(),
-                config.as_ref(),
-                crate::manifest::runtime_version(),
-            )
+            && let Err(e) = m.check(&caps.grants(), config.as_ref())
         {
             return Ok(raw_rsp(self.fatal(
                 &req,

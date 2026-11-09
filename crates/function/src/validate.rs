@@ -720,11 +720,7 @@ impl Validator {
             Ok(caps) => caps,
             Err(e) => refuse!(format!("module {} {e}", resolved.description)),
         };
-        if let Err(e) = m.check(
-            &caps.grants(),
-            config.as_ref(),
-            crate::manifest::runtime_version(),
-        ) {
+        if let Err(e) = m.check(&caps.grants(), config.as_ref()) {
             refuse!(format!("module {} {e}", resolved.description));
         }
         // A configuration the tool could not read is a schema check it

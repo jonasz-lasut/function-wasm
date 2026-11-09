@@ -82,7 +82,7 @@ A module manifest declares `contract: wasm@1.0`, this world. Another version is 
 
 `wasmfn:function@2.0.0` is the contract from function-wasm 1.0.0 on. The world's version moves on its own, by what a change asks of guests:
 
-- A 2.x minor may only add imports: a new interface or a new function. A component imports only what it uses. The runtime serves a guest built against an earlier 2.x unchanged. A guest that imports the addition needs a runtime that provides it, and its manifest's `minRuntime` says which.
+- A 2.x minor may only add imports: a new interface or a new function. A component imports only what it uses. The runtime serves a guest built against an earlier 2.x unchanged. A guest that imports the addition declares the contract minor that added it, and a runtime that doesn't offer that contract refuses it by name.
 - Within 2.x, `run`'s signature, the `log` import (the `log-level` cases included) and anything else already in the world stay as they are. Changing or removing any of them is `3.0.0`, a world every guest is rebuilt against.
 - A new field of `RunFunctionRequest` or `RunFunctionResponse` moves no world version. Payload evolution is Protobuf's.
 

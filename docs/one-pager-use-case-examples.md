@@ -171,7 +171,7 @@ published as CNCF Wasm OCI artifacts, with their module manifests:
   `v<version>`, independent of the runtime's. A version already published is
   never pushed again (the same registry probe as `publish-wit`), so a run
   publishes only the examples whose version moved, and a published tag remains
-  immutable. `minRuntime` in a manifest states the runtime it needs.
+  immutable.
 - **When:** when a maintainer runs the workflow, from `main`, after an
   example's version moved. The examples have a lifecycle of their own. A
   release neither builds nor carries them, and a failed example build stays

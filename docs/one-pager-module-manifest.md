@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.7 (`abi` is `contract`, `<engine>@<major>.<minor>`, and an `oci@0.1` manifest names its `image`, for the OCI runtime record; the manifest file is `guestfn.yaml` and its layer's media type is under `vnd.guestfn`, #241; the `requires.resources` declaration
+* Status: implemented, revision 1.8 (`abi` is `contract`, `<engine>@<major>.<minor>`, an `oci@0.1` manifest nests `image` and `args` under `oci`, and `minRuntime` is gone, for the OCI runtime record; the manifest file is `guestfn.yaml` and its layer's media type is under `vnd.guestfn`, #241; the `requires.resources` declaration
   beside `composes`; rewritten in the present tense over the Rust workspace; merges
   in the manifest-less-sources record, revision 0.1, whose manifests by
   reference are a section here)
@@ -65,7 +65,6 @@ config:
     type: object
     properties: {greeting: {type: string}, greetingUrl: {type: string, format: uri}}
     additionalProperties: false
-minRuntime: v0.2.0                       # oldest function-wasm runtime that serves this module
 composes:                                # advisory: what the module writes
 - kind: policy/PodDisruptionBudget
   changes: [add]
@@ -107,7 +106,7 @@ writes rules for) and by the operator's `--sandbox-policy-file`
 (default-deny). Then `Manifest::check` holds the rest of the manifest against
 the run:
 
-- `contract` is one the engine offers, and `minRuntime` is no newer than the runtime's stamped version
+- `contract` is one the engine offers
   (a development build, which has none, passes);
 - the Input's `config` (absent is `{}`) validates against `config.schema`.
 
@@ -222,7 +221,7 @@ requests.
   the `guestfn.yaml` of a project and refuses unknown fields, `parse` decodes a layer (at most 64
   KiB, unknown top-level fields ignored, an unknown `requires` field refused),
   `validate` checks the egress rules, env bindings and credentials through the
-  same functions the Input's use, `minRuntime` as semver and the schema
+  same functions the Input's use and the schema
   compiled as JSON Schema 2020-12 with the `jsonschema` crate. `check` holds
   the manifest against the run's `Grants`, and `summary` is the line the CLIs
   print.

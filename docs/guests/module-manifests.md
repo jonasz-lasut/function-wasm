@@ -71,7 +71,6 @@ same way.
   It must be self-contained: a `$ref` to a URL or a file is refused at load,
   and `pattern` takes the `regex` crate's syntax, which has no look-around
   and no back-references. Non-secret configuration belongs in `config`, not in env.
-- `minRuntime`: the oldest runtime that serves the module.
 - `composes`: what the module writes, advisory
   ([below](#the-composes-declaration)).
 - `requires.resources`: what the module asks Crossplane for, advisory
@@ -117,8 +116,8 @@ module oci ghcr.io/example/greeter@sha256:… requires egress GET to host "api.e
 … requires credential "cmdb" (requires.credentials[0]), which the operator policy (--sandbox-policy-file) does not permit
 ```
 
-A runtime older than the manifest's `minRuntime` and a `config` that doesn't
-match the schema fail the same way, and a schema that reaches outside itself
+A `config` that doesn't match the schema fails the same way, and a schema
+that reaches outside itself
 is refused when the manifest is read:
 
 ```text

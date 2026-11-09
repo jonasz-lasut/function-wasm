@@ -57,7 +57,7 @@ the evaluation planned didn't run.
   its manifest appended as one more layer. `guestfn inspect` shows what
   the runtime sees in it, and `function validate --resolve` admits a
   Composition offline.
-- **One manifest.** `requires`, `composes`, `config` and `minRuntime` keep
+- **One manifest.** `requires`, `composes` and `config` keep
   their meaning. A platform team's Cedar policies and manifest reviews
   transfer without a second vocabulary.
 
