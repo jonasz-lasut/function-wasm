@@ -67,10 +67,17 @@ version variable `FUNCTION_WASM_VERSION` became `GUESTFN_VERSION`.
 
 function-oci runs an OCI image in a Firecracker microVM
 ([Install function-oci](../oci/install.md)). It's alpha and 0.x, and
-function-wasm's 1.x promise doesn't extend to it. The design record keeps
-the alpha label until the process contract and the engine's flags have
-held through two minor releases
+function-wasm's 1.x promise doesn't extend to it. Until function-oci's own
+1.0.0, a release may break anything the package has. A release that
+renames or removes something refuses the old name by name, with no
+deprecation step. The design record keeps the alpha label until the
+process contract and the engine's flags have held through two minor
+releases
 ([OCI runtime](../one-pager-oci-runtime.md#two-packages-one-workspace)).
+
+What function-oci shares with function-wasm is the Input, the module
+manifest and the `guestfn_*` metric names. Whether those are stable for
+function-oci isn't decided: that waits for function-wasm's 1.0.0.
 
 `oci@1.0` is the process contract
 ([OCI modules](../oci/modules.md#the-process-contract)). The runtime runs
@@ -87,22 +94,22 @@ is a fatal result on the step.
 A module's manifest declares the contract it follows, `contract: oci@1.0`,
 and function-oci refuses a version its engine doesn't offer. It offers
 `oci@1.0` alone. The `1.0` is the contract's version, not function-oci's.
-A minor version adds what a module may use, and a major version changes
-what the engine does with a module
-([Module manifests](../guests/module-manifests.md)). Beyond that the rules
-aren't defined yet: which changes to the process contract count as a
-minor, and whether a runtime that offers a later version keeps running
-`oci@1.0` images.
+A minor version adds what a module may use, and a runtime that offers it
+keeps running `oci@1.0` images. Only a major version, `oci@2.0`, may stop
+running them ([Module manifests](../guests/module-manifests.md)).
 
-A 0.x minor release may change the surfaces that only function-oci has:
+The wording of a fatal result isn't part of the contract. `oci@1.0` says
+what an exit means, and the sentence that reports it, such as `process
+exited with status <n>`, may change in any release. The conformance
+goldens pin none of function-oci's sentences.
+
+Among what a 0.x release may change:
 
 - The engine's flags and their defaults: `--vmm`, `--guest-kernel`,
   `--guest-init` and `--vm-vcpus`
   ([Install function-oci](../oci/install.md#flags)).
 - The wording of the engine's fatal results and of the refusals only
-  function-oci prints, such as `process exited with status <n>`. The
-  contract says what an exit means, not the sentence of the fatal
-  result, and the conformance goldens pin none of these sentences.
+  function-oci prints.
 - The metrics only function-oci emits:
   `guestfn_module_snapshot_duration_seconds`, and the `snapshot` value of
   the `cache` label on `guestfn_module_cache_events_total`.

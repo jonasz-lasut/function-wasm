@@ -636,6 +636,14 @@ The owner decided these the same day:
 15. **Tags and releases.** The repository's tags and releases get cleaned
     up for a monorepo. The scheme is an open item of
     [#281](https://github.com/jonasz-lasut/guestfn/issues/281).
+16. **Compatibility at 0.x.** Until function-oci's 1.0.0 a release may
+    break anything the package has, and it announces a rename or a
+    removal by refusing the old name by name. The wording of a fatal
+    result is never a contract. A runtime that offers `oci@1.1` keeps
+    running `oci@1.0` images, and only `oci@2.0` breaks them. Whether the
+    Input, the manifest and the metric names are stable for function-oci
+    waits for function-wasm's 1.0.0
+    ([Compatibility](contract/compatibility.md#function-oci-at-0x)).
 
 Open:
 
