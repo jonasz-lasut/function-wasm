@@ -82,3 +82,7 @@ required-features = ["cluster"]
 [[test]]
 name = "oci_default"
 required-features = ["cluster"]
+
+[[test]]
+name = "oci_snapshots"
+required-features = ["cluster"]

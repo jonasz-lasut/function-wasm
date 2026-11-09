@@ -10,15 +10,16 @@ use crate::k8s::{CROSSPLANE_NAMESPACE, FUNCTION_POD_SELECTOR};
 pub const METRICS_PORT: u16 = 8080;
 pub const HEALTH_PORT: u16 = 8081;
 
-/// The /metrics text of the running function pod.
+/// The /metrics text of the running function-wasm pod.
 pub async fn scrape(client: &Client) -> Result<String> {
-    let bridge = Bridge::to_labelled(
-        client.clone(),
-        CROSSPLANE_NAMESPACE,
-        FUNCTION_POD_SELECTOR,
-        METRICS_PORT,
-    )
-    .await?;
+    scrape_of(client, FUNCTION_POD_SELECTOR).await
+}
+
+/// The /metrics text of the running pod a selector finds: a profile's
+/// `pod_selector` for the function it configures.
+pub async fn scrape_of(client: &Client, selector: &str) -> Result<String> {
+    let bridge =
+        Bridge::to_labelled(client.clone(), CROSSPLANE_NAMESPACE, selector, METRICS_PORT).await?;
     let url = bridge.url("http", "/metrics");
     reqwest::get(&url)
         .await
