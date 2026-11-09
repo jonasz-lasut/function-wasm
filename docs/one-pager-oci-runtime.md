@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft (a second runtime that runs OCI images in a microVM behind the same manifest and policy layers as a WebAssembly module. The owner settled the packaging and the contract and the egress and the artifact and the names and the order on 2026-11-05. The renames and the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247). The first `function-oci` build runs a process under Firecracker, the evaluation's first prototype behind the `Sandbox` seam, with the egress proxy and the scaffolds still ahead)
+* Status: draft (a second runtime that runs OCI images in a microVM behind the same manifest and policy layers as a WebAssembly module. The owner settled the packaging and the contract and the egress and the artifact and the names and the order on 2026-11-05. The renames and the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247). The first `function-oci` build runs a process under Firecracker behind the `Sandbox` seam. On 2026-11-09 the owner kept Firecracker for now and left scaffolding and building an image to its author, with `guestfn push` to publish it. Snapshots are in 0.1 as an alpha feature. The egress proxy gets a design of its own first, in [#280](https://github.com/jonasz-lasut/guestfn/issues/280), and [#281](https://github.com/jonasz-lasut/guestfn/issues/281) has the order to 0.1)
 * Tracking: https://github.com/jonasz-lasut/guestfn/issues/239
 
 ## Summary
@@ -35,8 +35,9 @@ outright, with no alias: the manifest file becomes `guestfn.yaml`, the
 artifact's media types move under `vnd.guestfn`, and both packages serve
 the Input as `guestfn.crossplane.io/v1`. The record proposed Firecracker
 as the sandbox. The owner asked for an evaluation of the candidates
-instead, which the Sandbox evaluation section holds, with a spike to
-settle it.
+instead, which the Sandbox evaluation section holds. Firecracker stays
+for now (Jonasz, 2026-11-09). The first build runs on it, and the spike
+the evaluation planned didn't run.
 
 ## Goals
 
@@ -52,10 +53,10 @@ settle it.
   manifest requests egress, env bindings and credentials, and both policy
   layers permit them, as today. A guest that ignores the proxy the init
   offers has no route at all.
-- **One CLI.** `guestfn init --type oci` scaffolds a project, `guestfn
-  build` builds its image and proves the contract, `guestfn push` publishes
-  the image and the artifact, `guestfn inspect` shows what the runtime
-  sees, and `function validate --resolve` admits a Composition offline.
+- **One CLI.** `guestfn push --image` publishes an image as a module, with
+  its manifest appended as one more layer. `guestfn inspect` shows what
+  the runtime sees in it, and `function validate --resolve` admits a
+  Composition offline.
 - **One manifest.** `requires`, `composes`, `config` and `minRuntime` keep
   their meaning. A platform team's Cedar policies and manifest reviews
   transfer without a second vocabulary.
@@ -64,11 +65,13 @@ settle it.
 
 - **Running the image as a plain container in production.** A container
   shares the host kernel. Whether a container sandbox serves the
-  development loop on machines without a hypervisor depends on the
-  sandbox the evaluation picks, and the runtime would refuse it in a
-  cluster without an explicit flag.
+  development loop on machines without KVM is open (decision 9), and the
+  runtime would refuse it in a cluster without an explicit flag.
 - **A second ABI for WebAssembly.** The component world remains the one
   WebAssembly contract. The OCI contract is a process contract.
+- **Scaffolding and building the image.** The author writes the project
+  and its `Dockerfile` and builds the image with their own tools.
+  `guestfn` publishes the result (decision 12).
 - **Renaming the WebAssembly package.** The repository became
   `jonasz-lasut/guestfn` at 0.6 (#252); the packages, `function-wasm` and
   `function-oci`, kept their names.
@@ -91,15 +94,14 @@ env, the private scratch and the deadline. `version` namespaces the
 compiled store, and the engine registers its own metric series. The
 Wasmtime engine in `crates/engine` keeps its behaviour behind the trait. An
 `oci` module of the same crate runs the microVM behind the same trait,
-through a `Sandbox` trait of its own, one type per candidate in the
-evaluation. A
-Cargo feature of the `function` crate selects the engine, and each package
+through a `Sandbox` trait of its own with Firecracker behind it. A Cargo
+feature of the `function` crate selects the engine, and each package
 image builds the binary with its own:
 
 | package | engine | image contents beyond the binary | the node needs |
 |---|---|---|---|
 | `function-wasm` | Wasmtime | none | none |
-| `function-oci` | the microVM sandbox | the VMM (a library or a binary, per the evaluation), the guest kernel, the init | `/dev/kvm` |
+| `function-oci` | Firecracker | the Firecracker binary, the guest kernel, the init | `/dev/kvm` |
 
 One binary never serves both. A `function-oci` pod that meets a `type:
 wasm` artifact refuses it with one sentence that states the other package,
@@ -107,10 +109,12 @@ and the other way round. A step pointed at the wrong package fails at
 admission with that sentence. `function validate` validates for the
 runtime it runs in and prints the same sentence.
 
-The OCI package versions with the workspace on the shared release train
-(`/cut-release` tags both packages). Its contract is young. Its
-documentation labels it alpha until the process contract and the sandbox
-flags have held through two minors.
+The OCI package's contract is young. Its documentation labels it alpha
+until the process contract and the sandbox flags have held through two
+minors. The repository's release tags are function-wasm's today:
+`v0.1.0` exists, and the latest is `v0.6.0`. The tags and releases get
+cleaned up for a monorepo, and the scheme that versions and releases the
+OCI package is open (decision 15).
 
 ### The process contract
 
@@ -207,8 +211,9 @@ one change, with no alias.
 
 ### The sandbox
 
-The design below holds for every candidate in the evaluation. Where a
-candidate differs, the evaluation says how.
+Firecracker is the sandbox for now (decision 8). The design below holds
+for every candidate in the evaluation. Where a candidate differs, the
+evaluation says how.
 
 **What boots.** The runtime unpacks the image's layers once per image
 digest, applies the whiteouts and preserves ownership and modes without
@@ -230,8 +235,10 @@ cgroups, virtio and vsock built in), pinned by checksum with Firecracker's
 release in `Dockerfile.oci` and the Makefile. The artifacts are at a dated
 prefix of Firecracker's bucket, whose retention the project doesn't
 control. Building the kernel in the repository from that source and
-config is what the record calls the project's own kernel build. `guestfn_module_compile_duration_seconds` measures
-the unpacking.
+config is what the record calls the project's own kernel build. Whether a
+release may include the published kernel is open
+([#281](https://github.com/jonasz-lasut/guestfn/issues/281)).
+`guestfn_module_compile_duration_seconds` measures the unpacking.
 
 **One VM per request.** The runtime starts the VM with the kernel, the
 root filesystem read-only, a vsock device, memory sized to the step's
@@ -254,7 +261,11 @@ wrap `Engine::run`. The kernel kills a process past its cap. The
 init reports the exit, and the fatal states the limit as the Wasmtime
 limiter's does.
 
-**Egress.** The VM has no network interface. The init listens on
+**Egress.** The VM has no network interface, and until the proxy exists
+`function-oci` refuses a manifest that requires egress, by name. The proxy
+gets a design of its own first, in
+[#280](https://github.com/jonasz-lasut/guestfn/issues/280), before
+phase 5. Decision 3 is its direction: the init listens on
 `127.0.0.1:3128` inside the guest and sets `HTTP_PROXY`, `HTTPS_PROXY` and
 `NO_PROXY=` (empty) in the process's environment. The init decrypts TLS for
 `https` targets with a certificate authority it generates at boot. It
@@ -267,7 +278,10 @@ the redirect check per hop, the budgets, the rate limit, the audit line and
 the outcome metric. A refusal comes back as an HTTP 502 with the refusal
 sentence as its body. Without a `requires.egress` grant the init skips the
 proxy and the variables. A VMM's own socket forwarding (libkrun's TSI) is
-off: it would give the guest the pod's network.
+off: it would give the guest the pod's network. The design has to answer
+what this direction doesn't, such as the clients the proxy covers, the
+authority under `--vm-snapshots` and the wire between the init and the
+host.
 
 **Credentials and env.** `requires.env` bindings become process environment
 through the init. `requires.credentials` entries travel in the request
@@ -289,21 +303,23 @@ can't open it. The VMM runs as the pod's user, and the
 pod's cgroup is the jail, without `privileged` and without
 `CAP_SYS_ADMIN`.
 
-**The development loop.** A VMM with a macOS port runs the loop on a
-laptop as it runs in the pod. For the candidates without one, a container
-sandbox behind `--insecure` would run the image through the Docker daemon
-or a rootless `crun` with the same init protocol over a Unix socket, with a
-warning at startup and under every step `function validate` prints. The
-spike's verdict says whether the project needs it.
+**The development loop.** The loop runs on a Linux machine with
+`/dev/kvm`, where the runtime boots the VM it boots in the pod.
+Firecracker has no macOS port, and a machine without KVM has no loop. A
+container sandbox behind `--insecure` would
+give it one: it would run the image through the Docker daemon or a
+rootless `crun` with the same init protocol over a Unix socket, with a
+warning at startup and under every step `function validate` prints.
+Whether 0.1 needs that fallback is open (decision 9).
 
 ### Sandbox evaluation
 
 The owner asked which sandbox fits before the record commits to one, and
-weighs a Rust code base as a plus. The candidates below all run an
-unmodified OCI image under a guest kernel, except the last two rows, which
-the table keeps for contrast. Edera, a Xen-based runtime the owner asked
-about, is under Alternatives: it sandboxes pods at the node, not requests
-inside a pod.
+weighs a Rust code base as a plus. The comparison remains here as the
+evaluation wrote it. The candidates below all run an unmodified OCI image
+under a guest kernel, except the last two rows, which the table keeps for
+contrast. Edera, a Xen-based runtime the owner asked about, is under
+Alternatives: it sandboxes pods at the node, not requests inside a pod.
 
 | candidate | language | form | rootfs | host-mediated I/O | macOS | notes |
 |---|---|---|---|---|---|---|
@@ -340,32 +356,26 @@ The criteria, in the order the owner weighs them:
    cloud-hypervisor runs Kata deployments.
 
 On the criteria, libkrun leads and Firecracker is the alternative the
-project understands best. The spike picks one by measurement rather than
-by reading. The first build of `function-oci` is the Firecracker prototype
-of that spike. A static release binary, a published kernel and no library
-to link made it the one to write first. It runs the end-to-end suite's
-`oci` profile on a GitHub runner. The libkrun prototype goes behind the
-same `Sandbox` seam next, and the measurements decide.
+project understands best. The evaluation planned a spike to pick one by
+measurement rather than by reading, with a prototype of each behind one
+`Sandbox` seam. The first build of `function-oci` is the Firecracker
+prototype. A static release binary, a published kernel and no library to
+link made it the one to write first. It runs the end-to-end suite's `oci`
+profile on a GitHub runner.
 
-- **The spike.** One week, two prototypes behind one `Sandbox` seam,
-  libkrun and Firecracker, each running the committed test image's
-  process contract with the init over vsock. Measured on a KVM runner and,
-  for libkrun, on an Apple Silicon laptop: time from `run` to the
-  process's first byte, request round trip for a 1 MiB request, resident
-  memory per idle VM, the unpacking time for a 100 MB image, the behaviour
-  under `limits.memory` and `limits.timeout`, and whether the pod runs
-  without `privileged`.
-- **The verdict.** The record takes the chosen sandbox into its Design,
-  its measurements under Decisions, and the other candidate under
-  Alternatives. The status stays `draft` until the first `function-oci`
-  package, which makes it `implemented, revision 1.0`. gVisor stays the candidate for a cluster without
-  `/dev/kvm`, behind the same `Sandbox` trait, if demand appears.
+The spike didn't run. Firecracker stays for now (Jonasz, 2026-11-09,
+decision 8), and the libkrun prototype and the comparison are off the
+path to 0.1, under Alternatives. The status stays `draft` until the first
+`function-oci` package, which makes it `implemented, revision 1.0`.
+gVisor stays the candidate for a cluster without `/dev/kvm`, behind the
+same `Sandbox` trait, if demand appears.
 
 ### Snapshots
 
 `--vm-snapshots` restores a snapshot of an image's booted VM in place of a
-boot. It's a prototype, off by default and Firecracker's alone. On a
-laptop's nested KVM the median run went from 1123 ms to 250 ms.
+boot. It's a prototype, off by default and Firecracker's alone, and 0.1
+includes it as an alpha feature (decision 13). On a laptop's nested KVM
+the median run went from 1123 ms to 250 ms.
 [Per-image microVM snapshots](one-pager-vm-snapshots.md) is its design record.
 
 ### Offline validation and the CLI
@@ -377,18 +387,19 @@ entrypoint or a command, that the user resolves and that the platform
 exists. It
 prints the same admission verdicts as today.
 
+For an OCI module `guestfn` publishes and inspects, and the author
+scaffolds the project and builds the image (decision 12):
+
 | command | `oci@1.0` |
 |---|---|
-| `guestfn init --type oci --lang go\|python\|rust\|ts` | a project with a `Dockerfile`, a `main` that reads stdin and writes stdout around the language's function SDK (function-sdk-go, function-sdk-python, function-sdk-rust, the TypeScript codec the ts scaffold vendors), the same greeting behaviour as the WebAssembly scaffolds, unit tests that run natively, and a `guestfn.yaml` with `contract: oci@1.0` |
-| `guestfn build` | `docker build` (or `buildx`) with the project's `Dockerfile`, then a contract check. The image runs once under the sandbox with an empty request, and the verdict says whether stdout decoded as a response |
-| `guestfn push` | pushes the image by digest when the project built it, or takes `--image <ref@sha256>`, then publishes the artifact with the manifest's `image` filled in, reproducible under `SOURCE_DATE_EPOCH` |
-| `guestfn inspect` | the image config (entrypoint, user, platform, size), the manifest summary and the contract verdict |
+| `guestfn build` | refuses an `oci@1.0` manifest: the command builds WebAssembly modules, and the author builds the image with `docker build` (or `buildx`) |
+| `guestfn push --image <ref@sha256:…>` | appends the manifest to the image the author pushed, as one more layer, and writes the image's digest into the manifest's `image`. It doesn't read a module file |
+| `guestfn inspect` | says that a module image is one and which image the manifest records as its origin, with the manifest's summary. `--pull` refuses it |
 | `guestfn scaffold composition` | unchanged |
 
-The OCI scaffolds run the language's own SDK natively. An OCI guest is an
-ordinary function with a twenty-line `main`. The guest behavioural suite
-runs each OCI scaffold through the whole host on a KVM runner, with the
-same expectations the WebAssembly scaffolds meet.
+An OCI guest is an ordinary function with a `main` around the language's
+own SDK that reads the request from stdin and writes the response to
+stdout. `examples/function-oci-go` is one in Go, with its `Dockerfile`.
 
 ### The Input
 
@@ -410,8 +421,8 @@ The `v1beta1` deprecation goes with the old group.
 - `crates/engine`, the one engine crate (the owner asked for few crates,
   2026-11-06): the `Engine` trait and what every engine shares at its
   root, the Wasmtime engine under the `wasm` feature, the OCI engine under
-  `oci` as the `oci` module - the `Sandbox` trait with the chosen VMM
-  behind it (`firecracker.rs` first: the machine config, the devices, the
+  `oci` as the `oci` module - the `Sandbox` trait with Firecracker
+  behind it (`firecracker.rs`: the machine config, the devices, the
   lifecycle), `rootfs.rs` unpacking the layers into the squashfs root
   filesystem, `layout.rs` reading the image layout the runtime hands over,
   `image.rs` holding the image config and the run description,
@@ -423,8 +434,9 @@ The `v1beta1` deprecation goes with the old group.
   authority comes with the egress phase) and the fixture process the VM
   tests run. `protocol.rs` is what the init and the host say to each
   other (`Description`, `Exit`, the frame kinds), framed over vsock.
-- `crates/guestfn`: `--type oci` through init, build, push and inspect, and
-  the OCI template sets.
+- `crates/guestfn`: `push.rs` appends the manifest to an image under
+  `--image`, and `inspect.rs` describes a module image. `buildcmd.rs`
+  refuses an `oci@1.0` manifest.
 - `package/oci/` beside `package/wasm/`: one package root per runtime, each
   with its `crossplane.yaml` and a copy of the Input CRD.
   `Dockerfile.oci` adds the VMM and the kernel, and a `kernel/` directory
@@ -447,7 +459,8 @@ The `v1beta1` deprecation goes with the old group.
   fake requester.
 - Conformance goldens: a new fixture family for the OCI refusals and the
   package mismatch sentence.
-- Guest suite: the OCI scaffolds on a KVM runner.
+- The example: `examples/function-oci-go` tests its function and the
+  process contract natively, and the `build-oci-go` job runs those tests.
 - End-to-end: an `oci` profile with the `function-oci` package on kind with
   `/dev/kvm` mounted, on a KVM-capable runner, that exercises a committed
   test image through the same Guest XR.
@@ -455,10 +468,10 @@ The `v1beta1` deprecation goes with the old group.
 ## Documentation
 
 An operators page for the OCI runtime (install, the device and the flags),
-a guests page for the process contract
-and the OCI scaffolds, the manifest page's `contract` and `image` fields, the
-artifact's media types on the trust model page, the Input reference's
-`apiVersion` note, and the troubleshooting entries for the new refusals.
+a guests page for the process contract and for publishing an image as a
+module, the manifest page's `contract` and `image` fields, the artifact's
+media types on the trust model page, the Input reference's `apiVersion`
+note, and the troubleshooting entries for the new refusals.
 
 ## Compatibility
 
@@ -474,7 +487,8 @@ metrics don't change otherwise.
 
 The runtime refuses the old names with a sentence that states the new one,
 and `function validate` prints the same sentence. The `function-oci`
-package starts alpha on the shared release train.
+package starts alpha. The scheme for its tags and releases is open
+(decision 15).
 
 ## Alternatives
 
@@ -482,6 +496,16 @@ package starts alpha on the shared release train.
   its systrap platform, slower system calls and a software-only boundary.
   Behind the microVM candidates in the evaluation. A later sandbox behind
   the same `Sandbox` trait if a cluster can't offer KVM.
+- **A libkrun prototype and the comparison.** The evaluation's spike was
+  one week for two prototypes behind one `Sandbox` seam, libkrun and
+  Firecracker, each running the committed test image's process contract
+  with the init over vsock. Its measurements were to come from a KVM
+  runner and, for libkrun, an Apple Silicon laptop: time from `run` to
+  the process's first byte, request round trip for a 1 MiB request,
+  resident memory per idle VM, the unpacking time for a 100 MB image, the
+  behaviour under `limits.memory` and `limits.timeout`, and whether the
+  pod runs without `privileged`. Dropped from the path to 0.1 (Jonasz,
+  2026-11-09), with Firecracker staying for now.
 - **Kata Containers through a RuntimeClass.** The runtime would create a
   Pod per request and talk to it. Seconds of latency per request, RBAC to
   create Pods and no `crossplane render`. Rejected.
@@ -495,8 +519,8 @@ package starts alpha on the shared release train.
   under an Edera RuntimeClass adds a second boundary around the whole
   runtime, which this record neither needs nor prevents.
 - **A plain OCI runtime (crun, youki) as the production sandbox.** Shares
-  the host kernel. A development fallback at most, if the evaluation picks
-  a VMM without a macOS port.
+  the host kernel. A development fallback at most, which decision 9
+  leaves open, since Firecracker has no macOS port.
 - **The image as a gRPC function server inside the VM.** Any existing
   function image would run unchanged, sandboxed, with the runtime as its
   proxy. It doubles the number of contracts and depends on each image's
@@ -534,6 +558,17 @@ package starts alpha on the shared release train.
   client finds the function's headless Service empty, which the e2e
   profile's first run showed. The device plugin admits the device, and
   the operator page keeps the symptom for the reader who meets it.
+- **OCI scaffolds and an image build in `guestfn`.** `guestfn init --type
+  oci --lang go|python|rust|ts` would write a project with a `Dockerfile`,
+  a `main` that reads stdin and writes stdout around the language's
+  function SDK, unit tests that run natively and a `guestfn.yaml` with
+  `contract: oci@1.0`. `guestfn build` would run `docker build`, then a
+  contract check: one run of the image under the sandbox with an empty
+  request, with a verdict on whether stdout decoded as a response. The
+  guest suite would run each scaffold through the whole host on a KVM
+  runner. Dropped (Jonasz, 2026-11-09): scaffolding and building the image
+  are the author's, and `guestfn push --image` wraps the result with the
+  manifest layer.
 - **A separate repository.** The policy, proxy and tooling code is most of
   the product and changes together. Rejected.
 
@@ -575,56 +610,84 @@ The owner decided this on 2026-11-08:
     it. The image remains runnable and the module's digest covers image
     and manifest, with one repository to name and sign.
 
+The owner decided this on 2026-11-09:
+
+8. **The sandbox.** Firecracker stays for now. The libkrun prototype and
+   the comparison are off the path to 0.1, under Alternatives. The
+   decision isn't a final verdict on the sandbox.
+
+The owner decided these the same day:
+
+12. **The CLI.** Scaffolding and building the image are the author's.
+    `guestfn push --image` publishes the image with the manifest appended
+    as a layer (decision 11), and `guestfn inspect` and `function validate
+    --resolve` read what it published. The OCI scaffolds and the image
+    build in `guestfn` are under Alternatives.
+13. **Snapshots.** A snapshot belongs to one image and has the image
+    and the VM size as its key. Restores go through the release binary's
+    API. 0.1 includes snapshots as an alpha feature behind
+    `--vm-snapshots`.
+    [Per-image microVM snapshots](one-pager-vm-snapshots.md) has the
+    design and the image-independent snapshot it rejected.
+14. **The egress design.** The proxy gets a design of its own first, in
+    [#280](https://github.com/jonasz-lasut/guestfn/issues/280), before
+    phase 5. Decision 3 remains its direction. Whether 0.1 waits for the
+    proxy isn't decided.
+15. **Tags and releases.** The repository's tags and releases get cleaned
+    up for a monorepo. The scheme is an open item of
+    [#281](https://github.com/jonasz-lasut/guestfn/issues/281).
+
 Open:
 
-8. **The sandbox.** The evaluation's spike (libkrun against Firecracker)
-   decides, and the verdict goes into the record. Firecracker is the first
-   prototype, in the tree.
-9. **The development loop without KVM.** Follows the sandbox: a VMM with a
-   macOS port runs the loop by itself, the others need a container
-   fallback behind `--insecure`.
+9. **The development loop without KVM.** Firecracker has no macOS port,
+   and a machine without KVM has no loop. Whether 0.1 needs a container
+   fallback behind `--insecure` is open.
 
 ## Phases
+
+[#281](https://github.com/jonasz-lasut/guestfn/issues/281) has the
+order from these phases to 0.1, the package's first release.
 
 1. Done (#247): the `Engine` trait (first in its own crate, folded back into
    `crates/engine` on 2026-11-06 at the owner's ask),
    `crates/function` generic over it as `engine::Selected`, Wasmtime behind
    it with no behaviour change and the goldens unchanged.
-2. Done in part. #244 renamed the manifest file and the media type. #246
+2. Done. #244 renamed the manifest file and the media type. #246
    moved the Input group and generated the CRD. #247 added the manifest's
    `type` with its per-type contract, with `type: oci` refused by name.
    The next PR made `abi` the `contract` enum and added the manifest's
    `image` with `guestfn push --image`, which first published a wrapping
    artifact and now appends the manifest to the image as a layer (decision
-   11), read back by `guestfn inspect`. Left: `guestfn init` and `guestfn
-   build` for `oci@1.0` (the OCI scaffolds), with the contract check
-   deferred to phase 3.
-3. Done in part, as the spike's Firecracker prototype: the engine crate's
-   `oci` module behind the `Sandbox` trait, the init and its protocol, the layer
-   unpacking into squashfs, the VM lifecycle, the bounds, `function
-   validate --resolve` for images, the `oci` Cargo feature of the
-   `function` crate with its flags, the image fetch of the resolver with the
-   manifest read out of the image's annotated layer, and the env bindings
-   and the credentials through the init. Left: the libkrun prototype and the measurements, the contract
-   check in `guestfn build`, and the OCI scaffolds in the guest suite.
+   11), read back by `guestfn inspect`.
+3. Done, on Firecracker: the engine crate's `oci` module behind the
+   `Sandbox` trait, the init and its protocol, the layer unpacking into
+   squashfs, the VM lifecycle, the bounds, `function validate --resolve`
+   for images, the `oci` Cargo feature of the `function` crate with its
+   flags, the image fetch of the resolver with the manifest read out of
+   the image's annotated layer, and the env bindings and the credentials
+   through the init.
 4. Done: the `oci` e2e profile on a GitHub runner with KVM, as jobs of the
    `/e2e` workflow beside the `wasm` ones (a build job, the engine's VM suite
    and a cluster job with both runtimes installed), with the published
    kernel. The kernel build, where the project builds its own, remains
    open.
 5. The egress bridge (the TLS-decrypting proxy in the init) with audit and
-   metrics parity; until then `function-oci` refuses a manifest that
-   requires egress, by name.
-6. Done in part ([#263](https://github.com/jonasz-lasut/function-wasm/issues/263)):
+   metrics parity, after its design in
+   [#280](https://github.com/jonasz-lasut/guestfn/issues/280) (decision
+   14). Until then `function-oci` refuses a manifest that requires egress,
+   by name.
+6. Done in part ([#263](https://github.com/jonasz-lasut/guestfn/issues/263)):
    `examples/function-oci-go`, the hello function as an image on the
    process contract, published by `publish-examples.yml` through `docker
-   buildx` and `guestfn push --image`. The `function-oci` package's publish
-   workflow (`Publish Function`, with `function-oci` chosen), its image
-   (`Dockerfile.oci`), its package root (`package/oci`) and its operators
-   page are in the tree. Left: the `oci` e2e case that pulls the published
-   example from `ghcr.io`, after the first publish.
+   buildx` and `guestfn push --image`, and the `oci` e2e case that pulls
+   the published example from `ghcr.io`. The `function-oci` package's
+   publish workflow (`Publish Function`, with `function-oci` chosen), its
+   image (`Dockerfile.oci`), its package root (`package/oci`) and its
+   operators page are in the tree. Left: the package's first release,
+   0.1.0.
 7. A prototype ([#255](https://github.com/jonasz-lasut/guestfn/issues/255)):
    snapshots per image behind `--vm-snapshots`
-   ([Per-image microVM snapshots](one-pager-vm-snapshots.md)).
+   ([Per-image microVM snapshots](one-pager-vm-snapshots.md)), in 0.1 as
+   an alpha feature (decision 13).
    [#279](https://github.com/jonasz-lasut/guestfn/issues/279) has what's
    left.
