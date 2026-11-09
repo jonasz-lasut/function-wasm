@@ -44,16 +44,19 @@ struct EngineArgs {
 }
 
 fn main() -> ExitCode {
-    guestfn_runtime::cli::run(|config, args: &EngineArgs| {
-        Oci::new(
-            config,
-            Options {
-                vmm: args.vmm.clone(),
-                kernel: args.guest_kernel.clone(),
-                init: args.guest_init.clone(),
-                vcpus: args.vm_vcpus,
-                snapshots: args.enable_vm_snapshots,
-            },
-        )
-    })
+    guestfn_runtime::cli::run(
+        "A Crossplane composition function that runs OCI images in microVMs.",
+        |config, args: &EngineArgs| {
+            Oci::new(
+                config,
+                Options {
+                    vmm: args.vmm.clone(),
+                    kernel: args.guest_kernel.clone(),
+                    init: args.guest_init.clone(),
+                    vcpus: args.vm_vcpus,
+                    snapshots: args.enable_vm_snapshots,
+                },
+            )
+        },
+    )
 }

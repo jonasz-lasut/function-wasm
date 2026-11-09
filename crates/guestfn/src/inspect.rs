@@ -60,7 +60,7 @@ struct ReferenceInfo {
     #[serde(rename = "moduleLayerError", skip_serializing_if = "String::is_empty")]
     module_layer_error: String,
     /// For an OCI module image: the image its manifest says it was built
-    /// from (the manifest's image field).
+    /// from (the manifest's oci.image field).
     #[serde(skip_serializing_if = "Option::is_none")]
     image: Option<String>,
     /// The module manifest the artifact carries as its manifest layer, read

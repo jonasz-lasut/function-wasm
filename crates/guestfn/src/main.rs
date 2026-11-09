@@ -26,7 +26,7 @@ const FALLBACK_GO_VERSION: &str = "1.26";
     // A release build states the version it was released as, which moves
     // apart from the runtimes' (GUESTFN_VERSION is theirs).
     version = option_env!("GUESTFN_CLI_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
-    about = "Scaffold, build and publish WebAssembly guest functions for function-wasm."
+    about = "Scaffold, build and publish guest functions for function-wasm and function-oci."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -42,8 +42,8 @@ enum Command {
     /// go project's world is embedded from its wit/ first), check its ABI
     /// and its manifest (guestfn.yaml).
     Build(buildcmd::BuildCmd),
-    /// Push a module to an OCI registry as a wasm artifact; a module the
-    /// runtime would refuse is not pushed.
+    /// Push a module to an OCI registry; a module the runtime would refuse
+    /// is refused.
     Push(push::PushCmd),
     /// Show what a module (or an artifact in a registry) is made of, as the
     /// runtime sees it: size, ABI verdict, exports, imports, memories,
