@@ -1131,20 +1131,11 @@ jobs:
   # on disk, the OCI engine's own suite over Firecracker: the process
   # contract's clauses with the fixture process, in real VMs under the
   # runner's KVM, which GitHub's Linux runners expose to a udev rule. One
-  # job proves the OCI engine. While #272 is open (the memory-limit test is
-  # flaky on the runners: the growing process meets its 30 s deadline
-  # instead of the OOM sentence), the suite's step continues on error and
-  # report names its outcome in the e2e/oci status's description without
-  # counting it. The flag sits on the step, not the job: the needs context
-  # reports a job's result after continue-on-error is applied, which would
-  # hide the verdict; the step's outcome, exported as an output, carries
-  # it.
+  # job proves the OCI engine.
   build-oci:
     name: build (oci, engine)
     runs-on: ubuntu-26.04
     needs: start
-    outputs:
-      vm: ${{ steps.vm.outcome }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1210,8 +1201,6 @@ jobs:
       # The files this job built and fetched, by absolute path: cargo test
       # runs the engine's suite from the crate's directory.
       - name: Run the Engine Suite in VMs
-        id: vm
-        continue-on-error: true
         env:
           GUESTFN_REQUIRE_KVM: "1"
           GUESTFN_VM_CONSOLE: "1"
@@ -1418,22 +1407,12 @@ jobs:
           oci_failed=$(failed \
             "build-oci-go=${{ needs.build-oci-go.result }}" "build-oci=${{ needs.build-oci.result }}" \
             "e2e-cluster-oci=${{ needs.e2e-cluster-oci.result }}")
-          # The OCI engine's VM suite: named, not counted, while #272 is
-          # open (the step's outcome; the job's result when it never ran).
-          vm="${{ needs.build-oci.outputs.vm }}"
-          [ -n "$vm" ] || vm="${{ needs.build-oci.result }}"
-          vm_note=""
-          case "$vm" in
-            success) ;;
-            failure) vm_note="; engine (firecracker): failure (#272)" ;;
-            *) vm_note="; engine (firecracker): $vm" ;;
-          esac
           wasm_state=success; [ -z "$wasm_failed" ] || wasm_state=failure
           oci_state=success; [ -z "$oci_failed" ] || oci_state=failure
           post e2e/wasm "$wasm_state" "${wasm_failed:-all jobs passed}"
-          post e2e/oci "$oci_state" "${oci_failed:-all jobs passed}$vm_note"
+          post e2e/oci "$oci_state" "${oci_failed:-all jobs passed}"
           if [ "$wasm_state" = success ] && [ "$oci_state" = success ]; then
-            post e2e success "all jobs passed$vm_note"
+            post e2e success "all jobs passed"
           else
-            post e2e failure "wasm: ${wasm_failed:-passed}; oci: ${oci_failed:-passed}$vm_note"
+            post e2e failure "wasm: ${wasm_failed:-passed}; oci: ${oci_failed:-passed}"
           fi

@@ -195,9 +195,7 @@ For `function-oci`:
   the init and the test module as a process (musl), fetches the pinned
   Firecracker and kernel (`make oci.tools`) and then runs the OCI engine's
   suite in real VMs under the runner's KVM over those files
-  (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of skipping); while
-  issue #272 is open, the `e2e/oci` status names the suite's verdict in its
-  description and never fails on it
+  (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of skipping)
 - the `oci` cluster job, which installs `function-oci` alone
   (`E2E_WASM=0 E2E_OCI=1`) and runs the `oci` profiles
 
