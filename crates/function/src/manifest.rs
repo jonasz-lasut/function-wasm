@@ -25,10 +25,11 @@ pub const TYPE_OCI: &str = "oci";
 /// The contracts this workspace's engines implement, by kind: the
 /// component world of docs/abi-v2.md as `wasm@1.0` (the one WebAssembly
 /// contract since function-wasm 1.0.0 removed the core-module ABI), the
-/// process contract as `oci@1.0`. A minor adds what a module may use; a
-/// major changes what the engine does with a module.
+/// process contract as `oci@0.1`. From a contract's 1.0 a minor adds what
+/// a module may use and a major changes what the engine does with a
+/// module; at 0.x a minor may change anything.
 pub const WASM_CONTRACTS: [Version; 1] = [Version { major: 1, minor: 0 }];
-pub const OCI_CONTRACTS: [Version; 1] = [Version { major: 1, minor: 0 }];
+pub const OCI_CONTRACTS: [Version; 1] = [Version { major: 0, minor: 1 }];
 
 /// A contract's version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +46,7 @@ impl std::fmt::Display for Version {
 
 /// The contract a module implements, `<engine>@<major>.<minor>`: the
 /// engine kind that serves it and the version of that engine's contract.
-/// `wasm@1.0` is the component world, `oci@1.0` the process contract.
+/// `wasm@1.0` is the component world, `oci@0.1` the process contract.
 /// Required. Named `abi` (an integer) through 0.6, replaced with no alias
 /// (docs/one-pager-oci-runtime.md, decision 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +56,7 @@ pub enum Contract {
 }
 
 /// What a wrong contract says: the shape, and the two this workspace has.
-const CONTRACT_SHAPE: &str = "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@1.0 (the process contract)";
+const CONTRACT_SHAPE: &str = "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the process contract)";
 
 impl Contract {
     /// Parses `wasm@1.0`; a version this workspace's engines do not
@@ -154,7 +155,7 @@ pub struct Manifest {
     pub name: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub version: String,
-    /// The image an `oci@1.0` module was built from, pinned by digest
+    /// The image an `oci@0.1` module was built from, pinned by digest
     /// (`ghcr.io/acme/tagger@sha256:…`): the one `guestfn push --image`
     /// appended the manifest layer to, written into the published manifest
     /// as provenance. A `wasm@1.0` manifest must not carry it.
@@ -639,7 +640,7 @@ impl Manifest {
     pub fn check_type(&self, served: &str) -> Result<(), String> {
         match (self.kind(), served) {
             (TYPE_OCI, TYPE_WASM) => Err(
-                "is an oci@1.0 module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)".to_string(),
+                "is an oci@0.1 module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)".to_string(),
             ),
             (TYPE_WASM, TYPE_OCI) => Err(
                 "is a WebAssembly module (wasm@1.0), which function-oci does not serve; function-wasm serves it".to_string(),
@@ -920,17 +921,17 @@ mod tests {
             r#"{"contract":"wasm@1.0","name":"greeter"}"#
         );
         let oci = manifest(
-            r#"{"contract":"oci@1.0","name":"tagger","version":"0.3.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#,
+            r#"{"contract":"oci@0.1","name":"tagger","version":"0.3.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#,
         );
         assert_eq!(oci.kind(), TYPE_OCI);
         assert!(oci.validate().is_ok());
         assert_eq!(
             oci.summary(),
-            "tagger 0.3.0, contract oci@1.0, image ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"
+            "tagger 0.3.0, contract oci@0.1, image ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"
         );
         assert_eq!(
             oci.check_type(TYPE_WASM).unwrap_err(),
-            "is an oci@1.0 module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)"
+            "is an oci@0.1 module, which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)"
         );
         assert!(oci.check_type(TYPE_OCI).is_ok());
         assert_eq!(
@@ -939,7 +940,7 @@ mod tests {
         );
         assert!(wasm.check_type(TYPE_WASM).is_ok());
         let egress = manifest(
-            r#"{"contract":"oci@1.0","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
+            r#"{"contract":"oci@0.1","requires":{"egress":{"http":[{"host":"api.example.com","methods":["GET"]}]}}}"#,
         );
         assert!(egress.check_type(TYPE_OCI).unwrap_err().starts_with(
             "requires egress (requires.egress.http), which function-oci does not serve yet"
@@ -947,7 +948,7 @@ mod tests {
         let err = |raw: &str| Manifest::parse(raw.as_bytes()).unwrap_err();
         assert_eq!(
             err(r#"{"contract":"oci@2.0"}"#),
-            "cannot parse manifest: contract oci@2.0 is not one the oci engine implements: oci@1.0"
+            "cannot parse manifest: contract oci@2.0 is not one the oci engine implements: oci@0.1"
         );
         assert_eq!(
             err(r#"{"contract":"wasm@0.9"}"#),
@@ -966,7 +967,7 @@ mod tests {
         // The image is the OCI module's, pinned, and no WebAssembly
         // module's.
         assert!(
-            err(r#"{"contract":"oci@1.0","image":"ghcr.io/acme/tagger:v1"}"#)
+            err(r#"{"contract":"oci@0.1","image":"ghcr.io/acme/tagger:v1"}"#)
                 .starts_with("image must be an OCI reference pinned by digest")
         );
         assert_eq!(
@@ -1000,7 +1001,7 @@ mod tests {
             // the module's own refusal.
             (
                 r#"{"abi":1}"#,
-                "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@1.0 (the process contract); the manifest declares none",
+                "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the process contract); the manifest declares none",
             ),
             (
                 r#"{"contract":"wasm@1.0","requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,

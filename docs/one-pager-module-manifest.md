@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.7 (`abi` is `contract`, `<engine>@<major>.<minor>`, and an `oci@1.0` manifest names its `image`, for the OCI runtime record; the manifest file is `guestfn.yaml` and its layer's media type is under `vnd.guestfn`, #241; the `requires.resources` declaration
+* Status: implemented, revision 1.7 (`abi` is `contract`, `<engine>@<major>.<minor>`, and an `oci@0.1` manifest names its `image`, for the OCI runtime record; the manifest file is `guestfn.yaml` and its layer's media type is under `vnd.guestfn`, #241; the `requires.resources` declaration
   beside `composes`; rewritten in the present tense over the Rust workspace; merges
   in the manifest-less-sources record, revision 0.1, whose manifests by
   reference are a section here)
@@ -45,7 +45,7 @@ permit. The manual page is [Module manifests](guests/module-manifests.md).
 The source is `guestfn.yaml` in the project (every scaffold includes one):
 
 ```yaml
-contract: wasm@1.0                       # required; the world of docs/abi-v2.md (oci@1.0: the process contract)
+contract: wasm@1.0                       # required; the world of docs/abi-v2.md (oci@0.1: the process contract)
 name: greeter                            # → org.opencontainers.image.title
 version: 0.1.0                           # → …image.version; guestfn push --module-version overrides
 source: https://github.com/example/greeter   # → …image.source (optional)

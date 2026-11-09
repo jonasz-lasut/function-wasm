@@ -507,7 +507,7 @@ fn validate_resolve_manifest_matches_the_goldens() {
         // valid, and this package says which package serves it.
         (
             "contractoci",
-            "contract: oci@1.0\nname: greeter\nversion: 0.1.0\n",
+            "contract: oci@0.1\nname: greeter\nversion: 0.1.0\n",
         ),
         // A config.schema reaching outside itself: refused at load, never
         // fetched (the port 1 URL would fail, which is not the point).

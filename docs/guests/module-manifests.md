@@ -39,13 +39,14 @@ The fields:
 
 - `contract`: the contract the module follows, as `<engine>@<major>.<minor>`.
   Required. `wasm@1.0` is the component world of a WebAssembly module,
-  which `function-wasm` serves; `oci@1.0` the process contract of an OCI
+  which `function-wasm` serves; `oci@0.1` the process contract of an OCI
   image, which the OCI runtime serves
-  ([OCI modules](../oci/modules.md)). A minor adds what a module may use, a
-  major changes what the engine does with a module, and the runtime
-  refuses a version its engine doesn't offer. The field was `abi`, an
+  ([OCI modules](../oci/modules.md)). From a contract's 1.0 a minor adds
+  what a module may use and a major changes what the engine does with a
+  module, and at 0.x a minor may change anything. The runtime refuses a
+  version its engine doesn't offer. The field was `abi`, an
   integer, through 0.6, and the old name is refused as unknown.
-- `image`: the digest-pinned reference of the image an `oci@1.0` module
+- `image`: the digest-pinned reference of the image an `oci@0.1` module
   runs (`ghcr.io/acme/tagger@sha256:…`). `guestfn push --image` writes it
   into the published manifest, so the file may leave it out. A `wasm@1.0`
   manifest has no `image`, and the runtime refuses one that sets it.
@@ -77,7 +78,7 @@ the media type `application/vnd.guestfn.manifest.v1+json`. The layer is covered
 by the manifest digest the Composition pins, and so by any cosign signature on
 it.
 
-For an `oci@1.0` manifest, `guestfn push <ref> --image <image@sha256:…>`
+For an `oci@0.1` manifest, `guestfn push <ref> --image <image@sha256:…>`
 appends the file to the image instead, as one more layer. The layer is a
 gzip tar holding `/.guestfn/manifest.json`, with its `diff_id` in the
 image config and its descriptor annotated `io.crossplane.guestfn:

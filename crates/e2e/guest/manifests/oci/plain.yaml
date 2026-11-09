@@ -3,7 +3,7 @@
 # image, which setup does by hand.
 # The test module under the default sandbox: it requires nothing, so it runs
 # under any policy, and it is the module every signature case is pushed as.
-contract: oci@1.0
+contract: oci@0.1
 name: e2e-guest
 version: 0.1.0
 description: guestfn's end-to-end test module, requiring nothing

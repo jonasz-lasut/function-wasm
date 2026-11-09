@@ -106,13 +106,13 @@ impl BuildCmd {
         };
         // An OCI image is built by its own Dockerfile and published by
         // guestfn push --image (docs/one-pager-oci-runtime.md); what was
-        // just built here is a WebAssembly module, which an oci@1.0
+        // just built here is a WebAssembly module, which an oci@0.1
         // manifest does not describe.
         if m.as_ref()
             .is_some_and(|m| m.kind() == guestfn_runtime::manifest::TYPE_OCI)
         {
             return Err(format!(
-                "{} declares contract oci@1.0, an OCI image; guestfn build builds WebAssembly modules: build the image with docker build and publish it with guestfn push --image <ref@sha256:...>",
+                "{} declares contract oci@0.1, an OCI image; guestfn build builds WebAssembly modules: build the image with docker build and publish it with guestfn push --image <ref@sha256:...>",
                 manifest_path.display()
             ));
         }

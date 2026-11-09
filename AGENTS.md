@@ -244,7 +244,7 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               and http_requests_total per request
   src/manifest.rs             the module manifest: parse (artifact layer), load (guestfn.yaml,
                               unknown top-level fields refused), the Contract enum
-                              (`<engine>@<major>.<minor>`: wasm@1.0 the component world, oci@1.0
+                              (`<engine>@<major>.<minor>`: wasm@1.0 the component world, oci@0.1
                               the process contract, parsed as it is read, a version no engine
                               implements refused; `abi`, an integer, through 0.6, replaced with
                               no alias), validate (contract declared, image the digest-pinned
@@ -347,7 +347,7 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
                               the example-config warning
   src/push.rs                 the CNCF wasm OCI artifact (wasm layer, manifest layer, layerDigests
                               config, OCI annotations, SOURCE_DATE_EPOCH-reproducible), upload;
-                              for an oci@1.0 manifest (--image, or the file's image) the image
+                              for an oci@0.1 manifest (--image, or the file's image) the image
                               with the manifest appended as one more layer: a gzip tar at
                               /.guestfn/manifest.json, its diff_id and a history entry in the
                               image config, the descriptor annotated io.crossplane.guestfn=
@@ -562,7 +562,7 @@ examples/function-wasm-cpp       the C++ use case (example only: no scaffold; gu
                             the operator's ceiling and example/required-resources.yaml the
                             Secret crossplane render supplies. Tests: src/rotator_test.cpp and
                             src/fn_test.c natively (zig build test); the build-cpp job. ~160 KB
-examples/function-oci-go      the hello function as an oci@1.0 module (#263, phase 6 of #239): a Go
+examples/function-oci-go      the hello function as an oci@0.1 module (#263, phase 6 of #239): a Go
                             process on function-sdk-go's types behind main.go's process contract
                             (RunFunctionRequest bytes on stdin, RunFunctionResponse bytes on
                             stdout, the logger's JSON lines on stderr, a non-zero status with one

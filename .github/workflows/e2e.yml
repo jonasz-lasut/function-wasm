@@ -317,7 +317,7 @@ jobs:
           go vet $(go list ./... | grep -v /internal/bindings/)
           go test -race ./...
 
-  # The Go process guest, an oci@1.0 module: the function-oci-go hello, the
+  # The Go process guest, an oci@0.1 module: the function-oci-go hello, the
   # image function-oci boots. Go vets and tests it natively; the image is
   # built, never pushed, to prove the Dockerfile.
   build-oci-go:

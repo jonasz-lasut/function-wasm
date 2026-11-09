@@ -3,7 +3,7 @@
 # before it pulls the rest, and the runtime holds it against what the policy
 # layers grant before every run - a manifest can refuse a run earlier and
 # say why, never make one possible.
-contract: oci@1.0
+contract: oci@0.1
 name: function-oci-go
 version: 0.1.0
 description: The hello function as an OCI module, a Go process function-oci boots once per request.

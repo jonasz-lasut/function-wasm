@@ -128,7 +128,7 @@ fn push_a_two_platform_image_then_inspect_and_show() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("guestfn.yaml"),
-        "contract: oci@1.0\nname: tagger\nversion: 0.3.0\n",
+        "contract: oci@0.1\nname: tagger\nversion: 0.3.0\n",
     )
     .expect("write");
     let mut registry = Registry::new();
@@ -173,7 +173,7 @@ fn push_a_two_platform_image_then_inspect_and_show() {
     assert_eq!(
         stdout
             .matches(&format!(
-                "    module: an OCI image (oci@1.0), which the OCI runtime, function-oci, boots; built from {image}"
+                "    module: an OCI image (oci@0.1), which the OCI runtime, function-oci, boots; built from {image}"
             ))
             .count(),
         2,
@@ -182,7 +182,7 @@ fn push_a_two_platform_image_then_inspect_and_show() {
     assert_eq!(
         stdout
             .matches(&format!(
-                "    manifest: tagger 0.3.0, contract oci@1.0, image {image}"
+                "    manifest: tagger 0.3.0, contract oci@0.1, image {image}"
             ))
             .count(),
         2,
@@ -203,7 +203,7 @@ fn push_a_two_platform_image_then_inspect_and_show() {
     );
     for p in platforms {
         assert_eq!(p["image"], image);
-        assert_eq!(p["manifest"]["contract"], "oci@1.0");
+        assert_eq!(p["manifest"]["contract"], "oci@0.1");
         assert_eq!(p["layers"].as_array().expect("layers").len(), 2);
     }
     assert!(v["reference"].get("config").is_none(), "{stdout}");
@@ -215,11 +215,11 @@ fn push_a_two_platform_image_then_inspect_and_show() {
 
     let (stdout, stderr, ok) = guestfn(dir.path(), &["manifest", "show", &pinned]);
     assert!(ok, "manifest show failed: {stderr}");
-    assert!(stdout.contains("contract: oci@1.0"), "{stdout}");
+    assert!(stdout.contains("contract: oci@0.1"), "{stdout}");
     assert!(stdout.contains("name: tagger"), "{stdout}");
 }
 
-/// An oci@1.0 manifest publishes the image with the manifest appended as
+/// An oci@0.1 manifest publishes the image with the manifest appended as
 /// one more layer (docs/one-pager-oci-runtime.md): no module file is read,
 /// the image's digest goes into the published manifest, the result sits in
 /// the image's repository, and inspect reads the manifest out of the layer.
@@ -228,7 +228,7 @@ fn push_a_module_image_then_inspect_and_show() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("guestfn.yaml"),
-        "contract: oci@1.0\nname: tagger\nversion: 0.3.0\nrequires:\n  credentials: [cmdb]\n",
+        "contract: oci@0.1\nname: tagger\nversion: 0.3.0\nrequires:\n  credentials: [cmdb]\n",
     )
     .expect("write");
     let mut registry = Registry::new();
@@ -305,13 +305,13 @@ fn push_a_module_image_then_inspect_and_show() {
     );
     assert!(
         stdout.contains(&format!(
-            "module: an OCI image (oci@1.0), which the OCI runtime, function-oci, boots; built from {image}"
+            "module: an OCI image (oci@0.1), which the OCI runtime, function-oci, boots; built from {image}"
         )),
         "{stdout}"
     );
     assert!(
         stdout.contains(&format!(
-            "manifest: tagger 0.3.0, contract oci@1.0, image {image}, credentials cmdb"
+            "manifest: tagger 0.3.0, contract oci@0.1, image {image}, credentials cmdb"
         )),
         "{stdout}"
     );
@@ -319,7 +319,7 @@ fn push_a_module_image_then_inspect_and_show() {
     assert!(ok);
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("json");
     assert_eq!(v["reference"]["image"], image);
-    assert_eq!(v["reference"]["manifest"]["contract"], "oci@1.0");
+    assert_eq!(v["reference"]["manifest"]["contract"], "oci@0.1");
     assert_eq!(
         v["reference"]["layers"].as_array().expect("layers").len(),
         2
@@ -330,7 +330,7 @@ fn push_a_module_image_then_inspect_and_show() {
 
     let (stdout, stderr, ok) = guestfn(dir.path(), &["manifest", "show", &pinned]);
     assert!(ok, "manifest show failed: {stderr}");
-    assert!(stdout.contains("contract: oci@1.0"), "{stdout}");
+    assert!(stdout.contains("contract: oci@0.1"), "{stdout}");
     // The emitter folds the long reference onto its own line.
     assert!(
         stdout.contains("image:") && stdout.contains(&image),
@@ -345,7 +345,7 @@ fn push_a_module_image_then_inspect_and_show() {
     let (_, stderr, ok) = guestfn(wasm_dir.path(), &["push", &reference, "--image", &image]);
     assert!(!ok);
     assert!(
-        stderr.contains("--image is for an oci@1.0 manifest"),
+        stderr.contains("--image is for an oci@0.1 manifest"),
         "{stderr}"
     );
 }

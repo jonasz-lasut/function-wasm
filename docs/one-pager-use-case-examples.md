@@ -115,7 +115,7 @@ C# has only `function-wasm-csharp`, C++ only `function-wasm-cpp`. The language m
 
 ### The OCI example
 
-`function-oci-go` is the hello function as an `oci@1.0` module
+`function-oci-go` is the hello function as an `oci@0.1` module
 ([#263](https://github.com/jonasz-lasut/function-wasm/issues/263), phase 6
 of the [OCI runtime record](one-pager-oci-runtime.md)). An ordinary
 function-sdk-go function sits behind a `main` that reads the request from
