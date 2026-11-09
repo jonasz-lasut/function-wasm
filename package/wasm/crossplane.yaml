@@ -7,14 +7,15 @@ metadata:
     meta.crossplane.io/maintainer: Jonasz Małecki <jonaszlasut@proton.me>
     meta.crossplane.io/source: github.com/jonasz-lasut/guestfn
     meta.crossplane.io/license: Apache-2.0
-    meta.crossplane.io/description: "A composition function that runs a WebAssembly module supplied through its input in a wasmtime sandbox: write an ordinary function-sdk-go function, compile it to wasip1, publish it as an OCI artifact and reference it from a Composition step."
+    meta.crossplane.io/description: "A composition function that runs a WebAssembly module supplied through its input in a wasmtime sandbox: write a composition function in any language that compiles to a WebAssembly component, publish it as an OCI artifact and reference it from a Composition step."
     meta.crossplane.io/readme: |
       function-wasm runs a WebAssembly module in a wasmtime sandbox. The
       module implements the composition function contract
       (RunFunctionRequest in, RunFunctionResponse out); its source is an OCI
       artifact, an HTTP URL or a served file, named in the step's Input or
-      read from a field of the composite resource, and its config block is
-      passed through untouched. One
+      read from a field of the composite resource. The runtime reads the
+      step's configuration from the composite resource and hands it to the
+      module as `input.config`. One
       installed function serves any number of modules. See the
       [documentation](https://jonasz-lasut.github.io/guestfn/) for the guestfn CLI, the
       guest examples and the operator's reference, and the

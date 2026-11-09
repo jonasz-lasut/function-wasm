@@ -116,6 +116,9 @@ impl Firecracker {
                 "guest_cid": GUEST_CID,
                 "uds_path": uds,
             },
+            // Without it a booted guest's randomness comes from its own
+            // kernel alone.
+            "entropy": {},
         })
     }
 
@@ -280,7 +283,6 @@ impl Firecracker {
                     hash.update(sha2::Sha256::digest(&bytes));
                 }
                 hash.update(BOOT_ARGS.as_bytes());
-                hash.update(crate::protocol::VERSION.to_be_bytes());
                 let f = hex::encode(&hash.finalize()[..6]);
                 snapshots.fingerprint.get_or_init(|| f).clone()
             }
@@ -419,15 +421,8 @@ impl Firecracker {
                 .set_nonblocking(false)
                 .and_then(|()| stream.set_read_timeout(Some(Duration::from_secs(10))))
                 .map_err(|e| format!("cannot configure the guest's connection: {e}"))?;
-            let hello: Hello = read_json(&mut stream, Kind::Hello)
+            let _: Hello = read_json(&mut stream, Kind::Hello)
                 .map_err(|e| format!("cannot read the init's hello: {e}"))?;
-            if hello.version != crate::protocol::VERSION {
-                return Err(format!(
-                    "the init speaks protocol version {}, this engine version {}",
-                    hello.version,
-                    crate::protocol::VERSION
-                ));
-            }
             write_frame(&mut stream, Kind::Park, &[])
                 .map_err(|e| format!("cannot park the init: {e}"))?;
             // The init answers and then waits on this connection, sending
@@ -939,20 +934,13 @@ fn talk(
         .set_nonblocking(false)
         .map_err(|e| Talk::Lost(format!("cannot configure the guest's connection: {e}")))?;
     arm(&stream, spec.deadline)?;
-    let hello: Hello = read_json(&mut stream, Kind::Hello).map_err(|e| match io_err(e, "cannot read the init's hello") {
+    let _: Hello = read_json(&mut stream, Kind::Hello).map_err(|e| match io_err(e, "cannot read the init's hello") {
         Talk::Deadline => Talk::Lost(
             "the guest connected but sent no hello before the deadline: its init stalled before the run"
                 .to_string(),
         ),
         lost => lost,
     })?;
-    if hello.version != crate::protocol::VERSION {
-        return Err(Talk::Lost(format!(
-            "the init speaks protocol version {}, this engine version {}",
-            hello.version,
-            crate::protocol::VERSION
-        )));
-    }
     write_json(&mut stream, Kind::Run, spec.description)
         .map_err(|e| io_err(e, "cannot send the run"))?;
     let mut control = stream

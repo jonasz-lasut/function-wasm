@@ -10,10 +10,11 @@ metadata:
     meta.crossplane.io/readme: |
       function-oci runs an OCI image in a microVM, one VM per request. The
       image serves FunctionRunnerService, as any Crossplane function does,
-      and the runtime calls it over gRPC; its
-      source is an artifact that wraps the image, named in the step's Input
-      or read from a field of the composite resource, and its config block
-      is passed through untouched. One installed function serves any number
+      and the runtime calls it over gRPC. Its source is the image with the
+      module manifest appended as one more layer, named in the step's Input
+      or read from a field of the composite resource. The runtime reads the
+      step's configuration from the composite resource and hands it to the
+      function as `input.config`. One installed function serves any number
       of images. The pod needs /dev/kvm. See the
       [documentation](https://jonasz-lasut.github.io/guestfn/) for the
       OCI runtime's install page and the contract, and the

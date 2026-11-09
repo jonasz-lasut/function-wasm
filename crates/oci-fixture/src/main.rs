@@ -149,6 +149,12 @@ impl FunctionRunnerService for Fixture {
                 std::fs::write("/probe", b"overlay").expect("write /probe");
                 answer(report)
             }
+            "rng" => answer(
+                std::fs::read_to_string("/sys/class/misc/hw_random/rng_current")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
+            ),
             "hostname" => answer(
                 std::fs::read_to_string("/proc/sys/kernel/hostname")
                     .unwrap_or_default()

@@ -10,5 +10,8 @@ use guestfn_engine_wasm::Wasmtime;
 struct EngineArgs {}
 
 fn main() -> ExitCode {
-    guestfn_runtime::cli::run(|config, _: &EngineArgs| Wasmtime::new(config))
+    guestfn_runtime::cli::run(
+        "A Crossplane composition function that runs WebAssembly modules.",
+        |config, _: &EngineArgs| Wasmtime::new(config),
+    )
 }

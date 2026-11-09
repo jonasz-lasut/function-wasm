@@ -24,10 +24,6 @@ pub const GRPC_PORT: u32 = 5001;
 pub const SERVER_PORT: u16 = 9443;
 pub const HOST_CID: u32 = 2;
 
-/// The protocol's version, in the init's hello: a host meeting another
-/// refuses the run rather than guess.
-pub const VERSION: u32 = 3;
-
 /// Most bytes one frame carries; stdout and stderr travel in frames of at
 /// most this size.
 pub const MAX_FRAME: usize = 1 << 20;
@@ -36,7 +32,7 @@ pub const MAX_FRAME: usize = 1 << 20;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Kind {
-    /// init → host, first: the protocol version as a Hello.
+    /// init → host, first: the init is up.
     Hello = 1,
     /// host → init: the run's Description.
     Run = 2,
@@ -77,9 +73,7 @@ impl Kind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Hello {
-    pub version: u32,
-}
+pub struct Hello {}
 
 /// What the init needs to run the image's process: the host resolves the
 /// image config (entrypoint and cmd, user, working directory, env) and the
@@ -192,7 +186,7 @@ mod tests {
     #[test]
     fn frames_round_trip() {
         let mut buf = Vec::new();
-        write_json(&mut buf, Kind::Hello, &Hello { version: VERSION }).unwrap();
+        write_json(&mut buf, Kind::Hello, &Hello {}).unwrap();
         let d = Description {
             argv: vec!["/bin/echo".into(), "hi".into()],
             env: vec!["PATH=/bin".into()],
@@ -210,8 +204,7 @@ mod tests {
         write_frame(&mut buf, Kind::Park, &[]).unwrap();
         write_frame(&mut buf, Kind::Parked, &[]).unwrap();
         let mut r = buf.as_slice();
-        let hello: Hello = read_json(&mut r, Kind::Hello).unwrap();
-        assert_eq!(hello.version, VERSION);
+        let _: Hello = read_json(&mut r, Kind::Hello).unwrap();
         let got: Description = read_json(&mut r, Kind::Run).unwrap();
         assert_eq!(got, d);
         assert_eq!(read_frame(&mut r).unwrap().0, Kind::Finish);

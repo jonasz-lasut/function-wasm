@@ -33,8 +33,8 @@ the local `registry:3` of the
 and runs `guestfn push --image` over it, which appends `guestfn.yaml` to
 the image as one more layer and prints the digest-pinned reference for
 `example/composition.yaml`. Rendering needs `function-oci` running on a
-Linux machine with `/dev/kvm`; `example/` holds the Composition, an XR and
-the Function on the Development runtime.
+Linux machine with `/dev/kvm`; `example/` holds the XRD, the Composition, an XR
+and the Function on the Development runtime.
 
 ## In a cluster
 
@@ -53,10 +53,14 @@ keyless. The step is a `function-oci` step with the published reference:
     module:
       type: OCI
       oci:
-        ref: ghcr.io/jonasz-lasut/guestfn/examples/oci-go@sha256:<the digest guestfn push printed>
+        ref: ghcr.io/jonasz-lasut/guestfn/examples/oci-go@sha256:<the digest guestfn inspect prints>
     config:
       from: spec.config        # the composite resource field holding {greeting: hi}
 ```
+
+The digest is the one
+`guestfn inspect ghcr.io/jonasz-lasut/guestfn/examples/oci-go:v<version>`
+prints.
 
 The manifest requires nothing: the process gets the request and nothing
 else. The runtime reads the configuration from the composite resource,

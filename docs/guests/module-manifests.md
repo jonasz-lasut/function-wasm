@@ -121,7 +121,6 @@ that reaches outside itself
 is refused when the manifest is read:
 
 ```text
-… requires runtime v0.3.0 or newer, this is v0.2.1
 … config does not match the module's schema: /greeting: got number, want string
 … has an invalid manifest: config.schema: Resource 'http://example.com/schema.json' is not present in a registry and retrieving it failed: $ref http://example.com/schema.json is external; config.schema must be self-contained
 ```

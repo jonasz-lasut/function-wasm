@@ -1,7 +1,7 @@
 # The oci profile: the function-oci package (docs/one-pager-oci-runtime.md)
 # with /dev/kvm granted by the node's device plugin (kvm-device-plugin.yaml
 # beside this file: the pod requests one devic.es/kvm) and opened through
-# the node's kvm group, whose gid make e2e.oci.kvm reads from the node and
+# the node's kvm group, whose gid the e2e setup reads from the node and
 # patches in as the pod's supplementalGroups, as the operator page
 # documents; the default profile's policy and verifiers; and the registry
 # CA trusted beside the image's bundle. A separate Function (function-oci)

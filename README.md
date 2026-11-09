@@ -98,7 +98,7 @@ language, `function-wasm-<lang>` and `function-oci-<lang>`.
 
 ```shell
 cargo build --workspace && cargo test --workspace   # engine, runtime, guestfn - conformance goldens and scaffold goldens included
-cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings
 mdbook build                                        # the documentation site, from docs/ (book.toml)
 ```
 

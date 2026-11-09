@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use function_sdk_rust::Args;
 use guestfn_engine::{ArtifactStore, Config, Engine, Error, duration};
 
@@ -20,12 +20,7 @@ use crate::{
 };
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "function",
-    bin_name = "function",
-    version,
-    about = "A Crossplane composition function that runs WebAssembly modules (Rust runtime)"
-)]
+#[command(name = "function", bin_name = "function", version)]
 struct Cli<A: clap::Args> {
     #[command(subcommand)]
     command: Option<Command<A>>,
@@ -36,7 +31,7 @@ struct Cli<A: clap::Args> {
 
 #[derive(clap::Subcommand, Debug)]
 enum Command<A: clap::Args> {
-    /// Validate the function-wasm Inputs of Compositions against these
+    /// Validate the Inputs of Compositions against these
     /// flags, offline: the checks a request passes before its module is
     /// resolved, in the runtime's own words.
     Validate(validate::ValidateArgs<A>),
@@ -185,12 +180,16 @@ struct ServeArgs<A: clap::Args> {
 /// and serves or validates with the engine `build` makes from the ceilings
 /// and those flags. Each package's binary calls this with its engine, which
 /// is how the runtime stays free of either.
-pub fn run<E, A>(build: impl FnOnce(Config, &A) -> Result<E, Error>) -> ExitCode
+pub fn run<E, A>(
+    about: &'static str,
+    build: impl FnOnce(Config, &A) -> Result<E, Error>,
+) -> ExitCode
 where
     E: Engine,
     A: clap::Args,
 {
-    let cli = Cli::<A>::parse();
+    let cli = Cli::<A>::from_arg_matches(&Cli::<A>::command().about(about).get_matches())
+        .unwrap_or_else(|e| e.exit());
     match cli.command {
         Some(Command::Validate(args)) => validate::run(&args, build),
         None => match serve_main(cli.serve, build) {

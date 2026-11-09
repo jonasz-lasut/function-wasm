@@ -139,7 +139,7 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               pod, text under --debug), not its configure, which raised every crate
   src/runner.rs               WasmFunction::handle_raw - the nine steps above, on raw request bytes;
                               fatal() logs the outcome and counts requests_total
-  src/grpc.rs                 the raw-codec gRPC transport: RawCodec (bytes in/out), RawFunctionServer
+  src/grpc.rs                 the raw-codec gRPC transport (the engine crate's RawCodec): RawFunctionServer
                               (routes /apiextensions.fn.proto.v1.FunctionRunnerService/RunFunction,
                               parses grpc-timeout into the run deadline), and serve() - mTLS from the
                               certs dir, v1+v1alpha reflection, gRPC health handed back NOT_SERVING
@@ -240,7 +240,7 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               (`<engine>@<major>.<minor>`: wasm@1.0 the component world, oci@0.1
                               the gRPC contract of an image, parsed as it is read, a version no engine
                               implements refused; `abi`, an integer, through 0.6, replaced with
-                              no alias), validate (contract declared, image the digest-pinned
+                              no alias), validate (contract declared, oci.image the digest-pinned
                               image of an oci module alone), check_type (the other package's
                               manifest refused by name; egress refused by name on function-oci
                               until the proxy phase), check (grants, config schema via
@@ -343,7 +343,7 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
                               the example-config warning
   src/push.rs                 the CNCF wasm OCI artifact (wasm layer, manifest layer, layerDigests
                               config, OCI annotations, SOURCE_DATE_EPOCH-reproducible), upload;
-                              for an oci@0.1 manifest (--image, or the file's image) the image
+                              for an oci@0.1 manifest (--image, or the file's oci.image) the image
                               with the manifest appended as one more layer: a gzip tar at
                               /.guestfn/manifest.json, its diff_id and a history entry in the
                               image config, the descriptor annotated io.crossplane.guestfn=
@@ -615,7 +615,7 @@ crates/oci-init/            the guest init (package and binary guestfn-init, on 
                             nothing in the image
 crates/oci-fixture/         the function the VM tests run (package and binary guestfn-guest-fixture, on
                             function-sdk-rust): echo, refuse, exit, stderr, spin, grow, env, cwd, id,
-                            tmp, hostname, silent
+                            tmp, hostname, rng, silent
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package guestfn-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library
@@ -655,7 +655,9 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             growMiB) and which composes provider-nop NopResources and
                             writes what it observed into the XR's status. The engine's
                             tests/committed_guest.rs drives the same fn.wasm with a fake
-                            requester on every push (#150)
+                            requester on every push (#150). The same module is also built as a
+                            process on function-sdk-rust (e2e-guest-oci, feature process, make
+                            e2e.oci.guest) and pushed under the six manifests of manifests/oci
 examples/render.sh          the development loop of an example (docs/wasm/render-locally.md):
                             cargo-build the runtime, function validate every example/xr*.yaml,
                             serve the example dir (example/policy.cedar as the operator policy,
@@ -788,7 +790,10 @@ cargo run -p guestfn -- inspect examples/function-wasm-go/fn.wasm
 docker buildx build -f crates/function-wasm/Dockerfile --platform linux/amd64,linux/arm64 --target image .
 
 # A Crossplane package
-crossplane xpkg build -f package --embed-runtime-image=runtime
+crossplane xpkg build --package-root package/wasm --examples-root examples/function-wasm-go/example --embed-runtime-image=runtime
+
+# The OCI runtime's guest init and the VM tests' fixture, static for musl
+make oci.init
 ```
 
 ### Testing
@@ -806,6 +811,7 @@ make e2e                                  # the second tier: kind + Crossplane +
 make e2e.up && make e2e.wasm-profile.default   # or strict, lifecycle; e2e.up adds function-oci on a node with /dev/kvm (E2E_OCI=auto, the default) for e2e.oci-profile.default; make e2e.down when done
 (cd examples/function-wasm-go && go test -race ./...)
 (cd examples/function-oci-go && go test -race ./...)   # the OCI example: the function, natively
+make oci.test                             # the OCI engine's suite in real VMs: fetches Firecracker and the kernel, builds the init, needs /dev/kvm
 (cd examples/function-wasm-zig && zig build test)
 (cd examples/function-wasm-c && zig build test)
 (cd examples/function-wasm-odin && zig build test)       # odin and zig on PATH
@@ -827,7 +833,7 @@ Unit tests live in `#[cfg(test)] mod tests` blocks beside the code; integration 
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 (cd examples/function-wasm-go && golangci-lint run ./...)  # the Go guests keep Go lint
 (cd examples/function-oci-go && golangci-lint run ./...)
 make -C examples/function-wasm-zig lint                     # zig fmt --check over build.zig and the guest's sources

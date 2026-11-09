@@ -91,7 +91,7 @@ guestfn push ghcr.io/acme/tagger:v0.3.0-module --image ghcr.io/acme/tagger@sha25
 ```
 
 `guestfn push` reads `guestfn.yaml` and records the image's digest in its
-`image` field. It appends a gzip tar layer holding the manifest at
+`oci.image` field. It appends a gzip tar layer holding the manifest at
 `/.guestfn/manifest.json` to the image: the layer's `diff_id` goes into
 the image config and the annotation `io.crossplane.guestfn: manifest` onto
 its descriptor, the way Crossplane's `xpkg append` adds a package's
@@ -107,7 +107,9 @@ the manifest records as its origin, and prints the manifest out of the
 layer. For a multi-platform image it describes each platform of the index,
 and `guestfn manifest show <ref>` prints the manifest the platforms share. `function
 validate --resolve` pulls the image and prints the contract's verdict, as
-it does for a component. A plain image, with no manifest layer, runs too,
+it does for a component. From the image, `--resolve` needs the device:
+`docker run --device /dev/kvm --group-add <gid> …`. A plain `validate`
+doesn't. A plain image, with no manifest layer, runs too,
 in the default sandbox, as a bare `application/wasm` layer does.
 
 Images must use gzip or uncompressed layers (every builder's default) and
@@ -141,3 +143,5 @@ A refusal states the module. The common ones:
   but its init never reached the host`: the process never started; the
   runtime's `--debug` log has the VM's console, which says where the boot
   stopped. Not the module's doing.
+
+[Install function-oci](install.md#refusals) lists the rest.

@@ -331,12 +331,12 @@ pub struct Grants {
     pub credentials: Vec<String>,
 }
 
-/// The runtime's own release version, stamped at build time
-/// (GUESTFN_VERSION, set by the release pipeline); empty for a
-/// development build.
 /// The manifest file a guest project carries.
 pub const FILE_NAME: &str = "guestfn.yaml";
 
+/// The runtime's own release version, stamped at build time
+/// (GUESTFN_VERSION, set by the release pipeline); empty for a
+/// development build.
 pub fn runtime_version() -> &'static str {
     option_env!("GUESTFN_VERSION").unwrap_or("")
 }

@@ -55,7 +55,7 @@ pub struct PushCmd {
     /// manifest to it as one more layer and pushes the result into the
     /// image's repository under the reference given; no module file is
     /// read, and the image's digest goes into the published manifest's
-    /// image field.
+    /// oci.image field.
     #[arg(long)]
     image: Option<String>,
 }
@@ -115,7 +115,7 @@ impl PushCmd {
     }
 
     /// Publishes an oci@0.1 module: the image named by --image (or the
-    /// manifest's image field) with the manifest appended as one more
+    /// manifest's oci.image field) with the manifest appended as one more
     /// layer (docs/one-pager-oci-runtime.md, "The artifact"): a gzip tar
     /// holding /.guestfn/manifest.json, its diff_id in the image config
     /// like any other layer's, its descriptor annotated so the runtime

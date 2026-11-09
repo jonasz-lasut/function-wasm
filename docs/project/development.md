@@ -1,6 +1,6 @@
 # Development
 
-This page is for contributors to function-wasm. It lists the commands that build, test and lint a change, and says which of them CI runs for you. It assumes a checkout with a Rust toolchain.
+This page is for contributors to guestfn. It lists the commands that build, test and lint a change, and says which of them CI runs for you. It assumes a checkout with a Rust toolchain.
 
 ## Commands that run on every push
 
@@ -32,6 +32,8 @@ make e2e
 ```
 
 The first line tests the Go example and its vendored `internal/wasmfn` glue. The second is the [development loop](../wasm/render-locally.md). The third runs the end-to-end suite in a kind cluster. [Testing](testing.md) explains the two tiers and the `/e2e` comment that runs them on a pull request.
+
+`(cd examples/function-oci-go && go test ./...)` tests the OCI example natively. `make oci.test` runs the OCI engine's suite in real VMs and needs `/dev/kvm`.
 
 ## Guest toolchains
 

@@ -23,8 +23,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 WORKDIR /fn
 
-# The runtime's release version, stamped into the binary for minRuntime
-# checks; a local build stays a development build (empty).
+# The runtime's release version, stamped into the binary; a local build
+# stays a development build (empty).
 ARG GUESTFN_VERSION=
 ENV GUESTFN_VERSION=${GUESTFN_VERSION}
 
