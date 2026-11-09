@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.10 (the Zig and C scaffolds retired, #264; the examples named `function-<runtime>-<lang>` and the `function-oci-go` example, #263; the examples publish on their own, by hand, apart from the release, #245)
+* Status: implemented, revision 1.11 (the artifacts published under the earlier names retired with the first publish under the new ones; the Zig and C scaffolds retired, #264; the examples named `function-<runtime>-<lang>` and the `function-oci-go` example, #263; the examples publish on their own, by hand, apart from the release, #245)
 * Tracking: https://github.com/jonasz-lasut/guestfn/issues/112
 
 ## Context
@@ -64,10 +64,11 @@ manifest's `description` (Jonasz, 2026-11-08,
 manifest's `name` follows the directory, and the published repository is
 `ghcr.io/jonasz-lasut/guestfn/examples/<runtime>-<lang>`, the directory's
 name less its `function-` prefix (Jonasz, 2026-11-08): `wasm-rust`,
-`oci-go`. The artifacts published under the earlier names, at
-`ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, keep their place, and the
-e2e lifecycle profile pins one of them until the first publish under the
-new names.
+`oci-go`. The first publish under the new names was on 2026-11-09. The
+artifacts published under the earlier names, at
+`ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, retired with it (Jonasz,
+2026-11-09): the e2e profiles pin `wasm-go` and `oci-go`, and the registry
+drops the old packages.
 
 ## The examples
 
@@ -189,9 +190,11 @@ published as CNCF Wasm OCI artifacts, with their module manifests:
   commits nothing back and attaches nothing to a release.
 - **An OCI module:** `function-oci-go`'s image is built by `docker buildx`
   for `linux/amd64` and `linux/arm64` and pushed into the same repository
-  under `v<version>-image`. `guestfn push --image` then publishes the
-  module, the image with its manifest layer, as `v<version>`, and the
-  signature covers that digest.
+  by digest, under no tag. `guestfn push --image` then publishes the
+  module, the image with its manifest layer, as `v<version>`, the
+  repository's one tag per version (Jonasz, 2026-11-09), and the signature
+  covers that digest. `oci-go` 0.1.0 predates this and also has
+  `v0.1.0-image`.
 - **Which:** `function-wasm-rust`, `function-wasm-ts`, `function-wasm-go` and
   `function-oci-go`. `function-wasm-python` and
   `function-wasm-csharp` request egress to placeholder hosts (`cmdb.example.org`,

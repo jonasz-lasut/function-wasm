@@ -100,7 +100,7 @@ before its first test and waits for the rollout. Each binary uses one profile.
 | `wasm/default` | every case a runtime admits, under both signature verifiers |
 | `wasm/strict` | the refusals of a narrow operator layer, the read fence's ceiling among them |
 | `wasm/lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
-| `oci/default` | the `function-oci` package ([the OCI runtime](../oci/install.md)) beside `function-wasm`, running the test module as a process in a Firecracker VM. Its runtime config mounts the `wasm/default` policy |
+| `oci/default` | the `function-oci` package ([the OCI runtime](../oci/install.md)) beside `function-wasm`, running the test module as a process in a Firecracker VM, and the published `function-oci-go` example. Its runtime config mounts the `wasm/default` policy |
 
 The `default` profile runs the runtime with `--cosign-key` (the suite's key)
 and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with
@@ -120,7 +120,7 @@ The `lifecycle` profile runs with `--debug`, `--warm-modules` on the published
 function-wasm-go, a PVC-backed cache bounded below that module's size, a readiness
 probe on `/readyz`, and `--cosign-trust-instance public-good` with no root file
 mounted. Its policy requires the published examples' signatures and accepts
-this repository's release workflow as a signer. Its tests cover readiness
+this repository's `Publish Examples` workflow as a signer. Its tests cover readiness
 waiting for the warm-up, the caches across a restart, and the trusted root
 fetched over TUF from the real public-good repository.
 

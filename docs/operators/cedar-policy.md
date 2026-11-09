@@ -323,18 +323,18 @@ required.
 
 ```cedar
 permit (principal, action == Action::"requireSignature", resource)
-when { resource in Repository::"ghcr.io/jonasz-lasut/guestfn/examples" };
+when { resource in Repository::"ghcr.io/acme/modules" };
 
 permit (principal, action == Action::"trustSigner", resource)
 when {
-  resource in Repository::"ghcr.io/jonasz-lasut/guestfn/examples" &&
+  resource in Repository::"ghcr.io/acme/modules" &&
   context.issuer == "https://token.actions.githubusercontent.com" &&
-  context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-pkg.yml@refs/tags/v*"
+  context.identity like "https://github.com/acme/modules/.github/workflows/release.yml@refs/tags/v*"
 };
 ```
 
 A keyless signature on a module under that repository counts only when its
-Fulcio certificate was issued to this repository's release workflow on a version
+Fulcio certificate was issued to the `acme/modules` release workflow on a version
 tag, authenticated by GitHub Actions. `like` takes `*` as a wildcard. The runtime
 verifies the signature against the trusted root first. The rule only sets which
 verified signers are trusted, so a rule with no `when` trusts

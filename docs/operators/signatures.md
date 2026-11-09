@@ -88,20 +88,15 @@ permit (principal, action == Action::"trustSigner", resource)
 when {
   resource in Repository::"ghcr.io/jonasz-lasut/guestfn/examples" &&
   context.issuer == "https://token.actions.githubusercontent.com" &&
-  (context.identity like "https://github.com/jonasz-lasut/guestfn/.github/workflows/publish-examples.yml@refs/heads/main" ||
-   context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-examples.yml@refs/heads/main" ||
-   context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-pkg.yml@refs/tags/v*")
+  context.identity == "https://github.com/jonasz-lasut/guestfn/.github/workflows/publish-examples.yml@refs/heads/main"
 };
 ```
 
 With that policy and the trusted root, the examples this repository publishes
-run on the identity of its publish workflow, with no countersignature. The
-first identity is today's: `publish-examples.yml`, run by hand from `main`.
-The second is the same workflow under the repository's name through 0.6,
-`function-wasm`. A certificate records the repository's name at signing
-time, and the examples published before the rename carry that one.
-The third is the identity of the examples the release workflow published
-through 0.6. A rule keeps an older identity while such a version is in use.
+run on the identity of its publish workflow, with no countersignature:
+`publish-examples.yml`, run by hand from `main`. A certificate records the
+repository's name and the workflow at signing time. A rule for an artifact
+signed before a rename has to state the identity of that time.
 
 A keyless signature by any other signer is refused:
 

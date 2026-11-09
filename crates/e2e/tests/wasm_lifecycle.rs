@@ -1,4 +1,5 @@
-//! The wasm lifecycle profile: the published pdb-addon warmed at startup, the
+//! The wasm lifecycle profile: the published function-wasm-go example warmed
+//! at startup, the
 //! caches on a volume that outlives the pod and bounded below that module's
 //! size, the trusted root fetched over TUF from the public-good instance,
 //! --debug on. The oracle is the function pod itself: its readiness and its
@@ -78,7 +79,7 @@ async fn readiness_waits_for_the_warm_up() -> Result<()> {
             );
         }
         // A request after the warm-up finds the module in memory.
-        let step = Step::oci_public(&ns.state.pdb_addon);
+        let step = Step::oci_public(&ns.state.published_wasm);
         let guest = ns.guest("warmed", &step, json!({})).await?;
         guest.wait_synced(WAIT).await?;
         Ok(())
@@ -139,7 +140,7 @@ async fn the_volume_keeps_fetched_modules_and_the_sweep_bounds_them() -> Result<
 /// The trusted root over TUF: the profile mounts no root file and names
 /// the public-good instance, whose root the pod fetched before it reported
 /// ready (a refresh counted as updated, a last-refresh time). The published
-/// pdb-addon, whose keyless signature the policy requires and only that
+/// example, whose keyless signature the policy requires and only that
 /// root verifies, is admitted - and after a restart the cache on the
 /// volume holds the verified metadata, so the fresh pod has its root even
 /// before the repository answers.
@@ -180,7 +181,7 @@ async fn the_trusted_root_is_fetched_over_tuf() -> Result<()> {
         };
         refreshed(&metrics::scrape(&ns.client).await?)?;
 
-        let step = Step::oci_public(&ns.state.pdb_addon);
+        let step = Step::oci_public(&ns.state.published_wasm);
         let guest = ns.guest("tuf", &step, json!({})).await?;
         guest.wait_synced(WAIT).await?;
 

@@ -85,8 +85,9 @@ async fn a_keyless_signature_by_an_untrusted_signer_is_refused() -> Result<()> {
     .await
 }
 
-/// The published pdb-addon, signed keyless by this repository's release
-/// workflow: the real Fulcio, Rekor and timestamp authorities, verified
+/// The published function-wasm-go example, signed keyless by this
+/// repository's Publish Examples workflow: the real Fulcio, Rekor and
+/// timestamp authorities, verified
 /// against the public-good half of the merged trusted root. The module
 /// composes nothing for a Guest (no Deployment to protect), so the oracle is
 /// the pipeline running at all.
@@ -94,7 +95,7 @@ async fn a_keyless_signature_by_an_untrusted_signer_is_refused() -> Result<()> {
 async fn a_published_keyless_signature_verifies_against_the_public_good_root() -> Result<()> {
     with_temp_ns("public-good", |ns| async move {
         ns.ensure_profile(Profile::WasmDefault).await?;
-        let step = Step::oci_public(&ns.state.pdb_addon);
+        let step = Step::oci_public(&ns.state.published_wasm);
         let guest = ns.guest("probe", &step, json!({})).await?;
         guest.wait_synced(Duration::from_secs(300)).await?;
         Ok(())
