@@ -14,8 +14,9 @@ use tracing_subscriber::EnvFilter;
 /// The environment variable whose directives, when set, replace the flag's.
 pub const RUST_LOG: &str = "RUST_LOG";
 
-/// The crates whose DEBUG lines `--debug` turns on, by tracing target: the
-/// `function` binary, the `guestfn_runtime` library and the engine.
+/// The crates whose DEBUG lines `--debug` turns on, by tracing target. A
+/// directive matches a target by prefix, so `function` covers both
+/// binaries and `guestfn_engine` the shared crate and both engines.
 const OWN_CRATES: [&str; 3] = ["function", "guestfn_runtime", "guestfn_engine"];
 
 /// The filter directives for the process: `rust_log` verbatim when it is set

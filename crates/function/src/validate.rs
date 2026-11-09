@@ -15,9 +15,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use guestfn_engine::{Config, duration};
-
-use crate::engine::{self, Engine as _, Selected};
+use guestfn_engine::{Config, Engine, Error, duration};
 
 use crate::admission;
 use crate::authz::OperatorPolicy;
@@ -29,7 +27,7 @@ const COMPOSITION_API_VERSION: &str = "apiextensions.crossplane.io/v1";
 const COMPOSITION_KIND: &str = "Composition";
 
 #[derive(clap::Args, Debug)]
-pub struct ValidateArgs {
+pub struct ValidateArgs<A: clap::Args> {
     /// Composition or Input files, YAML or JSON, multi-document; - reads
     /// stdin. Every pipeline step whose input is a guestfn.crossplane.io/v1
     /// Input is checked, and every bare Input document.
@@ -53,7 +51,7 @@ pub struct ValidateArgs {
     resolve: bool,
 
     #[command(flatten)]
-    engine: engine::EngineArgs,
+    engine: A,
 
     /// text: one line per step, warnings indented below it; json: one JSON
     /// object per step, one per line.
@@ -181,8 +179,15 @@ struct Step {
     input: serde_json::Map<String, serde_json::Value>,
 }
 
-pub fn run(args: &ValidateArgs) -> ExitCode {
-    match run_inner(args) {
+pub fn run<E, A>(
+    args: &ValidateArgs<A>,
+    build: impl FnOnce(Config, &A) -> Result<E, Error>,
+) -> ExitCode
+where
+    E: Engine,
+    A: clap::Args,
+{
+    match run_inner(args, build) {
         Ok(false) => ExitCode::SUCCESS,
         Ok(true) => ExitCode::from(1),
         Err(e) => {
@@ -192,7 +197,14 @@ pub fn run(args: &ValidateArgs) -> ExitCode {
     }
 }
 
-fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
+fn run_inner<E, A>(
+    args: &ValidateArgs<A>,
+    build: impl FnOnce(Config, &A) -> Result<E, Error>,
+) -> Result<bool, String>
+where
+    E: Engine,
+    A: clap::Args,
+{
     if args.egress_rate_limit_per_minute < 0.0 || args.egress_rate_limit_burst < 0 {
         return Err(
             "--egress-rate-limit-per-minute and --egress-rate-limit-burst must not be negative"
@@ -262,10 +274,10 @@ fn run_inner(args: &ValidateArgs) -> Result<bool, String> {
     if args.resolve {
         // wasmtime reads a module only by compiling it: --resolve pays the
         // compile the runtime would, for the verdict the runtime would reach.
-        engine = Some(engine::new(ceilings, &args.engine).map_err(|e| e.to_string())?);
+        engine = Some(build(ceilings, &args.engine).map_err(|e| e.to_string())?);
         resolver = Some(
             Resolver::new(args.module_dir.clone(), args.max_module_size << 20, None)
-                .serving(Selected::KIND),
+                .serving(E::KIND),
         );
     }
     let mut xr = None;
@@ -474,9 +486,9 @@ fn find_steps(file: &str, docs: &[serde_json::Value], function_name: Option<&str
 }
 
 /// Judges steps against one set of ceilings.
-struct Validator {
+struct Validator<E: Engine> {
     ceilings: Config,
-    engine: Option<Selected>,
+    engine: Option<E>,
     resolver: Option<Resolver>,
     xr: Option<serde_json::Value>,
     policy: Option<std::sync::Arc<OperatorPolicy>>,
@@ -485,7 +497,7 @@ struct Validator {
     verifier: Option<std::sync::Arc<crate::cosign::Verifier>>,
 }
 
-impl Validator {
+impl<E: Engine> Validator<E> {
     fn validate(&self, s: Step) -> StepResult {
         let mut r = StepResult {
             file: s.file,
@@ -513,7 +525,7 @@ impl Validator {
 
         // The runtime's admission, verbatim: the compositionPolicy compiled,
         // limits within the ceilings, the module source's shape.
-        let admitted = match admission::admit(&input, &self.ceilings, Selected::KIND) {
+        let admitted = match admission::admit(&input, &self.ceilings, E::KIND) {
             Ok(admitted) => admitted,
             Err(e) => refuse!(e),
         };
@@ -661,7 +673,7 @@ impl Validator {
         r.resolved = Some(Resolved {
             digest: resolved.digest.clone(),
             size: wasm.len(),
-            contract: Selected::CONTRACT.to_string(),
+            contract: E::CONTRACT.to_string(),
             imports: inspection.host_imports,
             details: inspection.details,
             manifest: None,
@@ -691,7 +703,7 @@ impl Validator {
         if let Some(res) = &mut r.resolved {
             res.manifest = Some(m.clone());
         }
-        if let Err(e) = m.check_type(Selected::KIND) {
+        if let Err(e) = m.check_type(E::KIND) {
             refuse!(format!("module {} {e}", resolved.description));
         }
         if m.requires

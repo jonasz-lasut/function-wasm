@@ -1,9 +1,10 @@
-//! The guestfn runtime, the `function` binary behind the function-wasm and
-//! function-oci packages: a Crossplane composition function that runs a
-//! user-supplied module in the engine its Cargo feature selected. This is
-//! the implementation of docs/one-pager-abi-v2.md; the flags, their names,
-//! defaults and units are the contract of docs/contract/compatibility.md. Serving is the default; `function validate`
-//! runs the same admission over Compositions offline.
+//! The guestfn runtime's command line, the entry point of the function-wasm
+//! and function-oci binaries: a Crossplane composition function that runs a
+//! user-supplied module in the engine the binary supplies. This is the
+//! implementation of docs/one-pager-abi-v2.md; the flags, their names,
+//! defaults and units are the contract of docs/contract/compatibility.md.
+//! Serving is the default; `function validate` runs the same admission over
+//! Compositions offline.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -12,41 +13,42 @@ use std::time::Duration;
 
 use clap::Parser;
 use function_sdk_rust::Args;
-use guestfn_engine::{Config, duration};
-use guestfn_runtime::engine::{self, Engine as _, Selected};
-use guestfn_runtime::{
+use guestfn_engine::{ArtifactStore, Config, Engine, Error, duration};
+
+use crate::{
     authz, cache, cosign, egress, grpc, logging, ops, resolver, runner, store, trustroot, validate,
 };
 
 #[derive(Parser, Debug)]
 #[command(
     name = "function",
+    bin_name = "function",
     version,
     about = "A Crossplane composition function that runs WebAssembly modules (Rust runtime)"
 )]
-struct Cli {
+struct Cli<A: clap::Args> {
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Option<Command<A>>,
 
     #[command(flatten)]
-    serve: ServeArgs,
+    serve: ServeArgs<A>,
 }
 
 #[derive(clap::Subcommand, Debug)]
-enum Command {
+enum Command<A: clap::Args> {
     /// Validate the function-wasm Inputs of Compositions against these
     /// flags, offline: the checks a request passes before its module is
     /// resolved, in the runtime's own words.
-    Validate(validate::ValidateArgs),
+    Validate(validate::ValidateArgs<A>),
 }
 
 #[derive(clap::Args, Debug)]
-struct ServeArgs {
+struct ServeArgs<A: clap::Args> {
     #[command(flatten)]
     sdk: Args,
 
     #[command(flatten)]
-    engine: engine::EngineArgs,
+    engine: A,
 
     /// Directory served for 'path' module sources; unset refuses them.
     #[arg(long, env = "MODULE_DIR")]
@@ -179,11 +181,19 @@ struct ServeArgs {
     max_cache_size: u64,
 }
 
-fn main() -> ExitCode {
-    let cli = Cli::parse();
+/// Runs the function: parses the flags, the engine's own among them as `A`,
+/// and serves or validates with the engine `build` makes from the ceilings
+/// and those flags. Each package's binary calls this with its engine, which
+/// is how the runtime stays free of either.
+pub fn run<E, A>(build: impl FnOnce(Config, &A) -> Result<E, Error>) -> ExitCode
+where
+    E: Engine,
+    A: clap::Args,
+{
+    let cli = Cli::<A>::parse();
     match cli.command {
-        Some(Command::Validate(args)) => validate::run(&args),
-        None => match serve_main(cli.serve) {
+        Some(Command::Validate(args)) => validate::run(&args, build),
+        None => match serve_main(cli.serve, build) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
@@ -194,7 +204,14 @@ fn main() -> ExitCode {
 }
 
 #[tokio::main]
-async fn serve_main(args: ServeArgs) -> Result<(), String> {
+async fn serve_main<E, A>(
+    args: ServeArgs<A>,
+    build: impl FnOnce(Config, &A) -> Result<E, Error>,
+) -> Result<(), String>
+where
+    E: Engine,
+    A: clap::Args,
+{
     logging::configure(args.sdk.debug);
 
     if args.egress_rate_limit_per_minute < 0.0 || args.egress_rate_limit_burst < 0 {
@@ -311,7 +328,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         }
     }
 
-    let engine = match engine::new(
+    let engine = match build(
         Config {
             timeout: args.module_timeout,
             memory_limit: args.module_memory_limit << 20,
@@ -337,7 +354,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     // root filesystem).
     let cache_dir = std::path::Path::new(store::DEFAULT_DIR);
     let compiled_parent = cache_dir.join(store::COMPILED_DIR);
-    let version = Selected::version();
+    let version = E::version();
     store::remove_stale_versions(&compiled_parent, &version);
     let open = |dir: std::path::PathBuf, verify: bool| match store::Store::open_dir(dir, verify) {
         Ok(s) => s,
@@ -363,7 +380,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     // stored module here too (the OCI engine's VM snapshots), under the
     // same key, bound and gauge.
     compiled.remove_unfinished();
-    engine.keep_in(Arc::clone(&compiled) as Arc<dyn guestfn_engine::ArtifactStore>);
+    engine.keep_in(Arc::clone(&compiled) as Arc<dyn ArtifactStore>);
     let compiled_store = Arc::clone(&compiled);
     let _modules = Arc::new(open(cache_dir.join(store::MODULES_DIR), true));
     // The resolver's manifest cache writes this store, keyed by the
@@ -375,7 +392,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     let resolver = Arc::new(
         resolver::Resolver::new(args.module_dir, args.max_module_size << 20, Some(blobs))
             .with_manifest_store(Arc::clone(&manifests))
-            .serving(Selected::KIND),
+            .serving(E::KIND),
     );
     let module_cache = Arc::new(cache::ModuleCache::new(
         Arc::clone(&engine),
@@ -479,7 +496,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
             }
             ops::warm(&entries, &resolver, &module_cache, &engine).await;
             readiness.ready();
-            health.set_serving::<grpc::RawFunctionServer>().await;
+            health.set_serving::<grpc::RawFunctionServer<E>>().await;
         });
     }
     server.await

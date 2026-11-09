@@ -45,7 +45,7 @@ fn serve_and_run_input(
         .expect("addr")
         .port();
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_function"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_function-wasm"));
     cmd.args([
         "--insecure",
         "--address",

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
+use guestfn_engine::Engine;
 use guestfn_engine::grpc::{RUN_FUNCTION, RawCodec};
 use tonic::Status;
 use tonic::server::NamedService;
@@ -24,14 +25,23 @@ const SERVICE: &str = "apiextensions.fn.proto.v1.FunctionRunnerService";
 
 /// The FunctionRunnerService served raw, modeled on the generated tonic
 /// server with only the codec swapped.
-#[derive(Clone)]
-pub struct RawFunctionServer {
-    function: Arc<WasmFunction>,
+pub struct RawFunctionServer<E: Engine> {
+    function: Arc<WasmFunction<E>>,
     max_decoding_message_size: Option<usize>,
 }
 
-impl RawFunctionServer {
-    pub fn new(function: Arc<WasmFunction>, max_decoding_message_size: Option<usize>) -> Self {
+// By hand: a derive would ask the engine itself to be Clone.
+impl<E: Engine> Clone for RawFunctionServer<E> {
+    fn clone(&self) -> Self {
+        RawFunctionServer {
+            function: Arc::clone(&self.function),
+            max_decoding_message_size: self.max_decoding_message_size,
+        }
+    }
+}
+
+impl<E: Engine> RawFunctionServer<E> {
+    pub fn new(function: Arc<WasmFunction<E>>, max_decoding_message_size: Option<usize>) -> Self {
         RawFunctionServer {
             function,
             max_decoding_message_size,
@@ -39,12 +49,13 @@ impl RawFunctionServer {
     }
 }
 
-impl NamedService for RawFunctionServer {
+impl<E: Engine> NamedService for RawFunctionServer<E> {
     const NAME: &'static str = SERVICE;
 }
 
-impl<B> tonic::codegen::Service<http::Request<B>> for RawFunctionServer
+impl<E, B> tonic::codegen::Service<http::Request<B>> for RawFunctionServer<E>
 where
+    E: Engine,
     B: tonic::codegen::Body + Send + 'static,
     B::Error: Into<tonic::codegen::StdError> + Send + 'static,
 {
@@ -72,11 +83,11 @@ where
                 Ok(response)
             });
         }
-        struct RunFunctionRaw {
-            function: Arc<WasmFunction>,
+        struct RunFunctionRaw<E: Engine> {
+            function: Arc<WasmFunction<E>>,
             deadline: Option<std::time::Instant>,
         }
-        impl tonic::server::UnaryService<Bytes> for RunFunctionRaw {
+        impl<E: Engine> tonic::server::UnaryService<Bytes> for RunFunctionRaw<E> {
             type Response = Vec<u8>;
             type Future = tonic::codegen::BoxFuture<tonic::Response<Vec<u8>>, Status>;
 
@@ -119,13 +130,13 @@ where
 /// service NOT_SERVING next to the server future, so warm-up flips
 /// readiness when it finishes; requests are served regardless of health,
 /// and nothing listens until the future is awaited.
-pub async fn serve(
-    function: Arc<WasmFunction>,
+pub async fn serve<E: Engine>(
+    function: Arc<WasmFunction<E>>,
     args: &function_sdk_rust::Args,
 ) -> Result<
     (
         tonic_health::server::HealthReporter,
-        impl Future<Output = Result<(), String>> + use<>,
+        impl Future<Output = Result<(), String>> + use<E>,
     ),
     String,
 > {
@@ -157,7 +168,9 @@ pub async fn serve(
         .map_err(|e| format!("cannot build gRPC reflection service: {e}"))?;
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter.set_not_serving::<RawFunctionServer>().await;
+    health_reporter
+        .set_not_serving::<RawFunctionServer<E>>()
+        .await;
 
     // The gRPC server metrics, pre-created at zero the way
     // grpc-prometheus's InitializeMetrics does; the layer wraps the whole

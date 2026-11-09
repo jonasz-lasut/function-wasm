@@ -8,6 +8,8 @@ members = [
     "crates/oci-init",
     "crates/oci-fixture",
     "crates/function",
+    "crates/function-wasm",
+    "crates/function-oci",
     "crates/guestfn",
     "crates/e2e",
 ]

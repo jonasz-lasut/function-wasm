@@ -1,0 +1,14 @@
+//! The function-wasm package's binary: the guestfn runtime over the
+//! Wasmtime engine.
+
+use std::process::ExitCode;
+
+use guestfn_engine_wasm::Wasmtime;
+
+/// The Wasmtime engine takes nothing beyond the ceilings.
+#[derive(clap::Args, Debug)]
+struct EngineArgs {}
+
+fn main() -> ExitCode {
+    guestfn_runtime::cli::run(|config, _: &EngineArgs| Wasmtime::new(config))
+}

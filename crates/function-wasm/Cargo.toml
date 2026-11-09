@@ -1,0 +1,28 @@
+[package]
+name = "function-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The function-wasm package's binary: the guestfn runtime over the Wasmtime engine"
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+guestfn-engine-wasm = { path = "../engine-wasm" }
+guestfn-runtime = { path = "../function" }
+
+# The suites that drive the binary itself: the conformance goldens of
+# `function validate`, and what --debug and RUST_LOG turn on.
+[dev-dependencies]
+base64 = "0.23"
+function-sdk-rust = "0.4.0"
+guestfn-engine = { path = "../engine" }
+guestfn-runtime = { path = "../function", features = ["testutil"] }
+hex = "0.4"
+serde_json.workspace = true
+sha2 = "0.11"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tonic = "0.14"
+wat = "1"

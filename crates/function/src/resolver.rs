@@ -118,7 +118,7 @@ impl Resolver {
         }
     }
 
-    /// Serves the engine's module type (`Selected::KIND`); wasm by default.
+    /// Serves the engine's module type (`Engine::KIND`); wasm by default.
     pub fn serving(mut self, kind: &'static str) -> Self {
         self.serves = kind;
         self

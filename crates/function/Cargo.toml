@@ -4,12 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The runtime behind the function-wasm and function-oci packages: the function binary, with one engine per Cargo feature"
+description = "The runtime behind the function-wasm and function-oci packages, generic over the engine: the Input admission, the module resolver and caches, the manifest, the policy layers, the raw gRPC service and the offline validator"
 publish = false
-
-[[bin]]
-name = "function"
-path = "src/main.rs"
 
 [dependencies]
 base64 = "0.23"
@@ -18,11 +14,11 @@ flate2 = "1"
 cedar-policy = "4"
 clap = { version = "4", features = ["derive", "env"] }
 function-sdk-rust = "0.4.0"
-# The engine behind the runtime (src/engine.rs): the trait always, the
-# Wasmtime engine under the `wasm` feature, the OCI engine under `oci`.
+# The trait the runtime is generic over; the binaries supply the engine
+# (crates/function-wasm, crates/function-oci). The Wasmtime engine is here
+# for the testing module alone (feature testutil).
 guestfn-engine = { path = "../engine" }
-guestfn-engine-oci = { path = "../engine-oci", optional = true }
-guestfn-engine-wasm = { path = "../engine-wasm", optional = true }
+guestfn-engine-wasm = { path = "../engine-wasm", features = ["testutil"], optional = true }
 # getrandom draws the compiled store's per-process key, hmac signs each
 # artifact under it (store.rs).
 getrandom = "0.4"
@@ -79,6 +75,7 @@ time = { version = "0.3", features = ["formatting"], optional = true }
 
 [dev-dependencies]
 # The crate's own integration tests use the test registry.
+guestfn-engine-wasm = { path = "../engine-wasm", features = ["testutil"] }
 guestfn-runtime = { path = ".", features = ["testutil"] }
 p256 = { version = "0.14", features = ["ecdsa", "pem"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"] }
@@ -88,16 +85,9 @@ wat = "1"
 time = { version = "0.3", features = ["formatting"] }
 
 [features]
-default = ["wasm"]
-# The engine the package serves with (src/engine.rs): wasm, the Wasmtime
-# engine, or oci, the OCI engine of docs/one-pager-oci-runtime.md, built
-# with --no-default-features --features oci. With both on (--all-features,
-# the lint) wasm serves and the oci crate is compiled beside it.
-wasm = ["dep:guestfn-engine-wasm"]
-oci = ["dep:guestfn-engine-oci"]
 # The testing module (the in-memory registry, the signers, the runtime
 # builder, the greeting server, the open policy) and what it stands on:
 # rcgen and x509-cert for testsigstore, the in-memory Sigstore instance
 # (Fulcio CA, CT log, Rekor) the keyless tests sign against, and the
 # engine's WAT fixtures.
-testutil = ["dep:p256", "dep:rcgen", "dep:x509-cert", "dep:time", "wasm", "guestfn-engine-wasm/testutil"]
+testutil = ["dep:p256", "dep:rcgen", "dep:x509-cert", "dep:time", "dep:guestfn-engine-wasm"]

@@ -9,7 +9,7 @@
 //! Run-specific values (temp directories, loopback ports) are replaced
 //! with stable placeholders before comparing.
 
-use guestfn_runtime::engine::Engine as _;
+use guestfn_engine::Engine as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -224,8 +224,13 @@ fn cases() -> Vec<Case> {
     ]
 }
 
+/// Where the corpus and the goldens live: the runtime's crate, whose
+/// `function validate` the suite drives through this package's binary.
 fn crate_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../function")
+        .canonicalize()
+        .expect("the runtime's crate")
 }
 
 struct Output {
@@ -319,7 +324,7 @@ fn assert_golden(name: &str, out: &Output, subs: &[(String, &str)]) -> Option<St
 
 #[test]
 fn validate_matches_the_goldens() {
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
 
     let mut failures = Vec::new();
@@ -338,7 +343,7 @@ fn validate_matches_the_goldens() {
 /// component and one that does not implement the world.
 #[test]
 fn validate_resolve_matches_the_goldens() {
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -385,8 +390,8 @@ fn validate_resolve_matches_the_goldens() {
     // A wasmtime compiled artifact (.cwasm) named as a module source: the
     // runtime refuses it by name rather than as malformed wasm.
     let artifact = {
-        let e = guestfn_runtime::engine::Selected::new(guestfn_engine::Config::default())
-            .expect("engine");
+        let e =
+            guestfn_engine_wasm::Wasmtime::new(guestfn_engine::Config::default()).expect("engine");
         let m = e.compile(&ok).expect("compile");
         e.serialize(&m).expect("serialize")
     };
@@ -458,7 +463,7 @@ fn validate_resolve_matches_the_goldens() {
 /// the one recorded gap: this runtime does not carry the egress client yet.
 #[test]
 fn validate_resolve_manifest_matches_the_goldens() {
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -574,7 +579,7 @@ fn validate_resolve_manifest_matches_the_goldens() {
 /// receives.
 #[test]
 fn validate_resolve_credentials_matches_the_goldens() {
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -642,7 +647,7 @@ fn validate_resolve_credentials_matches_the_goldens() {
 fn validate_resolve_http_source_matches_the_goldens() {
     use sha2::Digest as _;
 
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
 
     let wasm = wat::parse_str(
@@ -770,7 +775,7 @@ fn validate_resolve_http_source_matches_the_goldens() {
 fn validate_resolve_oci_source_matches_the_goldens() {
     use sha2::Digest as _;
 
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
 
     let wasm = wat::parse_str(
@@ -900,7 +905,7 @@ fn validate_resolve_cosign_matches_the_goldens() {
     use guestfn_runtime::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey};
     use guestfn_runtime::oci::testregistry::digest_of;
 
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
 
     let wasm = tiny_component();
@@ -1024,7 +1029,7 @@ fn validate_resolve_keyless_cosign_matches_the_goldens() {
     use guestfn_runtime::oci::testregistry::digest_of;
     use guestfn_runtime::testsigstore::Instance;
 
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
     let wasm = tiny_component();
     let keyless_manifest = module_artifact(&wasm, None, "keyless");
@@ -1154,7 +1159,7 @@ fn validate_resolve_keyless_cosign_matches_the_goldens() {
 /// local repository.
 #[test]
 fn validate_trust_instance_matches_the_goldens() {
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
     let mut failures = Vec::new();
     for (name, args) in [
@@ -1191,7 +1196,7 @@ fn validate_trust_instance_matches_the_goldens() {
 /// step stays admitted, since only a run can judge the module's output.
 #[test]
 fn validate_resolve_composes_matches_the_goldens() {
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
@@ -1262,7 +1267,7 @@ fn validate_resolve_composes_matches_the_goldens() {
 /// namespace; the step stays admitted.
 #[test]
 fn validate_resolve_reads_matches_the_goldens() {
-    let rust = Path::new(env!("CARGO_BIN_EXE_function"));
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
     let cwd = crate_dir();
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");

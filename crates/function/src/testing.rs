@@ -283,7 +283,6 @@ pub mod registry {
     }
 }
 
-#[cfg(feature = "wasm")]
 pub mod runtime {
     //! The runtime in process, as `function serve` assembles it from its
     //! flags, with the defaults a test wants.
@@ -300,8 +299,7 @@ pub mod runtime {
     use crate::runner::WasmFunction;
     use guestfn_engine::Config;
     use guestfn_engine::concurrency::StepSlots;
-
-    use crate::engine::Selected;
+    use guestfn_engine_wasm::Wasmtime;
 
     /// The module size ceiling the suites run with.
     pub const MAX_MODULE_SIZE: u64 = 128 << 20;
@@ -352,8 +350,8 @@ pub mod runtime {
             self
         }
 
-        pub fn build(self) -> WasmFunction {
-            let engine = Arc::new(Selected::new(Config::default()).expect("engine"));
+        pub fn build(self) -> WasmFunction<Wasmtime> {
+            let engine = Arc::new(Wasmtime::new(Config::default()).expect("engine"));
             let rules = if self.loopback {
                 IpRules {
                     blocked: Vec::new(),
@@ -384,7 +382,7 @@ pub mod runtime {
     /// Serves function over plain gRPC on a free loopback port, the way
     /// `function serve --insecure` does, and returns the port. The server
     /// runs on the current tokio runtime until the test ends.
-    pub async fn serve(function: Arc<WasmFunction>) -> u16 {
+    pub async fn serve(function: Arc<WasmFunction<Wasmtime>>) -> u16 {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .expect("bind")
             .local_addr()

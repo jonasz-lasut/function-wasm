@@ -1,17 +1,18 @@
-//! The guestfn runtime as a library: everything the `function`
-//! binary and the `guestfn` CLI share - the Input admission, the module
-//! resolver and caches, the manifest, the policy layers, the raw gRPC
-//! service and the offline validator.
+//! The guestfn runtime as a library, generic over the engine: everything
+//! the function-wasm and function-oci binaries and the `guestfn` CLI share -
+//! the command line, the Input admission, the module resolver and caches,
+//! the manifest, the policy layers, the raw gRPC service and the offline
+//! validator. A binary supplies its engine through `cli::run`.
 
 pub mod admission;
 pub mod authz;
 pub mod cache;
+pub mod cli;
 pub mod compose;
 pub mod cosign;
 pub mod crd;
 pub mod egress;
 pub mod egress_rules;
-pub mod engine;
 pub mod from;
 pub mod grpc;
 pub mod grpcmetrics;
