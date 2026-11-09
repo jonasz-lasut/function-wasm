@@ -7,6 +7,7 @@
 # Native builds of the example guests (`go build` in their directories names
 # the binary after the directory); only their fn.wasm is meaningful.
 /examples/function-wasm-go/function-wasm-go
+/examples/function-oci-go/function-oci-go
 .zig-cache
 zig-out
 zig-pkg
