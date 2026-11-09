@@ -20,7 +20,8 @@ use crate::protocol::{
     Exit, Hello, Kind, read_frame, read_json, write_chunked, write_frame, write_json,
 };
 
-use crate::oci::sandbox::{Ended, Outcome, Sandbox, VmSpec};
+use crate::metrics;
+use crate::oci::sandbox::{Ended, Outcome, Sandbox, Snapshot, VmSpec};
 
 /// The guest's CID; the host is always 2.
 const GUEST_CID: u32 = 3;
@@ -37,28 +38,13 @@ pub struct Firecracker {
     snapshots: Option<Snapshots>,
 }
 
-/// One VM frozen with its init parked: the state file and the memory file
-/// Firecracker wrote, which every later run of the same image restores.
-#[derive(Debug)]
-struct Snapshot {
-    state: PathBuf,
-    mem: PathBuf,
-}
-
-/// What a snapshot is good for: the root filesystem it mounted and the
-/// machine it was taken on. A snapshot restores only into the memory size
-/// and vCPU count it was taken with.
-type SnapshotKey = (PathBuf, u64, u8);
-
-/// One key's snapshot once made; its lock is held while it is being made.
-type SnapshotSlot = Arc<Mutex<Option<Arc<Snapshot>>>>;
-
-/// The snapshots by key, each made once: the lock per key is the single
-/// flight, so concurrent first runs of one image wait for one snapshot.
+/// What the sandbox keeps across runs when it snapshots: a counter for the
+/// scratch directories, and the fingerprint of what a snapshot depends on
+/// beyond its image and machine shape.
 #[derive(Default)]
 struct Snapshots {
-    made: Mutex<std::collections::HashMap<SnapshotKey, SnapshotSlot>>,
     next: std::sync::atomic::AtomicU64,
+    fingerprint: std::sync::OnceLock<String>,
 }
 
 impl Firecracker {
@@ -70,10 +56,11 @@ impl Firecracker {
     }
 
     /// Firecracker restoring a snapshot per image in place of a boot
-    /// (#255): the first run of an image boots, parks the init and
-    /// snapshots the VM through the API socket; every later run restores
-    /// that snapshot into a fresh process. The prototype keeps snapshots
-    /// under the engine's scratch directory for the process's life.
+    /// (docs/one-pager-vm-snapshots.md): the first run of an image boots,
+    /// parks the init and snapshots the VM through the API socket; every
+    /// later run restores that snapshot into a fresh process. A stored
+    /// image's snapshot is kept in the run's store, beside the compiled
+    /// artifacts; any other under the engine's scratch directory.
     pub fn with_snapshots(binary: PathBuf) -> Firecracker {
         Firecracker {
             binary,
@@ -226,13 +213,13 @@ impl Firecracker {
     }
 
     /// A boot: the VM from its configuration file, with no API socket.
-    fn boot(&self, spec: VmSpec<'_>) -> Result<Outcome, Error> {
+    fn boot(&self, spec: &VmSpec<'_>) -> Result<Outcome, Error> {
         let started = Instant::now();
-        let (dir, uds, listener) = Self::workdir(&spec)?;
+        let (dir, uds, listener) = Self::workdir(spec)?;
         let config_path = dir.path().join("vm.json");
         std::fs::write(
             &config_path,
-            serde_json::to_vec(&Self::config(&spec, &uds)).expect("json"),
+            serde_json::to_vec(&Self::config(spec, &uds)).expect("json"),
         )
         .map_err(|e| Error(format!("cannot write the VM's configuration: {e}")))?;
         let child = Command::new(&self.binary)
@@ -246,30 +233,95 @@ impl Firecracker {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| Error(format!("cannot start {}: {e}", self.binary.display())))?;
-        Ok(self.finish(child, &listener, &spec, started, "boot"))
+        Ok(self.finish(child, &listener, spec, started, "boot"))
     }
 
-    /// The snapshot for this image and machine, made on the first call:
-    /// the VM boots with its API socket, the init connects and is parked,
-    /// and the paused VM is written out. The VM that made it never runs a
-    /// process.
-    fn snapshot(&self, snapshots: &Snapshots, spec: &VmSpec<'_>) -> Result<Arc<Snapshot>, String> {
-        let key = (spec.rootfs.to_path_buf(), spec.memory_mib, spec.vcpus);
-        let slot = {
-            let mut made = snapshots.made.lock().expect("poisoned");
-            Arc::clone(made.entry(key).or_default())
+    /// The names a stored image's snapshot goes by in the store: the root
+    /// filesystem's own entry name, the machine shape and the fingerprint
+    /// of what else the frozen VM depends on, so a snapshot is found only
+    /// by the Firecracker, the kernel and the init that took it.
+    fn names(&self, snapshots: &Snapshots, spec: &VmSpec<'_>) -> Result<(String, String), String> {
+        let rootfs = spec
+            .rootfs
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or("the root filesystem has no file name")?;
+        let fingerprint = match snapshots.fingerprint.get() {
+            Some(f) => f.clone(),
+            None => {
+                use sha2::Digest as _;
+                let mut hash = sha2::Sha256::new();
+                for path in [self.binary.as_path(), spec.kernel, spec.initrd] {
+                    let bytes = std::fs::read(path)
+                        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+                    hash.update(sha2::Sha256::digest(&bytes));
+                }
+                hash.update(BOOT_ARGS.as_bytes());
+                hash.update(crate::protocol::VERSION.to_be_bytes());
+                let f = hex::encode(&hash.finalize()[..6]);
+                snapshots.fingerprint.get_or_init(|| f).clone()
+            }
         };
+        let stem = format!(
+            "{rootfs}.vm-{}m{}c-{fingerprint}",
+            spec.memory_mib, spec.vcpus
+        );
+        Ok((format!("{stem}.state"), format!("{stem}.mem")))
+    }
+
+    /// The snapshot for this image and machine shape: the one the loaded
+    /// image already has, the one the store kept and still verifies, or a
+    /// new one. To make one the VM boots with its API socket, the init
+    /// connects and is parked, and the paused VM is written out; that VM
+    /// never runs a process.
+    fn snapshot(&self, snapshots: &Snapshots, spec: &VmSpec<'_>) -> Result<Arc<Snapshot>, String> {
+        let slot = spec.snapshots.slot(spec.memory_mib, spec.vcpus);
         let mut slot = slot.lock().expect("poisoned");
+        let count = |event| {
+            metrics::CACHE_EVENTS
+                .with_label_values(&[metrics::CACHE_SNAPSHOT, event])
+                .inc()
+        };
         if let Some(snapshot) = &*slot {
-            return Ok(Arc::clone(snapshot));
+            if snapshot.state.is_file() && snapshot.mem.is_file() {
+                if let Some(store) = spec.store {
+                    store.used(&snapshot.state);
+                    store.used(&snapshot.mem);
+                }
+                count(metrics::EVENT_HIT);
+                return Ok(Arc::clone(snapshot));
+            }
+            // The sweep took a file from under the image: made again.
+            count(metrics::EVENT_STALE);
+            *slot = None;
         }
+        let names = match spec.store {
+            Some(_) => Some(self.names(snapshots, spec)?),
+            None => None,
+        };
+        if let (Some(store), Some((state, mem))) = (spec.store, &names) {
+            // Both or neither: a lone file is written over below.
+            if let (Some(state), Some(mem)) = (store.sealed(state), store.sealed(mem)) {
+                let snapshot = Arc::new(Snapshot { state, mem });
+                *slot = Some(Arc::clone(&snapshot));
+                count(metrics::EVENT_HIT);
+                return Ok(snapshot);
+            }
+        }
+        count(metrics::EVENT_MISS);
         let started = Instant::now();
-        let n = snapshots
-            .next
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let keep = spec.scratch.join(format!("snapshot-{n}"));
-        std::fs::create_dir_all(&keep)
-            .map_err(|e| format!("cannot create {}: {e}", keep.display()))?;
+        let (state_path, mem_path) = match (spec.store, &names) {
+            (Some(store), Some((state, mem))) => (store.begin(state)?, store.begin(mem)?),
+            _ => {
+                let n = snapshots
+                    .next
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let keep = spec.scratch.join(format!("snapshot-{n}"));
+                std::fs::create_dir_all(&keep)
+                    .map_err(|e| format!("cannot create {}: {e}", keep.display()))?;
+                (keep.join("state"), keep.join("mem"))
+            }
+        };
         let (dir, uds, listener) = Self::workdir(spec).map_err(|e| e.0)?;
         let config_path = dir.path().join("vm.json");
         std::fs::write(
@@ -290,7 +342,7 @@ impl Firecracker {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| format!("cannot start {}: {e}", self.binary.display()))?;
-        let result = (|| -> Result<Snapshot, String> {
+        let result = (|| -> Result<(), String> {
             let deadline = spec.deadline.min(Instant::now() + Duration::from_secs(30));
             let mut stream = loop {
                 match listener.accept() {
@@ -333,32 +385,36 @@ impl Firecracker {
                 "/vm",
                 &serde_json::json!({"state": "Paused"}),
             )?;
-            let snapshot = Snapshot {
-                state: keep.join("state"),
-                mem: keep.join("mem"),
-            };
             api_call(
                 &api,
                 "PUT",
                 "/snapshot/create",
                 &serde_json::json!({
                     "snapshot_type": "Full",
-                    "snapshot_path": snapshot.state,
-                    "mem_file_path": snapshot.mem,
+                    "snapshot_path": state_path,
+                    "mem_file_path": mem_path,
                 }),
             )?;
             drop(stream);
-            Ok(snapshot)
+            Ok(())
         })();
-        let result = result.and_then(|snapshot| {
-            let (apparent, kept) = sparsify(&snapshot.mem)
-                .map_err(|e| format!("cannot rewrite the VM's memory file: {e}"))?;
-            Ok((snapshot, apparent, kept))
-        });
         let _ = child.kill();
         let _ = child.wait();
-        let (snapshot, apparent, kept) = result?;
-        let snapshot = Arc::new(snapshot);
+        result?;
+        let (apparent, kept) =
+            sparsify(&mem_path).map_err(|e| format!("cannot rewrite the VM's memory file: {e}"))?;
+        // In the store a file counts once sealed, under the store's key.
+        let snapshot = Arc::new(match (spec.store, &names) {
+            (Some(store), Some((state, mem))) => Snapshot {
+                state: store.seal(state)?,
+                mem: store.seal(mem)?,
+            },
+            _ => Snapshot {
+                state: state_path,
+                mem: mem_path,
+            },
+        });
+        metrics::SNAPSHOT_DURATION.observe(started.elapsed().as_secs_f64());
         tracing::debug!(
             rootfs = %spec.rootfs.display(),
             memory_mib = spec.memory_mib,
@@ -389,9 +445,9 @@ impl Firecracker {
     /// writes are its own), the parked init connects to this run's socket
     /// and the run proceeds as after a boot. The description carries the
     /// host's clock and fresh randomness for the init to set.
-    fn restore(&self, spec: VmSpec<'_>, snapshot: &Snapshot) -> Result<Outcome, Error> {
+    fn restore(&self, spec: &VmSpec<'_>, snapshot: &Snapshot) -> Result<Outcome, String> {
         let started = Instant::now();
-        let (dir, uds, listener) = Self::workdir(&spec)?;
+        let (dir, uds, listener) = Self::workdir(spec).map_err(|e| e.0)?;
         let api = dir.path().join("api.sock");
         let mut child = Command::new(&self.binary)
             .arg("--api-sock")
@@ -402,7 +458,7 @@ impl Firecracker {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| Error(format!("cannot start {}: {e}", self.binary.display())))?;
+            .map_err(|e| format!("cannot start {}: {e}", self.binary.display()))?;
         if let Err(e) = api_call(
             &api,
             "PUT",
@@ -416,7 +472,7 @@ impl Firecracker {
         ) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Error(format!("cannot restore the VM's snapshot: {e}")));
+            return Err(e);
         }
         let mut seed = [0u8; 32];
         let seeded = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut seed));
@@ -434,7 +490,7 @@ impl Firecracker {
         };
         let spec = VmSpec {
             description: &description,
-            ..spec
+            ..*spec
         };
         Ok(self.finish(child, &listener, &spec, started, "restore"))
     }
@@ -450,7 +506,9 @@ fn sparsify(path: &Path) -> std::io::Result<(u64, u64)> {
     const BLOCK: usize = 64 << 10;
     let mut source = std::fs::File::open(path)?;
     let len = source.metadata()?.len();
-    let sparse_path = path.with_extension("sparse");
+    // Appended, not swapped for the extension: in the store the path has
+    // the marker of an unfinished write, which the name has to keep.
+    let sparse_path = PathBuf::from(format!("{}.sparse", path.display()));
     let mut sparse = std::fs::File::create(&sparse_path)?;
     let mut block = vec![0u8; BLOCK];
     let mut offset = 0u64;
@@ -510,12 +568,15 @@ fn api_call(sock: &Path, method: &str, path: &str, body: &serde_json::Value) -> 
         .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(30))))
         .map_err(|e| format!("cannot configure the VMM's API socket: {e}"))?;
     let body = body.to_string();
-    write!(
-        stream,
+    // One write for the whole request: written piece by piece, a peer that
+    // answers and closes on the first piece breaks the pipe under the rest.
+    let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
-    )
-    .map_err(|e| format!("cannot send {method} {path} to the VMM: {e}"))?;
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("cannot send {method} {path} to the VMM: {e}"))?;
     let mut response = Vec::new();
     let mut buf = [0u8; 1024];
     // The status line is enough for success; an error's body follows its
@@ -560,15 +621,35 @@ impl Sandbox for Firecracker {
     }
 
     fn run(&self, spec: VmSpec<'_>) -> Result<Outcome, Error> {
-        if let Some(snapshots) = &self.snapshots {
+        if let Some(snapshots) = &self.snapshots
+            && !spec.snapshots.is_off()
+        {
+            // A snapshot that cannot be made or restored costs its run the
+            // boot it was meant to save, never the run, and the image its
+            // snapshots until it is loaded again: the next run does not try
+            // what just failed.
             match self.snapshot(snapshots, &spec) {
-                Ok(snapshot) => return self.restore(spec, &snapshot),
-                // A snapshot that cannot be made costs the boot it was
-                // meant to save, never the run.
-                Err(e) => tracing::warn!(error = %e, "cannot snapshot the VM; booting it"),
+                Ok(snapshot) => match self.restore(&spec, &snapshot) {
+                    Ok(outcome) => return Ok(outcome),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "cannot restore the VM's snapshot; booting it");
+                        *spec
+                            .snapshots
+                            .slot(spec.memory_mib, spec.vcpus)
+                            .lock()
+                            .expect("poisoned") = None;
+                        let _ = std::fs::remove_file(&snapshot.state);
+                        let _ = std::fs::remove_file(&snapshot.mem);
+                        spec.snapshots.turn_off();
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, "cannot snapshot the VM; booting it");
+                    spec.snapshots.turn_off();
+                }
             }
         }
-        self.boot(spec)
+        self.boot(&spec)
     }
 }
 
@@ -735,9 +816,29 @@ mod tests {
                 },
             ] {
                 let (mut stream, _) = listener.accept().expect("accept");
+                // The whole request before the answer, as an HTTP server
+                // reads it: the headers, then the body they announce.
+                let mut request = Vec::new();
                 let mut buf = [0u8; 2048];
-                let n = stream.read(&mut buf).expect("request");
-                seen.push(String::from_utf8_lossy(&buf[..n]).to_string());
+                loop {
+                    let n = stream.read(&mut buf).expect("request");
+                    assert!(n > 0, "the request ended early");
+                    request.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&request);
+                    let Some(head) = text.find("\r\n\r\n") else {
+                        continue;
+                    };
+                    let length: usize = text[..head]
+                        .lines()
+                        .find_map(|l| l.strip_prefix("Content-Length: "))
+                        .expect("a Content-Length header")
+                        .parse()
+                        .expect("a length");
+                    if request.len() >= head + 4 + length {
+                        break;
+                    }
+                }
+                seen.push(String::from_utf8_lossy(&request).to_string());
                 stream.write_all(answer.as_bytes()).expect("answer");
             }
             seen
@@ -795,6 +896,8 @@ mod tests {
             request: b"",
             deadline: Instant::now() + Duration::from_millis(50),
             scratch: dir.path(),
+            snapshots: &Default::default(),
+            store: None,
         };
         let (stdout, stderr, end) = drive(&listener, &mut child, &spec, &mut None);
         let _ = child.kill();

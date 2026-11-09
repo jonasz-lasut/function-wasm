@@ -55,6 +55,8 @@ pub const KVM_DEVICE: &str = "/dev/kvm";
 pub struct Image {
     pub rootfs: Rootfs,
     pub config: ImageConfig,
+    /// The VM snapshots made of this image while it is loaded.
+    pub snapshots: sandbox::SnapshotMemo,
 }
 
 /// Where a root filesystem lives: a file the engine wrote under its
@@ -87,6 +89,9 @@ pub struct Oci {
     scheduler: Option<concurrency::FairScheduler>,
     mem: Option<Arc<concurrency::MemPool>>,
     sandbox: Box<dyn Sandbox>,
+    /// The runtime's compiled store, once the runtime has opened it: where
+    /// a stored image's snapshots are kept.
+    store: std::sync::OnceLock<Arc<dyn crate::ArtifactStore>>,
 }
 
 impl Oci {
@@ -113,6 +118,13 @@ impl Oci {
             )));
         }
         Self::with_sandbox(config, options, sandbox)
+    }
+
+    /// Keeps what the engine derives from a stored image (its VM
+    /// snapshots) in store, beside the compiled artifacts. The first call
+    /// counts; without one they stay in the engine's scratch directory.
+    pub fn keep_in(&self, store: Arc<dyn crate::ArtifactStore>) {
+        let _ = self.store.set(store);
     }
 
     /// The engine over any sandbox (tests pass a fake).
@@ -157,6 +169,7 @@ impl Oci {
             initrd: initrd.into_temp_path(),
             scratch,
             sandbox,
+            store: std::sync::OnceLock::new(),
         })
     }
 
@@ -217,6 +230,7 @@ impl Oci {
         Ok(Image {
             rootfs: Rootfs::Scratch(file.into_temp_path()),
             config,
+            snapshots: Default::default(),
         })
     }
 }
@@ -260,7 +274,19 @@ impl Engine for Oci {
         Ok(Arc::new(Image {
             rootfs: Rootfs::Stored(path.to_path_buf()),
             config,
+            snapshots: Default::default(),
         }))
+    }
+
+    /// The image over the stored root filesystem: the scratch file goes
+    /// with the compiled image, and a snapshot taken from here on mounts a
+    /// file that stays where it is for as long as the store keeps it.
+    fn stored(&self, m: Module, path: &Path) -> Module {
+        Arc::new(Image {
+            rootfs: Rootfs::Stored(path.to_path_buf()),
+            config: m.config.clone(),
+            snapshots: Default::default(),
+        })
     }
 
     fn run(&self, m: &Module, request: &[u8], opts: RunOptions) -> Result<Vec<u8>, Error> {
@@ -305,6 +331,79 @@ mod tests {
         // The temp dir goes; the engine read the init already.
         std::mem::forget(dir);
         e
+    }
+
+    /// A store that records what the engine asks of it.
+    #[derive(Default)]
+    struct RecordingStore {
+        used: std::sync::Mutex<Vec<std::path::PathBuf>>,
+    }
+
+    impl crate::ArtifactStore for RecordingStore {
+        fn begin(&self, name: &str) -> Result<std::path::PathBuf, String> {
+            Err(format!("no file for {name} in this test"))
+        }
+        fn seal(&self, name: &str) -> Result<std::path::PathBuf, String> {
+            Err(format!("no file for {name} in this test"))
+        }
+        fn sealed(&self, _: &str) -> Option<std::path::PathBuf> {
+            None
+        }
+        fn used(&self, path: &Path) {
+            self.used.lock().unwrap().push(path.to_path_buf());
+        }
+    }
+
+    /// The compiled image runs from its scratch file and keeps nothing in
+    /// the store; once the runtime has stored the artifact the image runs
+    /// from the stored file, every run marks it used, and the sandbox gets
+    /// the store for the image's snapshots. Each loaded image has its own
+    /// snapshot memo.
+    #[test]
+    fn a_stored_image_runs_from_the_store_and_keeps_its_snapshots_there() {
+        let stores = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let saw = Arc::clone(&stores);
+        let fake = FakeSandbox::new(Default::default(), move |spec: &VmSpec<'_>| {
+            saw.lock()
+                .unwrap()
+                .push((spec.rootfs.to_path_buf(), spec.store.is_some()));
+            spec.snapshots.turn_off();
+            Outcome {
+                stdout: spec.request.to_vec(),
+                stderr: Vec::new(),
+                end: Ended::Exit(Exit {
+                    status: Some(0),
+                    ..Default::default()
+                }),
+                console: String::new(),
+            }
+        });
+        let e = engine(fake);
+        let store = Arc::new(RecordingStore::default());
+        e.keep_in(Arc::clone(&store) as Arc<dyn crate::ArtifactStore>);
+        let image = fixture_image(b"#!/bin/sh\n", &["/app/run"], "", &[]);
+        let compiled = e.compile(&image).unwrap();
+        let scratch = compiled.rootfs.path().to_path_buf();
+        e.run(&compiled, b"one", RunOptions::default()).unwrap();
+        assert!(compiled.snapshots.is_off());
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("sha256-digest");
+        std::fs::write(&entry, e.serialize(&compiled).unwrap()).unwrap();
+        let stored = e.stored(compiled, &entry);
+        assert_eq!(stored.rootfs.path(), entry);
+        assert!(
+            !scratch.exists(),
+            "the scratch file goes with the compiled image"
+        );
+        assert!(!stored.snapshots.is_off(), "a memo of its own");
+        e.run(&stored, b"two", RunOptions::default()).unwrap();
+
+        assert_eq!(
+            *stores.lock().unwrap(),
+            vec![(scratch, false), (entry.clone(), true)]
+        );
+        assert_eq!(*store.used.lock().unwrap(), vec![entry]);
     }
 
     #[test]

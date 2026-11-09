@@ -97,8 +97,9 @@ impl Store {
         Some(b)
     }
 
-    /// Stores b under digest, through a temporary file and a rename.
-    pub fn put(&self, digest: &str, b: &[u8]) -> Result<(), String> {
+    /// Stores b under digest, through a temporary file and a rename, and
+    /// returns the entry's path.
+    pub fn put(&self, digest: &str, b: &[u8]) -> Result<PathBuf, String> {
         if self.verify && digest_of(b) != digest {
             return Err(format!("content is {}, not {digest}", digest_of(b)));
         }
@@ -110,7 +111,21 @@ impl Store {
             // rewrite, never a served entry.
             write_atomic(&mac_path(&target), hex::encode(mac(key, b)).as_bytes())?;
         }
-        Ok(())
+        Ok(target)
+    }
+
+    /// Removes what an interrupted write left: a file under the marker of
+    /// an unfinished put is no entry, and the sweep never sees it. Call it
+    /// before anything writes, as the runtime does at startup.
+    pub fn remove_unfinished(&self) {
+        let Ok(dir) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        for entry in dir.flatten() {
+            if entry.file_name().to_string_lossy().contains(TMP_MARKER) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
 
     /// The host filesystem path of the entry stored under digest - for
@@ -172,12 +187,122 @@ impl Store {
                 }
                 Some(Entry {
                     path: e.path(),
-                    size: meta.len(),
+                    size: disk_size(&meta),
                     last_used: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
                 })
             })
             .collect()
     }
+}
+
+/// What an entry costs the disk: its length, or what the filesystem
+/// allocated for it where that is less. A VM's memory file is sparse - as
+/// long as the VM's memory, with only the pages the guest touched on disk -
+/// and the bound and the gauge are about the disk. A filesystem that keeps
+/// a small file inside its inode reports no blocks for it; such a file
+/// counts by its length.
+fn disk_size(meta: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        match meta.blocks() {
+            0 => meta.len(),
+            blocks => meta.len().min(blocks * 512),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        meta.len()
+    }
+}
+
+/// The store as the place an engine keeps what it derives from a compiled
+/// module (the OCI engine's VM snapshots): files written in place, signed
+/// under the store's key when sealed, and verified when asked for again,
+/// read in pieces since a memory file is as long as a VM's memory.
+impl guestfn_engine::ArtifactStore for Store {
+    fn begin(&self, name: &str) -> Result<PathBuf, String> {
+        if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+            return Err(format!("{name:?} is not an entry name"));
+        }
+        let unfinished = unfinished_path(&self.entry_path(name));
+        let _ = std::fs::remove_file(&unfinished);
+        Ok(unfinished)
+    }
+
+    fn seal(&self, name: &str) -> Result<PathBuf, String> {
+        let target = self.entry_path(name);
+        let unfinished = unfinished_path(&target);
+        let tag = match &self.key {
+            Some(key) => Some(
+                mac_of_file(key, &unfinished)
+                    .map_err(|e| format!("cannot sign cache entry {name}: {e}"))?
+                    .finalize()
+                    .into_bytes()
+                    .to_vec(),
+            ),
+            None => None,
+        };
+        // The entry first, its sidecar after, as put does: a crash between
+        // the two leaves an entry no lookup serves.
+        let _ = std::fs::remove_file(mac_path(&target));
+        std::fs::rename(&unfinished, &target).map_err(|e| {
+            let _ = std::fs::remove_file(&unfinished);
+            format!("cannot store cache entry {name}: {e}")
+        })?;
+        if let Some(tag) = tag {
+            write_atomic(&mac_path(&target), hex::encode(tag).as_bytes())?;
+        }
+        Ok(target)
+    }
+
+    fn sealed(&self, name: &str) -> Option<PathBuf> {
+        let path = self.entry_path(name);
+        if !std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
+            return None;
+        }
+        if let Some(key) = &self.key {
+            let verified = std::fs::read(mac_path(&path))
+                .ok()
+                .and_then(|tag| hex::decode(tag).ok())
+                .is_some_and(|tag| {
+                    mac_of_file(key, &path).is_ok_and(|m| m.verify_slice(&tag).is_ok())
+                });
+            if !verified {
+                let _ = std::fs::remove_file(&path);
+                let _ = std::fs::remove_file(mac_path(&path));
+                return None;
+            }
+        }
+        touch(&path);
+        Some(path)
+    }
+
+    fn used(&self, path: &Path) {
+        touch(path);
+    }
+}
+
+/// Where an entry is written before it is one.
+fn unfinished_path(entry: &Path) -> PathBuf {
+    PathBuf::from(format!("{}{TMP_MARKER}keep", entry.display()))
+}
+
+/// The HMAC over a file's content, read in pieces: finalized for a
+/// sidecar, or verified against one.
+fn mac_of_file(key: &[u8; 32], path: &Path) -> std::io::Result<hmac::Hmac<Sha256>> {
+    use std::io::Read as _;
+    let mut m = hmac::Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes any key length");
+    let mut file = std::fs::File::open(path)?;
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        m.update(&buf[..n]);
+    }
+    Ok(m)
 }
 
 /// The bytes a store holds right now.
@@ -315,6 +440,96 @@ fn getrandom(buf: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file an engine keeps is written in place, signed when sealed and
+    /// verified when asked for again; a changed file or another process's
+    /// key is refused and removed, as a planted compiled artifact is.
+    #[test]
+    fn a_kept_file_is_signed_and_verified() {
+        use guestfn_engine::ArtifactStore as _;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = Store::open_dir(dir.path(), false)
+            .expect("open")
+            .with_key([7; 32]);
+        let name = "sha256-abc.vm-576m1c-0011223344ff.mem";
+        assert_eq!(s.sealed(name), None);
+        let unfinished = s.begin(name).expect("begin");
+        std::fs::write(&unfinished, b"a VM's memory").expect("write");
+        // Unfinished: no entry for a lookup or for the sweep.
+        assert_eq!(s.sealed(name), None);
+        assert!(s.entries().is_empty());
+        let path = s.seal(name).expect("seal");
+        assert_eq!(path, dir.path().join(name));
+        assert!(!unfinished.exists());
+        assert_eq!(s.sealed(name), Some(path.clone()));
+        assert_eq!(std::fs::read(&path).expect("read"), b"a VM's memory");
+        assert_eq!(s.entries().len(), 1, "the sidecar is no entry");
+
+        // Another process's key refuses it, and removes it.
+        let other = Store::open_dir(dir.path(), false)
+            .expect("open")
+            .with_key([8; 32]);
+        assert_eq!(other.sealed(name), None);
+        assert!(!path.exists() && !mac_path(&path).exists());
+
+        // So does a change after the seal.
+        std::fs::write(s.begin(name).expect("begin"), b"a VM's memory").expect("write");
+        let path = s.seal(name).expect("seal");
+        std::fs::write(&path, b"another memory").expect("tamper");
+        assert_eq!(s.sealed(name), None);
+        assert!(!path.exists());
+
+        for bad in ["", "a/b", "..", "a\\b"] {
+            assert!(s.begin(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// What an interrupted write left goes at startup: nothing else would
+    /// remove it, since it is no entry.
+    #[test]
+    fn an_unfinished_write_is_removed_at_startup() {
+        use guestfn_engine::ArtifactStore as _;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = Store::open_dir(dir.path(), false).expect("open");
+        s.put("sha256:kept", b"entry").expect("put");
+        let unfinished = s.begin("left.mem").expect("begin");
+        std::fs::write(&unfinished, b"half").expect("write");
+        s.remove_unfinished();
+        assert!(!unfinished.exists());
+        assert_eq!(s.entries().len(), 1);
+    }
+
+    /// A sparse entry counts by what the disk holds, not by its length: a
+    /// VM's memory file is as long as the VM's memory.
+    #[test]
+    fn a_sparse_entry_costs_what_the_disk_holds() {
+        use guestfn_engine::ArtifactStore as _;
+        use std::io::{Seek as _, SeekFrom, Write as _};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = Store::open_dir(dir.path(), false).expect("open");
+        let mut f = std::fs::File::create(s.begin("sparse.mem").expect("begin")).expect("create");
+        f.write_all(&[1u8; 4096]).expect("write");
+        f.seek(SeekFrom::Start((64 << 20) - 4096)).expect("seek");
+        f.write_all(&[1u8; 4096]).expect("write");
+        drop(f);
+        let path = s.seal("sparse.mem").expect("seal");
+        let meta = std::fs::metadata(&path).expect("metadata");
+        assert_eq!(meta.len(), 64 << 20);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            if meta.blocks() * 512 >= meta.len() {
+                // A filesystem without holes: nothing to tell apart.
+                return;
+            }
+        }
+        let size = bytes(&s);
+        assert!((8192..(1 << 20)).contains(&size), "{size}");
+        // A dense entry still counts by its length.
+        let dense = Store::open_dir(dir.path().join("dense"), false).expect("open");
+        dense.put("sha256:d", b"hello").expect("put");
+        assert_eq!(bytes(&dense), 5);
+    }
 
     #[test]
     fn stores_and_verifies() {

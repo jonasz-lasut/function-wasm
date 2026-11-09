@@ -108,29 +108,35 @@ async fn the_volume_keeps_fetched_modules_and_the_sweep_bounds_them() -> Result<
             fetched.unwrap_or_default() >= 1.0,
             "after the restart the warm-up should have fetched the swept module again: {fetched:?}\n{scraped}"
         );
-        let blob_hits_before =
-            metrics::sample(&scraped, "guestfn_module_cache_events_total", &[("cache", "blob"), ("event", "hit")])
-                .unwrap_or_default();
-        let stale_before =
-            metrics::sample(&scraped, "guestfn_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "stale")])
-                .unwrap_or_default();
-
+        // The new pod's counters start at zero, and what they count from
+        // here on is judged as a whole, not as a difference around the
+        // second Guest: the first Guest is still there, and Crossplane may
+        // reconcile it before the second one exists. Whichever request
+        // loads the test module first, that load is the one that reads
+        // the volume. A blob hit is the test module's: the warmed module
+        // is larger than the cache bound, so the startup sweep removed it.
         let second = ns.guest("second", &step, json!({})).await?;
         second.wait_ready(WAIT).await?;
         let scraped = metrics::scrape(&ns.client).await?;
-        let blob_hits_after =
-            metrics::sample(&scraped, "guestfn_module_cache_events_total", &[("cache", "blob"), ("event", "hit")])
-                .unwrap_or_default();
-        let stale_after =
-            metrics::sample(&scraped, "guestfn_module_cache_events_total", &[("cache", "compiled-disk"), ("event", "stale")])
-                .unwrap_or_default();
+        let blob_hits = metrics::sample(
+            &scraped,
+            "guestfn_module_cache_events_total",
+            &[("cache", "blob"), ("event", "hit")],
+        )
+        .unwrap_or_default();
+        let stale = metrics::sample(
+            &scraped,
+            "guestfn_module_cache_events_total",
+            &[("cache", "compiled-disk"), ("event", "stale")],
+        )
+        .unwrap_or_default();
         ensure!(
-            blob_hits_after > blob_hits_before,
-            "the fetched module on the volume was not reused by {pod}: {blob_hits_before} -> {blob_hits_after}\n{scraped}"
+            blob_hits >= 1.0,
+            "the fetched module on the volume was not reused by {pod}: {blob_hits} blob hits\n{scraped}"
         );
         ensure!(
-            stale_after > stale_before,
-            "the previous process's artifact should be refused as stale by {pod}: {stale_before} -> {stale_after}\n{scraped}"
+            stale >= 1.0,
+            "the previous process's artifact should be refused as stale by {pod}: {stale}\n{scraped}"
         );
         Ok(())
     })

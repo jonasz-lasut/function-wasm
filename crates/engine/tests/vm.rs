@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use guestfn_engine::oci::testing::fixture_image;
 use guestfn_engine::oci::{Oci, Options};
-use guestfn_engine::{Config, Engine, RunOptions};
+use guestfn_engine::{ArtifactStore, Config, Engine, RunOptions};
 
 struct Tools {
     firecracker: PathBuf,
@@ -338,6 +338,123 @@ fn restored_clones_share_nothing() {
             "a clone saw what another wrote"
         );
     }
+}
+
+/// A store for these tests: a directory with no key, which can be told to
+/// refuse what it has, as a store does for another process's entries.
+struct DirStore {
+    dir: PathBuf,
+    refuse: std::sync::atomic::AtomicBool,
+}
+
+impl ArtifactStore for DirStore {
+    fn begin(&self, name: &str) -> Result<PathBuf, String> {
+        Ok(self.dir.join(format!("{name}.put-keep")))
+    }
+
+    fn seal(&self, name: &str) -> Result<PathBuf, String> {
+        let entry = self.dir.join(name);
+        std::fs::rename(self.dir.join(format!("{name}.put-keep")), &entry)
+            .map_err(|e| e.to_string())?;
+        Ok(entry)
+    }
+
+    fn sealed(&self, name: &str) -> Option<PathBuf> {
+        let entry = self.dir.join(name);
+        if self.refuse.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = std::fs::remove_file(&entry);
+            return None;
+        }
+        entry.is_file().then_some(entry)
+    }
+
+    fn used(&self, _: &std::path::Path) {}
+}
+
+/// A stored image's snapshot is kept in the store beside it
+/// (docs/one-pager-vm-snapshots.md): two entries under the root
+/// filesystem's own name, the memory file sparse. A file the sweep took is
+/// made again, an image loaded again takes the snapshot the store still
+/// has, and one the store refuses is made again.
+#[cfg(unix)]
+#[test]
+fn a_stored_image_keeps_its_snapshot_in_the_store() {
+    use std::os::unix::fs::MetadataExt as _;
+    let Some(t) = tools() else { return };
+    let e = engine_with(&t, Config::default(), true);
+    let dir = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(DirStore {
+        dir: dir.path().to_path_buf(),
+        refuse: Default::default(),
+    });
+    e.keep_in(std::sync::Arc::clone(&store) as std::sync::Arc<dyn ArtifactStore>);
+    let compiled = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "echo"],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    let entry = dir.path().join("sha256-test");
+    std::fs::write(&entry, e.serialize(&compiled).unwrap()).unwrap();
+    let stored = e.stored(compiled, &entry);
+    let kept = || {
+        let mut names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|f| f.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "sha256-test")
+            .collect();
+        names.sort();
+        names
+    };
+
+    assert_eq!(e.run(&stored, b"one", opts()).unwrap(), b"one");
+    let names = kept();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert!(
+        names[0].starts_with("sha256-test.vm-") && names[0].ends_with(".mem"),
+        "{names:?}"
+    );
+    assert!(
+        names[1].starts_with("sha256-test.vm-") && names[1].ends_with(".state"),
+        "{names:?}"
+    );
+    let mem = dir.path().join(&names[0]);
+    let state = dir.path().join(&names[1]);
+    let meta = std::fs::metadata(&mem).unwrap();
+    assert!(
+        meta.blocks() * 512 < meta.len() / 2,
+        "the memory file is sparse: {} bytes long, {} on disk",
+        meta.len(),
+        meta.blocks() * 512
+    );
+    assert_eq!(e.run(&stored, b"two", opts()).unwrap(), b"two");
+
+    // The sweep takes the memory file from under the loaded image.
+    std::fs::remove_file(&mem).unwrap();
+    assert_eq!(e.run(&stored, b"three", opts()).unwrap(), b"three");
+    assert!(mem.is_file(), "made again");
+
+    // The image loaded again: the store still has the snapshot.
+    let made = std::fs::metadata(&state).unwrap().ino();
+    let again = e.deserialize_file(&entry).unwrap();
+    assert_eq!(e.run(&again, b"four", opts()).unwrap(), b"four");
+    assert_eq!(
+        std::fs::metadata(&state).unwrap().ino(),
+        made,
+        "restored from the kept snapshot"
+    );
+
+    // Loaded once more with a store that refuses what it has.
+    store
+        .refuse
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let refused = e.deserialize_file(&entry).unwrap();
+    assert_eq!(e.run(&refused, b"five", opts()).unwrap(), b"five");
+    assert_eq!(kept().len(), 2, "made again after the refusal");
+    assert_eq!(e.run(&refused, b"six", opts()).unwrap(), b"six");
 }
 
 /// Boot against restore, by hand (#255):

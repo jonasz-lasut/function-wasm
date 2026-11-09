@@ -80,6 +80,17 @@ impl Default for EngineArgs {
     }
 }
 
+/// Hands the engine the compiled store for what it derives from a stored
+/// module at run time. The Wasmtime engine derives nothing; the OCI engine
+/// keeps a stored image's VM snapshots there.
+#[cfg(feature = "wasm")]
+pub fn keep_in(_engine: &Selected, _store: std::sync::Arc<crate::store::Store>) {}
+
+#[cfg(all(feature = "oci", not(feature = "wasm")))]
+pub fn keep_in(engine: &Selected, store: std::sync::Arc<crate::store::Store>) {
+    engine.keep_in(store);
+}
+
 /// The selected engine under the ceilings and its own flags.
 #[cfg(feature = "wasm")]
 pub fn new(config: Config, _args: &EngineArgs) -> Result<Selected, Error> {

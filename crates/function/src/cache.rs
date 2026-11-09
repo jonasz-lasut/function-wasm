@@ -163,12 +163,15 @@ impl ModuleCache {
         let load = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let wasm = fetch()?;
-            let m = engine.compile(&wasm).map_err(|e| e.to_string())?;
+            let mut m = engine.compile(&wasm).map_err(|e| e.to_string())?;
             if let Some(disk) = disk {
                 // Best effort: a full or read-only store only costs the next
-                // process the compile.
-                if let Ok(artifact) = engine.serialize(&m) {
-                    let _ = disk.put(&key, &artifact);
+                // process the compile. Where the artifact landed, the
+                // engine may continue from the stored file.
+                if let Ok(artifact) = engine.serialize(&m)
+                    && let Ok(path) = disk.put(&key, &artifact)
+                {
+                    m = engine.stored(m, &path);
                 }
             }
             Ok::<Module, String>(m)
