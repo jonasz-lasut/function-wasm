@@ -121,6 +121,11 @@
       // comes from the release tag; the two checksums (one per
       // architecture) come from the release's <asset>.sha256.txt attachments,
       // which github-release-attachments reads to update a currentDigest.
+      // A match has one digest, so there are two, and they must not
+      // overlap: Renovate replaces each match's text as a whole, and two
+      // that both began at the version line left the amd64 checksum at the
+      // old release (#289). The arm64 checksum has a marker line of its
+      // own with the version, and its match starts there.
       // The guest kernel beside it (KERNEL_CI, KERNEL_VERSION and their
       // checksums) sits under a dated prefix of Firecracker's artifact
       // bucket with no datasource: the Firecracker PR is the signal to move
@@ -129,8 +134,8 @@
       description: 'the Firecracker release Dockerfile.oci pins, version and per-architecture checksum',
       managerFilePatterns: ['/^Dockerfile\\.oci$/'],
       matchStrings: [
-        'ARG FIRECRACKER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\n[^\\n]*\\nARG FIRECRACKER_SHA256_AMD64=(?<currentDigest>[0-9a-f]{64})',
-        'ARG FIRECRACKER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\n[^\\n]*\\nARG FIRECRACKER_SHA256_AMD64=[0-9a-f]{64}\\nARG FIRECRACKER_SHA256_ARM64=(?<currentDigest>[0-9a-f]{64})',
+        'ARG FIRECRACKER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\n(?:#[^\\n]*\\n)*ARG FIRECRACKER_SHA256_AMD64=(?<currentDigest>[0-9a-f]{64})',
+        '# renovate: firecracker (?<currentValue>v\\d+\\.\\d+\\.\\d+) arm64\\nARG FIRECRACKER_SHA256_ARM64=(?<currentDigest>[0-9a-f]{64})',
       ],
       depNameTemplate: 'firecracker',
       packageNameTemplate: 'firecracker-microvm/firecracker',
@@ -280,8 +285,9 @@
       groupName: 'zig',
     },
     // The two Firecracker matches of Dockerfile.oci (one checksum per
-    // architecture) are one dependency: one PR moves the version and both
-    // digests, and it is the signal for the kernel bump by hand.
+    // architecture, each with the version beside it) are one dependency:
+    // one PR moves the version and both digests, and it is the signal for
+    // the kernel bump by hand.
     {
       matchDepNames: ['firecracker'],
       groupName: 'firecracker',
