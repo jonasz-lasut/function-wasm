@@ -35,6 +35,10 @@ const CGROUP: &str = "/sys/fs/cgroup/run";
 /// The init's whole life: run the description, report, power off. A
 /// failure is printed to the serial console first.
 pub fn main() {
+    // Three lines on the serial console, which the host keeps with the run
+    // (GUESTFN_VM_CONSOLE prints it in the engine's tests): where a stalled
+    // VM got to is otherwise invisible from outside (#272).
+    eprintln!("guestfn-init: up");
     if let Err(e) = run() {
         eprintln!("guestfn-init: {e}");
     }
@@ -81,6 +85,10 @@ fn run() -> Result<(), String> {
     if description.memory_max > 0 {
         memory_cgroup(description.memory_max)?;
     }
+    eprintln!(
+        "guestfn-init: running {}",
+        description.argv.first().map(String::as_str).unwrap_or("")
+    );
     let sock = Arc::new(Mutex::new(sock));
     let exit = match spawn(&description, request, &sock) {
         Ok(exit) => exit,
@@ -89,6 +97,10 @@ fn run() -> Result<(), String> {
             ..Default::default()
         },
     };
+    eprintln!(
+        "guestfn-init: exited status={:?} signal={:?} oom={}",
+        exit.status, exit.signal, exit.oom
+    );
     let mut s = sock.lock().expect("poisoned");
     write_json(&mut *s, Kind::Exit, &exit).map_err(|e| format!("cannot report the exit: {e}"))?;
     let _ = s.shutdown(std::net::Shutdown::Write);

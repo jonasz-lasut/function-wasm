@@ -159,8 +159,15 @@ impl Sandbox for Firecracker {
     }
 }
 
+/// What the host says when the guest never reaches it: the VM booted (or
+/// stalled) and no init connected before the deadline. Its own sentence,
+/// not the module's deadline: the process never ran (#272).
+pub const GUEST_NEVER_CONNECTED: &str = "the guest did not connect before the deadline: the VM booted but its init never reached the host";
+
 /// Waits for the init's connection, then speaks the protocol until the
-/// exit, the deadline or a lost connection.
+/// exit, the deadline or a lost connection. Until the run is sent, time
+/// running out is the sandbox's failure, not the module's: a guest that
+/// never connects, or connects and sends no hello, never ran the process.
 fn drive(
     listener: &UnixListener,
     child: &mut Child,
@@ -181,7 +188,11 @@ fn drive(
             }
         }
         if Instant::now() >= spec.deadline {
-            return (stdout, stderr, Ended::Deadline);
+            return (
+                stdout,
+                stderr,
+                Ended::Lost(GUEST_NEVER_CONNECTED.to_string()),
+            );
         }
         if let Ok(Some(status)) = child.try_wait() {
             return (
@@ -241,8 +252,13 @@ fn talk(
             .map_err(|e| Talk::Lost(format!("cannot configure the guest's connection: {e}")))
     };
     arm(&stream, spec.deadline)?;
-    let hello: Hello = read_json(&mut stream, Kind::Hello)
-        .map_err(|e| io_err(e, "cannot read the init's hello"))?;
+    let hello: Hello = read_json(&mut stream, Kind::Hello).map_err(|e| match io_err(e, "cannot read the init's hello") {
+        Talk::Deadline => Talk::Lost(
+            "the guest connected but sent no hello before the deadline: its init stalled before the run"
+                .to_string(),
+        ),
+        lost => lost,
+    })?;
     if hello.version != crate::protocol::VERSION {
         return Err(Talk::Lost(format!(
             "the init speaks protocol version {}, this engine version {}",
@@ -274,6 +290,48 @@ fn talk(
                     "unexpected {other:?} frame from the init"
                 )));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::Description;
+
+    /// A guest that never connects is the sandbox's failure, worded as
+    /// such, not the module's deadline: the process never ran.
+    #[test]
+    fn a_guest_that_never_connects_is_lost_not_late() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let listener = UnixListener::bind(dir.path().join("vsock")).expect("listener");
+        listener.set_nonblocking(true).expect("nonblocking");
+        // Stands in for the VMM: alive for as long as the wait lasts.
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sleep");
+        let description = Description::default();
+        let spec = VmSpec {
+            kernel: dir.path(),
+            initrd: dir.path(),
+            rootfs: dir.path(),
+            memory_mib: 64,
+            vcpus: 1,
+            description: &description,
+            request: b"",
+            deadline: Instant::now() + Duration::from_millis(50),
+            scratch: dir.path(),
+        };
+        let (stdout, stderr, end) = drive(&listener, &mut child, &spec);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(stdout.is_empty() && stderr.is_empty());
+        match end {
+            Ended::Lost(why) => assert_eq!(why, GUEST_NEVER_CONNECTED),
+            other => panic!("expected a lost run, got {other:?}"),
         }
     }
 }

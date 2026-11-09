@@ -14,8 +14,9 @@ otherwise. The package is alpha.
 its own guest kernel, the image's root filesystem read-only under a tmpfs
 overlay, the step's `limits.memory` for the process (at least 16 MiB,
 held by a cgroup the init puts the process in, so the kernel's
-out-of-memory killer ends a process past it at once) plus 32 MiB for the
-kernel and the init, and no network device. Inside it, the runtime's init runs the image's
+out-of-memory killer ends a process past it at once) plus 64 MiB for the
+kernel, the init, the overlay and the page cache of the root filesystem,
+and no network device. Inside it, the runtime's init runs the image's
 configured command as the image's configured user, with the request on its
 standard input, and relays its standard output, standard error and exit
 status to the host ([the process contract](modules.md)). The
@@ -114,7 +115,7 @@ cannot open /dev/kvm: No such file or directory; the OCI runtime boots a microVM
 the pod's user is neither its owner nor in its group.
 
 A VM's memory comes out of the pod's. The container's memory limit
-needs `--module-memory-limit` plus 32 MiB for each of
+needs `--module-memory-limit` plus 64 MiB for each of
 `--max-concurrent-runs`, and the runtime's own use on top.
 `--max-total-run-memory` bounds the VMs together. A VM reserves its whole
 memory before it boots.
@@ -157,7 +158,11 @@ response, is a fatal result on the step, as a component's error is:
 standard error>`. The deadline and the memory limit end the run the same
 way: `module … failed: run failed: module exceeded its execution deadline
 (30s)` and `module … failed: process was killed: the run's memory limit of
-512Mi was exceeded`.
+512Mi was exceeded`. A VM whose init never reaches the host before the
+deadline is the runtime's failure, not the module's: `module … failed: run
+failed: the guest did not connect before the deadline: the VM booted but
+its init never reached the host`. The VM's serial console, which `--debug`
+logs with the run, says how far the boot got.
 
 ## The development loop
 
