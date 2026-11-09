@@ -67,6 +67,14 @@ the suite's own setup binary, in three steps:
    names, on the `oci` runtime's `default` profile. `E2E_OCI` decides:
    `auto` (the default) installs it when the kind node has `/dev/kvm`, `1`
    requires it and `0` leaves it out, the two values CI's cluster jobs set.
+   `E2E_WASM` decides the same for `function-wasm`: `1` (the default)
+   installs it and `0` leaves it out, which CI's `oci` cluster job sets.
+   Each cluster job installs its own runtime alone. Setup pushes every
+   variant either way (the `oci` suite's wrong-type case names the `wasm`
+   runtime's `plain` variant) and writes the `wasm/default` policy either
+   way (the `oci` profile's `DeploymentRuntimeConfig` mounts it); `0` skips
+   the package, the `wasm` profiles' runtime configs and the lifecycle
+   cache volume.
    The test module as a process is built in a `rust` container on any host
    but Linux.
 
@@ -183,14 +191,18 @@ For `function-oci`:
 - the `oci-go` build job, which vets and tests the process guest and builds
   its image, pushing nothing
 - a build job that compiles the runtime with the `oci` engine,
-  the init and the test module as a process (musl) and fetches the pinned
-  Firecracker and kernel (`make oci.tools`)
-- an engine job that runs the OCI engine's suite in real VMs under the
-  runner's KVM (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of
-  skipping); while issue #272 is open, the `e2e` status names its verdict
-  in the description and never fails on it
-- a second cluster job that installs both runtimes (`E2E_OCI=1`) and runs the
-  `oci` profiles
+  the init and the test module as a process (musl), fetches the pinned
+  Firecracker and kernel (`make oci.tools`) and then runs the OCI engine's
+  suite in real VMs under the runner's KVM over those files
+  (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of skipping); while
+  issue #272 is open, the `e2e/oci` status names the suite's verdict in its
+  description and never fails on it
+- the `oci` cluster job, which installs `function-oci` alone
+  (`E2E_WASM=0 E2E_OCI=1`) and runs the `oci` profiles
+
+The run posts three commit statuses on the pull request's head: `e2e/wasm`
+and `e2e/oci`, each naming the jobs of its runtime that didn't pass, and
+`e2e`, the whole run's verdict, which branch protection names.
 
 The jobs cache under `e2e-` keys that no trusted workflow restores, and the
 workflow sets `cache-mode: write` because a comment-started run gets a

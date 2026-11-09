@@ -8,7 +8,9 @@
 //! DeploymentRuntimeConfigs; the kvm device plugin, when the kind node has
 //! /dev/kvm (the oci profiles need it; E2E_OCI=1 makes a node without it
 //! a failure, E2E_OCI=0 leaves it out); the Guest XRD; and the state file the tests
-//! read. Idempotent: every write is a server-side apply.
+//! read. E2E_WASM=0 (function-wasm left out) skips the wasm profiles'
+//! runtime configs and the lifecycle cache volume, nothing the oci
+//! profiles read. Idempotent: every write is a server-side apply.
 
 use std::time::Duration;
 
@@ -255,9 +257,25 @@ async fn main() -> Result<()> {
         None => {}
     }
 
+    // E2E_WASM (the Makefile's other knob) is 1 or 0: whether function-wasm
+    // is installed, so whether the wasm profiles are wanted. Every variant
+    // was pushed either way (the oci suite's wrong-type case names the
+    // plain wasm one), and a policy is written when a wanted profile mounts
+    // it (the oci default mounts the wasm default's).
+    let wasm_wanted = std::env::var("E2E_WASM").unwrap_or_else(|_| "1".to_string()) == "1";
+    if !wasm_wanted {
+        println!(
+            "    function-wasm is left out (E2E_WASM=0): the wasm profiles' runtime configs and cache volume are skipped"
+        );
+    }
+    let wanted = |profile: Profile| wasm_wanted || profile.runtime() != Runtime::Wasm;
+
     step("the profiles' policies, keys and volumes in crossplane-system");
     for profile in Profile::ALL {
-        if let Some(policy) = profile.policy() {
+        let mounted = Profile::ALL
+            .iter()
+            .any(|p| wanted(*p) && p.policy_source() == profile);
+        if mounted && let Some(policy) = profile.policy() {
             apply_value(&client, &json!({
                 "apiVersion": "v1", "kind": "ConfigMap",
                 "metadata": {"name": format!("e2e-policy-{}", profile.name()), "namespace": CROSSPLANE_NAMESPACE},
@@ -292,11 +310,14 @@ async fn main() -> Result<()> {
         }),
     )
     .await?;
-    apply_value(&client, &json!({
-        "apiVersion": "v1", "kind": "PersistentVolumeClaim",
-        "metadata": {"name": "e2e-cache", "namespace": CROSSPLANE_NAMESPACE},
-        "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}},
-    })).await?;
+    // The lifecycle profile's cache volume.
+    if wasm_wanted {
+        apply_value(&client, &json!({
+            "apiVersion": "v1", "kind": "PersistentVolumeClaim",
+            "metadata": {"name": "e2e-cache", "namespace": CROSSPLANE_NAMESPACE},
+            "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}},
+        })).await?;
+    }
 
     step("the profiles' runtime configs");
     let drcs = dynamic(
@@ -305,7 +326,7 @@ async fn main() -> Result<()> {
         "DeploymentRuntimeConfig",
         None,
     );
-    for profile in Profile::ALL {
+    for profile in Profile::ALL.into_iter().filter(|p| wanted(*p)) {
         let mut drc: serde_json::Value = serde_saphyr::from_str(profile.drc_yaml())
             .with_context(|| format!("{}: drc.yaml", profile.name()))?;
         if profile.runtime() == Runtime::Oci
