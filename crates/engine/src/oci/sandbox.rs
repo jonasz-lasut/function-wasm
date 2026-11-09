@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use crate::protocol::{Description, Exit};
@@ -19,9 +19,10 @@ pub struct Snapshot {
     pub mem: PathBuf,
 }
 
-/// One machine shape's snapshot once made. Its lock is held while the
-/// snapshot is made, so concurrent first runs wait for one.
-pub type SnapshotSlot = Arc<Mutex<Option<Arc<Snapshot>>>>;
+/// One machine shape's snapshot once made. The write side is held while
+/// the snapshot is made and the read side while a run looks it up, so
+/// concurrent first runs make one and runs restoring it never meet.
+pub type SnapshotSlot = Arc<RwLock<Option<Arc<Snapshot>>>>;
 
 /// The snapshots of one loaded image by machine shape (the VM's memory in
 /// MiB and its vCPUs): a snapshot restores only into the shape it came
