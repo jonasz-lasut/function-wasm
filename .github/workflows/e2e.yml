@@ -13,12 +13,16 @@
 # limitations under the License.
 
 # The end-to-end workflow, hand-triggered by commenting /e2e on a pull
-# request (the pattern upjet providers use for uptest): the full guest
-# behavioural suite, which the always-on CI keeps toolchain-free; one build
-# job per example toolchain (build, unit tests, lint, codec and bindings
-# drift); and the cluster job, the Kubernetes-native end-to-end suite
+# request (the pattern upjet providers use for uptest), for both functions
+# the repository ships. For function-wasm: the full guest behavioural
+# suite, which the always-on CI keeps toolchain-free; one build job per
+# example toolchain (build, unit tests, lint, codec and bindings drift);
+# and the wasm cluster job, the Kubernetes-native end-to-end suite
 # (crates/e2e, docs/project/testing.md) against the runtime built from the
-# PR, installed as a Function in a kind cluster. The result is reported as a
+# PR, installed as a Function in a kind cluster. For function-oci: the
+# process guest's build job, the OCI runtime's build, the OCI engine's
+# suite in real VMs, and a second cluster job with function-oci installed
+# beside function-wasm for the oci profiles. The result is reported as a
 # commit status on the PR's head, since an issue_comment run does not show
 # up as a check by itself.
 #

@@ -11,7 +11,7 @@ second.
 | Tier | Runs | What it covers |
 |---|---|---|
 | unit and component | `cargo test --workspace`, on every push and on a pull request that changes code | the engine, the runtime and `function validate` against in-memory stand-ins and recorded goldens, and every scaffold built and run through the host (the guest suite) |
-| end-to-end | `make e2e`, `/e2e` on a pull request, the [release matrix](#the-release-matrix) on a release branch | the package installed by Crossplane in a kind cluster, as an XR author and an operator see it |
+| end-to-end | `make e2e`, `/e2e` on a pull request, the [release matrix](#the-release-matrix) on a release branch | each function's package installed by Crossplane in a kind cluster, as an XR author and an operator see it |
 
 ## The tier for a new test
 
@@ -166,21 +166,30 @@ the whole suite on another Crossplane, given as the chart version without a
 `ci.yml` runs lint with `--all-features` and `cargo test --workspace` on every
 push, and on a pull request unless it touches only Markdown, JSON or SVG files.
 
-A `/e2e` comment on a pull request runs `e2e.yml`:
+A `/e2e` comment on a pull request runs `e2e.yml`. Every job proves one of
+the two functions. For `function-wasm`:
 
 - the guest suite, with `GUESTFN_REQUIRE_TOOLCHAINS=1` so a missing
   toolchain fails instead of skipping
 - one build job per example toolchain: build, unit tests, lint, and codec and
-  bindings drift
+  bindings drift, each module wrapped by the `guestfn` the `build-tools` job
+  compiled with the runtime
 - the `wasm` cluster job, which runs the three `wasm` profiles one after another
   on one kind cluster at the Makefile's `CROSSPLANE_VERSION` with
   `function-oci` left out (`E2E_OCI=0`), and uploads `make e2e.dump` on failure
-- the OCI jobs: a build job that compiles the runtime with the `oci` engine,
+
+For `function-oci`:
+
+- the `oci-go` build job, which vets and tests the process guest and builds
+  its image, pushing nothing
+- a build job that compiles the runtime with the `oci` engine,
   the init and the test module as a process (musl) and fetches the pinned
-  Firecracker and kernel (`make oci.tools`), an engine job that runs the OCI
-  engine's suite in real VMs under the runner's KVM (`GUESTFN_REQUIRE_KVM=1`,
-  so a missing tool fails instead of skipping), and a second cluster job that
-  installs both runtimes (`E2E_OCI=1`) and runs the `oci` profiles
+  Firecracker and kernel (`make oci.tools`)
+- an engine job that runs the OCI engine's suite in real VMs under the
+  runner's KVM (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of
+  skipping)
+- a second cluster job that installs both runtimes (`E2E_OCI=1`) and runs the
+  `oci` profiles
 
 The jobs cache under `e2e-` keys that no trusted workflow restores, and the
 workflow sets `cache-mode: write` because a comment-started run gets a
@@ -206,10 +215,15 @@ the function supports the same three. Every `/e2e` run tests the current minor, 
 adds the two before it.
 
 `release-matrix-e2e.yml` runs on every push to a `release-X.Y` branch. It
-builds the runtime from the branch and runs `make e2e` three times in parallel,
-one kind cluster per version, and uploads the cluster dump for a failed
-version. `gh workflow run "Release Matrix E2E" --ref <ref>` runs it by hand on
-any ref.
+builds the `function-wasm` runtime from the branch and runs `make e2e` three
+times in parallel, one kind cluster per version, and uploads the cluster dump
+for a failed version. Each leg installs `function-wasm` from that runtime.
+`function-oci` follows the Makefile's `E2E_OCI=auto` default. When the kind
+node has `/dev/kvm`, the leg builds the pieces itself (the test module as a
+process natively, the image from `Dockerfile.oci` in Docker) and installs
+the package. A node without the device leaves the package out. Both
+functions leave through `Publish Function`. A red leg blocks either.
+`gh workflow run "Release Matrix E2E" --ref <ref>` runs it by hand on any ref.
 
 The Makefile's `CROSSPLANE_VERSION` default names the current version. The
 workflow's `env` (`CROSSPLANE_PREVIOUS`, `CROSSPLANE_OLDEST`) pins the latest

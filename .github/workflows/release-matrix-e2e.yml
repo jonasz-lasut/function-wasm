@@ -14,14 +14,19 @@
 
 # The release matrix (#189, docs/project/testing.md): the end-to-end cluster
 # suite (`make e2e`: kind, Crossplane, provider-nop, the registry, the
-# package built from this ref, the three profiles, teardown) run once per
+# packages built from this ref, every profile, teardown) run once per
 # Crossplane minor the project supports, in parallel on three runners.
-# Crossplane maintains its three most recent minor releases
-# (docs.crossplane.io/latest/learn/release-cycle), so the matrix is the
-# current one - the Makefile's CROSSPLANE_VERSION default, what every /e2e
-# run tests - and the latest patch of the two minors before it, pinned
-# below. Nothing else runs here: the guest suite and the build jobs do not
-# depend on Crossplane.
+# Both functions leave through Publish Function, so the gate is for both:
+# function-wasm from the runtime build-tools hands each leg, and
+# function-oci as the Makefile's E2E_OCI=auto default decides - installed
+# when the kind node has /dev/kvm, its pieces built on the leg itself (the
+# test module as a process natively, the image from Dockerfile.oci in
+# Docker), left out otherwise. Crossplane maintains its three most recent
+# minor releases (docs.crossplane.io/latest/learn/release-cycle), so the
+# matrix is the current one - the Makefile's CROSSPLANE_VERSION default,
+# what every /e2e run tests - and the latest patch of the two minors before
+# it, pinned below. Nothing else runs here: the guest suite and the build
+# jobs do not depend on Crossplane.
 #
 # Runs on every push to a release-X.Y branch: the cut of a new line (the
 # cut-release skill pushes the branch, waits for this run and cuts the tag

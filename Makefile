@@ -287,14 +287,6 @@ $(foreach p,$(E2E_OCI_PROFILES),$(eval $(call e2e.profile,oci,$(p))))
 e2e.test.wasm: $(addprefix e2e.wasm-profile.,$(E2E_WASM_PROFILES))
 e2e.test.oci: $(addprefix e2e.oci-profile.,$(E2E_OCI_PROFILES))
 
-# The wasm profiles under their old names, e2e.test.<p>: a comment-started
-# /e2e run reads e2e.yml from main, which calls these until the workflow
-# with the per-runtime names has merged. Remove them after that.
-define e2e.test.alias
-.PHONY: e2e.test.$(1)
-e2e.test.$(1): e2e.wasm-profile.$(1)
-endef
-$(foreach p,$(E2E_WASM_PROFILES),$(eval $(call e2e.test.alias,$(p))))
 e2e.test: e2e.test.wasm
 	@if $(e2e_oci_wanted); then $(MAKE) e2e.test.oci; \
 	else echo "function-oci is not in this cluster (E2E_OCI=$(E2E_OCI)); the oci profiles are skipped"; fi
