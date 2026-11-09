@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Fetches the two VM pieces the OCI runtime boots from (docs/one-pager-oci-runtime.md):
 # the Firecracker release binary and the guest kernel Firecracker's CI
-# publishes, at the versions and checksums Dockerfile.oci pins. The
-# Dockerfile is the one place those pins are written (Renovate moves the
-# Firecracker ones there); this script reads them, so the Makefile, CI and
-# the image agree by construction. A directory fetched at other pins is
-# fetched again.
+# publishes, at the versions and checksums crates/function-oci/Dockerfile
+# pins. The Dockerfile is the one place those pins are written (Renovate
+# moves the Firecracker ones there); this script reads them, so the
+# Makefile, CI and the image agree by construction. A directory fetched at
+# other pins is fetched again.
 #
 #   hack/oci-tools.sh <x86_64|aarch64> <directory>
 #
@@ -14,7 +14,7 @@ set -euo pipefail
 
 arch=${1:?the architecture: x86_64 or aarch64}
 dir=${2:?the output directory}
-dockerfile="$(cd "$(dirname "$0")/.." && pwd)/Dockerfile.oci"
+dockerfile="$(cd "$(dirname "$0")/.." && pwd)/crates/function-oci/Dockerfile"
 
 arg() { sed -n "s/^ARG $1=//p" "$dockerfile" | head -n 1; }
 checksum() { if command -v sha256sum >/dev/null; then sha256sum -c - >/dev/null; else shasum -a 256 -c - >/dev/null; fi; }

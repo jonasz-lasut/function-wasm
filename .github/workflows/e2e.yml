@@ -117,9 +117,10 @@ jobs:
 
   # The runtime and guestfn, compiled once per run with a warm cargo cache
   # and handed to the other jobs as an artifact: the cluster job wraps the
-  # runtime into its image (Dockerfile.wasm.dev) instead of compiling the
-  # workspace cold in Dockerfile.wasm's build stage, and the guests that
-  # build through guestfn take it from GUESTFN.
+  # runtime into its image (crates/function-wasm/Dockerfile.dev) instead of
+  # compiling the workspace cold in the build stage of
+  # crates/function-wasm/Dockerfile, and the guests that build through guestfn
+  # take it from GUESTFN.
   build-tools:
     runs-on: ubuntu-26.04
     needs: start
@@ -1218,8 +1219,8 @@ jobs:
   # The Kubernetes-native end-to-end suite (crates/e2e, docs/project/testing.md):
   # a kind cluster with Crossplane at CROSSPLANE_VERSION, provider-nop, the
   # suite's registry and this tree's runtime installed as a Function - the
-  # prebuilt binary from build-tools wrapped by Dockerfile.wasm.dev - and the
-  # wasm profiles' suites in turn on that one cluster, function-oci left
+  # prebuilt binary from build-tools wrapped by
+  # crates/function-wasm/Dockerfile.dev - and the wasm profiles' suites in turn on that one cluster, function-oci left
   # out (E2E_OCI=0: the job below has it). The submodule's make library
   # pins kind, kubectl, helm and the crossplane CLI, so nothing is
   # installed by hand here. On failure the cluster's state and the suite's

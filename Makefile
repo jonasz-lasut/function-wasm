@@ -80,7 +80,8 @@ include build/makelib/local.xpkg.mk
 # make e2e.oci.guest  build the test module as a process (musl), the oci
 #                     profiles' image content
 # make oci.tools      fetch the pinned Firecracker and guest kernel
-#                     (hack/oci-tools.sh, the pins read from Dockerfile.oci)
+#                     (hack/oci-tools.sh, the pins read from
+#                     crates/function-oci/Dockerfile)
 # make oci.init       build the guest init and the fixture static for musl
 # make oci.test       the OCI engine's suite over a real Firecracker VM (KVM,
 #                     a Linux host: the test process spawns Firecracker)
@@ -90,11 +91,12 @@ include build/makelib/local.xpkg.mk
 #
 # FUNCTION_BIN names a prebuilt linux runtime binary for the host's
 # architecture (CI's build-tools job hands one over), wrapped by
-# Dockerfile.wasm.dev; without it the image is built from Dockerfile.wasm, which
-# compiles the workspace in a container. FUNCTION_OCI_TOOLS names a
-# directory of the prebuilt function-oci binary named function, init, firecracker and
-# vmlinux (CI's build-oci job hands one over), wrapped by Dockerfile.oci.dev;
-# without it they are built and fetched here.
+# crates/function-wasm/Dockerfile.dev; without it the image is built from
+# crates/function-wasm/Dockerfile, which compiles the workspace in a
+# container. FUNCTION_OCI_TOOLS names a directory of the prebuilt function-oci
+# binary named function, init, firecracker and vmlinux (CI's build-oci job
+# hands one over), wrapped by crates/function-oci/Dockerfile.dev; without it
+# they are built and fetched here.
 E2E_IMAGE := function-wasm-e2e:dev
 E2E_OCI_IMAGE := function-oci-e2e:dev
 E2E_DIR := $(OUTPUT_DIR)/e2e
@@ -130,12 +132,12 @@ e2e_oci_wanted = { [ "$(E2E_OCI)" = "1" ] || { [ "$(E2E_OCI)" = "auto" ] && $(E2
 
 # The OCI runtime's pieces (docs/one-pager-oci-runtime.md): the Firecracker
 # release and the guest kernel its CI publishes, fetched by hack/oci-tools.sh
-# at the versions and checksums Dockerfile.oci pins (the one place they are
-# written), and the guest init and the test fixture (crates/oci-init,
-# crates/oci-fixture), built static for musl. Every one of them is a Linux binary: a
+# at the versions and checksums crates/function-oci/Dockerfile pins (the one
+# place they are written), and the guest init and the test fixture
+# (crates/oci-init, crates/oci-fixture), built static for musl. Every one of them is a Linux binary: a
 # Linux host builds them natively, any other host through Docker (the
-# image from Dockerfile.oci, the test module as a process in a rust
-# container), and oci.test runs on Linux alone.
+# image from crates/function-oci/Dockerfile, the test module as a process in
+# a rust container), and oci.test runs on Linux alone.
 OCI_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),aarch64,x86_64)
 MUSL_TARGET := $(OCI_ARCH)-unknown-linux-musl
 OCI_TOOLS := .cache/tools/oci
@@ -187,9 +189,9 @@ e2e.image:
 	@$(INFO) building the runtime image $(E2E_IMAGE) for linux/$(TARGETARCH)
 ifdef FUNCTION_BIN
 	@mkdir -p $(E2E_DIR)/prebuilt && cp $(FUNCTION_BIN) $(E2E_DIR)/prebuilt/function
-	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.wasm.dev -t $(E2E_IMAGE) $(E2E_DIR)/prebuilt || $(FAIL)
+	@docker buildx build --load --platform linux/$(TARGETARCH) -f crates/function-wasm/Dockerfile.dev -t $(E2E_IMAGE) $(E2E_DIR)/prebuilt || $(FAIL)
 else
-	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.wasm --target image -t $(E2E_IMAGE) . || $(FAIL)
+	@docker buildx build --load --platform linux/$(TARGETARCH) -f crates/function-wasm/Dockerfile --target image -t $(E2E_IMAGE) . || $(FAIL)
 endif
 	@$(OK) building the runtime image $(E2E_IMAGE)
 
@@ -258,19 +260,19 @@ else
 endif
 	@$(OK) building $(E2E_OCI_GUEST)
 
-# The function-oci image: Dockerfile.oci.dev around the four files
-# FUNCTION_OCI_TOOLS names (CI's build job hands them over), or
-# Dockerfile.oci built in Docker, which compiles the runtime and the init
-# and fetches Firecracker and the kernel at its own pins - the same default
-# as e2e.image, so no host builds a Linux binary itself.
+# The function-oci image: crates/function-oci/Dockerfile.dev around the four
+# files FUNCTION_OCI_TOOLS names (CI's build job hands them over), or
+# crates/function-oci/Dockerfile built in Docker, which compiles the runtime
+# and the init and fetches Firecracker and the kernel at its own pins - the
+# same default as e2e.image, so no host builds a Linux binary itself.
 e2e.oci.image:
 	@$(INFO) building the runtime image $(E2E_OCI_IMAGE) for linux/$(TARGETARCH)
 ifdef FUNCTION_OCI_TOOLS
 	@mkdir -p $(E2E_DIR)/prebuilt-oci
 	@cp $(FUNCTION_OCI_TOOLS)/function $(FUNCTION_OCI_TOOLS)/init $(FUNCTION_OCI_TOOLS)/firecracker $(FUNCTION_OCI_TOOLS)/vmlinux $(E2E_DIR)/prebuilt-oci/
-	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.oci.dev -t $(E2E_OCI_IMAGE) $(E2E_DIR)/prebuilt-oci || $(FAIL)
+	@docker buildx build --load --platform linux/$(TARGETARCH) -f crates/function-oci/Dockerfile.dev -t $(E2E_OCI_IMAGE) $(E2E_DIR)/prebuilt-oci || $(FAIL)
 else
-	@docker buildx build --load --platform linux/$(TARGETARCH) -f Dockerfile.oci --target image -t $(E2E_OCI_IMAGE) . || $(FAIL)
+	@docker buildx build --load --platform linux/$(TARGETARCH) -f crates/function-oci/Dockerfile --target image -t $(E2E_OCI_IMAGE) . || $(FAIL)
 endif
 	@$(OK) building the runtime image $(E2E_OCI_IMAGE)
 

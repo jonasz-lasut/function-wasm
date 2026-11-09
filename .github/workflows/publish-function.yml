@@ -39,7 +39,7 @@ env:
 
   # Each function builds from its own Dockerfile and package root: the two
   # runtimes share this workflow, not their images.
-  DOCKERFILE: ${{ inputs.function == 'function-oci' && 'Dockerfile.oci' || 'Dockerfile.wasm' }}
+  DOCKERFILE: ${{ inputs.function == 'function-oci' && 'crates/function-oci/Dockerfile' || 'crates/function-wasm/Dockerfile' }}
   PACKAGE_ROOT: ${{ inputs.function == 'function-oci' && 'package/oci' || 'package/wasm' }}
 
   UP_VERSION: v0.51.1

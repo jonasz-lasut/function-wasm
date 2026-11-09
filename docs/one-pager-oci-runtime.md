@@ -234,8 +234,8 @@ and Renovate tracks it with the VMM. The first build takes the kernel
 Firecracker's CI builds from Amazon Linux's microVM kernel (6.18, the
 guest kernel Firecracker supports since 1.16.1, with squashfs, overlayfs,
 cgroups, virtio and vsock built in), pinned by checksum with Firecracker's
-release in `Dockerfile.oci` and the Makefile. The artifacts are at a dated
-prefix of Firecracker's bucket, whose retention the project doesn't
+release in `crates/function-oci/Dockerfile` and the Makefile. The artifacts
+are at a dated prefix of Firecracker's bucket, whose retention the project doesn't
 control. Building the kernel in the repository from that source and
 config is what the record calls the project's own kernel build. Whether a
 release may include the published kernel is open
@@ -439,7 +439,8 @@ The `v1beta1` deprecation goes with the old group.
   refuses an `oci@0.1` manifest.
 - `package/oci/` beside `package/wasm/`: one package root per runtime, each
   with its `crossplane.yaml` and a copy of the Input CRD.
-  `Dockerfile.oci` adds the VMM and the kernel, and a `kernel/` directory
+  `crates/function-oci/Dockerfile` adds the VMM and the kernel, and a
+  `kernel/` directory
   holds the kernel configuration and the build the release workflow runs
   where the project builds its own.
 - `.github/workflows`: the kernel build, `build-oci` jobs in `e2e.yml`, an
@@ -708,7 +709,7 @@ order from these phases to 0.1, the package's first release.
    buildx` and `guestfn push --image`, and the `oci` e2e case that pulls
    the published example from `ghcr.io`. The `function-oci` package's
    publish workflow (`Publish Function`, with `function-oci` chosen), its
-   image (`Dockerfile.oci`), its package root (`package/oci`) and its
+   image (`crates/function-oci/Dockerfile`), its package root (`package/oci`) and its
    operators page are in the tree. Left: the package's first release,
    0.1.0.
 7. A prototype ([#255](https://github.com/jonasz-lasut/guestfn/issues/255)):
