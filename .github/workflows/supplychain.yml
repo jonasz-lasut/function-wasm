@@ -35,6 +35,10 @@ env:
   XP_VERSION: 'v2.5.0'
 
   GHCR_IMAGE: ghcr.io/jonasz-lasut/${{ inputs.function }}
+  # The package's own readme and the extensions root the marketplace reads
+  # (the icon), per function (#271).
+  PACKAGE_README: ${{ inputs.function == 'function-oci' && 'package/oci/README.md' || 'package/wasm/README.md' }}
+  EXTENSIONS_ROOT: extensions/${{ inputs.function }}
   MIRROR_IMAGE: xpkg.upbound.io/jonasz-lasut/${{ inputs.function }}
 
   UP_VERSION: v0.51.1
@@ -130,13 +134,13 @@ jobs:
 
       - name: Append package assets for Marketplace
         run: |
-          extensions_dir=${{ github.workspace }}/extensions
+          extensions_dir=${{ github.workspace }}/${{ env.EXTENSIONS_ROOT }}
 
           mkdir -p $extensions_dir/sbom
           cp ./mirror-sbom.spdx.json $extensions_dir/sbom/sbom.spdx.json
 
           mkdir -p $extensions_dir/readme
-          cp ./README.md $extensions_dir/readme/readme.md
+          cp ./${{ env.PACKAGE_README }} $extensions_dir/readme/readme.md
           
           mkdir -p $extensions_dir/release-notes
           if [ -f ./release_notes.md ]; then
