@@ -150,7 +150,7 @@ another version refuses the run and reports both versions.
 
 ## Measurements
 
-The numbers come from one machine: a laptop's nested KVM (arm64),
+Most numbers come from one machine: a laptop's nested KVM (arm64),
 Firecracker 1.17.0, the pinned 6.18 guest kernel, one vCPU, the default
 512 MiB limit and with it a 576 MiB VM, the echo fixture, 30 runs for each
 path after one warm-up run.
@@ -175,9 +175,18 @@ A clone runs its process slower than a booted VM does, because each page it
 touches faults in from the memory file. Nested virtualization makes a fault
 and a boot expensive: a boot on this machine takes four times the 270 ms a
 CI runner measured. The ratio between the two paths transfers better than
-the milliseconds do. Nothing ran on x86 or on a GitHub runner yet. The VM
-suite prints both paths' times, and `boot_against_restore` in
-`crates/engine/tests/vm.rs` is the benchmark, run by hand.
+the milliseconds do. The VM suite prints both paths' times, and
+`boot_against_restore` in `crates/engine/tests/vm.rs` is the benchmark,
+run by hand.
+
+On GitHub's runners (x86-64) the VM suite ran twice on 2026-11-09, on
+Firecracker 1.18.0 and on 1.17.0. A boot run took 297 and 350 ms, and a
+restored run 87 and 122 ms. The first run after a warm-up took 122 ms in
+the second. The run that made the snapshot took 5.0 and 4.4 s, against
+1.75 s on the laptop: the 576 MiB memory file costs the runner's disk
+4.0 to 4.7 s to write and rewrite. A restored run saves 210 to 230 ms
+there, and the snapshot's cost equals that saving over about twenty
+requests, which is the case for taking it at warm-up.
 
 ## Decisions
 
@@ -233,6 +242,6 @@ Jonasz settled these on 2026-11-09, with these measurements:
 
 [#279](https://github.com/jonasz-lasut/guestfn/issues/279) tracks it:
 
-- the numbers from a GitHub runner, the first x86 run among them
+- the 4 s or more a snapshot's memory file takes on a GitHub runner
 - restores under load, which the measurements ran one at a time
 - whether the flag is on by default once the feature leaves alpha
