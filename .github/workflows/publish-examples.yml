@@ -65,7 +65,7 @@ jobs:
   # whose version moved, and a published tag stays immutable. Only the
   # examples that work as published are here: function-wasm-python and function-wasm-csharp
   # request egress to placeholder hosts their users replace before
-  # publishing their own. function-oci-go is an oci@1.0 module: buildx pushes
+  # publishing their own. function-oci-go is an oci@0.1 module: buildx pushes
   # its image for amd64 and arm64 into the repository first, by digest and
   # under no tag, and guestfn push --image publishes the module, the image
   # with its manifest layer, under the version tag - the repository's one

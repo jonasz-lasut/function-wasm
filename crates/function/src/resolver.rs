@@ -309,7 +309,7 @@ impl Resolver {
     /// down through the blob store, verified against their digests and
     /// bounded together by --max-module-size, and go to the engine as one
     /// image layout. An image with the annotated manifest layer `guestfn
-    /// push --image` appends is an oci@1.0 module: its manifest is read
+    /// push --image` appends is an oci@0.1 module: its manifest is read
     /// out of that one layer first and remembered under the pinning digest
     /// for the read that follows; a plain image runs as a manifest-less
     /// module. A WebAssembly artifact is refused by name.
@@ -786,7 +786,7 @@ mod tests {
     #[test]
     fn a_module_image_yields_its_manifest_and_a_plain_image_none() {
         use crate::testing::registry::Registry;
-        let module_manifest = br#"{"contract":"oci@1.0","name":"probe","version":"0.1.0"}"#;
+        let module_manifest = br#"{"contract":"oci@0.1","name":"probe","version":"0.1.0"}"#;
         let mut registry = Registry::new();
         let module = registry.module_image(module_manifest, "module");
         let plain = registry.plain_image("plain");

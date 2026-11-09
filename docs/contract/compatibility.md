@@ -79,7 +79,7 @@ What function-oci shares with function-wasm is the Input, the module
 manifest and the `guestfn_*` metric names. Whether those are stable for
 function-oci isn't decided: that waits for function-wasm's 1.0.0.
 
-`oci@1.0` is the process contract
+`oci@0.1` is the process contract
 ([OCI modules](../oci/modules.md#the-process-contract)). The runtime runs
 the image's configured entrypoint and command once per request, as the
 image's configured user, in its configured working directory, with its
@@ -91,14 +91,14 @@ Standard error is its log: a line that's a JSON object with `level` and
 of zero with a response on standard output is a run, and any other ending
 is a fatal result on the step.
 
-A module's manifest declares the contract it follows, `contract: oci@1.0`,
-and function-oci refuses a version its engine doesn't offer. It offers
-`oci@1.0` alone. The `1.0` is the contract's version, not function-oci's.
-A minor version adds what a module may use, and a runtime that offers it
-keeps running `oci@1.0` images. Only a major version, `oci@2.0`, may stop
-running them ([Module manifests](../guests/module-manifests.md)).
+A module's manifest declares the contract it follows, `contract: oci@0.1`,
+and function-oci refuses a version its engine doesn't offer. The contract
+has a version of its own, and while it's 0.x a minor version may break
+images built for the one before
+([Module manifests](../guests/module-manifests.md)). Its stability starts
+at `oci@1.0`, with function-oci's 1.0.0.
 
-The wording of a fatal result isn't part of the contract. `oci@1.0` says
+The wording of a fatal result isn't part of the contract. `oci@0.1` says
 what an exit means, and the sentence that reports it, such as `process
 exited with status <n>`, may change in any release. The conformance
 goldens pin none of function-oci's sentences.

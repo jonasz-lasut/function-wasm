@@ -187,7 +187,7 @@ impl InspectCmd {
         out.reference = Some(info);
         if self.pull && module_image {
             return Err(format!(
-                "{} is an OCI image (an oci@1.0 module) and has no module file to pull; the OCI runtime, function-oci, pulls and boots it",
+                "{} is an OCI image (an oci@0.1 module) and has no module file to pull; the OCI runtime, function-oci, pulls and boots it",
                 self.target
             ));
         }
@@ -305,7 +305,7 @@ fn print_manifest(r: &ReferenceInfo, pad: &str) {
             crate::human_bytes(l.size as u64)
         ),
         (None, Some(image)) => println!(
-            "{pad}module: an OCI image (oci@1.0), which the OCI runtime, function-oci, boots; built from {image}"
+            "{pad}module: an OCI image (oci@0.1), which the OCI runtime, function-oci, boots; built from {image}"
         ),
         (None, None) => println!(
             "{pad}module layer: none - the runtime would refuse it: {}",

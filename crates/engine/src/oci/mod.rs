@@ -237,7 +237,7 @@ impl Oci {
 
 impl Engine for Oci {
     const KIND: &'static str = "oci";
-    const CONTRACT: &'static str = "oci@1.0";
+    const CONTRACT: &'static str = "oci@0.1";
     type Module = Module;
 
     fn config(&self) -> Config {

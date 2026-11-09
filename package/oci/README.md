@@ -80,7 +80,7 @@ guestfn push ghcr.io/example/greeter:v0.1.0-module --image ghcr.io/example/greet
 
 `guestfn push --image` appends the manifest to the image as one more layer
 and records the image's digest in it; the result is an image Docker still
-runs, which the Composition pins. The manifest declares `contract: oci@1.0`
+runs, which the Composition pins. The manifest declares `contract: oci@0.1`
 and what the process needs, the way a WebAssembly module's does.
 [`examples/function-oci-go`](../../examples/function-oci-go) is the hello
 function built this way: a Go `main` around function-sdk-go, a

@@ -158,7 +158,7 @@ struct Resolved {
     size: usize,
     /// The contract the module loads under, the engine's: `wasm@1.0` on
     /// function-wasm (a module that loads is a component of that world),
-    /// `oci@1.0` on function-oci.
+    /// `oci@0.1` on function-oci.
     contract: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     imports: Vec<String>,

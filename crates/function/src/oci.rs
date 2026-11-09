@@ -28,7 +28,7 @@ const WASM_LAYER_TYPES: &[&str] = &[
 /// The media type of the artifact layer carrying the module manifest.
 pub const MANIFEST_LAYER_TYPE: &str = "application/vnd.guestfn.manifest.v1+json";
 
-/// An OCI image becomes an `oci@1.0` module by a layer `guestfn push
+/// An OCI image becomes an `oci@0.1` module by a layer `guestfn push
 /// --image` appends to it (docs/one-pager-oci-runtime.md): a plain tar
 /// layer with its diff_id in the image config like any other, holding the
 /// module manifest at MANIFEST_LAYER_PATH, marked by this annotation on its
@@ -508,7 +508,7 @@ pub fn is_manifest_layer(l: &Descriptor) -> bool {
                 .is_some_and(|v| v == MANIFEST_LAYER_ANNOTATION_VALUE))
 }
 
-/// Whether m is an OCI image with a module manifest layer: an `oci@1.0`
+/// Whether m is an OCI image with a module manifest layer: an `oci@0.1`
 /// module as `guestfn push --image` publishes it. A plain image is not one;
 /// the OCI runtime runs it in the default sandbox.
 pub fn is_module_image(m: &OciManifest) -> bool {
@@ -517,7 +517,7 @@ pub fn is_module_image(m: &OciManifest) -> bool {
 
 /// The refusal of an OCI module image by this package: the OCI runtime's
 /// module, named so the reader knows which package serves it.
-pub const MODULE_IMAGE_REFUSAL: &str = "is an OCI image with a module manifest (an oci@1.0 module), which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)";
+pub const MODULE_IMAGE_REFUSAL: &str = "is an OCI image with a module manifest (an oci@0.1 module), which function-wasm does not serve; the OCI runtime is function-oci (docs/one-pager-oci-runtime.md)";
 
 /// Picks the layer of a manifest that holds the module: a wasm-typed layer
 /// if there is one, otherwise the only layer that is not the module
@@ -1044,13 +1044,13 @@ mod tests {
         );
     }
 
-    /// An OCI image with the annotated manifest layer is an oci@1.0
+    /// An OCI image with the annotated manifest layer is an oci@0.1
     /// module: this package names the package that serves it, and the
     /// manifest comes out of the layer's tar, gzipped or not. A plain image
     /// is neither.
     #[test]
     fn a_module_image_is_refused_by_name_and_its_manifest_read() {
-        let manifest_json = br#"{"contract":"oci@1.0","name":"tagger"}"#;
+        let manifest_json = br#"{"contract":"oci@0.1","name":"tagger"}"#;
         let mut tar = tar::Builder::new(Vec::new());
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Regular);

@@ -1,6 +1,6 @@
 //! guestfn push: publish a module as an OCI artifact (the module layer
 //! and, when the project has a guestfn.yaml, the manifest layer beside it;
-//! for an `oci@1.0` manifest, the image named by --image with the manifest
+//! for an `oci@0.1` manifest, the image named by --image with the manifest
 //! appended to it as one more layer, docs/one-pager-oci-runtime.md) and
 //! print what a Composition needs: the reference pinned to the OCI manifest
 //! digest, and the requires block the module's manifest declares.
@@ -50,7 +50,7 @@ pub struct PushCmd {
     #[arg(long)]
     revision: Option<String>,
 
-    /// For an oci@1.0 manifest: the image the module is built from, pinned
+    /// For an oci@0.1 manifest: the image the module is built from, pinned
     /// by digest (registry/repository@sha256:...). guestfn push appends the
     /// manifest to it as one more layer and pushes the result into the
     /// image's repository under the reference given; no module file is
@@ -109,12 +109,12 @@ impl PushCmd {
     }
 
     /// Whether the project's manifest (--manifest, or the guestfn.yaml next
-    /// to the module file) declares an oci@1.0 module.
+    /// to the module file) declares an oci@0.1 module.
     fn manifest_is_oci(&self) -> Result<bool, String> {
         Ok(self.load_manifest()?.is_some_and(|m| m.kind() == TYPE_OCI))
     }
 
-    /// Publishes an oci@1.0 module: the image named by --image (or the
+    /// Publishes an oci@0.1 module: the image named by --image (or the
     /// manifest's image field) with the manifest appended as one more
     /// layer (docs/one-pager-oci-runtime.md, "The artifact"): a gzip tar
     /// holding /.guestfn/manifest.json, its diff_id in the image config
@@ -127,14 +127,14 @@ impl PushCmd {
     fn push_module_image(&self) -> Result<(), String> {
         let Some(mut m) = self.load_manifest()? else {
             return Err(format!(
-                "--image needs an oci@1.0 manifest: no {} next to {} and no --manifest",
+                "--image needs an oci@0.1 manifest: no {} next to {} and no --manifest",
                 guestfn_runtime::manifest::FILE_NAME,
                 self.file.display()
             ));
         };
         if m.kind() != TYPE_OCI {
             return Err(
-                "--image is for an oci@1.0 manifest; this manifest describes a WebAssembly module, which guestfn push publishes from its file".to_string(),
+                "--image is for an oci@0.1 manifest; this manifest describes a WebAssembly module, which guestfn push publishes from its file".to_string(),
             );
         }
         if let Some(image) = &self.image {
@@ -142,7 +142,7 @@ impl PushCmd {
         }
         if m.image.is_empty() {
             return Err(format!(
-                "an oci@1.0 manifest names the image it is built from: set image in {} or pass --image registry/repository@sha256:...",
+                "an oci@0.1 manifest names the image it is built from: set image in {} or pass --image registry/repository@sha256:...",
                 guestfn_runtime::manifest::FILE_NAME
             ));
         }
@@ -631,7 +631,7 @@ mod tests {
     /// manifest back out of it the way it reads an image's.
     #[test]
     fn the_manifest_layer_is_reproducible_and_readable() {
-        let manifest = br#"{"contract":"oci@1.0","name":"tagger"}"#;
+        let manifest = br#"{"contract":"oci@0.1","name":"tagger"}"#;
         let a = ManifestLayer::new(manifest, std::time::UNIX_EPOCH);
         let b = ManifestLayer::new(manifest, std::time::UNIX_EPOCH);
         assert_eq!(a.compressed, b.compressed);

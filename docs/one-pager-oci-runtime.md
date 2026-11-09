@@ -22,7 +22,7 @@ from the image's root filesystem. The VM has no network device. The
 process reads the request from its standard input and writes the response
 to its standard output. A small init program the runtime boots as the VM's
 first process provides the services the WebAssembly guest gets through its
-world. The manifest's contract states the engine, `wasm@1.0` or `oci@1.0`,
+world. The manifest's contract states the engine, `wasm@1.0` or `oci@0.1`,
 and the artifact `guestfn push` publishes moves to generic media types. Both
 runtimes then share the manifest format, the artifact layout and the CLI.
 The operator installs the runtime they need. The WebAssembly package
@@ -116,7 +116,7 @@ OCI package is open (decision 15).
 
 ### The process contract
 
-A module of contract `oci@1.0` is an OCI image. The runtime runs the image's
+A module of contract `oci@0.1` is an OCI image. The runtime runs the image's
 configured entrypoint and command once per request, as the image's
 configured user, in the image's configured working directory, with the
 image's configured environment plus the bindings the manifest requested.
@@ -136,9 +136,9 @@ today. The process sees `/tmp` writable and the rest of its root
 filesystem writable through an overlay the VM discards on exit.
 `requires.filesystem.privateTmp` remains accepted and keeps its meaning, a
 scratch space private to the run. The manifest's `contract` field states
-this contract as `oci@1.0` and the component world as `wasm@1.0`: the
-engine kind, then the version of that engine's contract. A later minor
-extends a contract with new fields. The runtime reads the engine kind from
+this contract as `oci@0.1` and the component world as `wasm@1.0`: the
+engine kind, then the version of that engine's contract. From a contract's
+1.0 a later minor extends it with new fields. The runtime reads the engine kind from
 the field and refuses a version its engine doesn't offer. The field
 was `abi`, an integer, through 0.6. An OCI image has no ABI, so the owner
 replaced it with no alias (decision 10).
@@ -179,7 +179,7 @@ one.
 ### The manifest
 
 ```yaml
-contract: oci@1.0  # the engine and its contract's version; wasm@1.0 is the component world
+contract: oci@0.1  # the engine and its contract's version; wasm@1.0 is the component world
 name: tagger
 version: 0.3.0
 image: ghcr.io/acme/tagger@sha256:…   # written by guestfn push
@@ -384,9 +384,9 @@ prints the same admission verdicts as today.
 For an OCI module `guestfn` publishes and inspects, and the author
 scaffolds the project and builds the image (decision 12):
 
-| command | `oci@1.0` |
+| command | `oci@0.1` |
 |---|---|
-| `guestfn build` | refuses an `oci@1.0` manifest: the command builds WebAssembly modules, and the author builds the image with `docker build` (or `buildx`) |
+| `guestfn build` | refuses an `oci@0.1` manifest: the command builds WebAssembly modules, and the author builds the image with `docker build` (or `buildx`) |
 | `guestfn push --image <ref@sha256:…>` | appends the manifest to the image the author pushed, as one more layer, and writes the image's digest into the manifest's `image`. It doesn't read a module file |
 | `guestfn inspect` | says that a module image is one and which image the manifest records as its origin, with the manifest's summary. `--pull` refuses it |
 | `guestfn scaffold composition` | unchanged |
@@ -430,7 +430,7 @@ The `v1beta1` deprecation goes with the old group.
   other (`Description`, `Exit`, the frame kinds), framed over vsock.
 - `crates/guestfn`: `push.rs` appends the manifest to an image under
   `--image`, and `inspect.rs` describes a module image. `buildcmd.rs`
-  refuses an `oci@1.0` manifest.
+  refuses an `oci@0.1` manifest.
 - `package/oci/` beside `package/wasm/`: one package root per runtime, each
   with its `crossplane.yaml` and a copy of the Input CRD.
   `Dockerfile.oci` adds the VMM and the kernel, and a `kernel/` directory
@@ -556,7 +556,7 @@ package starts alpha. The scheme for its tags and releases is open
   oci --lang go|python|rust|ts` would write a project with a `Dockerfile`,
   a `main` that reads stdin and writes stdout around the language's
   function SDK, unit tests that run natively and a `guestfn.yaml` with
-  `contract: oci@1.0`. `guestfn build` would run `docker build`, then a
+  `contract: oci@0.1`. `guestfn build` would run `docker build`, then a
   contract check: one run of the image under the sandbox with an empty
   request, with a verdict on whether stdout decoded as a response. The
   guest suite would run each scaffold through the whole host on a KVM
@@ -598,10 +598,11 @@ The owner decided this on 2026-11-06:
 
 10. **The contract field.** The manifest's `abi` becomes `contract`, an
     enum written `<engine>@<major>.<minor>` with no alias: `wasm@1.0` is
-    the component world, `oci@1.0` the process contract, and `type` goes,
-    since the contract states the engine. A minor adds fields a module may
-    use between versions; a major changes what the engine does with a
-    module. The runtime refuses the old name as an unknown field.
+    the component world, `oci@0.1` the process contract, and `type` goes,
+    since the contract states the engine. From a contract's 1.0 a minor
+    adds fields a module may use between versions and a major changes what
+    the engine does with a module, and at 0.x a minor may change anything.
+    The runtime refuses the old name as an unknown field.
 
 The owner decided this on 2026-11-08:
 
@@ -641,8 +642,9 @@ The owner decided these the same day:
 16. **Compatibility at 0.x.** Until function-oci's 1.0.0 a release may
     break anything the package has, and it announces a rename or a
     removal by refusing the old name by name. The wording of a fatal
-    result is never a contract. A runtime that offers `oci@1.1` keeps
-    running `oci@1.0` images, and only `oci@2.0` breaks them. Whether the
+    result is never a contract. The process contract is `oci@0.1` while
+    function-oci is 0.x: a minor version may break images built for the
+    one before, and `oci@1.0` comes with function-oci's 1.0.0. Whether the
     Input, the manifest and the metric names are stable for function-oci
     waits for function-wasm's 1.0.0
     ([Compatibility](contract/compatibility.md#function-oci-at-0x)).

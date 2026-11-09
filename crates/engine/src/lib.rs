@@ -200,7 +200,7 @@ pub trait Engine: Send + Sync + 'static {
     const KIND: &'static str;
 
     /// The contract the engine implements, as the manifest names it:
-    /// `wasm@1.0` for the component world, `oci@1.0` for the process
+    /// `wasm@1.0` for the component world, `oci@0.1` for the process
     /// contract.
     const CONTRACT: &'static str;
 

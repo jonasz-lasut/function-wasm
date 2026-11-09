@@ -21,7 +21,7 @@ builds both:
 | function | runs | in | README |
 |---|---|---|---|
 | function-wasm | a WebAssembly component (`wasm@1.0`) | a [Wasmtime](https://wasmtime.dev) sandbox | [`package/wasm`](package/wasm/README.md) |
-| function-oci | an OCI image (`oci@1.0`) | a [Firecracker](https://firecracker-microvm.github.io) microVM, one per request | [`package/oci`](package/oci/README.md) |
+| function-oci | an OCI image (`oci@0.1`) | a [Firecracker](https://firecracker-microvm.github.io) microVM, one per request | [`package/oci`](package/oci/README.md) |
 
 A module follows the contract of a native function,
 `RunFunction(RunFunctionRequest) → RunFunctionResponse`, in the module's own
