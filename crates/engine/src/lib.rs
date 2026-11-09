@@ -165,6 +165,30 @@ pub struct Extern {
 /// artifact on disk, under `version()`), inspects it for `guestfn` and
 /// `function validate --resolve`, and runs it once per request under the
 /// `RunOptions` admission settled. An engine is safe for concurrent use.
+/// Files an engine derives from a compiled module at run time and keeps as
+/// the compiled artifacts are kept: the OCI engine's VM snapshots. The
+/// runtime's compiled store implements it, so the store's sweep bounds
+/// these files, its size gauge counts them and its per-process key signs
+/// them. A name is the engine's own and has no path separator. A file is
+/// written in place, since a VM's memory is too large to hand over as
+/// bytes, and served only once sealed.
+pub trait ArtifactStore: Send + Sync + 'static {
+    /// Where to write a new file for name. Nothing serves it before `seal`.
+    fn begin(&self, name: &str) -> Result<std::path::PathBuf, String>;
+
+    /// Signs what was written at `begin`'s path and publishes it under
+    /// name; returns the entry's path.
+    fn seal(&self, name: &str) -> Result<std::path::PathBuf, String>;
+
+    /// The entry under name when this store sealed it and it still
+    /// verifies; None otherwise, with a refused entry removed.
+    fn sealed(&self, name: &str) -> Option<std::path::PathBuf>;
+
+    /// Marks an entry used, for a sweep that removes the least recently
+    /// used first.
+    fn used(&self, path: &std::path::Path);
+}
+
 pub trait Engine: Send + Sync + 'static {
     /// A compiled module: what `compile` makes and `run` takes, cheap to
     /// clone and shared between runs.
@@ -195,6 +219,15 @@ pub trait Engine: Send + Sync + 'static {
 
     /// Loads a module `serialize` wrote.
     fn deserialize_file(&self, path: &std::path::Path) -> Result<Self::Module, Error>;
+
+    /// The module once the runtime has stored its serialized artifact at
+    /// path. An engine whose module is a file on disk (the OCI engine's
+    /// root filesystem) continues from the stored one, so what it derives
+    /// from that file outlives this load; the default keeps the module as
+    /// it is.
+    fn stored(&self, m: Self::Module, _path: &std::path::Path) -> Self::Module {
+        m
+    }
 
     /// Runs one request through a module under the run's options and
     /// returns the response bytes; every failure is an `Error` whose
