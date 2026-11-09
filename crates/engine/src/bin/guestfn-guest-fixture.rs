@@ -23,6 +23,24 @@ fn main() {
         "spin" => loop {
             std::hint::spin_loop();
         },
+        // Sixteen bytes of the kernel's randomness as hex: two clones of
+        // one snapshot must not print the same.
+        "random" => {
+            let mut bytes = [0u8; 16];
+            std::fs::File::open("/dev/urandom")
+                .and_then(|mut f| f.read_exact(&mut bytes))
+                .expect("/dev/urandom");
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            print!("{hex}");
+        }
+        // The wall clock in seconds since the epoch: a restored clone's
+        // must be the host's, not the snapshot's.
+        "clock" => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("a clock after the epoch");
+            print!("{}", now.as_secs());
+        }
         // Take the asked memory in chunks, touching every page, so the
         // kernel's limit is what ends it: one reservation of the whole
         // would fail by overcommit's heuristic before any page is used.

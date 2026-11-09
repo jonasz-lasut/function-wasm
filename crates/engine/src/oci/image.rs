@@ -155,6 +155,8 @@ impl ImageConfig {
             groups: self.groups.clone(),
             hostname: HOSTNAME.to_string(),
             memory_max: 0,
+            now_unix_ns: 0,
+            seed: String::new(),
         }
     }
 

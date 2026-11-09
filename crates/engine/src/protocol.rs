@@ -18,7 +18,7 @@ pub const HOST_CID: u32 = 2;
 
 /// The protocol's version, in the init's hello: a host meeting another
 /// refuses the run rather than guess.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// Most bytes one frame carries; stdout, stderr and stdin travel in frames
 /// of at most this size.
@@ -42,6 +42,15 @@ pub enum Kind {
     Stderr = 6,
     /// init → host, last: the process's Exit.
     Exit = 7,
+    /// host → init, in place of Run: the host is about to snapshot the VM.
+    /// The init answers Parked and waits on this connection, which a
+    /// restore resets: that reset is what wakes the init in a clone, and it
+    /// then connects again and says hello as after a boot.
+    Park = 8,
+    /// init → host: the answer to Park. The init sends nothing more and
+    /// does nothing until the connection ends, so the VM is still when
+    /// the host freezes it.
+    Parked = 9,
 }
 
 impl Kind {
@@ -54,6 +63,8 @@ impl Kind {
             5 => Kind::Stdout,
             6 => Kind::Stderr,
             7 => Kind::Exit,
+            8 => Kind::Park,
+            9 => Kind::Parked,
             _ => return None,
         })
     }
@@ -89,6 +100,16 @@ pub struct Description {
     /// the VM thrashing its page cache first. 0 is no cap.
     #[serde(default)]
     pub memory_max: u64,
+    /// The host's wall clock in nanoseconds since the epoch, for an init
+    /// that was parked: a restored clone's clock stands at the snapshot's
+    /// moment until the init sets it. 0 leaves the clock alone.
+    #[serde(default)]
+    pub now_unix_ns: u64,
+    /// Fresh randomness from the host as hex, for an init that was parked:
+    /// every clone of one snapshot starts with the same kernel random
+    /// state, which the init reseeds with this before the process runs.
+    #[serde(default)]
+    pub seed: String,
 }
 
 /// How the process ended.
@@ -182,10 +203,14 @@ mod tests {
             groups: vec![4],
             hostname: "guest".into(),
             memory_max: 96 << 20,
+            now_unix_ns: 1_700_000_000_000_000_000,
+            seed: "00ff".into(),
         };
         write_json(&mut buf, Kind::Run, &d).unwrap();
         write_chunked(&mut buf, Kind::Stdin, &vec![7u8; MAX_FRAME + 10]).unwrap();
         write_frame(&mut buf, Kind::StdinEnd, &[]).unwrap();
+        write_frame(&mut buf, Kind::Park, &[]).unwrap();
+        write_frame(&mut buf, Kind::Parked, &[]).unwrap();
         let mut r = buf.as_slice();
         let hello: Hello = read_json(&mut r, Kind::Hello).unwrap();
         assert_eq!(hello.version, VERSION);
@@ -197,6 +222,8 @@ mod tests {
         assert_eq!((k, second.len()), (Kind::Stdin, 10));
         let (k, end) = read_frame(&mut r).unwrap();
         assert_eq!((k, end.len()), (Kind::StdinEnd, 0));
+        assert_eq!(read_frame(&mut r).unwrap().0, Kind::Park);
+        assert_eq!(read_frame(&mut r).unwrap().0, Kind::Parked);
         assert!(read_frame(&mut r).is_err());
     }
 
@@ -207,6 +234,6 @@ mod tests {
         let mut head = vec![Kind::Stdout as u8];
         head.extend_from_slice(&((MAX_FRAME as u32) + 1).to_be_bytes());
         assert!(read_frame(&mut head.as_slice()).is_err());
-        assert!(read_frame(&mut [9u8, 0, 0, 0, 0].as_slice()).is_err());
+        assert!(read_frame(&mut [200u8, 0, 0, 0, 0].as_slice()).is_err());
     }
 }
