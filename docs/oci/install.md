@@ -178,5 +178,4 @@ registry, because an OCI module comes from one alone (`module.type: OCI`:
 the runtime refuses a `Path` or `HTTP` source by name). Run a `registry:3`
 container on `127.0.0.1:5000`, which the runtime reaches over plain HTTP,
 then `docker push` the image there and `guestfn push --image` the module.
-A machine without KVM has no loop yet. The design record keeps the question
-open.
+A machine without KVM has no loop: function-oci 0.1 runs on KVM only.
