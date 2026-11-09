@@ -13,7 +13,7 @@ pub struct InspectCmd {
     /// A module file, compiled with wasmtime for the runtime's own view
     /// (seconds for a large Go module); or an OCI reference (tag or digest)
     /// described from its manifest - media types, layer size, annotations -
-    /// without pulling.
+    /// without pulling. An image index is described platform by platform.
     target: String,
 
     /// For a reference: also pull the module layer and read the module, as
@@ -46,7 +46,10 @@ struct ReferenceInfo {
     #[serde(rename = "mediaType")]
     media_type: String,
     size: i64,
-    config: DescriptorInfo,
+    /// Absent for an image index and for an index entry that names no
+    /// platform: neither is read as a manifest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<DescriptorInfo>,
     layers: Vec<DescriptorInfo>,
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     annotations: std::collections::BTreeMap<String, String>,
@@ -66,6 +69,23 @@ struct ReferenceInfo {
     manifest: Option<Manifest>,
     #[serde(rename = "manifestError", skip_serializing_if = "String::is_empty")]
     manifest_error: String,
+    /// For an image index: every entry, each platform's manifest described
+    /// as a manifest of its own is. The runtime runs the entry of its
+    /// node's platform.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    platforms: Vec<PlatformInfo>,
+    #[serde(skip)]
+    index: bool,
+}
+
+/// One entry of an image index.
+#[derive(Serialize)]
+struct PlatformInfo {
+    /// `os/architecture`; empty for an entry that names no platform (an
+    /// attestation a builder attached), which the runtime never runs.
+    platform: String,
+    #[serde(flatten)]
+    reference: ReferenceInfo,
 }
 
 #[derive(Serialize, Clone)]
@@ -122,54 +142,58 @@ impl InspectCmd {
         let (raw, digest) = client.raw_manifest(&reference.manifest_ref())?;
         let m: OciManifest = serde_json::from_slice(&raw)
             .map_err(|e| format!("cannot parse manifest {digest}: {e}"))?;
-        let mut info = ReferenceInfo {
-            digest,
-            media_type: m.media_type.clone(),
-            size: raw.len() as i64,
-            config: m
-                .config
-                .as_ref()
-                .map(descriptor)
-                .unwrap_or_else(|| descriptor(&Descriptor::default())),
-            layers: m.layers.iter().map(descriptor).collect(),
-            annotations: m.annotations.clone(),
-            module_layer: None,
-            module_layer_error: String::new(),
-            image: None,
-            manifest: None,
-            manifest_error: String::new(),
-        };
-        let module_image = oci::is_module_image(&m);
-        let layer = if module_image {
-            info.module_layer_error = oci::MODULE_IMAGE_REFUSAL.to_string();
-            None
-        } else {
-            match oci::wasm_layer(&m) {
-                Ok(l) => {
-                    info.module_layer = Some(descriptor(&l));
-                    Some(l)
-                }
-                Err(e) => {
-                    info.module_layer_error = e;
-                    None
-                }
-            }
-        };
-        if let Some(ml) = oci::manifest_layer(&m) {
-            match fetch_manifest(&client, &ml) {
-                Ok(parsed) => {
-                    if module_image && !parsed.image.is_empty() {
-                        info.image = Some(parsed.image.clone());
+        let mut module_image = false;
+        let mut layer = None;
+        let info = if m.is_index() {
+            let mut info = ReferenceInfo::bare(digest, m.media_type.clone(), raw.len() as i64);
+            info.annotations = m.annotations.clone();
+            info.index = true;
+            for entry in index_entries(&client, &m)? {
+                let platform = platform_text(&entry.descriptor);
+                let reference = match &entry.manifest {
+                    Some((em, entry_raw)) => {
+                        let d = describe_manifest(
+                            &client,
+                            entry.descriptor.digest.clone(),
+                            entry_raw.len() as i64,
+                            em,
+                        );
+                        module_image |= d.module_image;
+                        d.info
                     }
-                    info.manifest = Some(parsed);
-                }
-                Err(e) => info.manifest_error = e,
+                    None => {
+                        let mut bare = ReferenceInfo::bare(
+                            entry.descriptor.digest.clone(),
+                            entry.descriptor.media_type.clone(),
+                            entry.descriptor.size,
+                        );
+                        bare.annotations = entry.descriptor.annotations.clone();
+                        bare
+                    }
+                };
+                info.platforms.push(PlatformInfo {
+                    platform,
+                    reference,
+                });
             }
-        }
+            info
+        } else {
+            let d = describe_manifest(&client, digest, raw.len() as i64, &m);
+            module_image = d.module_image;
+            layer = d.layer;
+            d.info
+        };
+        let index = info.index;
         out.reference = Some(info);
         if self.pull && module_image {
             return Err(format!(
                 "{} is an OCI image (an oci@1.0 module) and has no module file to pull; the OCI runtime, function-oci, pulls and boots it",
+                self.target
+            ));
+        }
+        if self.pull && index {
+            return Err(format!(
+                "{} is an image index and has no module file to pull",
                 self.target
             ));
         }
@@ -192,51 +216,40 @@ impl InspectCmd {
         }
         if let Some(r) = &out.reference {
             println!(
-                "{}: manifest {} ({}, {})",
+                "{}: {} {} ({}, {})",
                 out.target,
+                if r.index { "index" } else { "manifest" },
                 r.digest,
                 r.media_type,
                 crate::human_bytes(r.size as u64)
             );
-            println!(
-                "  config: {} {} ({})",
-                r.config.media_type,
-                r.config.digest,
-                crate::human_bytes(r.config.size as u64)
-            );
-            for l in &r.layers {
-                println!(
-                    "  layer: {} {} ({}){}",
-                    l.media_type,
-                    l.digest,
-                    crate::human_bytes(l.size as u64),
-                    annotations_text(&l.annotations)
-                );
-            }
-            if !r.annotations.is_empty() {
-                println!("  annotations:{}", annotations_text(&r.annotations));
-            }
-            match (&r.module_layer, &r.image) {
-                (Some(l), _) => println!(
-                    "  module layer: {} {} ({})",
-                    l.media_type,
-                    l.digest,
-                    crate::human_bytes(l.size as u64)
-                ),
-                (None, Some(image)) => println!(
-                    "  module: an OCI image (oci@1.0), which the OCI runtime, function-oci, boots; built from {image}"
-                ),
-                (None, None) => println!(
-                    "  module layer: none - the runtime would refuse it: {}",
-                    r.module_layer_error
-                ),
-            }
-            match (&r.manifest, r.manifest_error.as_str()) {
-                (Some(m), _) => println!("  manifest: {}", manifest_text(m)),
-                (None, "") => println!("  manifest: none"),
-                (None, e) => {
-                    println!("  manifest: invalid - the runtime would refuse the module: {e}")
+            if r.index {
+                if !r.annotations.is_empty() {
+                    println!("  annotations:{}", annotations_text(&r.annotations));
                 }
+                for p in &r.platforms {
+                    let e = &p.reference;
+                    if e.config.is_none() {
+                        println!(
+                            "  no platform: manifest {} ({}, {}){} - the runtime never runs it",
+                            e.digest,
+                            e.media_type,
+                            crate::human_bytes(e.size as u64),
+                            annotations_text(&e.annotations)
+                        );
+                        continue;
+                    }
+                    println!(
+                        "  {}: manifest {} ({}, {})",
+                        p.platform,
+                        e.digest,
+                        e.media_type,
+                        crate::human_bytes(e.size as u64)
+                    );
+                    print_manifest(e, "    ");
+                }
+            } else {
+                print_manifest(r, "  ");
             }
         }
         if let Some(m) = &out.module {
@@ -258,6 +271,183 @@ impl InspectCmd {
             println!("  imports: {}", imports_text(&m.imports));
         }
         Ok(())
+    }
+}
+
+/// What a manifest says of itself, each line under pad: its config and
+/// layers, the module by the resolver's rule, and the module manifest.
+fn print_manifest(r: &ReferenceInfo, pad: &str) {
+    if let Some(config) = &r.config {
+        println!(
+            "{pad}config: {} {} ({})",
+            config.media_type,
+            config.digest,
+            crate::human_bytes(config.size as u64)
+        );
+    }
+    for l in &r.layers {
+        println!(
+            "{pad}layer: {} {} ({}){}",
+            l.media_type,
+            l.digest,
+            crate::human_bytes(l.size as u64),
+            annotations_text(&l.annotations)
+        );
+    }
+    if !r.annotations.is_empty() {
+        println!("{pad}annotations:{}", annotations_text(&r.annotations));
+    }
+    match (&r.module_layer, &r.image) {
+        (Some(l), _) => println!(
+            "{pad}module layer: {} {} ({})",
+            l.media_type,
+            l.digest,
+            crate::human_bytes(l.size as u64)
+        ),
+        (None, Some(image)) => println!(
+            "{pad}module: an OCI image (oci@1.0), which the OCI runtime, function-oci, boots; built from {image}"
+        ),
+        (None, None) => println!(
+            "{pad}module layer: none - the runtime would refuse it: {}",
+            r.module_layer_error
+        ),
+    }
+    match (&r.manifest, r.manifest_error.as_str()) {
+        (Some(m), _) => println!("{pad}manifest: {}", manifest_text(m)),
+        (None, "") => println!("{pad}manifest: none"),
+        (None, e) => {
+            println!("{pad}manifest: invalid - the runtime would refuse the module: {e}")
+        }
+    }
+}
+
+impl ReferenceInfo {
+    /// A manifest known by its descriptor alone: an index, or an entry
+    /// nothing reads further.
+    fn bare(digest: String, media_type: String, size: i64) -> ReferenceInfo {
+        ReferenceInfo {
+            digest,
+            media_type,
+            size,
+            config: None,
+            layers: Vec::new(),
+            annotations: std::collections::BTreeMap::new(),
+            module_layer: None,
+            module_layer_error: String::new(),
+            image: None,
+            manifest: None,
+            manifest_error: String::new(),
+            platforms: Vec::new(),
+            index: false,
+        }
+    }
+}
+
+/// A manifest described, with what inspect needs beyond the description.
+struct Described {
+    info: ReferenceInfo,
+    /// Whether it is an OCI module image, which has no module file.
+    module_image: bool,
+    /// The module layer, when the resolver's rule finds one.
+    layer: Option<Descriptor>,
+}
+
+/// Describes one manifest as the runtime reads it: the module layer by
+/// the resolver's own rule, and the module manifest out of its layer.
+fn describe_manifest(
+    client: &RegistryClient,
+    digest: String,
+    size: i64,
+    m: &OciManifest,
+) -> Described {
+    let mut info = ReferenceInfo::bare(digest, m.media_type.clone(), size);
+    info.config = Some(
+        m.config
+            .as_ref()
+            .map(descriptor)
+            .unwrap_or_else(|| descriptor(&Descriptor::default())),
+    );
+    info.layers = m.layers.iter().map(descriptor).collect();
+    info.annotations = m.annotations.clone();
+    let module_image = oci::is_module_image(m);
+    let layer = if module_image {
+        info.module_layer_error = oci::MODULE_IMAGE_REFUSAL.to_string();
+        None
+    } else {
+        match oci::wasm_layer(m) {
+            Ok(l) => {
+                info.module_layer = Some(descriptor(&l));
+                Some(l)
+            }
+            Err(e) => {
+                info.module_layer_error = e;
+                None
+            }
+        }
+    };
+    if let Some(ml) = oci::manifest_layer(m) {
+        match fetch_manifest(client, &ml) {
+            Ok(parsed) => {
+                if module_image && !parsed.image.is_empty() {
+                    info.image = Some(parsed.image.clone());
+                }
+                info.manifest = Some(parsed);
+            }
+            Err(e) => info.manifest_error = e,
+        }
+    }
+    Described {
+        info,
+        module_image,
+        layer,
+    }
+}
+
+/// One entry of an image index: its descriptor and, where it names a
+/// platform, its manifest with the raw bytes, fetched and held to the
+/// entry's digest. An entry with no platform (an attestation a builder
+/// attached under `unknown/unknown`) is listed and never read.
+pub(crate) struct IndexEntry {
+    pub descriptor: Descriptor,
+    pub manifest: Option<(OciManifest, Vec<u8>)>,
+}
+
+pub(crate) fn index_entries(
+    client: &RegistryClient,
+    index: &OciManifest,
+) -> Result<Vec<IndexEntry>, String> {
+    let mut entries = Vec::new();
+    for descriptor in index.index_entries() {
+        if platform_text(&descriptor).is_empty() {
+            entries.push(IndexEntry {
+                descriptor,
+                manifest: None,
+            });
+            continue;
+        }
+        let (raw, got) = client.raw_manifest(&descriptor.digest)?;
+        if got != descriptor.digest {
+            return Err(format!(
+                "image manifest content is {got}, want {}",
+                descriptor.digest
+            ));
+        }
+        let manifest: OciManifest = serde_json::from_slice(&raw)
+            .map_err(|e| format!("cannot parse manifest {}: {e}", descriptor.digest))?;
+        entries.push(IndexEntry {
+            descriptor,
+            manifest: Some((manifest, raw)),
+        });
+    }
+    Ok(entries)
+}
+
+/// An index entry's platform as `os/architecture`, or empty when it names
+/// none.
+fn platform_text(entry: &Descriptor) -> String {
+    match &entry.platform {
+        Some(p) if !p.os.is_empty() && p.os != "unknown" => format!("{}/{}", p.os, p.architecture),
+        _ => String::new(),
     }
 }
 
@@ -380,4 +570,29 @@ fn imports_text(xs: &[ExternInfo]) -> String {
 
 fn annotations_text(a: &std::collections::BTreeMap<String, String>) -> String {
     a.iter().map(|(k, v)| format!(" {k}={v}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An index entry counts as a platform's image only when it names one:
+    /// a builder's attestation sits under unknown/unknown and is listed,
+    /// never read.
+    #[test]
+    fn an_entry_without_a_platform_is_not_read() {
+        let entry = |platform: Option<(&str, &str)>| Descriptor {
+            platform: platform.map(|(os, architecture)| oci::Platform {
+                os: os.to_string(),
+                architecture: architecture.to_string(),
+            }),
+            ..Descriptor::default()
+        };
+        assert_eq!(
+            platform_text(&entry(Some(("linux", "arm64")))),
+            "linux/arm64"
+        );
+        assert_eq!(platform_text(&entry(Some(("unknown", "unknown")))), "");
+        assert_eq!(platform_text(&entry(None)), "");
+    }
 }

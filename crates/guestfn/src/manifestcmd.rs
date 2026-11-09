@@ -64,7 +64,16 @@ impl ShowCmd {
         let (raw, digest) = client.raw_manifest(&reference.manifest_ref())?;
         let om: oci::OciManifest = serde_json::from_slice(&raw)
             .map_err(|e| format!("cannot parse manifest {digest}: {e}"))?;
-        let Some(ml) = oci::manifest_layer(&om) else {
+        // An image index has the manifest in each platform's image, the same
+        // one in all of them: the first that has it speaks for the index.
+        let layer = if om.is_index() {
+            crate::inspect::index_entries(&client, &om)?
+                .iter()
+                .find_map(|e| oci::manifest_layer(&e.manifest.as_ref()?.0))
+        } else {
+            oci::manifest_layer(&om)
+        };
+        let Some(ml) = layer else {
             return Err(format!(
                 "{} carries no module manifest layer: it was pushed without a {} (guestfn push publishes the manifest beside a module, or as a layer of an image)",
                 self.r#ref,

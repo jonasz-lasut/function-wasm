@@ -125,6 +125,31 @@ pub mod registry {
             self.manifest(&manifest)
         }
 
+        /// The plain image for two platforms, linux/amd64 and linux/arm64,
+        /// behind an image index, as `docker buildx` pushes one. Returns
+        /// the index's digest.
+        pub fn plain_index(&mut self, title: &str) -> String {
+            let mut entries = Vec::new();
+            for arch in ["amd64", "arm64"] {
+                let (manifest, blobs) = image_blobs_for(arch, None, title);
+                for b in &blobs {
+                    self.blob(b);
+                }
+                let digest = self.manifest(&manifest);
+                entries.push(serde_json::json!({
+                    "mediaType": OCI_MANIFEST_TYPE, "digest": digest, "size": manifest.len(),
+                    "platform": {"architecture": arch, "os": "linux"},
+                }));
+            }
+            let index = serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 2,
+                "mediaType": crate::oci::OCI_INDEX_TYPE,
+                "manifests": entries,
+            }))
+            .expect("index json");
+            self.manifest(&index)
+        }
+
         /// Attaches a Sigstore bundle to subject as cosign 3 does; returns
         /// the referrer's digest.
         pub fn attach(&mut self, subject: &str, bundle: &[u8], shape: super::Shape) -> String {
@@ -201,6 +226,15 @@ pub mod registry {
             "aarch64" => "arm64",
             other => other,
         };
+        image_blobs_for(arch, module_manifest, title)
+    }
+
+    /// The same image for a named architecture.
+    fn image_blobs_for(
+        arch: &str,
+        module_manifest: Option<&[u8]>,
+        title: &str,
+    ) -> (Vec<u8>, Vec<Vec<u8>>) {
         let mut layers = vec![tar_layer("/bin/guest", b"#!/bin/sh\nexit 0\n", 0o755)];
         let mut descriptors = vec![serde_json::json!({
             "mediaType": IMAGE_LAYER_TYPE, "digest": digest_of(&layers[0]), "size": layers[0].len(),

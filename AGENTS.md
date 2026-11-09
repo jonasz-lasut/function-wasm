@@ -346,7 +346,9 @@ crates/guestfn/             the CLI crate (binary `guestfn`)
                               recognises it, wasm_layer refuses it by name, inspect names the
                               image it was built from and refuses --pull
   src/inspect.rs              file → engine.inspect; reference → manifest, layers, annotations, the
-                              module-layer rule, the manifest summary; --pull; text/json
+                              module-layer rule, the manifest summary, an image index platform by
+                              platform (index_entries, which manifest show reads too); --pull;
+                              text/json
   src/manifestcmd.rs          manifest validate <file> / manifest show <ref>
   src/composition.rs          scaffold composition: the step, a config skeleton from the schema, the
                               commented compositionPolicy skeleton from the manifest's requires
