@@ -56,7 +56,9 @@ jobs:
           retention-days: 1
 
   # The use-case examples (#112) as CNCF Wasm OCI artifacts with their module
-  # manifests, at ghcr.io/jonasz-lasut/wasmfn/examples/<name>:v<version>,
+  # manifests, at ghcr.io/jonasz-lasut/guestfn/examples/<runtime>-<lang>:v<version>
+  # (the directory's name less its function- prefix: function-wasm-rust
+  # publishes as wasm-rust),
   # signed and attested like the image. Each example carries its own version
   # in its guestfn.yaml, independent of the runtime's: a version already
   # published is never pushed again, so a run publishes only the examples
@@ -81,15 +83,19 @@ jobs:
       matrix:
         include:
           - name: function-wasm-rust
+            repository: wasm-rust
             toolchain: rust
           - name: function-wasm-ts
+            repository: wasm-ts
             toolchain: node
           - name: function-wasm-go
+            repository: wasm-go
             toolchain: go
           - name: function-oci-go
+            repository: oci-go
             toolchain: docker
     env:
-      REPOSITORY: jonasz-lasut/wasmfn/examples/${{ matrix.name }}
+      REPOSITORY: jonasz-lasut/guestfn/examples/${{ matrix.repository }}
       EXAMPLE: examples/${{ matrix.name }}
     steps:
       - name: Checkout

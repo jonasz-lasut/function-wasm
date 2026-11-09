@@ -61,10 +61,13 @@ An example's directory is `function-<runtime>-<lang>`: `function-wasm-go`,
 finds it by name, and the use case stays in the example's README and its
 manifest's `description` (Jonasz, 2026-11-08,
 [#263](https://github.com/jonasz-lasut/function-wasm/issues/263)). The
-manifest's `name` and the published repository under
-`ghcr.io/jonasz-lasut/wasmfn/examples/` follow the directory. The artifacts
-published under the earlier names keep their place, and the e2e lifecycle
-profile pins one of them until the first publish under the new names.
+manifest's `name` follows the directory, and the published repository is
+`ghcr.io/jonasz-lasut/guestfn/examples/<runtime>-<lang>`, the directory's
+name less its `function-` prefix (Jonasz, 2026-11-08): `wasm-rust`,
+`oci-go`. The artifacts published under the earlier names, at
+`ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, keep their place, and the
+e2e lifecycle profile pins one of them until the first publish under the
+new names.
 
 ## The examples
 
@@ -160,7 +163,7 @@ pulled from `ghcr.io` with its real signature.
 `publish-examples.yml`, run by hand, publishes the examples that work as
 published as CNCF Wasm OCI artifacts, with their module manifests:
 
-- **Names:** `ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, beside the WIT
+- **Names:** `ghcr.io/jonasz-lasut/guestfn/examples/<runtime>-<lang>`, beside the WIT
   world at `wasmfn/function`. A namespace per kind of artifact is the
   convention across OCI-distributed WebAssembly plugins (Kubewarden's
   `policies/`, wasmCloud's `components/`).

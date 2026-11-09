@@ -80,7 +80,7 @@ A local render needs no internet and no AWS account. `example/` holds:
 ## In a cluster
 
 Each release publishes this example, signed keyless and attested, as
-`ghcr.io/jonasz-lasut/wasmfn/examples/function-wasm-rust:v<version>` (the version in
+`ghcr.io/jonasz-lasut/guestfn/examples/wasm-rust:v<version>` (the version in
 `guestfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
 its reference pinned by digest. To run your own build instead, publish it
 with its manifest, then reference the digest `guestfn push` prints:

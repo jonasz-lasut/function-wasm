@@ -40,7 +40,7 @@ the Function on the Development runtime.
 ## In a cluster
 
 `Publish Examples` publishes this example as
-`ghcr.io/jonasz-lasut/wasmfn/examples/function-oci-go:v<version>` (the
+`ghcr.io/jonasz-lasut/guestfn/examples/oci-go:v<version>` (the
 version in `guestfn.yaml`), the image with its manifest layer, signed
 keyless. The step is a `function-oci` step with the published reference:
 
@@ -54,7 +54,7 @@ keyless. The step is a `function-oci` step with the published reference:
     module:
       type: OCI
       oci:
-        ref: ghcr.io/jonasz-lasut/wasmfn/examples/function-oci-go@sha256:<the digest guestfn push printed>
+        ref: ghcr.io/jonasz-lasut/guestfn/examples/oci-go@sha256:<the digest guestfn push printed>
     config:
       from: spec.config        # the composite resource field holding {greeting: hi}
 ```

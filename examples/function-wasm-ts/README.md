@@ -117,7 +117,7 @@ requirement round trip, the tags and the warnings.
 ## In a cluster
 
 Each release publishes this example, signed keyless and attested, as
-`ghcr.io/jonasz-lasut/wasmfn/examples/function-wasm-ts:v<version>` (the version in
+`ghcr.io/jonasz-lasut/guestfn/examples/wasm-ts:v<version>` (the version in
 `guestfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
 its reference pinned by digest. To run your own build instead, publish it
 with its manifest, then reference the digest `guestfn push` prints as the last

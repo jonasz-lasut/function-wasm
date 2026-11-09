@@ -98,12 +98,12 @@ make render           # serve it with function-wasm and crossplane render exampl
 ## In a cluster
 
 Each release publishes this example, signed keyless and attested, as
-`ghcr.io/jonasz-lasut/wasmfn/examples/function-wasm-go:v<version>` (the version in
+`ghcr.io/jonasz-lasut/guestfn/examples/wasm-go:v<version>` (the version in
 `guestfn.yaml`); the release's `function-wasm-examples-<release>.yaml` lists
 its reference pinned by digest. To run your own build instead, publish it
 with its manifest, then name the digest `guestfn push` prints in a WebApp
 (a WebApp naming the published add-on needs a `pullModule` permit for
-`Repository::"ghcr.io/jonasz-lasut/wasmfn/examples"` instead):
+`Repository::"ghcr.io/jonasz-lasut/guestfn/examples"` instead):
 
 ```shell
 guestfn push ghcr.io/example-org/webapp-addons/pdb:v0.1.0
