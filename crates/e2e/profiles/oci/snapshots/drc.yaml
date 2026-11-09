@@ -23,7 +23,7 @@ spec:
             - --cosign-trusted-root=/etc/guestfn/trusted-root/trusted_root.json
             - --debug
             - --enable-vm-snapshots
-            - --warm-modules=ghcr.io/jonasz-lasut/guestfn/examples/oci-go@sha256:83f5bac9b73db9f3781f14722db279c4e1cd147c8fb464613f558f17a5c11ccc
+            - --warm-modules=ghcr.io/jonasz-lasut/guestfn/examples/oci-go@sha256:a11795674f24539afe03a1aca13a05b1dc03eb55ebda1bffdebd2b9089651447
             # Ready means warmed, and warmed means the published example's
             # snapshot exists: /readyz answers 503 until then
             # (docs/operators/readiness.md).
