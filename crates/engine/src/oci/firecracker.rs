@@ -910,6 +910,10 @@ async fn call(
     tokio::select! {
         answer = rpc => match answer {
             Ok(response) => Call::Answered(response.into_inner().to_vec()),
+            // The client enforces the timeout it sends, and the select below
+            // may poll its error first: past the deadline, any failure is
+            // the deadline.
+            Err(_) if Instant::now() >= spec.deadline => Call::Deadline,
             Err(status) if status.code() == tonic::Code::DeadlineExceeded => Call::Deadline,
             // A status the transport made up, not one the function sent.
             Err(status) if std::error::Error::source(&status).is_some() => {
