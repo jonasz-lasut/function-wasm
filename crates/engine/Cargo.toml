@@ -9,8 +9,10 @@ publish = false
 
 # The two binaries are the OCI runtime's guest init (PID 1 of the microVM)
 # and the fixture process its VM tests run, built static for musl with no
-# feature on (make oci.init, Dockerfile.oci): they need the protocol module
-# and libc alone.
+# feature on (make oci.init, Dockerfile.oci). The init needs the protocol
+# module and libc alone. The fixture is an ordinary function on
+# function-sdk-rust, behind its own feature so nothing else builds the SDK's
+# server.
 [[bin]]
 name = "guestfn-init"
 path = "src/bin/guestfn-init.rs"
@@ -18,6 +20,7 @@ path = "src/bin/guestfn-init.rs"
 [[bin]]
 name = "guestfn-guest-fixture"
 path = "src/bin/guestfn-guest-fixture.rs"
+required-features = ["fixture"]
 
 # The suites of each engine, under its feature.
 [[test]]
@@ -59,6 +62,16 @@ flate2 = { version = "1", optional = true }
 hex = { version = "0.4", optional = true }
 sha2 = { version = "0.11", optional = true }
 tar = { version = "0.4", optional = true }
+
+# The OCI engine's call to the function's gRPC server over vsock, and the
+# fixture's server.
+hyper-util = { version = "0.1", optional = true, features = ["tokio"] }
+tokio = { version = "1", optional = true, features = ["rt", "rt-multi-thread", "macros", "net", "time", "sync"] }
+tonic = { version = "0.14", optional = true }
+tower = { version = "0.5", optional = true, features = ["util"] }
+# The VM test fixture: a function on the SDK, with its own arguments.
+clap = { version = "4", optional = true, features = ["derive", "env"] }
+function-sdk-rust = { version = "0.4.0", optional = true }
 
 # The Wasmtime engine (feature wasm).
 bytes = { version = "1", optional = true }
@@ -142,7 +155,23 @@ wasm = [
     "dep:wit-parser",
 ]
 # The OCI engine of docs/one-pager-oci-runtime.md.
-oci = ["dep:backhand", "dep:flate2", "dep:hex", "dep:sha2", "dep:tar"]
+oci = [
+    "dep:backhand",
+    "dep:flate2",
+    "dep:hex",
+    "dep:http",
+    "dep:hyper-util",
+    "dep:sha2",
+    "dep:tar",
+    "dep:tokio",
+    "dep:tower",
+    "raw-codec",
+]
+# The pass-through gRPC codec, shared by the runtime's server and the OCI
+# engine's client.
+raw-codec = ["dep:bytes", "dep:tonic"]
+# The fixture process the VM tests run, a function on function-sdk-rust.
+fixture = ["dep:clap", "dep:function-sdk-rust", "dep:tokio", "dep:tonic"]
 # The testing modules: the WAT component fixtures every suite in the
 # workspace drives the Wasmtime engine with (docs/project/testing.md), and
 # the OCI engine's image fixtures and fake sandbox.

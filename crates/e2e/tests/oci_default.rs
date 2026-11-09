@@ -203,7 +203,7 @@ async fn a_fatal_result_names_the_exit_status_and_the_message() -> Result<()> {
             .await?;
         let message = guest.wait_fatal(WAIT).await?;
         ensure!(
-            message.contains("process exited with status 1: asked to fail"),
+            message.contains("run returned an error: asked to fail"),
             "{message}"
         );
         Ok(())

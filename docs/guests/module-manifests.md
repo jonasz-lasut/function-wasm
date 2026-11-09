@@ -39,17 +39,21 @@ The fields:
 
 - `contract`: the contract the module follows, as `<engine>@<major>.<minor>`.
   Required. `wasm@1.0` is the component world of a WebAssembly module,
-  which `function-wasm` serves; `oci@0.1` the process contract of an OCI
+  which `function-wasm` serves; `oci@0.1` the contract of an OCI
   image, which the OCI runtime serves
   ([OCI modules](../oci/modules.md)). From a contract's 1.0 a minor adds
   what a module may use and a major changes what the engine does with a
   module, and at 0.x a minor may change anything. The runtime refuses a
   version its engine doesn't offer. The field was `abi`, an
   integer, through 0.6, and the old name is refused as unknown.
-- `image`: the digest-pinned reference of the image an `oci@0.1` module
-  runs (`ghcr.io/acme/tagger@sha256:…`). `guestfn push --image` writes it
-  into the published manifest, so the file may leave it out. A `wasm@1.0`
-  manifest has no `image`, and the runtime refuses one that sets it.
+- `oci`: what only an `oci@0.1` module says. `oci.image` is the
+  digest-pinned reference of the image it runs
+  (`ghcr.io/acme/tagger@sha256:…`), which `guestfn push --image` writes into
+  the published manifest, so the file may leave it out. `oci.args` are the
+  arguments for the function's binary, replacing the image's command and
+  keeping its entrypoint; a function on a Crossplane SDK needs
+  `["--insecure"]`. A `wasm@1.0` manifest has no `oci`, and the runtime
+  refuses one that sets it.
 - `name`, `version`, `description` and `source`: what the module says about
   itself.
 - `requires`: the sandbox capabilities the module can't run without. These
@@ -67,7 +71,6 @@ same way.
   It must be self-contained: a `$ref` to a URL or a file is refused at load,
   and `pattern` takes the `regex` crate's syntax, which has no look-around
   and no back-references. Non-secret configuration belongs in `config`, not in env.
-- `minRuntime`: the oldest runtime that serves the module.
 - `composes`: what the module writes, advisory
   ([below](#the-composes-declaration)).
 - `requires.resources`: what the module asks Crossplane for, advisory
@@ -113,8 +116,8 @@ module oci ghcr.io/example/greeter@sha256:… requires egress GET to host "api.e
 … requires credential "cmdb" (requires.credentials[0]), which the operator policy (--sandbox-policy-file) does not permit
 ```
 
-A runtime older than the manifest's `minRuntime` and a `config` that doesn't
-match the schema fail the same way, and a schema that reaches outside itself
+A `config` that doesn't match the schema fails the same way, and a schema
+that reaches outside itself
 is refused when the manifest is read:
 
 ```text

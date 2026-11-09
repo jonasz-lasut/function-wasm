@@ -12,58 +12,15 @@ use std::path::Path;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use bytes::{Buf as _, BufMut as _, Bytes};
+use bytes::Bytes;
+use guestfn_engine::grpc::{RUN_FUNCTION, RawCodec};
 use tonic::Status;
-use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::server::NamedService;
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 
 use crate::runner::WasmFunction;
 
 const SERVICE: &str = "apiextensions.fn.proto.v1.FunctionRunnerService";
-const RUN_FUNCTION: &str = "/apiextensions.fn.proto.v1.FunctionRunnerService/RunFunction";
-
-/// A pass-through codec: gRPC messages as their raw bytes.
-#[derive(Default)]
-struct RawCodec;
-
-impl Codec for RawCodec {
-    type Encode = Vec<u8>;
-    type Decode = Bytes;
-    type Encoder = RawEncoder;
-    type Decoder = RawDecoder;
-
-    fn encoder(&mut self) -> Self::Encoder {
-        RawEncoder
-    }
-
-    fn decoder(&mut self) -> Self::Decoder {
-        RawDecoder
-    }
-}
-
-struct RawEncoder;
-
-impl Encoder for RawEncoder {
-    type Item = Vec<u8>;
-    type Error = Status;
-
-    fn encode(&mut self, item: Vec<u8>, dst: &mut EncodeBuf<'_>) -> Result<(), Status> {
-        dst.put_slice(&item);
-        Ok(())
-    }
-}
-
-struct RawDecoder;
-
-impl Decoder for RawDecoder {
-    type Item = Bytes;
-    type Error = Status;
-
-    fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<Bytes>, Status> {
-        Ok(Some(src.copy_to_bytes(src.remaining())))
-    }
-}
 
 /// The FunctionRunnerService served raw, modeled on the generated tonic
 /// server with only the codec swapped.

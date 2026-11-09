@@ -9,13 +9,12 @@ ConfigMap that greets the composite resource, with the greeting from the
 step's `config`.
 
 `fn.go` is an ordinary function-sdk-go `RunFunction`, the same code a gRPC
-Function or a WebAssembly module would run. `main.go` is the process
-contract around it
-([OCI modules](https://jonasz-lasut.github.io/guestfn/oci/modules.html)):
-the `RunFunctionRequest` bytes on standard input, the `RunFunctionResponse`
-bytes on standard output, the logger's JSON lines on standard error, and
-a non-zero status with one plain line on standard error for a request it
-can't read, decode or answer, which the runtime quotes in its fatal result.
+Function or a WebAssembly module would run. `main.go` starts function-sdk-go's
+server around it, as any function's `main` does, and the runtime calls it
+over gRPC
+([OCI modules](https://jonasz-lasut.github.io/guestfn/oci/modules.html)).
+The manifest's `oci.args` pass `--insecure`, since the call stays inside
+the VM.
 The `Dockerfile` cross-compiles a static binary into an empty image with
 a numeric user; the image has no shell, no libc and no `/tmp`, which the
 runtime mounts fresh for every run.
@@ -68,7 +67,6 @@ process as `input.config`.
 
 - `fn.go`: `RunFunction` and the `config` reader; `fn_test.go` covers the
   default and the configured greeting and a config that doesn't decode.
-- `main.go`: the process contract; `main_test.go` runs it over a request
-  and over bytes that aren't one.
+- `main.go`: the function's server.
 - `Dockerfile`: the image. `guestfn.yaml`: the manifest `guestfn push
   --image` appends, with the config schema.

@@ -1,4 +1,4 @@
-//! The image config as the engine keeps it, the process contract's
+//! The image config as the engine keeps it, the contract's
 //! preconditions over it, and the run description the init gets (the
 //! config resolved against the run's grants).
 
@@ -82,14 +82,14 @@ impl ImageConfig {
         })
     }
 
-    /// The process contract's preconditions: a command to run, and a
+    /// The contract's preconditions: a command to run, and a
     /// platform this host boots. None is a load-time refusal, so a
     /// Composition fails at `function validate --resolve` and at the first
     /// request alike, before a VM boots.
     pub fn check(&self) -> Result<(), String> {
         if self.entrypoint.is_empty() && self.cmd.is_empty() {
             return Err(
-                "image has neither an entrypoint nor a command: the process contract runs the image's configured command (docs/one-pager-oci-runtime.md)"
+                "image has neither an entrypoint nor a command: the contract runs the image's configured command (docs/one-pager-oci-runtime.md)"
                     .to_string(),
             );
         }
@@ -122,6 +122,18 @@ impl ImageConfig {
         argv
     }
 
+    /// The command line of one run: the manifest's `oci.args` replace the
+    /// image's command and keep its entrypoint, as a Kubernetes container's
+    /// `args` do.
+    pub fn argv_with(&self, args: &[String]) -> Vec<String> {
+        if args.is_empty() {
+            return self.argv();
+        }
+        let mut argv = self.entrypoint.clone();
+        argv.extend(args.iter().cloned());
+        argv
+    }
+
     /// The environment the process gets: the image's, PATH set where it
     /// is not, and the run's bindings over it (a binding names a variable
     /// the manifest requested, which wins over the image's value).
@@ -143,7 +155,7 @@ impl ImageConfig {
     /// grants.
     pub fn describe(&self, opts: &RunOptions) -> Description {
         Description {
-            argv: self.argv(),
+            argv: self.argv_with(&opts.args),
             env: self.environment(&opts.env),
             cwd: if self.working_dir.is_empty() {
                 "/".to_string()

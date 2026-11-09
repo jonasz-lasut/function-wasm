@@ -71,7 +71,7 @@ function-wasm's 1.x promise doesn't extend to it. Until function-oci's own
 1.0.0, a release may break anything the package has. A release that
 renames or removes something refuses the old name by name, with no
 deprecation step. The design record keeps the alpha label until the
-process contract and the engine's flags have held through two minor
+contract and the engine's flags have held through two minor
 releases
 ([OCI runtime](../one-pager-oci-runtime.md#two-packages-one-workspace)).
 
@@ -79,16 +79,14 @@ What function-oci shares with function-wasm is the Input, the module
 manifest and the `guestfn_*` metric names. Whether those are stable for
 function-oci isn't decided: that waits for function-wasm's 1.0.0.
 
-`oci@0.1` is the process contract
-([OCI modules](../oci/modules.md#the-process-contract)). The runtime runs
-the image's configured entrypoint and command once per request, as the
-image's configured user, in its configured working directory, with its
-configured environment plus the `requires.env` bindings the module was
-granted. The process reads the `RunFunctionRequest` bytes from standard
-input and writes the `RunFunctionResponse` bytes to standard output.
-Standard error is its log: a line that's a JSON object with `level` and
-`msg` logs at that level, and any other line logs at info. An exit status
-of zero with a response on standard output is a run, and any other ending
+`oci@0.1` is the contract an image follows
+([OCI modules](../oci/modules.md#the-contract)). The image's command starts
+a `FunctionRunnerService` gRPC server on port 9443, and the runtime calls
+`RunFunction` on it once per request, as the image's configured user, in
+its configured working directory, with its configured environment plus the
+`requires.env` bindings the module was granted. The process's output is its
+log: a line that's a JSON object with `level` and `msg` logs at that level,
+and any other line logs at info. An answer is a run, and any other ending
 is a fatal result on the step.
 
 A module's manifest declares the contract it follows, `contract: oci@0.1`,
@@ -99,7 +97,7 @@ images built for the one before
 at `oci@1.0`, with function-oci's 1.0.0.
 
 The wording of a fatal result isn't part of the contract. `oci@0.1` says
-what an exit means, and the sentence that reports it, such as `process
+what an ending means, and the sentence that reports it, such as `process
 exited with status <n>`, may change in any release. The conformance
 goldens pin none of function-oci's sentences.
 

@@ -3,10 +3,13 @@
 //! connection the init opens to the host (docs/one-pager-oci-runtime.md,
 //! "The sandbox"). Frames carry a kind byte, a big-endian length and the
 //! payload. The init says hello; the host answers with the run's
-//! description and the request bytes; the init relays the process's
-//! stdout and stderr as they arrive, then its exit, and the connection
-//! ends. Nothing here knows a VMM: the host side is any listener the
-//! sandbox puts the guest's port on (a Unix socket for Firecracker).
+//! description; the init starts the process and relays its stdout and
+//! stderr as they arrive. When the function's server accepts connections
+//! the init opens a second connection to the host and bridges it to that
+//! server, and the host calls `RunFunction` over it. The host then says
+//! finish, the init stops the process and reports its exit, and the
+//! connection ends. Nothing here knows a VMM: the host side is any listener
+//! the sandbox puts the guest's ports on (Unix sockets for Firecracker).
 
 use std::io::{Read, Write};
 
@@ -14,14 +17,19 @@ use serde::{Deserialize, Serialize};
 
 /// The vsock port the init connects to, on the host's well-known CID.
 pub const PORT: u32 = 5000;
+/// The vsock port the init bridges the function's server to.
+pub const GRPC_PORT: u32 = 5001;
+/// The port the contract says the function's server listens on, the one
+/// Crossplane's function runtime uses.
+pub const SERVER_PORT: u16 = 9443;
 pub const HOST_CID: u32 = 2;
 
 /// The protocol's version, in the init's hello: a host meeting another
 /// refuses the run rather than guess.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
-/// Most bytes one frame carries; stdout, stderr and stdin travel in frames
-/// of at most this size.
+/// Most bytes one frame carries; stdout and stderr travel in frames of at
+/// most this size.
 pub const MAX_FRAME: usize = 1 << 20;
 
 /// The frame kinds. The numbers are the wire format.
@@ -32,10 +40,6 @@ pub enum Kind {
     Hello = 1,
     /// host → init: the run's Description.
     Run = 2,
-    /// host → init: a chunk of the process's stdin (the request bytes).
-    Stdin = 3,
-    /// host → init: the end of stdin.
-    StdinEnd = 4,
     /// init → host: a chunk of stdout.
     Stdout = 5,
     /// init → host: a chunk of stderr.
@@ -51,6 +55,9 @@ pub enum Kind {
     /// does nothing until the connection ends, so the VM is still when
     /// the host freezes it.
     Parked = 9,
+    /// host → init: the call has its answer. The init stops the process
+    /// and reports its exit, which flushes what the process logged.
+    Finish = 10,
 }
 
 impl Kind {
@@ -58,13 +65,12 @@ impl Kind {
         Some(match b {
             1 => Kind::Hello,
             2 => Kind::Run,
-            3 => Kind::Stdin,
-            4 => Kind::StdinEnd,
             5 => Kind::Stdout,
             6 => Kind::Stderr,
             7 => Kind::Exit,
             8 => Kind::Park,
             9 => Kind::Parked,
+            10 => Kind::Finish,
             _ => return None,
         })
     }
@@ -81,7 +87,8 @@ pub struct Hello {
 /// init reads no config of its own.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Description {
-    /// The command line: the image's entrypoint followed by its cmd.
+    /// The command line: the image's entrypoint followed by its cmd, or by
+    /// the manifest's `oci.args` where it sets them.
     pub argv: Vec<String>,
     /// `KEY=VALUE` entries, the image's environment plus the bindings the
     /// run was granted; PATH among them, which the init resolves argv[0]
@@ -178,14 +185,6 @@ pub fn read_json<T: for<'de> Deserialize<'de>>(
     serde_json::from_slice(&payload).map_err(std::io::Error::other)
 }
 
-/// Writes bytes as a sequence of frames of at most MAX_FRAME each.
-pub fn write_chunked(w: &mut impl Write, kind: Kind, bytes: &[u8]) -> std::io::Result<()> {
-    for chunk in bytes.chunks(MAX_FRAME) {
-        write_frame(w, kind, chunk)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,8 +206,7 @@ mod tests {
             seed: "00ff".into(),
         };
         write_json(&mut buf, Kind::Run, &d).unwrap();
-        write_chunked(&mut buf, Kind::Stdin, &vec![7u8; MAX_FRAME + 10]).unwrap();
-        write_frame(&mut buf, Kind::StdinEnd, &[]).unwrap();
+        write_frame(&mut buf, Kind::Finish, &[]).unwrap();
         write_frame(&mut buf, Kind::Park, &[]).unwrap();
         write_frame(&mut buf, Kind::Parked, &[]).unwrap();
         let mut r = buf.as_slice();
@@ -216,12 +214,7 @@ mod tests {
         assert_eq!(hello.version, VERSION);
         let got: Description = read_json(&mut r, Kind::Run).unwrap();
         assert_eq!(got, d);
-        let (k, first) = read_frame(&mut r).unwrap();
-        assert_eq!((k, first.len()), (Kind::Stdin, MAX_FRAME));
-        let (k, second) = read_frame(&mut r).unwrap();
-        assert_eq!((k, second.len()), (Kind::Stdin, 10));
-        let (k, end) = read_frame(&mut r).unwrap();
-        assert_eq!((k, end.len()), (Kind::StdinEnd, 0));
+        assert_eq!(read_frame(&mut r).unwrap().0, Kind::Finish);
         assert_eq!(read_frame(&mut r).unwrap().0, Kind::Park);
         assert_eq!(read_frame(&mut r).unwrap().0, Kind::Parked);
         assert!(read_frame(&mut r).is_err());

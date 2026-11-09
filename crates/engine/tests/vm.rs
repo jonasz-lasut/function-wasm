@@ -1,5 +1,5 @@
-//! The engine over a real Firecracker VM: the process contract end to end
-//! with the committed fixture process. Needs KVM, the Firecracker binary,
+//! The engine over a real Firecracker VM: the contract end to end with
+//! the committed fixture function. Needs KVM, the Firecracker binary,
 //! a guest kernel and the init and fixture binaries built for musl, named
 //! by GUESTFN_FIRECRACKER, GUESTFN_KERNEL, GUESTFN_INIT and
 //! GUESTFN_FIXTURE (`make oci.tools` and `make oci.init` set them up); without them every test
@@ -12,6 +12,10 @@ use std::time::Duration;
 use guestfn_engine::oci::testing::fixture_image;
 use guestfn_engine::oci::{Oci, Options};
 use guestfn_engine::{ArtifactStore, Config, Engine, RunOptions};
+
+use function_sdk_rust::proto::v1::{RequestMeta, RunFunctionRequest, RunFunctionResponse};
+use guestfn_engine::oci::Module;
+use prost::Message as _;
 
 struct Tools {
     firecracker: PathBuf,
@@ -76,26 +80,45 @@ fn opts() -> RunOptions {
     }
 }
 
+/// Calls the function with a tag and returns what it answered in its
+/// response's tag.
+fn ask(e: &Oci, m: &Module, tag: &str, o: RunOptions) -> Result<String, String> {
+    let request = RunFunctionRequest {
+        meta: Some(RequestMeta {
+            tag: tag.to_string(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+    .encode_to_vec();
+    let response = e.run(m, &request, o).map_err(|e| e.0)?;
+    Ok(RunFunctionResponse::decode(response.as_slice())
+        .expect("a response")
+        .meta
+        .map(|m| m.tag)
+        .unwrap_or_default())
+}
+
 #[test]
-fn a_process_echoes_the_request_as_the_response() {
+fn a_function_answers_the_call() {
     let Some(t) = tools() else { return };
     let e = engine(&t, Config::default());
     let m = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "echo"],
+            &["/fixture", "--insecure", "echo"],
             "app",
             &[],
         ))
         .unwrap();
-    let request = vec![7u8; 300_000];
+    let request = "7".repeat(300_000);
     let started = std::time::Instant::now();
-    let out = e.run(&m, &request, opts()).unwrap();
+    let out = ask(&e, &m, &request, opts()).unwrap();
     eprintln!("first run took {:?}", started.elapsed());
     assert_eq!(out, request);
     // A second run boots a fresh VM; nothing of the first is seen.
-    let out = e.run(&m, b"again", opts()).unwrap();
-    assert_eq!(out, b"again");
+    let out = ask(&e, &m, "again", opts()).unwrap();
+    assert_eq!(out, "again");
 }
 
 #[test]
@@ -103,23 +126,28 @@ fn the_process_runs_as_the_image_says() {
     let Some(t) = tools() else { return };
     let e = engine(&t, Config::default());
     let m = e
-        .compile(&fixture_image(&t.fixture, &["/fixture", "id"], "app", &[]))
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "id"],
+            "app",
+            &[],
+        ))
         .unwrap();
-    let out = String::from_utf8(e.run(&m, b"", opts()).unwrap()).unwrap();
+    let out = ask(&e, &m, "", opts()).unwrap();
     assert_eq!(out.trim(), "uid=1000 gid=1000 groups=");
-    let m = e
-        .compile(&fixture_image(&t.fixture, &["/fixture", "cwd"], "", &[]))
-        .unwrap();
-    assert_eq!(
-        String::from_utf8(e.run(&m, b"", opts()).unwrap())
-            .unwrap()
-            .trim(),
-        "/home/app"
-    );
     let m = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "env"],
+            &["/fixture", "--insecure", "cwd"],
+            "",
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(ask(&e, &m, "", opts()).unwrap().trim(), "/home/app");
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "env"],
             "",
             &["FROM_IMAGE=yes"],
         ))
@@ -127,24 +155,19 @@ fn the_process_runs_as_the_image_says() {
     let mut o = opts();
     o.env
         .insert("FROM_BINDING".to_string(), "bound".to_string());
-    let out = String::from_utf8(e.run(&m, b"", o).unwrap()).unwrap();
+    let out = ask(&e, &m, "", o).unwrap();
     assert!(out.contains("FROM_IMAGE=yes\n"), "{out}");
     assert!(out.contains("FROM_BINDING=bound\n"), "{out}");
     assert!(out.contains("PATH=/usr/local/sbin"), "{out}");
     let m = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "hostname"],
+            &["/fixture", "--insecure", "hostname"],
             "",
             &[],
         ))
         .unwrap();
-    assert_eq!(
-        String::from_utf8(e.run(&m, b"", opts()).unwrap())
-            .unwrap()
-            .trim(),
-        "guestfn"
-    );
+    assert_eq!(ask(&e, &m, "", opts()).unwrap().trim(), "guestfn");
 }
 
 #[test]
@@ -152,10 +175,15 @@ fn the_root_filesystem_is_writable_and_discarded() {
     let Some(t) = tools() else { return };
     let e = engine(&t, Config::default());
     let m = e
-        .compile(&fixture_image(&t.fixture, &["/fixture", "tmp"], "", &[]))
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "tmp"],
+            "",
+            &[],
+        ))
         .unwrap();
     for _ in 0..2 {
-        let out = String::from_utf8(e.run(&m, b"", opts()).unwrap()).unwrap();
+        let out = ask(&e, &m, "", opts()).unwrap();
         assert_eq!(out.trim(), "tmp=scratch root=writable");
     }
 }
@@ -167,32 +195,81 @@ fn a_non_zero_exit_names_the_status_and_the_last_line() {
     let m = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "exit", "3"],
+            &["/fixture", "--insecure", "exit", "3"],
             "",
             &[],
         ))
         .unwrap();
     assert_eq!(
-        e.run(&m, b"", opts()).unwrap_err().0,
-        "process exited with status 3: exiting as asked"
+        ask(&e, &m, "", opts()).unwrap_err(),
+        "process exited with status 3 before answering the call: exiting as asked"
     );
     let m = e
-        .compile(&fixture_image(&t.fixture, &["/fixture", "stderr"], "", &[]))
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "stderr"],
+            "",
+            &[],
+        ))
         .unwrap();
-    assert_eq!(e.run(&m, b"with logs", opts()).unwrap(), b"with logs");
+    assert_eq!(ask(&e, &m, "with logs", opts()).unwrap(), "with logs");
     let m = e
-        .compile(&fixture_image(&t.fixture, &["/fixture", "silent"], "", &[]))
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "silent"],
+            "",
+            &[],
+        ))
         .unwrap();
     assert_eq!(
-        e.run(&m, b"", opts()).unwrap_err().0,
-        "process exited with status 0 and wrote no response to its standard output"
+        ask(&e, &m, "", opts()).unwrap_err(),
+        "process exited with status 0 before answering the call"
     );
     let m = e
         .compile(&fixture_image(&t.fixture, &["/nowhere"], "", &[]))
         .unwrap();
-    let err = e.run(&m, b"", opts()).unwrap_err().0;
+    let err = ask(&e, &m, "", opts()).unwrap_err();
     assert!(
         err.starts_with("cannot start the process: cannot start /nowhere:"),
+        "{err}"
+    );
+}
+
+/// A function that answers with an error fails the run with its words.
+#[test]
+fn a_function_s_error_is_the_run_s() {
+    let Some(t) = tools() else { return };
+    let e = engine(&t, Config::default());
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "refuse"],
+            "",
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(
+        ask(&e, &m, "", opts()).unwrap_err(),
+        "run returned an error: refused as asked (gRPC status FailedPrecondition)"
+    );
+}
+
+/// The manifest's `oci.args` replace the image's command and keep its
+/// entrypoint: an SDK image is started with `--insecure` this way.
+#[test]
+fn the_manifest_s_args_start_the_function() {
+    let Some(t) = tools() else { return };
+    let e = engine(&t, Config::default());
+    let m = e
+        .compile(&fixture_image(&t.fixture, &["/fixture"], "", &[]))
+        .unwrap();
+    let mut o = opts();
+    o.args = vec!["--insecure".to_string(), "echo".to_string()];
+    assert_eq!(ask(&e, &m, "with args", o).unwrap(), "with args");
+    // No flag: the SDK's server refuses to start without credentials.
+    let err = ask(&e, &m, "", opts()).unwrap_err();
+    assert!(
+        err.starts_with("process exited with status 1 before answering the call"),
         "{err}"
     );
 }
@@ -202,13 +279,18 @@ fn the_deadline_stops_a_spinning_process() {
     let Some(t) = tools() else { return };
     let e = engine(&t, Config::default());
     let m = e
-        .compile(&fixture_image(&t.fixture, &["/fixture", "spin"], "", &[]))
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "spin"],
+            "",
+            &[],
+        ))
         .unwrap();
     let mut o = opts();
     o.timeout = Some(Duration::from_secs(3));
     let started = std::time::Instant::now();
     assert_eq!(
-        e.run(&m, b"", o).unwrap_err().0,
+        ask(&e, &m, "", o).unwrap_err(),
         "run failed: module exceeded its execution deadline (3s)"
     );
     assert!(started.elapsed() < Duration::from_secs(10));
@@ -221,14 +303,14 @@ fn the_memory_limit_kills_a_growing_process() {
     let m = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "grow", "200"],
+            &["/fixture", "--insecure", "grow", "200"],
             "",
             &[],
         ))
         .unwrap();
     let mut o = opts();
     o.memory_limit = Some(96 << 20);
-    let err = e.run(&m, b"", o).unwrap_err().0;
+    let err = ask(&e, &m, "", o).unwrap_err();
     assert!(
         err.starts_with("process was killed: the run's memory limit of 96Mi was exceeded")
             || err.starts_with("process was killed by signal 9"),
@@ -246,17 +328,21 @@ fn a_restored_clone_runs_like_a_boot() {
     let m = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "echo"],
+            &["/fixture", "--insecure", "echo"],
             "app",
             &[],
         ))
         .unwrap();
-    for (i, request) in [vec![7u8; 300_000], b"again".to_vec(), b"and again".to_vec()]
-        .into_iter()
-        .enumerate()
+    for (i, request) in [
+        "7".repeat(300_000),
+        "again".to_string(),
+        "and again".to_string(),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let started = std::time::Instant::now();
-        let out = e.run(&m, &request, opts()).unwrap();
+        let out = ask(&e, &m, &request, opts()).unwrap();
         // The first run boots and snapshots; the others restore.
         eprintln!("snapshots on: run {i} took {:?}", started.elapsed());
         assert_eq!(out, request);
@@ -265,23 +351,23 @@ fn a_restored_clone_runs_like_a_boot() {
     let booted = booting
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "echo"],
+            &["/fixture", "--insecure", "echo"],
             "app",
             &[],
         ))
         .unwrap();
     let started = std::time::Instant::now();
-    assert_eq!(booting.run(&booted, b"again", opts()).unwrap(), b"again");
+    assert_eq!(ask(&booting, &booted, "again", opts()).unwrap(), "again");
     eprintln!("snapshots off: a run took {:?}", started.elapsed());
     let m = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "exit", "3"],
+            &["/fixture", "--insecure", "exit", "3"],
             "",
             &[],
         ))
         .unwrap();
-    let err = e.run(&m, b"", opts()).unwrap_err().0;
+    let err = ask(&e, &m, "", opts()).unwrap_err();
     assert!(err.starts_with("process exited with status 3"), "{err}");
 }
 
@@ -292,28 +378,35 @@ fn restored_clones_share_nothing() {
     let Some(t) = tools() else { return };
     let e = engine_with(&t, Config::default(), true);
     let random = e
-        .compile(&fixture_image(&t.fixture, &["/fixture", "random"], "", &[]))
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "random"],
+            "",
+            &[],
+        ))
         .unwrap();
-    let draws: Vec<Vec<u8>> = (0..4)
-        .map(|_| e.run(&random, b"", opts()).unwrap())
+    let draws: Vec<String> = (0..4)
+        .map(|_| ask(&e, &random, "", opts()).unwrap())
         .collect();
     for (i, a) in draws.iter().enumerate() {
-        assert_eq!(a.len(), 32, "{:?}", String::from_utf8_lossy(a));
+        assert_eq!(a.len(), 32, "{a:?}");
         for b in &draws[i + 1..] {
             assert_ne!(a, b, "two clones drew the same randomness");
         }
     }
     let clock = e
-        .compile(&fixture_image(&t.fixture, &["/fixture", "clock"], "", &[]))
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "clock"],
+            "",
+            &[],
+        ))
         .unwrap();
     // The first run made the snapshot a moment ago; wait, so a clock left
     // at the snapshot's moment would show.
-    let _ = e.run(&clock, b"", opts()).unwrap();
+    let _ = ask(&e, &clock, "", opts()).unwrap();
     std::thread::sleep(Duration::from_secs(3));
-    let guest: u64 = String::from_utf8(e.run(&clock, b"", opts()).unwrap())
-        .unwrap()
-        .parse()
-        .unwrap();
+    let guest: u64 = ask(&e, &clock, "", opts()).unwrap().parse().unwrap();
     let host = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -325,16 +418,15 @@ fn restored_clones_share_nothing() {
     let leftover = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "leftover"],
+            &["/fixture", "--insecure", "leftover"],
             "",
             &[],
         ))
         .unwrap();
     for _ in 0..3 {
-        let seen = e.run(&leftover, b"", opts()).unwrap();
+        let seen = ask(&e, &leftover, "", opts()).unwrap();
         assert_eq!(
-            String::from_utf8_lossy(&seen),
-            "tmp=absent root=absent",
+            seen, "tmp=absent root=absent",
             "a clone saw what another wrote"
         );
     }
@@ -406,7 +498,7 @@ fn a_stored_image_keeps_its_snapshot_in_the_store() {
     let compiled = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "echo"],
+            &["/fixture", "--insecure", "echo"],
             "app",
             &[],
         ))
@@ -425,7 +517,7 @@ fn a_stored_image_keeps_its_snapshot_in_the_store() {
         names
     };
 
-    assert_eq!(e.run(&stored, b"one", opts()).unwrap(), b"one");
+    assert_eq!(ask(&e, &stored, "one", opts()).unwrap(), "one");
     let names = kept();
     assert_eq!(names.len(), 2, "{names:?}");
     assert!(
@@ -445,17 +537,17 @@ fn a_stored_image_keeps_its_snapshot_in_the_store() {
         meta.len(),
         meta.blocks() * 512
     );
-    assert_eq!(e.run(&stored, b"two", opts()).unwrap(), b"two");
+    assert_eq!(ask(&e, &stored, "two", opts()).unwrap(), "two");
 
     // The sweep takes the memory file from under the loaded image.
     std::fs::remove_file(&mem).unwrap();
-    assert_eq!(e.run(&stored, b"three", opts()).unwrap(), b"three");
+    assert_eq!(ask(&e, &stored, "three", opts()).unwrap(), "three");
     assert!(mem.is_file(), "made again");
 
     // The image loaded again: the store still has the snapshot.
     let made = std::fs::metadata(&state).unwrap().ino();
     let again = e.deserialize_file(&entry).unwrap();
-    assert_eq!(e.run(&again, b"four", opts()).unwrap(), b"four");
+    assert_eq!(ask(&e, &again, "four", opts()).unwrap(), "four");
     assert_eq!(
         std::fs::metadata(&state).unwrap().ino(),
         made,
@@ -467,9 +559,9 @@ fn a_stored_image_keeps_its_snapshot_in_the_store() {
         .refuse
         .store(true, std::sync::atomic::Ordering::Relaxed);
     let refused = e.deserialize_file(&entry).unwrap();
-    assert_eq!(e.run(&refused, b"five", opts()).unwrap(), b"five");
+    assert_eq!(ask(&e, &refused, "five", opts()).unwrap(), "five");
     assert_eq!(kept().len(), 2, "made again after the refusal");
-    assert_eq!(e.run(&refused, b"six", opts()).unwrap(), b"six");
+    assert_eq!(ask(&e, &refused, "six", opts()).unwrap(), "six");
 }
 
 /// A stored image for the snapshot tests: the echo fixture compiled,
@@ -478,7 +570,7 @@ fn stored_echo(t: &Tools, e: &Oci, dir: &std::path::Path) -> guestfn_engine::oci
     let compiled = e
         .compile(&fixture_image(
             &t.fixture,
-            &["/fixture", "echo"],
+            &["/fixture", "--insecure", "echo"],
             "app",
             &[],
         ))
@@ -505,7 +597,7 @@ fn the_warm_up_makes_the_snapshot() {
         "the snapshot is there before a run"
     );
     let started = std::time::Instant::now();
-    assert_eq!(e.run(&stored, b"first", opts()).unwrap(), b"first");
+    assert_eq!(ask(&e, &stored, "first", opts()).unwrap(), "first");
     eprintln!("the first run after warm-up took {:?}", started.elapsed());
     assert_eq!(store.snapshots_made(), 1, "the first run restored it");
     // A second warm-up of a loaded image finds the snapshot it has.
@@ -528,14 +620,14 @@ fn concurrent_first_runs_make_one_snapshot_and_do_not_wait() {
         .map(|i| {
             let e = std::sync::Arc::clone(&e);
             let m = std::sync::Arc::clone(&stored);
-            std::thread::spawn(move || e.run(&m, &[b'a' + i], opts()))
+            std::thread::spawn(move || ask(&e, &m, &(b'a' + i).to_string(), opts()))
         })
         .collect();
     for (i, run) in runs.into_iter().enumerate() {
-        assert_eq!(run.join().unwrap().unwrap(), vec![b'a' + i as u8]);
+        assert_eq!(run.join().unwrap().unwrap(), (b'a' + i as u8).to_string());
     }
     assert_eq!(store.snapshots_made(), 1);
-    assert_eq!(e.run(&stored, b"after", opts()).unwrap(), b"after");
+    assert_eq!(ask(&e, &stored, "after", opts()).unwrap(), "after");
     assert_eq!(store.snapshots_made(), 1);
 }
 
@@ -555,17 +647,17 @@ fn boot_against_restore() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(20);
-    let image = fixture_image(&t.fixture, &["/fixture", "echo"], "app", &[]);
+    let image = fixture_image(&t.fixture, &["/fixture", "--insecure", "echo"], "app", &[]);
     for (name, snapshots) in [("boot", false), ("restore", true)] {
         let e = engine_with(&t, Config::default(), snapshots);
         let m = e.compile(&image).unwrap();
         let started = std::time::Instant::now();
-        assert_eq!(e.run(&m, b"warm", opts()).unwrap(), b"warm");
+        assert_eq!(ask(&e, &m, "warm", opts()).unwrap(), "warm");
         let first = started.elapsed();
         let mut millis: Vec<f64> = (0..runs)
             .map(|_| {
                 let started = std::time::Instant::now();
-                assert_eq!(e.run(&m, b"request", opts()).unwrap(), b"request");
+                assert_eq!(ask(&e, &m, "request", opts()).unwrap(), "request");
                 started.elapsed().as_secs_f64() * 1e3
             })
             .collect();

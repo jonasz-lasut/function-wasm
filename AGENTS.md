@@ -62,7 +62,7 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       composition layer permits (scoped default-permit), the operator layer  │
 │       permits (default-deny) → Capabilities{private tmp, HTTP grant, env,    │
 │       credentials}, or a fatal "module <desc> requires …, which the … does   │
-│       not permit"; manifest.check (minRuntime vs the stamped version, config │
+│       not permit"; manifest.check (config                                    │
 │       schema); sandboxenv::materialize(env bindings, step credentials) →     │
 │       the run's env, sandboxenv::check_credentials(requires.credentials) -   │
 │       the request must carry each, and neither may name the pull credential; │
@@ -245,13 +245,13 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
   src/manifest.rs             the module manifest: parse (artifact layer), load (guestfn.yaml,
                               unknown top-level fields refused), the Contract enum
                               (`<engine>@<major>.<minor>`: wasm@1.0 the component world, oci@0.1
-                              the process contract, parsed as it is read, a version no engine
+                              the gRPC contract of an image, parsed as it is read, a version no engine
                               implements refused; `abi`, an integer, through 0.6, replaced with
                               no alias), validate (contract declared, image the digest-pinned
                               image of an oci module alone), check_type (the other package's
                               manifest refused by name; egress refused by name on function-oci
                               until the proxy phase), check (grants, config schema via
-                              jsonschema, minRuntime vs runtime_version()), summary, json
+                              jsonschema), summary, json
   src/from.rs, input.rs,      module.from fencing, the Input types, egress rule, env binding and
   egress_rules.rs,            required-credential shapes, quantity/duration parsing, env
   sandboxenv.rs, quantity.rs  materialization and the required credentials held against the request
@@ -267,7 +267,7 @@ crates/engine/              the engines, one crate (guestfn-engine): what every 
                             the only code in the workspace that imports wasmtime); the OCI
                             engine under `oci` (src/oci/, below); and the OCI runtime's guest
                             init and test fixture as the crate's two binaries, built static for
-                            musl with no feature on (make oci.init)
+                            musl, the fixture under its `fixture` feature (make oci.init)
   src/lib.rs                  the Engine trait (compile, inspect, serialize, deserialize_file,
                               stored - the module once the runtime stored its artifact, a
                               no-op but for the OCI engine, which continues from the stored
@@ -286,7 +286,7 @@ crates/engine/              the engines, one crate (guestfn-engine): what every 
   src/protocol.rs             what the guest init and the host say to each other over vsock:
                               Hello, Run with the Description (argv, env, cwd, uid, gid, groups,
                               hostname, and for a restored clone the host's clock and a seed),
-                              Stdin/StdinEnd, Stdout, Stderr, Exit (status, signal, oom, error),
+                              Stdout, Stderr, Finish, Exit (status, signal, oom, error),
                               Park and Parked around a snapshot; framed, feature-free
   src/wasm.rs                 Wasmtime (compile + checkABI, inspect → the full module shape, leases,
                               fair scheduler, memory pool, on-demand epoch ticker), RunOptions
@@ -563,10 +563,8 @@ examples/function-wasm-cpp       the C++ use case (example only: no scaffold; gu
                             Secret crossplane render supplies. Tests: src/rotator_test.cpp and
                             src/fn_test.c natively (zig build test); the build-cpp job. ~160 KB
 examples/function-oci-go      the hello function as an oci@0.1 module (#263, phase 6 of #239): a Go
-                            process on function-sdk-go's types behind main.go's process contract
-                            (RunFunctionRequest bytes on stdin, RunFunctionResponse bytes on
-                            stdout, the logger's JSON lines on stderr, a non-zero status with one
-                            plain line for a request it cannot answer), built by its Dockerfile
+                            function on function-sdk-go behind the SDK's gRPC server (main.go),
+                            its manifest's oci.args passing --insecure, built by its Dockerfile
                             into a static binary in an empty image under a numeric user; no
                             scaffold plumbing, since the contract needs none. make push pushes the
                             image to REGISTRY (127.0.0.1:5000, the development loop's registry:3)
@@ -604,22 +602,23 @@ examples/function-oci-go      the hello function as an oci@0.1 module (#263, pha
                               contract check (a command, this platform) and the run's
                               Description; initrd.rs the cpio around the init; run.rs the
                               slot, the whole-VM memory reservation, the stderr lines logged
-                              (JSON level/msg typed) and the fatal wording (`process exited
-                              with status N: <last line>`, the deadline family, the memory
+                              (JSON level/msg typed) and the fatal wording (`run returned an error`, `process exited
+                              with status N before answering the call: <last line>`, the deadline family, the memory
                               limit); testing.rs the image fixtures and the fake sandbox.
-                              tests/vm.rs runs the fixture process in real VMs when
+                              tests/vm.rs runs the fixture function in real VMs when
                               GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set (make oci.test),
                               skipping otherwise unless GUESTFN_REQUIRE_KVM
   src/bin/guestfn-init.rs     the guest init's entry point; guestfn-init/linux.rs is the init,
                               Linux alone (elsewhere the binary says so and exits, so the
                               workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
                               on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
-                              host, chroot, the process as the described user with the request
-                              on stdin, stdout/stderr relayed as frames, the exit with an OOM
+                              host, loopback up, chroot, the process as the described user, its
+                              server once serving bridged to the host over a second vsock port, stdout/stderr relayed as frames, the exit with an OOM
                               check of /dev/kmsg, then power off. Static (musl), depends on
                               nothing in the image
-  src/bin/guestfn-guest-fixture.rs  the process the VM tests run: echo, exit, stderr, spin, grow,
-                              env, cwd, id, tmp, hostname, silent
+  src/bin/guestfn-guest-fixture.rs  the function the VM tests run, on function-sdk-rust (feature
+                              fixture): echo, refuse, exit, stderr, spin, grow, env, cwd, id, tmp,
+                              hostname, silent
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package guestfn-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library
@@ -802,7 +801,7 @@ cargo test -p guestfn                     # scaffold goldens, the examples' shar
 make e2e                                  # the second tier: kind + Crossplane + the packages, every profile in turn, teardown
 make e2e.up && make e2e.wasm-profile.default   # or strict, lifecycle; e2e.up adds function-oci on a node with /dev/kvm (E2E_OCI=auto, the default) for e2e.oci-profile.default; make e2e.down when done
 (cd examples/function-wasm-go && go test -race ./...)
-(cd examples/function-oci-go && go test -race ./...)   # the OCI example: the function and the process contract, natively
+(cd examples/function-oci-go && go test -race ./...)   # the OCI example: the function, natively
 (cd examples/function-wasm-zig && zig build test)
 (cd examples/function-wasm-c && zig build test)
 (cd examples/function-wasm-odin && zig build test)       # odin and zig on PATH
@@ -930,7 +929,7 @@ The decisions below, the ones taken before the port included, describe the produ
 
 Each component has its own versions, tags and releases: git tags and GitHub releases `function-wasm-vX.Y.Z`, `function-oci-vX.Y.Z`, `guestfn-vX.Y.Z` and `wit-vX.Y.Z`, release branches `release-function-wasm-X.Y` and so on, and an OCI artifact's tag is the version alone (`function-wasm:vX.Y.Z`, the WIT world's the bare `X.Y.Z`). Releases are driven by two skills; use them rather than improvising the branch/tag/publish sequence:
 
-- **`/cut-release`** — a new minor or major version of one component from `main` HEAD: new `release-<component>-X.Y` branch, whose push runs the release matrix (`release-matrix-e2e.yml`: the end-to-end suite on the three Crossplane minors the project supports; the skill waits for it and a red version blocks the release), tag (`.github/workflows/tag.yml`), GitHub release, package publish (`Publish Function` in `publish-function.yml`, which takes the function, `function-wasm` or `function-oci`, and the version → `ghcr.io/jonasz-lasut/<function>`, mirrored to `xpkg.upbound.io/jonasz-lasut/<function>`; the version is stamped into the binary as `GUESTFN_VERSION` — what module manifests' `minRuntime` rules are checked against), signing/attestation (`supplychain.yml`). The bump size is the user's choice, never inferred.
+- **`/cut-release`** — a new minor or major version of one component from `main` HEAD: new `release-<component>-X.Y` branch, whose push runs the release matrix (`release-matrix-e2e.yml`: the end-to-end suite on the three Crossplane minors the project supports; the skill waits for it and a red version blocks the release), tag (`.github/workflows/tag.yml`), GitHub release, package publish (`Publish Function` in `publish-function.yml`, which takes the function, `function-wasm` or `function-oci`, and the version → `ghcr.io/jonasz-lasut/<function>`, mirrored to `xpkg.upbound.io/jonasz-lasut/<function>`; the version is stamped into the binary as `GUESTFN_VERSION`), signing/attestation (`supplychain.yml`). The bump size is the user's choice, never inferred.
 - **`/remediate-cves`**: a patch release on a `release-<function>-X.Y` branch (the latest by default) for CVEs found by `grype-scan.yml`: weekly, one matrix leg per function, each under its own code scanning category, each against its newest `<function>-vX.Y.Z` release (ending green with a notice while it has none). Grype sees the base image's packages alone: the crates inside the Rust binaries are `cargo deny`'s, and Firecracker and the guest kernel in function-oci's image are outside any scan, tracked by the pins in `Dockerfile.oci`, Renovate's Firecracker pull request and the kernel moved by hand with it (`SECURITY.md`). Through 0.x only the latest release branch is kept; from 1.0.0 on superseded release branches stay, so an older line can be patched when asked (Jonasz, 2026-10-07). A wasmtime crate bump is in scope there (it is the sandbox's own security fix): `crates/engine` only.
 
 `Publish guestfn` (`publish-guestfn.yml`), run by hand from a `guestfn-vX.Y.Z` tag once its GitHub release exists, builds the CLI for Linux (static, musl) and macOS, amd64 and arm64, stamps `GUESTFN_CLI_VERSION` (what `guestfn --version` prints, apart from the runtimes' `GUESTFN_VERSION`), and attaches the binaries, `SHA256SUMS` and its Sigstore bundle to the release, with SLSA provenance on the binaries (#284). `Publish WIT` (`publish-wit.yml`), run by hand from a `wit-vX.Y.Z` tag, publishes the ABI v2 world (`wit/wasmfn-function.wit`, built with a pinned `wkg`) to `ghcr.io/jonasz-lasut/wasmfn/function:<world version>`, signs and attests it, and refuses a pre-release world version (#106). It has no beta hold for the rust scaffold's `rust-toolchain.toml` and no published-tag check, and attaches no tarball to a release, so whoever runs it checks that the world version is final, that the scaffold builds on stable Rust (#129's Rust 1.100 step) and that the tag is not already in the registry. The use-case examples publish apart from the release, on their own lifecycle (#245): `publish-examples.yml` (`Publish Examples`), run by hand from `main` (guestfn built once by `build-guestfn`), builds the examples that work as published (`function-wasm-rust`, `function-wasm-ts`, `function-wasm-go`, and `function-oci-go`, whose image `docker buildx` pushes for amd64 and arm64 before `guestfn push --image` appends the manifest) and pushes them with their manifests to `ghcr.io/jonasz-lasut/guestfn/examples/<runtime>-<lang>:v<version>` (the directory less its `function-` prefix: `wasm-rust`, `oci-go`; the artifacts published through 0.6 under `ghcr.io/jonasz-lasut/wasmfn/examples/<name>` retired on 2026-11-09 with the first publish under the new names, and the e2e profiles pin `wasm-go` and `oci-go`) (the version in each `guestfn.yaml`, independent of the runtime's), signed keyless and attested - only a version not yet in the registry, so bump an example's `guestfn.yaml` version and run the workflow to publish a change; a keyless signature's identity is `publish-examples.yml@refs/heads/main` under the repository's name, the one identity the `trustSigner` rules state (the signatures page, the e2e profiles; `docs/one-pager-use-case-examples.md`). `SECURITY.md` is the dependency CVE policy these follow: the runtime is patched through `/remediate-cves`, the scaffold templates' pins are refreshed by `/cut-release` at every `guestfn` release, and the examples are refreshed by Renovate's monthly examples batch (`.github/renovate.json5`), gated by `/e2e`.

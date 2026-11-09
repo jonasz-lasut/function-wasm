@@ -158,7 +158,7 @@ pub const OCI_PROCESS_PATH: &str = "e2e-guest";
 
 impl Variant {
     /// The manifest layer: the YAML validated the way guestfn build does,
-    /// encoded the way guestfn push publishes it; an oci variant's `image`
+    /// encoded the way guestfn push publishes it; an oci variant's `oci.image`
     /// is the image it was appended to, as guestfn push --image writes it.
     pub fn manifest_json(&self) -> Result<Vec<u8>> {
         self.manifest_json_for(None)
@@ -172,7 +172,7 @@ impl Variant {
             value["version"] = serde_json::Value::String(format!("{version}-{suffix}"));
         }
         if let Some(image) = image {
-            value["image"] = serde_json::Value::String(image.to_string());
+            value["oci"]["image"] = serde_json::Value::String(image.to_string());
         }
         let manifest = Manifest::parse(&serde_json::to_vec(&value)?)
             .map_err(|e| anyhow::anyhow!("{}: {e}", self.name))?;

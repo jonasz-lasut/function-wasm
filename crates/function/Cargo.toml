@@ -20,7 +20,7 @@ clap = { version = "4", features = ["derive", "env"] }
 function-sdk-rust = "0.4.0"
 # The engine behind the runtime (src/engine.rs): the trait always, the
 # Wasmtime engine under the `wasm` feature, the OCI engine under `oci`.
-guestfn-engine = { path = "../engine", default-features = false }
+guestfn-engine = { path = "../engine", default-features = false, features = ["raw-codec"] }
 # getrandom draws the compiled store's per-process key, hmac signs each
 # artifact under it (store.rs).
 getrandom = "0.4"

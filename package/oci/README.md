@@ -2,11 +2,10 @@
 
 function-oci is a [Crossplane](https://crossplane.io) composition function
 that runs an OCI image in a [Firecracker](https://firecracker-microvm.github.io)
-microVM, one VM per request. The image's process follows the process
-contract: it reads a `RunFunctionRequest` from its standard input, writes a
-`RunFunctionResponse` to its standard output and logs to its standard error.
-You write the function in any language with a Crossplane function SDK, or
-without one, build the image with your own `Dockerfile`, publish it with its
+microVM, one VM per request. The image is an ordinary Crossplane function:
+its command starts a `FunctionRunnerService` server, and the runtime calls
+`RunFunction` on it. You write the function in any language with a
+Crossplane function SDK and build the image with your own `Dockerfile`. You then publish it with its
 manifest and point a Composition step at it. It's one of the two functions
 of the [guestfn](../../README.md) project, and shares the Input, the
 manifest, the policy layers and the CLI with
@@ -85,10 +84,10 @@ and records the image's digest in it; the result is an image Docker still
 runs, which the Composition pins. The manifest declares `contract: oci@0.1`
 and what the process needs, the way a WebAssembly module's does.
 [`examples/function-oci-go`](../../examples/function-oci-go) is the hello
-function built this way: a Go `main` around function-sdk-go, a
+function built this way: a function on function-sdk-go, a
 `Dockerfile` and the manifest. [OCI
 modules](https://jonasz-lasut.github.io/guestfn/oci/modules.html) has the
-process contract and the refusals.
+contract and the refusals.
 
 ## This directory
 

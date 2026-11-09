@@ -408,11 +408,7 @@ impl WasmFunction {
             }
         };
         if let Some(m) = &manifest
-            && let Err(e) = m.check(
-                &caps.grants(),
-                config.as_ref(),
-                crate::manifest::runtime_version(),
-            )
+            && let Err(e) = m.check(&caps.grants(), config.as_ref())
         {
             return Ok(raw_rsp(self.fatal(
                 &req,
@@ -513,6 +509,10 @@ impl WasmFunction {
             private_tmp: caps.private_tmp,
             env,
             http,
+            args: manifest
+                .as_ref()
+                .map(|m| m.args().to_vec())
+                .unwrap_or_default(),
             module: resolved.description.clone(),
             digest: resolved.digest.clone(),
         };

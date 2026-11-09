@@ -9,12 +9,14 @@
 //! imports wasmtime) and `oci`, the OCI engine of
 //! docs/one-pager-oci-runtime.md (`oci::Oci`, a Firecracker microVM per
 //! request). The crate's two binaries are the OCI runtime's guest init and
-//! the fixture process its VM tests run, built static for musl with no
-//! feature at all; `protocol` is what the init and the host say to each
-//! other.
+//! the fixture function its VM tests run, built static for musl, the
+//! init with no feature at all and the fixture under `fixture`; `protocol`
+//! is what the init and the host say to each other.
 
 pub mod concurrency;
 pub mod duration;
+#[cfg(feature = "raw-codec")]
+pub mod grpc;
 pub mod metrics;
 pub mod protocol;
 pub mod wire;
@@ -123,6 +125,10 @@ pub struct RunOptions {
     /// What answers the guest's wasi:http sends for this run. None is no
     /// grant: every send gets a refusal, never a trap.
     pub http: Option<Arc<dyn HttpRequester>>,
+
+    /// The arguments an OCI module's manifest gives its binary, replacing
+    /// the image's command. An engine with no command line ignores them.
+    pub args: Vec<String>,
 
     /// The module's description and digest, attached to guest log lines.
     pub module: String,

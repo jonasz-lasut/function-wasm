@@ -18,10 +18,10 @@ overlay, the step's `limits.memory` for the process (at least 16 MiB,
 held by a cgroup the init puts the process in, so the kernel's
 out-of-memory killer ends a process past it at once) plus 64 MiB for the
 kernel, the init, the overlay and the page cache of the root filesystem,
-and no network device. Inside it, the runtime's init runs the image's
-configured command as the image's configured user, with the request on its
-standard input, and relays its standard output, standard error and exit
-status to the host ([the process contract](modules.md)). The
+and no network device. Inside it, the runtime's init starts the image's
+configured command as the image's configured user, the host calls the
+function over gRPC, and the init relays the process's output and exit
+status to the host ([the contract](modules.md)). The
 VM ends with the run, and the next request boots a fresh one.
 
 The runtime unpacks an image once per digest into a squashfs root
@@ -155,10 +155,9 @@ step's `limits.timeout` bound the whole run, the boot included.
   with zstd, which the OCI runtime does not unpack yet`. Build the image
   with gzip layers, the default of every builder.
 
-A process that exits with a non-zero status, or that exits without a
-response, is a fatal result on the step, as a component's error is:
-`module … failed: process exited with status 3: <the last line of its
-standard error>`. The deadline and the memory limit end the run the same
+A process that exits before answering the call, or an error from the
+function, is a fatal result on the step, as a component's error is: `module … failed: process exited with status 3 before answering
+the call: <the last line it logged>`. The deadline and the memory limit end the run the same
 way: `module … failed: run failed: module exceeded its execution deadline
 (30s)` and `module … failed: process was killed: the run's memory limit of
 512Mi was exceeded`. A VM whose init never reaches the host before the

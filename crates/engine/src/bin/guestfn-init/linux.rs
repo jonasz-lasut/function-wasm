@@ -6,22 +6,27 @@
 //! with its memory, puts proc, sys, dev and a fresh /tmp into it, connects
 //! to the host over vsock, runs the image's process as the run's
 //! description says - its user, its working directory, its environment -
-//! with the request on its stdin, relays stdout and stderr as they arrive
-//! and reports the exit. Then it powers the VM off. Every failure is
+//! and relays its stdout and stderr as they arrive. Once the function's
+//! server accepts connections it bridges a second vsock connection to it,
+//! over which the host calls the function, and it reports the process's
+//! exit. Then it powers the VM off. Every failure is
 //! printed to the serial console, which the engine logs at debug, and ends
 //! the VM the same way: the host reads a missing exit as a failed run.
 
 use std::ffi::CString;
-use std::io::{Read, Write};
+use std::io::Read;
+use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use guestfn_engine::protocol::{
-    Description, Exit, Hello, Kind, read_frame, read_json, write_frame, write_json,
+    Description, Exit, GRPC_PORT, Hello, Kind, PORT, SERVER_PORT, read_frame, read_json,
+    write_frame, write_json,
 };
 
 /// The image's root filesystem: Firecracker exposes the one drive as vda.
@@ -47,6 +52,7 @@ pub fn main() {
 
 fn run() -> Result<(), String> {
     mount_base()?;
+    loopback_up()?;
     let mut sock = connect_host()?;
     write_json(
         &mut sock,
@@ -77,7 +83,7 @@ fn run() -> Result<(), String> {
             // is gone and the next host is the one to greet.
             let _ = read_frame(&mut sock);
             drop(sock);
-            sock = connect_host_within(2_000, Duration::from_millis(1))?;
+            sock = connect_vsock(PORT, 2_000, Duration::from_millis(1))?;
             write_json(
                 &mut sock,
                 Kind::Hello,
@@ -94,23 +100,6 @@ fn run() -> Result<(), String> {
         }
         other => return Err(format!("unexpected {other:?} frame in place of the run")),
     };
-    // The whole request before the process starts: it is small (a
-    // RunFunctionRequest), and the process then reads it without waiting
-    // on the host.
-    let mut request = Vec::new();
-    loop {
-        let (kind, payload) =
-            read_frame(&mut sock).map_err(|e| format!("cannot read the request: {e}"))?;
-        match kind {
-            Kind::Stdin => request.extend_from_slice(&payload),
-            Kind::StdinEnd => break,
-            other => {
-                return Err(format!(
-                    "unexpected {other:?} frame while reading the request"
-                ));
-            }
-        }
-    }
     if !description.hostname.is_empty() {
         set_hostname(&description.hostname);
     }
@@ -126,7 +115,7 @@ fn run() -> Result<(), String> {
         description.argv.first().map(String::as_str).unwrap_or("")
     );
     let sock = Arc::new(Mutex::new(sock));
-    let exit = match spawn(&description, request, &sock) {
+    let exit = match spawn(&description, &sock) {
         Ok(exit) => exit,
         Err(error) => Exit {
             error,
@@ -157,7 +146,7 @@ fn run() -> Result<(), String> {
 
 /// Runs the process and relays its streams; the error is a run that never
 /// started.
-fn spawn(d: &Description, request: Vec<u8>, sock: &Arc<Mutex<UnixStream>>) -> Result<Exit, String> {
+fn spawn(d: &Description, sock: &Arc<Mutex<UnixStream>>) -> Result<Exit, String> {
     let Some(program) = d.argv.first() else {
         return Err("the image has neither an entrypoint nor a command".to_string());
     };
@@ -170,7 +159,7 @@ fn spawn(d: &Description, request: Vec<u8>, sock: &Arc<Mutex<UnixStream>>) -> Re
         }
     }
     cmd.current_dir(if d.cwd.is_empty() { "/" } else { &d.cwd });
-    cmd.stdin(Stdio::piped());
+    cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     let (uid, gid, groups) = (d.uid, d.gid, d.groups.clone());
@@ -200,21 +189,17 @@ fn spawn(d: &Description, request: Vec<u8>, sock: &Arc<Mutex<UnixStream>>) -> Re
         std::fs::write(format!("{CGROUP}/cgroup.procs"), child.id().to_string())
             .map_err(|e| format!("cannot put the process in its cgroup: {e}"))?;
     }
-    let mut stdin = child.stdin.take().expect("piped");
-    let feeder = std::thread::spawn(move || {
-        // A process that exits without reading gets EPIPE here, which is
-        // its business, not a failure of the run.
-        let _ = stdin.write_all(&request);
-        drop(stdin);
-    });
     let stdout = child.stdout.take().expect("piped");
     let stderr = child.stderr.take().expect("piped");
     let out = relay(stdout, Kind::Stdout, Arc::clone(sock));
     let err = relay(stderr, Kind::Stderr, Arc::clone(sock));
+    let ended = Arc::new(AtomicBool::new(false));
+    bridge_when_serving(Arc::clone(&ended));
+    stop_on_finish(sock, child.id(), Arc::clone(&ended))?;
     let status = child
         .wait()
         .map_err(|e| format!("cannot wait for {program}: {e}"))?;
-    let _ = feeder.join();
+    ended.store(true, Ordering::SeqCst);
     let _ = out.join();
     let _ = err.join();
     use std::os::unix::process::ExitStatusExt as _;
@@ -227,9 +212,72 @@ fn spawn(d: &Description, request: Vec<u8>, sock: &Arc<Mutex<UnixStream>>) -> Re
     })
 }
 
+/// Waits for the function's server to accept a connection, then bridges it
+/// to the host, which calls the function over it. A process that never
+/// serves leaves the host to its deadline, or to the exit the init reports.
+fn bridge_when_serving(ended: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let server = loop {
+            if ended.load(Ordering::SeqCst) {
+                return;
+            }
+            match TcpStream::connect(("127.0.0.1", SERVER_PORT)) {
+                Ok(s) => break s,
+                Err(_) => std::thread::sleep(Duration::from_millis(2)),
+            }
+        };
+        let _ = server.set_nodelay(true);
+        let host = match connect_vsock(GRPC_PORT, 200, Duration::from_millis(5)) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("guestfn-init: cannot bridge the function: {e}");
+                return;
+            }
+        };
+        let (Ok(mut server_read), Ok(mut host_write)) = (server.try_clone(), host.try_clone())
+        else {
+            eprintln!("guestfn-init: cannot share the function's connections");
+            return;
+        };
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut server_read, &mut host_write);
+            let _ = host_write.shutdown(std::net::Shutdown::Write);
+        });
+        let (mut host_read, mut server_write) = (host, server);
+        let _ = std::io::copy(&mut host_read, &mut server_write);
+        let _ = server_write.shutdown(std::net::Shutdown::Write);
+    });
+}
+
+/// Stops the process when the host says the call is over: a server would
+/// otherwise run until the VM is killed, and what it logged with it.
+fn stop_on_finish(
+    sock: &Arc<Mutex<UnixStream>>,
+    pid: u32,
+    ended: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let mut reader = sock
+        .lock()
+        .expect("poisoned")
+        .try_clone()
+        .map_err(|e| format!("cannot share the host's connection: {e}"))?;
+    std::thread::spawn(move || {
+        while let Ok((kind, _)) = read_frame(&mut reader) {
+            if kind == Kind::Finish {
+                if !ended.load(Ordering::SeqCst) {
+                    // SAFETY: a signal to the child this process has not
+                    // reaped yet.
+                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+                }
+                return;
+            }
+        }
+    });
+    Ok(())
+}
+
 /// Relays a stream to the host in frames as it arrives, so a guest's log
-/// lines reach the host while it runs and stdout is collected whatever its
-/// size.
+/// lines reach the host while it runs.
 fn relay(
     mut from: impl Read + Send + 'static,
     kind: Kind,
@@ -373,7 +421,42 @@ fn set_hostname(name: &str) {
 /// Connects to the host on the well-known port; the host listens before
 /// the VM boots, and the retries cover the vsock driver coming up.
 fn connect_host() -> Result<UnixStream, String> {
-    connect_host_within(200, Duration::from_millis(25))
+    connect_vsock(PORT, 200, Duration::from_millis(25))
+}
+
+/// Brings up the loopback interface, which the kernel leaves down: the
+/// function's server listens on it. It's the VM's one interface.
+fn loopback_up() -> Result<(), String> {
+    // SAFETY: socket(2) with constant arguments.
+    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        return Err(format!(
+            "cannot open a socket to configure loopback: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: ifreq is plain data; zeroed is a valid value.
+    let mut request: libc::ifreq = unsafe { std::mem::zeroed() };
+    for (slot, byte) in request.ifr_name.iter_mut().zip(b"lo") {
+        *slot = *byte as libc::c_char;
+    }
+    // SAFETY: a valid fd and an ifreq naming the interface; the union's
+    // flags are what these two requests read and write.
+    let rc = unsafe {
+        let mut rc = libc::ioctl(fd, libc::SIOCGIFFLAGS as _, &mut request);
+        if rc == 0 {
+            request.ifr_ifru.ifru_flags |= (libc::IFF_UP | libc::IFF_RUNNING) as libc::c_short;
+            rc = libc::ioctl(fd, libc::SIOCSIFFLAGS as _, &request);
+        }
+        rc
+    };
+    let error = std::io::Error::last_os_error();
+    // SAFETY: the fd is ours and not used again.
+    unsafe { libc::close(fd) };
+    if rc != 0 {
+        return Err(format!("cannot bring up loopback: {error}"));
+    }
+    Ok(())
 }
 
 /// What a restored clone must not share with its siblings or keep from the
@@ -435,8 +518,8 @@ fn refresh(d: &Description) {
     }
 }
 
-/// Connects to the host's port, trying again after each refusal.
-fn connect_host_within(tries: u32, pause: Duration) -> Result<UnixStream, String> {
+/// Connects to a port of the host, trying again after each refusal.
+fn connect_vsock(port: u32, tries: u32, pause: Duration) -> Result<UnixStream, String> {
     let mut last = String::new();
     for _ in 0..tries {
         // SAFETY: socket(2) with constant arguments.
@@ -451,7 +534,7 @@ fn connect_host_within(tries: u32, pause: Duration) -> Result<UnixStream, String
         let mut addr: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
         addr.svm_family = libc::AF_VSOCK as libc::sa_family_t;
         addr.svm_cid = guestfn_engine::protocol::HOST_CID;
-        addr.svm_port = guestfn_engine::protocol::PORT;
+        addr.svm_port = port;
         // SAFETY: a valid fd and address of the stated length.
         let rc = unsafe {
             libc::connect(

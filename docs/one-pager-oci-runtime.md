@@ -19,8 +19,8 @@ This record adds a second runtime, `function-oci`, built from the same
 workspace. It runs an OCI image, any image, as the step's module, inside a
 microVM with its own guest kernel. The runtime boots one VM per request
 from the image's root filesystem. The VM has no network device. The
-process reads the request from its standard input and writes the response
-to its standard output. A small init program the runtime boots as the VM's
+image's command starts the `FunctionRunnerService` gRPC server every
+Crossplane function is, and the runtime calls it over vsock. A small init program the runtime boots as the VM's
 first process provides the services the WebAssembly guest gets through its
 world. The manifest's contract states the engine, `wasm@1.0` or `oci@0.1`,
 and the artifact `guestfn push` publishes moves to generic media types. Both
@@ -57,7 +57,7 @@ the evaluation planned didn't run.
   its manifest appended as one more layer. `guestfn inspect` shows what
   the runtime sees in it, and `function validate --resolve` admits a
   Composition offline.
-- **One manifest.** `requires`, `composes`, `config` and `minRuntime` keep
+- **One manifest.** `requires`, `composes` and `config` keep
   their meaning. A platform team's Cedar policies and manifest reviews
   transfer without a second vocabulary.
 
@@ -66,7 +66,7 @@ the evaluation planned didn't run.
 - **Running the image as a plain container.** A container shares the host
   kernel, and `function-oci` 0.1 runs on KVM only (decision 9).
 - **A second ABI for WebAssembly.** The component world remains the one
-  WebAssembly contract. The OCI contract is a process contract.
+  WebAssembly contract. The OCI contract is a gRPC server in the VM.
 - **Scaffolding and building the image.** The author writes the project
   and its `Dockerfile` and builds the image with their own tools.
   `guestfn` publishes the result (decision 12).
@@ -108,26 +108,30 @@ admission with that sentence. `function validate` validates for the
 runtime it runs in and prints the same sentence.
 
 The OCI package's contract is young. Its documentation labels it alpha
-until the process contract and the sandbox flags have held through two
+until the contract and the sandbox flags have stayed the same through two
 minors. The package has versions, tags and releases of its own
 (decision 15).
 
-### The process contract
+### The contract
 
 A module of contract `oci@0.1` is an OCI image. The runtime runs the image's
 configured entrypoint and command once per request, as the image's
 configured user, in the image's configured working directory, with the
 image's configured environment plus the bindings the manifest requested.
-The contract fits in a table:
+The command starts a `FunctionRunnerService` server on port 9443, and the
+runtime calls `RunFunction` once that port accepts a connection:
 
-| stream | content |
+| part | content |
 |---|---|
-| standard input | the raw `RunFunctionRequest` bytes the proxy forwards, as the component's `run` receives them, then end of file |
-| standard output | the raw `RunFunctionResponse` bytes, read to end of file after exit. The proxy returns them verbatim and appends `meta` at the wire level when the guest omitted it, as today |
-| standard error | log lines. A line that parses as a JSON object with `level` and `msg` becomes a typed log line with its other keys as fields. Every other line logs at info. `module` and `digest` attach as they do for the typed `log` import |
-| exit status | zero with a response on stdout is a run. Non-zero is `module <desc> failed: process exited with status <n>: <the last stderr line>`, a fatal result on a fresh response, as a component's `err(string)` is |
+| the request | the raw `RunFunctionRequest` bytes the proxy forwards, as the component's `run` receives them, through a pass-through codec |
+| the response | the raw `RunFunctionResponse` bytes. The proxy returns them verbatim and appends `meta` at the wire level when the guest omitted it, as today |
+| a status other than OK | `module <desc> failed: run returned an error: <message> (gRPC status <code>)`, a fatal result on a fresh response, as a component's `err(string)` is |
+| standard output and standard error | log lines. A line that parses as a JSON object with `level` and `msg` becomes a typed log line with its other keys as fields. Every other line logs at info. `module` and `digest` attach as they do for the typed `log` import |
+| the process ending before it answers | `module <desc> failed: process exited with status <n> before answering the call: <the last log line>` |
 
-The process gets the image's own arguments and nothing more. The runtime
+The process gets the image's own arguments, or the manifest's `oci.args` in
+place of the image's command: a function on a Crossplane SDK demands mTLS
+without `--insecure`, and the call stays inside the VM. The runtime
 sends it no signal before the deadline. At the deadline the runtime kills
 the VM and returns the deadline fatal in the wording family the engine uses
 today. The process sees `/tmp` writable and the rest of its root
@@ -180,7 +184,9 @@ one.
 contract: oci@0.1  # the engine and its contract's version; wasm@1.0 is the component world
 name: tagger
 version: 0.3.0
-image: ghcr.io/acme/tagger@sha256:…   # written by guestfn push
+oci:
+  image: ghcr.io/acme/tagger@sha256:…   # written by guestfn push
+  args: ["--insecure"]
 requires:
   egress:
     http:
@@ -239,11 +245,14 @@ release may include the published kernel is open
 **One VM per request.** The runtime starts the VM with the kernel, the
 root filesystem read-only, a vsock device, memory sized to the step's
 `limits.memory` plus the kernel's share, one vCPU (`--vm-vcpus`) and
-the deadline. The init mounts the root filesystem with a tmpfs overlay and
-reads the run's description over vsock (env, user, cwd, entrypoint and the
-proxy settings). It starts the process and pipes the request to its stdin.
-It streams stderr to the host as it arrives and collects stdout to end of
-file. After the exit it reports the status. The runtime then kills the VM,
+the deadline. The init mounts the root filesystem with a tmpfs overlay,
+brings up loopback and reads the run's description over vsock (env, user,
+cwd, entrypoint and the proxy settings). It starts the process and streams
+its output to the host as it arrives. Once the function's port accepts a
+connection the init bridges it to a second vsock connection, and the host
+calls `RunFunction` over that, bounded by the run's deadline and a limit on
+the response's size. After the answer the init stops the process and reports
+its exit, which flushes what it logged. The runtime then kills the VM,
 which discards every change the run made, and a fresh instance per request
 holds. `--enable-vm-snapshots` restores a snapshot of the booted VM in place of
 the boot ([Snapshots](#snapshots)).
@@ -389,9 +398,8 @@ scaffolds the project and builds the image (decision 12):
 | `guestfn inspect` | says that a module image is one and which image the manifest records as its origin, with the manifest's summary. `--pull` refuses it |
 | `guestfn scaffold composition` | unchanged |
 
-An OCI guest is an ordinary function with a `main` around the language's
-own SDK that reads the request from stdin and writes the response to
-stdout. `examples/function-oci-go` is one in Go, with its `Dockerfile`.
+An OCI guest is an ordinary function on the language's own SDK.
+`examples/function-oci-go` is one in Go, with its `Dockerfile`.
 
 ### The Input
 
@@ -451,8 +459,8 @@ The `v1beta1` deprecation goes with the old group.
   fake requester.
 - Conformance goldens: a new fixture family for the OCI refusals and the
   package mismatch sentence.
-- The example: `examples/function-oci-go` tests its function and the
-  process contract natively, and the `build-oci-go` job runs those tests.
+- The example: `examples/function-oci-go` tests its function natively,
+  and the `build-oci-go` job runs those tests.
 - End-to-end: an `oci` profile with the `function-oci` package on kind with
   `/dev/kvm` mounted, on a KVM-capable runner, that exercises a committed
   test image through the same Guest XR.
@@ -460,7 +468,7 @@ The `v1beta1` deprecation goes with the old group.
 ## Documentation
 
 An operators page for the OCI runtime (install, the device and the flags),
-a guests page for the process contract and for publishing an image as a
+a guests page for the contract and for publishing an image as a
 module, the manifest page's `contract` and `image` fields, the artifact's
 media types on the trust model page, the Input reference's `apiVersion`
 note, and the troubleshooting entries for the new refusals.
@@ -489,7 +497,7 @@ package starts alpha, on its own tags and releases (decision 15).
   the same `Sandbox` trait if a cluster can't offer KVM.
 - **A libkrun prototype and the comparison.** The evaluation's spike was
   one week for two prototypes behind one `Sandbox` seam, libkrun and
-  Firecracker, each running the committed test image's process contract
+  Firecracker, each running the committed test image's contract
   with the init over vsock. Its measurements were to come from a KVM
   runner and, for libkrun, an Apple Silicon laptop: time from `run` to
   the process's first byte, request round trip for a 1 MiB request,
@@ -512,11 +520,11 @@ package starts alpha, on its own tags and releases (decision 15).
 - **A plain OCI runtime (crun, youki) as the production sandbox.** Shares
   the host kernel. A development fallback at most, which decision 9
   leaves open, since Firecracker has no macOS port.
-- **The image as a gRPC function server inside the VM.** Any existing
-  function image would run unchanged, sandboxed, with the runtime as its
-  proxy. It doubles the number of contracts and depends on each image's
-  flags for an insecure listener. Rejected by the owner (2026-11-05) in
-  favour of the process contract alone.
+- **A process contract over the standard streams.** The first build ran the
+  image's command once per request with the request on standard input and
+  the response on standard output. An SDK image needed an adapter around its
+  server. Replaced before any release (Jonasz, 2026-11-09,
+  [#258](https://github.com/jonasz-lasut/guestfn/issues/258)).
 - **The manifest as an OCI 1.1 referrer of the image.** Standard, but the
   signature on the image wouldn't cover the manifest, the manifest would
   need its own signature, and the Input would pin the image rather than
@@ -577,8 +585,11 @@ The owner settled these on 2026-11-05:
 1. **Packaging.** Separate packages from one workspace, each built with its
    engine's Cargo feature. `function-wasm` keeps its size and runs
    without a device. `function-oci` needs `/dev/kvm`.
-2. **The contract.** The process contract alone. A gRPC server inside the
-   VM is under Alternatives.
+2. **The contract.** A gRPC server in the VM: the image is an ordinary
+   Crossplane function, and the host calls it over vsock (Jonasz,
+   2026-11-09, [#258](https://github.com/jonasz-lasut/guestfn/issues/258)).
+   The manifest nests keys specific to a contract under its name:
+   `oci.image` and `oci.args`.
 3. **Egress.** A TLS-decrypting proxy in the init with a per-run
    authority, for full rule parity on method and path.
 4. **The manifest's placement.** A layer of the image, found by its
@@ -595,7 +606,7 @@ The owner decided this on 2026-11-06:
 
 10. **The contract field.** The manifest's `abi` becomes `contract`, an
     enum written `<engine>@<major>.<minor>` with no alias: `wasm@1.0` is
-    the component world, `oci@0.1` the process contract, and `type` goes,
+    the component world, `oci@0.1` the contract of an image, and `type` goes,
     since the contract states the engine. From a contract's 1.0 a minor
     adds fields a module may use between versions and a major changes what
     the engine does with a module, and at 0.x a minor may change anything.
@@ -641,7 +652,7 @@ The owner decided these the same day:
 16. **Compatibility at 0.x.** Until function-oci's 1.0.0 a release may
     break anything the package has, and it announces a rename or a
     removal by refusing the old name by name. The wording of a fatal
-    result is never a contract. The process contract is `oci@0.1` while
+    result is never a contract. The contract is `oci@0.1` while
     function-oci is 0.x: a minor version may break images built for the
     one before, and `oci@1.0` comes with function-oci's 1.0.0. Whether the
     Input, the manifest and the metric names are stable for function-oci
@@ -689,7 +700,7 @@ order from these phases to 0.1, the package's first release.
    by name.
 6. Done in part ([#263](https://github.com/jonasz-lasut/guestfn/issues/263)):
    `examples/function-oci-go`, the hello function as an image on the
-   process contract, published by `publish-examples.yml` through `docker
+   contract, published by `publish-examples.yml` through `docker
    buildx` and `guestfn push --image`, and the `oci` e2e case that pulls
    the published example from `ghcr.io`. The `function-oci` package's
    publish workflow (`Publish Function`, with `function-oci` chosen), its

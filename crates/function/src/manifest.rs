@@ -25,7 +25,7 @@ pub const TYPE_OCI: &str = "oci";
 /// The contracts this workspace's engines implement, by kind: the
 /// component world of docs/abi-v2.md as `wasm@1.0` (the one WebAssembly
 /// contract since function-wasm 1.0.0 removed the core-module ABI), the
-/// process contract as `oci@0.1`. From a contract's 1.0 a minor adds what
+/// gRPC contract of an image as `oci@0.1`. From a contract's 1.0 a minor adds what
 /// a module may use and a major changes what the engine does with a
 /// module; at 0.x a minor may change anything.
 pub const WASM_CONTRACTS: [Version; 1] = [Version { major: 1, minor: 0 }];
@@ -44,9 +44,28 @@ impl std::fmt::Display for Version {
     }
 }
 
+/// What only an `oci@0.1` manifest says.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OciSettings {
+    /// The image the module was built from, pinned by digest
+    /// (`ghcr.io/acme/tagger@sha256:…`): the one `guestfn push --image`
+    /// appended the manifest layer to, written into the published manifest
+    /// as provenance.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub image: String,
+    /// The arguments for the function's binary. They replace the image's
+    /// command and keep its entrypoint, as a Kubernetes container's `args`
+    /// do. A function on a Crossplane SDK usually needs `--insecure`:
+    /// its server demands mTLS otherwise, and the host's call stays inside
+    /// the VM.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+}
+
 /// The contract a module implements, `<engine>@<major>.<minor>`: the
 /// engine kind that serves it and the version of that engine's contract.
-/// `wasm@1.0` is the component world, `oci@0.1` the process contract.
+/// `wasm@1.0` is the component world, `oci@0.1` the gRPC contract of an image.
 /// Required. Named `abi` (an integer) through 0.6, replaced with no alias
 /// (docs/one-pager-oci-runtime.md, decision 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +75,7 @@ pub enum Contract {
 }
 
 /// What a wrong contract says: the shape, and the two this workspace has.
-const CONTRACT_SHAPE: &str = "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the process contract)";
+const CONTRACT_SHAPE: &str = "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the gRPC contract)";
 
 impl Contract {
     /// Parses `wasm@1.0`; a version this workspace's engines do not
@@ -155,12 +174,11 @@ pub struct Manifest {
     pub name: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub version: String,
-    /// The image an `oci@0.1` module was built from, pinned by digest
-    /// (`ghcr.io/acme/tagger@sha256:…`): the one `guestfn push --image`
-    /// appended the manifest layer to, written into the published manifest
-    /// as provenance. A `wasm@1.0` manifest must not carry it.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub image: String,
+    /// What only an OCI module says: keys specific to a contract are
+    /// nested under its engine's name. A `wasm@1.0` manifest must not
+    /// carry this section.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oci: Option<OciSettings>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub source: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -171,9 +189,6 @@ pub struct Manifest {
     /// Describes the Input's config block.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<Config>,
-    /// The oldest function-wasm runtime that serves this module.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub min_runtime: String,
     /// What the module composes - advisory (#174): the runtime judges the
     /// module's actual output against the policy layers' composeResource
     /// rules and never reads this; `function validate --resolve` warns where
@@ -318,7 +333,7 @@ pub struct Grants {
 
 /// The runtime's own release version, stamped at build time
 /// (GUESTFN_VERSION, set by the release pipeline); empty for a
-/// development build, which passes every minRuntime rule.
+/// development build.
 /// The manifest file a guest project carries.
 pub const FILE_NAME: &str = "guestfn.yaml";
 
@@ -327,6 +342,16 @@ pub fn runtime_version() -> &'static str {
 }
 
 impl Manifest {
+    /// The image an OCI module was built from, empty where none is named.
+    pub fn image(&self) -> &str {
+        self.oci.as_ref().map_or("", |o| o.image.as_str())
+    }
+
+    /// The arguments for an OCI module's binary, empty where none are.
+    pub fn args(&self) -> &[String] {
+        self.oci.as_ref().map_or(&[], |o| o.args.as_slice())
+    }
+
     /// Decodes a manifest layer's JSON payload, at most MAX_SIZE. Unknown
     /// top-level fields are ignored, so a module built by a newer guestfn
     /// still loads; an unknown field anywhere under requires is refused, so
@@ -341,21 +366,27 @@ impl Manifest {
         let value: serde_json::Value = serde_saphyr::from_slice(&raw)
             .map_err(|e| format!("{} is not valid YAML: {e}", path.display()))?;
         if let Some(map) = value.as_object() {
-            const KNOWN: [&str; 10] = [
+            const KNOWN: [&str; 9] = [
                 "contract",
                 "name",
                 "version",
-                "image",
+                "oci",
                 "source",
                 "description",
                 "requires",
                 "config",
-                "minRuntime",
                 "composes",
             ];
             for key in map.keys() {
                 if !KNOWN.contains(&key.as_str()) {
                     return Err(format!("{}: unknown field {key:?}", path.display()));
+                }
+            }
+            if let Some(oci) = map.get("oci").and_then(|v| v.as_object()) {
+                for key in oci.keys() {
+                    if !["image", "args"].contains(&key.as_str()) {
+                        return Err(format!("{}: unknown field \"oci.{key}\"", path.display()));
+                    }
                 }
             }
             // The author's file is read strictly here, where a typo can be
@@ -431,27 +462,26 @@ impl Manifest {
     /// declared (its value was checked as it was read), image is a
     /// digest-pinned reference of an oci module alone, every required
     /// egress rule passes the checks a Composition's rule passes,
-    /// minRuntime is a semantic version, and config.schema is a JSON
-    /// Schema.
+    /// and config.schema is a JSON Schema.
     pub fn validate(&self) -> Result<(), String> {
         let Some(contract) = self.contract else {
             return Err(format!("{CONTRACT_SHAPE}; the manifest declares none"));
         };
         match contract {
             Contract::Wasm(_) => {
-                if !self.image.is_empty() {
+                if self.oci.is_some() {
                     return Err(
-                        "image names an OCI image, which only an oci contract's manifest carries"
+                        "oci holds an OCI module's settings, which only an oci contract's manifest carries"
                             .to_string(),
                     );
                 }
             }
             Contract::Oci(_) => {
-                if !self.image.is_empty()
-                    && let Err(e) = crate::location::parse_oci_reference(&self.image)
+                if !self.image().is_empty()
+                    && let Err(e) = crate::location::parse_oci_reference(self.image())
                 {
                     return Err(format!(
-                        "image must be an OCI reference pinned by digest (registry/repository@sha256:…): {e}"
+                        "oci.image must be an OCI reference pinned by digest (registry/repository@sha256:…): {e}"
                     ));
                 }
             }
@@ -492,12 +522,6 @@ impl Manifest {
                     ));
                 }
             }
-        }
-        if !self.min_runtime.is_empty() && parse_semver(&canonical(&self.min_runtime)).is_none() {
-            return Err(format!(
-                "minRuntime {:?} is not a semantic version (e.g. v0.2.0)",
-                self.min_runtime
-            ));
         }
         if let Some(schema) = self.config_schema() {
             self.compile_schema(schema)?;
@@ -550,8 +574,11 @@ impl Manifest {
         }
         if let Some(c @ Contract::Oci(_)) = self.contract {
             parts.push(format!("contract {c}"));
-            if !self.image.is_empty() {
-                parts.push(format!("image {}", self.image));
+            if !self.image().is_empty() {
+                parts.push(format!("image {}", self.image()));
+            }
+            if !self.args().is_empty() {
+                parts.push(format!("args {}", self.args().join(" ")));
             }
         }
         if let Some(r) = &self.requires {
@@ -617,18 +644,12 @@ impl Manifest {
             }
             out += "config schema";
         }
-        if !self.min_runtime.is_empty() {
-            if !out.is_empty() {
-                out += "; ";
-            }
-            out += &format!("runtime {} or newer", canonical(&self.min_runtime));
-        }
         out
     }
 
     /// Holds the manifest against what one run was granted - narrowing only:
-    /// every requirement must be covered by g, the runtime must be at least
-    /// minRuntime, and config must satisfy the schema. The first miss is the
+    /// every requirement must be covered by g, and config must satisfy the
+    /// schema. The first miss is the
     /// error, worded for a fatal result the caller prefixes with the
     /// module's name.
     /// Holds the manifest's type to the package serving it (`served`: the
@@ -660,12 +681,7 @@ impl Manifest {
         }
     }
 
-    pub fn check(
-        &self,
-        g: &Grants,
-        config: Option<&Value>,
-        runtime_version: &str,
-    ) -> Result<(), String> {
+    pub fn check(&self, g: &Grants, config: Option<&Value>) -> Result<(), String> {
         if self.kind() == TYPE_OCI {
             return Ok(());
         }
@@ -697,22 +713,6 @@ impl Manifest {
                         "requires credential {name:?} (requires.credentials[{i}]), which was not granted"
                     ));
                 }
-            }
-        }
-        if !self.min_runtime.is_empty()
-            && !runtime_version.is_empty()
-            && runtime_version != "(devel)"
-        {
-            let have = canonical(runtime_version);
-            if let (Some(have_v), Some(want_v)) = (
-                parse_semver(&have),
-                parse_semver(&canonical(&self.min_runtime)),
-            ) && have_v < want_v
-            {
-                return Err(format!(
-                    "requires runtime {} or newer, this is {have}",
-                    canonical(&self.min_runtime)
-                ));
             }
         }
         self.validate_config(config)
@@ -870,33 +870,6 @@ fn describe_rule(r: &HttpRule) -> String {
     out
 }
 
-/// Gives a version the leading v its comparison wants.
-fn canonical(v: &str) -> String {
-    if v.is_empty() || v.starts_with('v') {
-        return v.to_string();
-    }
-    format!("v{v}")
-}
-
-/// A minimal semantic version: (major, minor, patch, has_prerelease) - a
-/// version with a prerelease sorts before the same version without one.
-fn parse_semver(v: &str) -> Option<(u64, u64, u64, bool)> {
-    let v = v.strip_prefix('v')?;
-    let (core, pre) = match v.split_once(['-', '+']) {
-        Some((core, _)) => (core, v.contains('-')),
-        None => (v, false),
-    };
-    let mut parts = core.split('.');
-    let major: u64 = parts.next()?.parse().ok()?;
-    let minor: u64 = parts.next().unwrap_or("0").parse().ok()?;
-    let patch: u64 = parts.next().unwrap_or("0").parse().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    // Invert has_prerelease so tuple ordering puts a prerelease first.
-    Some((major, minor, patch, !pre))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -921,7 +894,7 @@ mod tests {
             r#"{"contract":"wasm@1.0","name":"greeter"}"#
         );
         let oci = manifest(
-            r#"{"contract":"oci@0.1","name":"tagger","version":"0.3.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#,
+            r#"{"contract":"oci@0.1","name":"tagger","version":"0.3.0","oci":{"image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}}"#,
         );
         assert_eq!(oci.kind(), TYPE_OCI);
         assert!(oci.validate().is_ok());
@@ -967,14 +940,14 @@ mod tests {
         // The image is the OCI module's, pinned, and no WebAssembly
         // module's.
         assert!(
-            err(r#"{"contract":"oci@0.1","image":"ghcr.io/acme/tagger:v1"}"#)
-                .starts_with("image must be an OCI reference pinned by digest")
+            err(r#"{"contract":"oci@0.1","oci":{"image":"ghcr.io/acme/tagger:v1"}}"#)
+                .starts_with("oci.image must be an OCI reference pinned by digest")
         );
         assert_eq!(
             err(
-                r#"{"contract":"wasm@1.0","image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}"#
+                r#"{"contract":"wasm@1.0","oci":{"image":"ghcr.io/acme/tagger@sha256:b66b70ad00384aa91b72f1848e96a6a29623c66b7cb8ead15c6eea807a24f744"}}"#
             ),
-            "image names an OCI image, which only an oci contract's manifest carries"
+            "oci holds an OCI module's settings, which only an oci contract's manifest carries"
         );
     }
 
@@ -1001,15 +974,11 @@ mod tests {
             // the module's own refusal.
             (
                 r#"{"abi":1}"#,
-                "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the process contract); the manifest declares none",
+                "contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the gRPC contract); the manifest declares none",
             ),
             (
                 r#"{"contract":"wasm@1.0","requires":{"egress":{"http":[{"methods":["GET"]}]}}}"#,
                 "requires.egress.http[0] must set exactly one of host and hostPattern",
-            ),
-            (
-                r#"{"contract":"wasm@1.0","minRuntime":"latest"}"#,
-                r#"minRuntime "latest" is not a semantic version (e.g. v0.2.0)"#,
             ),
         ];
         for (raw, want) in cases {
@@ -1105,10 +1074,10 @@ mod tests {
             }],
             ..Default::default()
         };
-        assert!(m.check(&full, None, "").is_ok());
+        assert!(m.check(&full, None).is_ok());
         let none = Grants::default();
         assert_eq!(
-            m.check(&none, None, "").expect_err("refuse"),
+            m.check(&none, None).expect_err("refuse"),
             "requires egress host api.example.com methods [GET], which was not granted"
         );
     }
@@ -1130,13 +1099,13 @@ mod tests {
             credentials: vec!["cmdb".to_string(), "db".to_string()],
             ..Default::default()
         };
-        assert!(m.check(&granted, None, "").is_ok());
+        assert!(m.check(&granted, None).is_ok());
         let partly = Grants {
             credentials: vec!["cmdb".to_string()],
             ..granted
         };
         assert_eq!(
-            m.check(&partly, None, "").expect_err("refuse"),
+            m.check(&partly, None).expect_err("refuse"),
             r#"requires credential "db" (requires.credentials[1]), which was not granted"#
         );
         // Names are checked like an env binding's credential, and each is
@@ -1236,18 +1205,5 @@ mod tests {
         );
         assert!(m.validate_config(Some(&serde_json::json!("hi"))).is_ok());
         assert!(m.validate_config(Some(&serde_json::json!("Hi"))).is_err());
-    }
-
-    #[test]
-    fn min_runtime_compares() {
-        let m = manifest(r#"{"contract":"wasm@1.0","minRuntime":"0.2.0"}"#);
-        assert!(m.check(&Grants::default(), None, "(devel)").is_ok());
-        assert!(m.check(&Grants::default(), None, "").is_ok());
-        assert!(m.check(&Grants::default(), None, "v0.3.0").is_ok());
-        assert_eq!(
-            m.check(&Grants::default(), None, "v0.1.0")
-                .expect_err("refuse"),
-            "requires runtime v0.2.0 or newer, this is v0.1.0"
-        );
     }
 }

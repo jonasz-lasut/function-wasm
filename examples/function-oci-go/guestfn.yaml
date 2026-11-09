@@ -4,6 +4,10 @@
 # layers grant before every run - a manifest can refuse a run earlier and
 # say why, never make one possible.
 contract: oci@0.1
+oci:
+  # function-sdk-go's server demands mTLS without this; the host's call stays
+  # inside the VM.
+  args: ["--insecure"]
 name: function-oci-go
 version: 0.1.0
 description: The hello function as an OCI module, a Go process function-oci boots once per request.

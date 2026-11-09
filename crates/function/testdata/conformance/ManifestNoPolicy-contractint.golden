@@ -1,6 +1,6 @@
 exit 1
 --- stdout
-<DIR>/contractint.yaml: Composition/contractint pipeline[0] contractint: refused: module module file fn.wasm has an invalid manifest: cannot parse manifest: contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the process contract), got the number 1 (the field was abi, an integer, through function-wasm 0.6)
+<DIR>/contractint.yaml: Composition/contractint pipeline[0] contractint: refused: module module file fn.wasm has an invalid manifest: cannot parse manifest: contract must be <engine>@<major>.<minor>: wasm@1.0 (the component world) or oci@0.1 (the gRPC contract), got the number 1 (the field was abi, an integer, through function-wasm 0.6)
   module: sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, 255 B, contract wasm@1.0
   warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
 --- stderr

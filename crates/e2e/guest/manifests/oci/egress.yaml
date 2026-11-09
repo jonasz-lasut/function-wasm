@@ -4,6 +4,8 @@
 # The test module requiring egress to the suite's registry: GET /v2/ on the
 # in-cluster registry host, the target of every egress case.
 contract: oci@0.1
+oci:
+  args: ["--insecure"]
 name: e2e-guest
 version: 0.1.0-egress
 description: guestfn's end-to-end test module, requiring egress to the suite's registry

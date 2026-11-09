@@ -138,11 +138,11 @@ impl PushCmd {
             );
         }
         if let Some(image) = &self.image {
-            m.image = image.clone();
+            m.oci.get_or_insert_with(Default::default).image = image.clone();
         }
-        if m.image.is_empty() {
+        if m.image().is_empty() {
             return Err(format!(
-                "an oci@0.1 manifest names the image it is built from: set image in {} or pass --image registry/repository@sha256:...",
+                "an oci@0.1 manifest names the image it is built from: set oci.image in {} or pass --image registry/repository@sha256:...",
                 guestfn_runtime::manifest::FILE_NAME
             ));
         }
@@ -150,7 +150,7 @@ impl PushCmd {
         // runtime's own rule.
         m.validate()?;
         let image =
-            parse_oci_reference(&m.image).map_err(|e| format!("image {:?}: {e}", m.image))?;
+            parse_oci_reference(m.image()).map_err(|e| format!("image {:?}: {e}", m.image()))?;
         let target = parse_any_reference(&self.r#ref)?;
         if target.registry != image.registry || target.repository != image.repository {
             return Err(format!(
@@ -209,7 +209,7 @@ impl PushCmd {
         let pinned = target.pinned(&digest);
         println!(
             "Pushed {pinned} (the image {} with its manifest layer)\n\nmodule:\n  type: OCI\n  oci:\n    ref: {pinned}",
-            m.image
+            m.image()
         );
         if let Some(block) = requires_block(&m)? {
             print!("{block}");

@@ -388,8 +388,8 @@ fn describe_manifest(
     if let Some(ml) = oci::manifest_layer(m) {
         match fetch_manifest(client, &ml) {
             Ok(parsed) => {
-                if module_image && !parsed.image.is_empty() {
-                    info.image = Some(parsed.image.clone());
+                if module_image && !parsed.image().is_empty() {
+                    info.image = Some(parsed.image().to_string());
                 }
                 info.manifest = Some(parsed);
             }
