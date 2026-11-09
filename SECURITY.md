@@ -1,8 +1,9 @@
 # Security policy
 
-This policy is for anyone who depends on function-wasm or wants to report a
-vulnerability in it: how to report one, which releases receive fixes and
-where the fixes for each kind of code in this repository come from.
+This policy is for anyone who depends on function-wasm or function-oci or
+wants to report a vulnerability in either: how to report one, which
+releases receive fixes and where the fixes for each kind of code in this
+repository come from.
 
 ## Reporting a vulnerability
 
@@ -19,15 +20,29 @@ patched on request.
 
 ## The runtime
 
-The `function` binary, its image, the workspace `Cargo.lock` it's built
-from, and the Crossplane package that embeds the image: the code that runs
-in your cluster. The maintainers fix a vulnerability here as a patch release
-of the latest release line. Every pull request runs `cargo deny` over the
-workspace's dependency graph (`deny.toml`), so a published advisory against
-a pinned crate fails the merge, and the same check runs every week against
-`main`. The `grype-scan.yml` workflow scans the image of the latest release
-every week and reports what it finds to GitHub code scanning, and Renovate
-opens a pull request when an advisory affects one of the workspace's crates.
+Each function's `function` binary, its image, the workspace `Cargo.lock`
+both binaries are built from, and the Crossplane package that embeds the
+image: the code that runs in your cluster. function-oci's image also
+contains a guest init built from the same workspace, the Firecracker binary
+from Firecracker's release archive and the guest kernel that Firecracker's
+CI builds. The maintainers fix a vulnerability here as a patch release of
+the latest release line. Every pull request runs `cargo deny` over the
+workspace's dependency graph (`deny.toml`, with every feature on), so a
+published advisory against a pinned crate fails the merge, and the same
+check runs every week against `main`. Renovate opens a pull request when an
+advisory affects one of the workspace's crates.
+
+The `grype-scan.yml` workflow scans each function's latest release image
+every week and reports what it finds to GitHub code scanning. function-oci
+has no release yet, and its scan starts with the first one. Grype reads
+package metadata, which in these images is the Chainguard base's alone:
+the C library, the GCC runtime libraries and the CA certificates. It
+doesn't see the crates inside the Rust binaries, which `cargo deny` checks
+instead, and it reports nothing for Firecracker or the guest kernel.
+`Dockerfile.oci` pins both by checksum. Renovate opens a pull request for
+each Firecracker release, and the maintainers move the kernel by hand in
+that pull request, to the kernel the release's CI built. No scan in this
+repository alerts on a CVE in either.
 
 ## Scaffolded projects
 
@@ -45,8 +60,8 @@ The guests under `examples/` illustrate the guest languages. Four of them,
 `function-oci-go` (an image with its manifest layer), are published signed
 under `ghcr.io/jonasz-lasut/guestfn/examples/` (`wasm-rust`, `wasm-ts`,
 `wasm-go`, `oci-go`), so a Composition can
-reference them. The runtime image contains only the runtime binary, and
-the package embeds only the example manifests of `examples/function-wasm-go/example`.
+reference them. The runtime images contain no example code, and both
+packages embed only the example manifests of `examples/function-wasm-go/example`.
 Renovate refreshes the examples' dependencies in a monthly batch that merges
 once the end-to-end suite passes, and its vulnerability pull requests against
 them merge when their checks pass. The maintainers dismiss an alert against
