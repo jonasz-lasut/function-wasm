@@ -363,74 +363,10 @@ same `Sandbox` seam next, and the measurements decide.
 
 ### Snapshots
 
-`--vm-snapshots` restores a snapshot per image in place of a boot. It's a
-prototype from [#255](https://github.com/jonasz-lasut/guestfn/issues/255),
-off by default, and Firecracker's alone.
-
-The first run of an image at a VM size boots the VM with Firecracker's API
-socket. The init connects and says hello, and the host answers `Park` in
-place of the run. The init answers `Parked` and waits on that connection.
-The host pauses the VM and has Firecracker write a state file and a memory
-file. It then rewrites the memory file sparse and kills the VM, which
-never ran a process. A later run of that image starts a fresh
-`firecracker`, loads the snapshot through the API with the run's own vsock
-socket (`vsock_override`) and resumes it. Firecracker resets the guest's
-vsock connections across a snapshot. In the clone that reset ends the wait
-of the parked init, after the guest's driver has handled it. The init then
-connects to the clone's host and says hello as it does after a boot, and
-the run proceeds with the protocol and the fatal wording of a booted run.
-When the host can't make a snapshot, it logs a warning and boots the VM.
-
-Firecracker takes and loads a snapshot through its API alone. Those two
-paths start it with `--api-sock` in the run's private directory, and a boot
-with snapshots off still runs `--no-api`.
-
-A clone's writes are its own, as a booted VM's are. Its memory is a private
-mapping of the memory file. The overlay's upper layer and `/tmp` are tmpfs
-inside that memory, empty at the snapshot. The wall clock and the kernel's
-random state come from the snapshot, and the run's description refreshes
-both. A clone's wall clock stops at the snapshot's moment. On arm64 a
-clone restored five seconds after the snapshot read five seconds behind
-the host. The description includes the host's time, and the init sets the
-clock from it.
-The clones of one snapshot start from one kernel random state. The
-description includes 32 bytes from the host, and the init reseeds the
-kernel with them. Without the seed, five clones still drew five different
-values on the pinned 6.18 kernel, most likely through the VMGenID device,
-which Firecracker updates on a restore. The seed covers a guest kernel
-without that device.
-
-Measured on a laptop's nested KVM (arm64, Firecracker 1.17.0, the pinned
-kernel, one vCPU, the default 512 MiB limit and with it a 576 MiB VM, the
-echo fixture, 30 runs each):
-
-| | boot | restore |
-|---|---|---|
-| the whole run, median | 1123 ms | 250 ms |
-| the fastest and the slowest run | 1112 and 1152 ms | 241 and 256 ms |
-| until the init connects | 1030 ms | 3 ms to load, then 36 ms |
-| the protocol and the process | 85 ms | 205 ms |
-| `firecracker`'s resident memory at the exit | 49.7 MiB | 20.6 MiB |
-| `firecracker`'s minor page faults | 12 200 | 1 085 |
-
-The first run of an image takes 1.75 s with snapshots on: the boot, then
-about 0.6 s to write and rewrite the memory file. That file is 576 MiB long
-and 44 MiB on disk once sparse, and the state file is 6 KiB. A clone runs
-its process slower than a booted VM does because each page it touches
-faults in from the file. Nested virtualization makes a fault and a boot
-expensive: a boot here takes four times the 270 ms a CI runner measured.
-The ratio between the two paths transfers better than the milliseconds do.
-The VM suite prints both paths' times, which gives the runner's numbers on
-the next `/e2e`.
-
-The prototype stops short of the cache. Its snapshots live in the engine's
-scratch directory for the life of the process, per root filesystem, VM
-memory and vCPU count. The compiled store's per-process key already stops
-an artifact from loading after a restart, which leaves the sweep's bound
-and the `cache_bytes` gauge as what the store would add. An image's first
-request pays for the snapshot, since the warm-up doesn't make one, and no
-metric counts a restore. Adoption is the owner's decision once the
-runner's numbers are in.
+`--vm-snapshots` restores a snapshot of an image's booted VM in place of a
+boot. It's a prototype, off by default and Firecracker's alone. On a
+laptop's nested KVM the median run went from 1123 ms to 250 ms.
+[Per-image microVM snapshots](one-pager-vm-snapshots.md) is its design record.
 
 ### Offline validation and the CLI
 
@@ -598,19 +534,6 @@ package starts alpha on the shared release train.
   client finds the function's headless Service empty, which the e2e
   profile's first run showed. The device plugin admits the device, and
   the operator page keeps the symptom for the reader who meets it.
-- **An image-independent snapshot.** One generic VM snapshotted before it
-  mounts a root filesystem, with the drive pointed at the request's
-  squashfs after each restore. It costs one memory file for the whole
-  runtime in place of one per image, and the mounts and two more API calls
-  per request. [#255](https://github.com/jonasz-lasut/guestfn/issues/255)
-  didn't measure it: the per-image memory file is 44 MiB on disk once
-  sparse ([Snapshots](#snapshots)), which the cache's sweep can bound.
-- **A parked init that listens.** Firecracker keeps a guest's listening
-  sockets across a restore, so the init could listen and the host connect
-  to it. The pending reset event closes every connection the guest has
-  when it handles it, so a host that connects first can lose that
-  connection and has to retry. The init waits on the open connection
-  instead, and the reset is its wake-up.
 - **A separate repository.** The policy, proxy and tooling code is most of
   the product and changes together. Rejected.
 
@@ -701,7 +624,7 @@ Open:
    page are in the tree. Left: the `oci` e2e case that pulls the published
    example from `ghcr.io`, after the first publish.
 7. A prototype ([#255](https://github.com/jonasz-lasut/guestfn/issues/255)):
-   snapshots per image behind `--vm-snapshots` ([Snapshots](#snapshots)).
-   Left, if adopted: the snapshots move into the compiled store under the
-   sweep, with a metric of their own and a snapshot at warm-up. The
-   numbers from a CI runner come first.
+   snapshots per image behind `--vm-snapshots`
+   ([Per-image microVM snapshots](one-pager-vm-snapshots.md)).
+   [#279](https://github.com/jonasz-lasut/guestfn/issues/279) has what's
+   left.

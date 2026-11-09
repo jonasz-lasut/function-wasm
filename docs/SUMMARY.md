@@ -55,6 +55,7 @@
   - [Module source schema (Implemented, revision 2.4)](one-pager-module-source-schema.md)
   - [Module configuration from the composite resource](one-pager-module-config.md)
   - [OCI runtime (Draft)](one-pager-oci-runtime.md)
+  - [Per-image microVM snapshots (Draft)](one-pager-vm-snapshots.md)
   - [Read fence (Implemented, revision 1.0)](one-pager-read-fence.md)
   - [Runtime resource governance (Implemented, revision 1.7)](one-pager-resource-governance.md)
   - [Three-layer authorization model (Implemented, revision 1.4)](one-pager-three-layer-authz.md)
