@@ -106,4 +106,12 @@ pub trait Sandbox: Send + Sync + 'static {
     /// whatever happened; an Err is a failure of the sandbox itself (the
     /// VMM would not start), not of the process.
     fn run(&self, spec: VmSpec<'_>) -> Result<Outcome, Error>;
+
+    /// Makes ready what a later run of this VM would otherwise make
+    /// first: a sandbox that restores snapshots takes the snapshot here.
+    /// The spec's description and request say nothing yet. The default
+    /// does nothing.
+    fn prepare(&self, _spec: VmSpec<'_>) -> Result<(), Error> {
+        Ok(())
+    }
 }

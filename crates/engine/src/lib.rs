@@ -229,6 +229,14 @@ pub trait Engine: Send + Sync + 'static {
         m
     }
 
+    /// Makes ready, at warm-up, what the module's first run would
+    /// otherwise pay for. The OCI engine takes the image's VM snapshot for
+    /// the machine a step with no limits of its own gets; the default does
+    /// nothing.
+    fn warm(&self, _m: &Self::Module) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Runs one request through a module under the run's options and
     /// returns the response bytes; every failure is an `Error` whose
     /// message is the fatal result's.

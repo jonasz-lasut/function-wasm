@@ -274,9 +274,27 @@ impl Firecracker {
     /// new one. To make one the VM boots with its API socket, the init
     /// connects and is parked, and the paused VM is written out; that VM
     /// never runs a process.
-    fn snapshot(&self, snapshots: &Snapshots, spec: &VmSpec<'_>) -> Result<Arc<Snapshot>, String> {
+    ///
+    /// None while another run is making it and this one does not wait:
+    /// making a snapshot takes longer than a boot, so a run that finds the
+    /// slot taken boots, as it would without snapshots, and no request
+    /// waits past its deadline for another's snapshot.
+    fn snapshot(
+        &self,
+        snapshots: &Snapshots,
+        spec: &VmSpec<'_>,
+        wait: bool,
+    ) -> Result<Option<Arc<Snapshot>>, String> {
         let slot = spec.snapshots.slot(spec.memory_mib, spec.vcpus);
-        let mut slot = slot.lock().expect("poisoned");
+        let mut slot = if wait {
+            slot.lock().expect("poisoned")
+        } else {
+            match slot.try_lock() {
+                Ok(slot) => slot,
+                Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+                Err(std::sync::TryLockError::Poisoned(e)) => panic!("poisoned: {e}"),
+            }
+        };
         let count = |event| {
             metrics::CACHE_EVENTS
                 .with_label_values(&[metrics::CACHE_SNAPSHOT, event])
@@ -289,7 +307,7 @@ impl Firecracker {
                     store.used(&snapshot.mem);
                 }
                 count(metrics::EVENT_HIT);
-                return Ok(Arc::clone(snapshot));
+                return Ok(Some(Arc::clone(snapshot)));
             }
             // The sweep took a file from under the image: made again.
             count(metrics::EVENT_STALE);
@@ -305,7 +323,7 @@ impl Firecracker {
                 let snapshot = Arc::new(Snapshot { state, mem });
                 *slot = Some(Arc::clone(&snapshot));
                 count(metrics::EVENT_HIT);
-                return Ok(snapshot);
+                return Ok(Some(snapshot));
             }
         }
         count(metrics::EVENT_MISS);
@@ -437,7 +455,7 @@ impl Firecracker {
             );
         }
         *slot = Some(Arc::clone(&snapshot));
-        Ok(snapshot)
+        Ok(Some(snapshot))
     }
 
     /// A restore in place of a boot: a fresh Firecracker process loads the
@@ -628,8 +646,10 @@ impl Sandbox for Firecracker {
             // boot it was meant to save, never the run, and the image its
             // snapshots until it is loaded again: the next run does not try
             // what just failed.
-            match self.snapshot(snapshots, &spec) {
-                Ok(snapshot) => match self.restore(&spec, &snapshot) {
+            match self.snapshot(snapshots, &spec, false) {
+                // Another run is making it: this one boots.
+                Ok(None) => {}
+                Ok(Some(snapshot)) => match self.restore(&spec, &snapshot) {
                     Ok(outcome) => return Ok(outcome),
                     Err(e) => {
                         tracing::warn!(error = %e, "cannot restore the VM's snapshot; booting it");
@@ -650,6 +670,17 @@ impl Sandbox for Firecracker {
             }
         }
         self.boot(&spec)
+    }
+
+    fn prepare(&self, spec: VmSpec<'_>) -> Result<(), Error> {
+        if let Some(snapshots) = &self.snapshots
+            && !spec.snapshots.is_off()
+            && let Err(e) = self.snapshot(snapshots, &spec, true)
+        {
+            spec.snapshots.turn_off();
+            return Err(Error(format!("cannot snapshot the VM: {e}")));
+        }
+        Ok(())
     }
 }
 

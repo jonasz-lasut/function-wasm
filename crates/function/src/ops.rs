@@ -11,8 +11,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::cache::ModuleCache;
+use crate::engine::Selected;
 use crate::input::{ModuleSource, OciSource};
 use crate::resolver::Resolver;
+use guestfn_engine::Engine as _;
 
 /// The readiness flag the health server reads and warm-up flips.
 #[derive(Clone, Default)]
@@ -126,9 +128,16 @@ pub async fn serve_health(address: &str, readiness: Readiness) -> Result<(), std
 /// Loads every --warm-modules entry - an OCI reference pinned to its digest,
 /// or path:<file> under --module-dir - through the request path's own
 /// resolve and cache, so a warmed module is exactly what a request would
-/// have loaded. Failures are logged per entry and never fatal; the caller
-/// flips readiness when this returns.
-pub async fn warm(entries: &[String], resolver: &Arc<Resolver>, cache: &ModuleCache) {
+/// have loaded, and then lets the engine make ready what the module's
+/// first run would otherwise pay for (the OCI engine's VM snapshot).
+/// Failures are logged per entry and never fatal; the caller flips
+/// readiness when this returns.
+pub async fn warm(
+    entries: &[String],
+    resolver: &Arc<Resolver>,
+    cache: &ModuleCache,
+    engine: &Arc<Selected>,
+) {
     if entries.is_empty() {
         return;
     }
@@ -151,8 +160,24 @@ pub async fn warm(entries: &[String], resolver: &Arc<Resolver>, cache: &ModuleCa
                     .map_err(|e| format!("cannot fetch module: {e}"))
             })
             .await;
-        match loaded {
-            Ok(_) => tracing::info!(entry = %entry, digest = %resolved.digest, "Warmed module"),
+        let module = match loaded {
+            Ok(module) => module,
+            Err(e) => {
+                tracing::warn!(entry = %entry, error = %e, "Cannot warm module");
+                continue;
+            }
+        };
+        let warming = Arc::clone(engine);
+        let warmed = tokio::task::spawn_blocking(move || warming.warm(&module)).await;
+        match warmed {
+            Ok(Ok(())) => {
+                tracing::info!(entry = %entry, digest = %resolved.digest, "Warmed module")
+            }
+            // The module is loaded all the same: its first run pays for
+            // what the engine could not make ready.
+            Ok(Err(e)) => {
+                tracing::warn!(entry = %entry, digest = %resolved.digest, error = %e, "Warmed module, but the engine could not make its first run ready")
+            }
             Err(e) => tracing::warn!(entry = %entry, error = %e, "Cannot warm module"),
         }
     }
@@ -202,6 +227,7 @@ mod tests {
             &["path:missing.wasm".to_string(), "path:fn.wasm".to_string()],
             &resolver,
             &cache,
+            &engine,
         )
         .await;
 
