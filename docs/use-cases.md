@@ -61,7 +61,8 @@ explains why these were chosen and how they're published.
 
 `Publish Examples` publishes `function-wasm-rust`, `function-wasm-ts`,
 `function-wasm-go` and `function-oci-go` to
-`ghcr.io/jonasz-lasut/wasmfn/examples/<name>`, signed and attested, when the
+`ghcr.io/jonasz-lasut/guestfn/examples/<runtime>-<lang>` (`wasm-rust`,
+`wasm-ts`, `wasm-go`, `oci-go`), signed and attested, when the
 version in the example's `guestfn.yaml` isn't in the registry yet. `guestfn
 inspect <ref>` prints the digest-pinned reference for a Composition.
 

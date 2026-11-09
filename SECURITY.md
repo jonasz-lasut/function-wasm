@@ -43,7 +43,8 @@ project.
 The guests under `examples/` illustrate the guest languages. Four of them,
 `function-wasm-rust`, `function-wasm-ts`, `function-wasm-go` and
 `function-oci-go` (an image with its manifest layer), are published signed
-under `ghcr.io/jonasz-lasut/wasmfn/examples/`, so a Composition can
+under `ghcr.io/jonasz-lasut/guestfn/examples/` (`wasm-rust`, `wasm-ts`,
+`wasm-go`, `oci-go`), so a Composition can
 reference them. The runtime image contains only the runtime binary, and
 the package embeds only the example manifests of `examples/function-wasm-go/example`.
 Renovate refreshes the examples' dependencies in a monthly batch that merges

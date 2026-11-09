@@ -82,11 +82,11 @@ operator policy, default-deny. The repository also needs its
 
 ```cedar
 permit (principal, action == Action::"requireSignature", resource)
-when { resource in Repository::"ghcr.io/jonasz-lasut/wasmfn/examples" };
+when { resource in Repository::"ghcr.io/jonasz-lasut/guestfn/examples" };
 
 permit (principal, action == Action::"trustSigner", resource)
 when {
-  resource in Repository::"ghcr.io/jonasz-lasut/wasmfn/examples" &&
+  resource in Repository::"ghcr.io/jonasz-lasut/guestfn/examples" &&
   context.issuer == "https://token.actions.githubusercontent.com" &&
   (context.identity like "https://github.com/jonasz-lasut/guestfn/.github/workflows/publish-examples.yml@refs/heads/main" ||
    context.identity like "https://github.com/jonasz-lasut/function-wasm/.github/workflows/publish-examples.yml@refs/heads/main" ||
