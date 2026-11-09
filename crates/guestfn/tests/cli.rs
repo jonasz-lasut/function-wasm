@@ -118,6 +118,107 @@ fn push_then_inspect_and_show() {
     assert!(stdout.contains("- cmdb"), "{stdout}");
 }
 
+/// A module image for two platforms is an image index: push appends the
+/// manifest to each platform's image, and inspect and manifest show descend
+/// the index, where the runtime runs the entry of its node's platform. The
+/// published function-oci-go was the first such module, and inspect read
+/// its index as a manifest with no layers.
+#[test]
+fn push_a_two_platform_image_then_inspect_and_show() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("guestfn.yaml"),
+        "contract: oci@1.0\nname: tagger\nversion: 0.3.0\n",
+    )
+    .expect("write");
+    let mut registry = Registry::new();
+    let index_digest = registry.plain_index("tagger");
+    let addr = registry.serve();
+    let image = format!("{addr}/example/tagger@{index_digest}");
+    let reference = format!("{addr}/example/tagger:v0.3.0");
+
+    // The plain index: two platforms, neither a module image.
+    let (stdout, stderr, ok) = guestfn(dir.path(), &["inspect", &image]);
+    assert!(ok, "inspect failed: {stderr}");
+    assert!(
+        stdout.starts_with(&format!("{image}: index {index_digest} (")),
+        "{stdout}"
+    );
+    assert_eq!(stdout.matches("    manifest: none").count(), 2, "{stdout}");
+    let (_, stderr, ok) = guestfn(dir.path(), &["manifest", "show", &image]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("carries no module manifest layer"),
+        "{stderr}"
+    );
+
+    let (stdout, stderr, ok) = guestfn(dir.path(), &["push", &reference, "--image", &image]);
+    assert!(ok, "push failed: {stderr}");
+    let pinned = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("Pushed "))
+        .and_then(|l| l.split(' ').next())
+        .expect("pinned reference")
+        .to_string();
+
+    let (stdout, stderr, ok) = guestfn(dir.path(), &["inspect", &pinned]);
+    assert!(ok, "inspect failed: {stderr}");
+    assert!(stdout.contains(": index sha256:"), "{stdout}");
+    for platform in ["linux/amd64", "linux/arm64"] {
+        assert!(
+            stdout.contains(&format!("  {platform}: manifest sha256:")),
+            "{stdout}"
+        );
+    }
+    assert_eq!(
+        stdout
+            .matches(&format!(
+                "    module: an OCI image (oci@1.0), which the OCI runtime, function-oci, boots; built from {image}"
+            ))
+            .count(),
+        2,
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .matches(&format!(
+                "    manifest: tagger 0.3.0, contract oci@1.0, image {image}"
+            ))
+            .count(),
+        2,
+        "{stdout}"
+    );
+    assert!(!stdout.contains("the runtime would refuse it"), "{stdout}");
+
+    let (stdout, _, ok) = guestfn(dir.path(), &["inspect", &pinned, "--output", "json"]);
+    assert!(ok);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let platforms = v["reference"]["platforms"].as_array().expect("platforms");
+    assert_eq!(
+        platforms
+            .iter()
+            .map(|p| p["platform"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        ["linux/amd64", "linux/arm64"]
+    );
+    for p in platforms {
+        assert_eq!(p["image"], image);
+        assert_eq!(p["manifest"]["contract"], "oci@1.0");
+        assert_eq!(p["layers"].as_array().expect("layers").len(), 2);
+    }
+    assert!(v["reference"].get("config").is_none(), "{stdout}");
+    assert!(v["reference"].get("moduleLayerError").is_none(), "{stdout}");
+
+    let (_, stderr, ok) = guestfn(dir.path(), &["inspect", &pinned, "--pull"]);
+    assert!(!ok);
+    assert!(stderr.contains("has no module file to pull"), "{stderr}");
+
+    let (stdout, stderr, ok) = guestfn(dir.path(), &["manifest", "show", &pinned]);
+    assert!(ok, "manifest show failed: {stderr}");
+    assert!(stdout.contains("contract: oci@1.0"), "{stdout}");
+    assert!(stdout.contains("name: tagger"), "{stdout}");
+}
+
 /// An oci@1.0 manifest publishes the image with the manifest appended as
 /// one more layer (docs/one-pager-oci-runtime.md): no module file is read,
 /// the image's digest goes into the published manifest, the result sits in

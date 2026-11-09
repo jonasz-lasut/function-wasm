@@ -93,7 +93,8 @@ refuses a `Path` or `HTTP` source by name.
 
 `guestfn inspect <ref>` says that a module image is one and which image
 the manifest records as its origin, and prints the manifest out of the
-layer. `function
+layer. For a multi-platform image it describes each platform of the index,
+and `guestfn manifest show <ref>` prints the manifest the platforms share. `function
 validate --resolve` pulls the image and prints the contract's verdict, as
 it does for a component. A plain image, with no manifest layer, runs too,
 in the default sandbox, as a bare `application/wasm` layer does.
