@@ -123,3 +123,7 @@ A refusal states the module. The common ones:
 - `run failed: module exceeded its execution deadline (30s)`: the step's
   `limits.timeout`, or the runtime's `--module-timeout`, bounds the run,
   boot included.
+- `run failed: the guest did not connect before the deadline: the VM booted
+  but its init never reached the host`: the process never started; the
+  runtime's `--debug` log has the VM's console, which says where the boot
+  stopped. Not the module's doing.

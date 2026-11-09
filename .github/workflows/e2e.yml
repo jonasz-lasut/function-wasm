@@ -1218,7 +1218,7 @@ jobs:
           export GUESTFN_KERNEL="${RUNNER_TEMP}/e2e-oci-tools/vmlinux"
           export GUESTFN_INIT="${RUNNER_TEMP}/e2e-oci-tools/init"
           export GUESTFN_FIXTURE="${RUNNER_TEMP}/e2e-oci-tools/fixture"
-          cargo test --locked -p guestfn-engine --no-default-features --features oci -- --nocapture
+          cargo test --locked -p guestfn-engine --no-default-features --features oci -- --nocapture --test-threads=1
 
   # The Kubernetes-native end-to-end suite (crates/e2e, docs/project/testing.md):
   # a kind cluster with Crossplane at CROSSPLANE_VERSION, provider-nop, the

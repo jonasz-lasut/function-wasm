@@ -213,7 +213,7 @@ oci.test: oci.tools oci.init ## The OCI engine's suite over a real Firecracker V
 	@GUESTFN_FIRECRACKER=$(CURDIR)/$(OCI_TOOLS)/firecracker GUESTFN_KERNEL=$(CURDIR)/$(OCI_TOOLS)/vmlinux \
 	 GUESTFN_INIT=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-init \
 	 GUESTFN_FIXTURE=$(CURDIR)/target/$(MUSL_TARGET)/release/guestfn-guest-fixture GUESTFN_VM_CONSOLE=1 \
-	 cargo test -p guestfn-engine --no-default-features --features oci -- --nocapture || $(FAIL)
+	 cargo test -p guestfn-engine --no-default-features --features oci -- --nocapture --test-threads=1 || $(FAIL)
 
 # The test module as a process, static for musl, on the guest's own pinned
 # toolchain (its rust-toolchain.toml). A Linux host builds it natively. Any
