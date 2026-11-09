@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use crate::concurrency::{MemPool, format_bytes};
 use crate::{Error, RunOptions, duration, metrics};
 
-use crate::oci::sandbox::{Ended, VmSpec};
-use crate::oci::{Image, Oci, Rootfs};
+use crate::sandbox::{Ended, VmSpec};
+use crate::{Image, Oci, Rootfs};
 
 /// What the VM gets beyond the process's limit: the guest kernel, the
 /// init, the root filesystem's overlay and the squashfs page cache. The

@@ -15,11 +15,12 @@ use std::time::Duration;
 
 use function_sdk_rust::proto::v1::{Result as FnResult, RunFunctionResponse, Severity, Target};
 use guestfn_engine::Engine as _;
-use guestfn_engine::testing::{
+use guestfn_engine::{Config, RunOptions};
+use guestfn_engine_wasm::testing::{
     COMPONENT_CORE_PRELUDE, component_importing, component_with_run, fixed_component, grow_guest,
     lift_run, ok_result, spinning_guest, wat_bytes,
 };
-use guestfn_engine::{CORE_MODULE_REFUSAL, Config, RunOptions, Wasmtime};
+use guestfn_engine_wasm::{CORE_MODULE_REFUSAL, Wasmtime};
 use prost::Message;
 
 fn engine() -> Wasmtime {
@@ -39,7 +40,7 @@ fn response_bytes() -> Vec<u8> {
     .encode_to_vec()
 }
 
-fn compile(e: &Wasmtime, wat: &str) -> guestfn_engine::Module {
+fn compile(e: &Wasmtime, wat: &str) -> guestfn_engine_wasm::Module {
     e.compile(&wat::parse_str(wat).expect("wat"))
         .expect("compile")
 }
@@ -479,7 +480,7 @@ impl tracing::Subscriber for GuestLogLines {
         }
         // WASI's own tracing runs through the same dispatcher; only the
         // world's log import is under test.
-        if event.metadata().target() != "guestfn_engine::component" {
+        if event.metadata().target() != "guestfn_engine_wasm::component" {
             return;
         }
         let mut msg = Message(String::new());
@@ -605,7 +606,7 @@ fn the_memory_limit_denies_table_growth() {
         ..Config::default()
     })
     .expect("engine");
-    let m = compile(&e, &guestfn_engine::testing::grow_table_guest(100_000));
+    let m = compile(&e, &guestfn_engine_wasm::testing::grow_table_guest(100_000));
     let out = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(
         out.len(),
@@ -635,7 +636,7 @@ fn the_pool_denies_table_growth_it_cannot_serve() {
         .expect("engine"),
     );
     let blocker = compile(&e, &spinning_guest(300_000_000));
-    let grower = compile(&e, &guestfn_engine::testing::grow_table_guest(1));
+    let grower = compile(&e, &guestfn_engine_wasm::testing::grow_table_guest(1));
 
     let eb = std::sync::Arc::clone(&e);
     let blocking = std::thread::spawn(move || {
@@ -765,7 +766,7 @@ fn the_ceiling_is_per_run_across_regions() {
         ..Config::default()
     })
     .expect("engine");
-    let m = compile(&e, &guestfn_engine::testing::grow_table_guest(40_000));
+    let m = compile(&e, &guestfn_engine_wasm::testing::grow_table_guest(40_000));
     let out = e.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(
         out.len(),
@@ -778,7 +779,10 @@ fn the_ceiling_is_per_run_across_regions() {
         ..Config::default()
     })
     .expect("engine");
-    let m = compile(&roomy, &guestfn_engine::testing::grow_table_guest(40_000));
+    let m = compile(
+        &roomy,
+        &guestfn_engine_wasm::testing::grow_table_guest(40_000),
+    );
     let out = roomy.run(&m, b"", RunOptions::default()).expect("run");
     assert_eq!(out.len(), 1, "the growth should succeed with room for both");
 }

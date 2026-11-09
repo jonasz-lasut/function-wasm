@@ -8,10 +8,11 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use guestfn_engine::Engine as _;
-use guestfn_engine::componentize::{
+use guestfn_engine::{Config, RunOptions};
+use guestfn_engine_wasm::Wasmtime;
+use guestfn_engine_wasm::componentize::{
     StringEncoding, carries_component_type, componentize, embed_world,
 };
-use guestfn_engine::{Config, RunOptions, Wasmtime};
 
 /// The runtime's own wit/ directory: the world the engine compiles.
 const RUNTIME_WIT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../wit");

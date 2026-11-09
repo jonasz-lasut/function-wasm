@@ -20,7 +20,7 @@ use crate::Error;
 use crate::protocol::{Exit, Hello, Kind, read_frame, read_json, write_frame, write_json};
 
 use crate::metrics;
-use crate::oci::sandbox::{Ended, Outcome, Sandbox, Snapshot, VmSpec};
+use crate::sandbox::{Ended, Outcome, Sandbox, Snapshot, VmSpec};
 
 /// The guest's CID; the host is always 2.
 const GUEST_CID: u32 = 3;
@@ -1017,7 +1017,7 @@ mod tests {
         let (state, mem) = (dir.path().join("state"), dir.path().join("mem"));
         std::fs::write(&state, b"").expect("state");
         std::fs::write(&mem, b"").expect("mem");
-        let memo = crate::oci::sandbox::SnapshotMemo::default();
+        let memo = crate::sandbox::SnapshotMemo::default();
         let slot = memo.slot(64, 1);
         *slot.write().expect("poisoned") = Some(Arc::new(Snapshot { state, mem }));
         let description = Description::default();

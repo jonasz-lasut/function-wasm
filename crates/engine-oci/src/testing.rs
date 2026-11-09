@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use crate::Error;
 use crate::protocol::Description;
 
-use crate::oci::layout::{OCI_MANIFEST_TYPE, Writer};
-use crate::oci::sandbox::{Outcome, Sandbox, VmSpec};
+use crate::layout::{OCI_MANIFEST_TYPE, Writer};
+use crate::sandbox::{Outcome, Sandbox, VmSpec};
 
 pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.image.config.v1+json";
 pub const LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar";
@@ -78,7 +78,7 @@ pub fn fixture_image(program: &[u8], entrypoint: &[&str], user: &str, env: &[&st
         (&at, Some(program), 0o755),
     ]));
     let config = serde_json::json!({
-        "architecture": crate::oci::image::host_architecture(),
+        "architecture": crate::image::host_architecture(),
         "os": "linux",
         "config": {"Entrypoint": entrypoint, "User": user, "Env": env, "WorkingDir": "/home/app"},
         "rootfs": {"type": "layers", "diff_ids": []},

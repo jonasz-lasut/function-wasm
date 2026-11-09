@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 use function_sdk_rust::proto::v1::{Resource, RunFunctionRequest, RunFunctionResponse, State};
 use guestfn_engine::Engine as _;
 use guestfn_engine::wire::{HttpRequester, Request, Response};
-use guestfn_engine::{Config, Module, RunOptions, Wasmtime};
+use guestfn_engine::{Config, RunOptions};
+use guestfn_engine_wasm::{Module, Wasmtime};
 use prost::Message;
 
 const GUEST: &[u8] = include_bytes!("../../e2e/guest/fn.wasm");

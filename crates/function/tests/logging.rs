@@ -161,7 +161,7 @@ fn debug_is_scoped_to_the_runtime() {
         lines.join("\n")
     );
     assert!(
-        guest[0].contains("DEBUG") && guest[0].contains("guestfn_engine::component"),
+        guest[0].contains("DEBUG") && guest[0].contains("guestfn_engine_wasm::component"),
         "the record is logged at DEBUG by the engine: {}",
         guest[0]
     );

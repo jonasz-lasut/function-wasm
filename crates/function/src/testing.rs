@@ -6,7 +6,7 @@
 
 pub use crate::cosign::testutil::{COSIGN_SIGN_PREDICATE, Shape, TestKey, attach};
 pub use crate::testsigstore::Instance as Sigstore;
-pub use guestfn_engine::testing as guests;
+pub use guestfn_engine_wasm::testing as guests;
 
 pub mod registry {
     //! An in-memory distribution registry assembled by name.

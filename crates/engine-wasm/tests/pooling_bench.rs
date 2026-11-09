@@ -4,7 +4,7 @@
 //! evidence behind the wasmtime-adoption decision "pooling: benchmark
 //! first, adopt only on a clear win". Not part of the suite:
 //!
-//!   cargo test -p guestfn-engine --test pooling_bench --release -- --ignored --nocapture
+//!   cargo test -p guestfn-engine-wasm --test pooling_bench --release -- --ignored --nocapture
 
 use std::time::Instant;
 

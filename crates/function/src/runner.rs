@@ -1523,7 +1523,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
             dir.path().join("fn.wasm"),
-            wat::parse_str(guestfn_engine::testing::fixed_component(&bytes)).expect("wat"),
+            wat::parse_str(guestfn_engine_wasm::testing::fixed_component(&bytes)).expect("wat"),
         )
         .expect("write");
         (dir, bytes)

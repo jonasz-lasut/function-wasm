@@ -1691,6 +1691,7 @@ dependencies = [
  "clap",
  "flate2",
  "guestfn-engine",
+ "guestfn-engine-wasm",
  "guestfn-runtime",
  "hex",
  "include_dir",
@@ -1729,28 +1730,56 @@ dependencies = [
 name = "guestfn-engine"
 version = "0.1.0"
 dependencies = [
- "backhand",
  "bytes",
+ "hex",
+ "prometheus-client",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "thiserror",
+ "tonic",
+]
+
+[[package]]
+name = "guestfn-engine-oci"
+version = "0.1.0"
+dependencies = [
+ "backhand",
  "flate2",
  "function-sdk-rust",
  "guestfn-engine",
+ "guestfn-engine-oci",
  "guestfn-oci-protocol",
  "hex",
  "http",
- "http-body-util",
  "hyper-util",
- "pbjson-types",
- "prometheus-client",
  "prost",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "tar",
  "tempfile",
- "thiserror",
  "tokio",
  "tonic",
  "tower",
+ "tracing",
+]
+
+[[package]]
+name = "guestfn-engine-wasm"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "function-sdk-rust",
+ "guestfn-engine",
+ "guestfn-engine-wasm",
+ "http",
+ "http-body-util",
+ "pbjson-types",
+ "prost",
+ "serde_json",
+ "tempfile",
  "tracing",
  "wasi-preview1-component-adapter-provider",
  "wasmparser 0.258.3",
@@ -1802,6 +1831,8 @@ dependencies = [
  "function-sdk-rust",
  "getrandom 0.4.3",
  "guestfn-engine",
+ "guestfn-engine-oci",
+ "guestfn-engine-wasm",
  "guestfn-runtime",
  "hex",
  "hmac",

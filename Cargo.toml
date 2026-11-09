@@ -2,6 +2,8 @@
 resolver = "3"
 members = [
     "crates/engine",
+    "crates/engine-wasm",
+    "crates/engine-oci",
     "crates/oci-protocol",
     "crates/oci-init",
     "crates/oci-fixture",

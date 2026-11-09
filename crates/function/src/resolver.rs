@@ -313,9 +313,8 @@ impl Resolver {
     /// out of that one layer first and remembered under the pinning digest
     /// for the read that follows; a plain image runs as a manifest-less
     /// module. A WebAssembly artifact is refused by name.
-    #[cfg(feature = "oci")]
     fn fetch_image(&self, reference: &OciReference, auth: Option<Auth>) -> Result<Vec<u8>, String> {
-        use guestfn_engine::oci::layout;
+        use guestfn_engine::layout;
         let image_client = RegistryClient::new(reference, auth);
         let top = image_client.manifest_by_digest(&reference.digest, usize::MAX)?;
         if !(top.is_image() || top.is_index()) {
@@ -442,15 +441,6 @@ impl Resolver {
             })
         })?;
         crate::oci::manifest_from_layer(layer, &blob, limit)
-    }
-
-    #[cfg(not(feature = "oci"))]
-    fn fetch_image(
-        &self,
-        _reference: &OciReference,
-        _auth: Option<Auth>,
-    ) -> Result<Vec<u8>, String> {
-        Err("this runtime serves no OCI images".to_string())
     }
 
     fn fetch_path(&self, full: &Path, digest: &str) -> Result<Vec<u8>, String> {
@@ -782,7 +772,6 @@ mod tests {
     /// of the annotated layer and is remembered under the pinning digest,
     /// the layout carries every layer, and a plain image has no manifest.
     /// A WebAssembly artifact is refused before any blob is pulled.
-    #[cfg(feature = "oci")]
     #[test]
     fn a_module_image_yields_its_manifest_and_a_plain_image_none() {
         use crate::testing::registry::Registry;

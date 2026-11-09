@@ -28,7 +28,7 @@ use function_sdk_rust::proto::v1::{
     RunFunctionRequest, RunFunctionResponse, Severity, State, Status, Target,
 };
 use function_sdk_rust::resource;
-use guestfn_engine::componentize;
+use guestfn_engine_wasm::componentize;
 use guestfn_runtime::engine::Engine as _;
 use guestfn_runtime::oci::testregistry;
 use guestfn_runtime::testing::{http, policy, runtime};

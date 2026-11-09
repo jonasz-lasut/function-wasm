@@ -3,8 +3,7 @@
 //! modules through, what `cache.rs` keeps and what `validate.rs` reads. A
 //! Cargo feature selects the one engine a package serves with (`wasm`:
 //! Wasmtime; `oci`: the OCI engine of docs/one-pager-oci-runtime.md, built
-//! with --no-default-features --features oci; each the engine crate's
-//! feature of the same name), and the rest of the crate
+//! with --no-default-features --features oci), and the rest of the crate
 //! names it only as `Selected`, so a second engine is a second feature and
 //! no other change here. With both features on, which is what the lint's
 //! --all-features does, wasm serves. The engine's own flags, if any, are
@@ -13,10 +12,10 @@
 pub use guestfn_engine::{Config, Engine, Error, Inspection, RunOptions};
 
 #[cfg(feature = "wasm")]
-pub use guestfn_engine::Wasmtime as Selected;
+pub use guestfn_engine_wasm::Wasmtime as Selected;
 
 #[cfg(all(feature = "oci", not(feature = "wasm")))]
-pub use guestfn_engine::oci::Oci as Selected;
+pub use guestfn_engine_oci::Oci as Selected;
 
 #[cfg(not(any(feature = "wasm", feature = "oci")))]
 compile_error!("function-wasm serves with one engine: build with the `wasm` or the `oci` feature");
@@ -80,17 +79,6 @@ impl Default for EngineArgs {
     }
 }
 
-/// Hands the engine the compiled store for what it derives from a stored
-/// module at run time. The Wasmtime engine derives nothing; the OCI engine
-/// keeps a stored image's VM snapshots there.
-#[cfg(feature = "wasm")]
-pub fn keep_in(_engine: &Selected, _store: std::sync::Arc<crate::store::Store>) {}
-
-#[cfg(all(feature = "oci", not(feature = "wasm")))]
-pub fn keep_in(engine: &Selected, store: std::sync::Arc<crate::store::Store>) {
-    engine.keep_in(store);
-}
-
 /// The selected engine under the ceilings and its own flags.
 #[cfg(feature = "wasm")]
 pub fn new(config: Config, _args: &EngineArgs) -> Result<Selected, Error> {
@@ -101,7 +89,7 @@ pub fn new(config: Config, _args: &EngineArgs) -> Result<Selected, Error> {
 pub fn new(config: Config, args: &EngineArgs) -> Result<Selected, Error> {
     Selected::new(
         config,
-        guestfn_engine::oci::Options {
+        guestfn_engine_oci::Options {
             vmm: args.vmm.clone(),
             kernel: args.guest_kernel.clone(),
             init: args.guest_init.clone(),

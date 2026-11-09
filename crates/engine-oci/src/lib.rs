@@ -1,5 +1,5 @@
 //! The OCI engine of the `function-oci` runtime (docs/one-pager-oci-runtime.md),
-//! behind the crate's `Engine` trait as the Wasmtime engine is: a module is an OCI image, handed over as an image layout tar
+//! behind guestfn-engine's `Engine` trait as the Wasmtime engine is: a module is an OCI image, handed over as an image layout tar
 //! (`layout.rs`), compiled by unpacking its layers into a squashfs root
 //! filesystem with the image config inside it (`rootfs.rs`, `image.rs`),
 //! stored and loaded as that one file, and run once per request in a
@@ -22,10 +22,11 @@ pub mod testing;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use crate::{
-    self as api, Config, Engine, Error, Extern, HttpRequester, Inspection, RunOptions, concurrency,
-    duration, metrics, wire,
+pub(crate) use guestfn_engine::{
+    ArtifactStore, Config, Engine, Error, Inspection, RunOptions, concurrency, duration, grpc,
+    metrics,
 };
+pub(crate) use guestfn_oci_protocol as protocol;
 pub use image::ImageConfig;
 pub use sandbox::Sandbox;
 
@@ -118,13 +119,6 @@ impl Oci {
             )));
         }
         Self::with_sandbox(config, options, sandbox)
-    }
-
-    /// Keeps what the engine derives from a stored image (its VM
-    /// snapshots) in store, beside the compiled artifacts. The first call
-    /// counts; without one they stay in the engine's scratch directory.
-    pub fn keep_in(&self, store: Arc<dyn crate::ArtifactStore>) {
-        let _ = self.store.set(store);
     }
 
     /// The engine over any sandbox (tests pass a fake).
@@ -297,6 +291,13 @@ impl Engine for Oci {
         run::prepare(self, m)
     }
 
+    /// Keeps what the engine derives from a stored image (its VM
+    /// snapshots) in store, beside the compiled artifacts. The first call
+    /// counts; without one they stay in the engine's scratch directory.
+    fn keep_in(&self, store: Arc<dyn ArtifactStore>) {
+        let _ = self.store.set(store);
+    }
+
     fn version() -> String {
         version()
     }
@@ -316,9 +317,9 @@ pub fn version() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oci::sandbox::{Ended, Outcome, VmSpec};
-    use crate::oci::testing::{FakeSandbox, fixture_image};
     use crate::protocol::Exit;
+    use crate::sandbox::{Ended, Outcome, VmSpec};
+    use crate::testing::{FakeSandbox, fixture_image};
 
     fn engine(sandbox: FakeSandbox) -> Oci {
         let dir = tempfile::tempdir().unwrap();

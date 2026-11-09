@@ -9,12 +9,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use guestfn_engine::oci::testing::fixture_image;
-use guestfn_engine::oci::{Oci, Options};
 use guestfn_engine::{ArtifactStore, Config, Engine, RunOptions};
+use guestfn_engine_oci::testing::fixture_image;
+use guestfn_engine_oci::{Oci, Options};
 
 use function_sdk_rust::proto::v1::{RequestMeta, RunFunctionRequest, RunFunctionResponse};
-use guestfn_engine::oci::Module;
+use guestfn_engine_oci::Module;
 use prost::Message as _;
 
 struct Tools {
@@ -566,7 +566,7 @@ fn a_stored_image_keeps_its_snapshot_in_the_store() {
 
 /// A stored image for the snapshot tests: the echo fixture compiled,
 /// written into dir as the store would and continued from there.
-fn stored_echo(t: &Tools, e: &Oci, dir: &std::path::Path) -> guestfn_engine::oci::Module {
+fn stored_echo(t: &Tools, e: &Oci, dir: &std::path::Path) -> guestfn_engine_oci::Module {
     let compiled = e
         .compile(&fixture_image(
             &t.fixture,
@@ -633,8 +633,8 @@ fn concurrent_first_runs_make_one_snapshot_and_do_not_wait() {
 
 /// Boot against restore, by hand (#255):
 ///
-///   GUESTFN_VM_TIMING=1 cargo test -p guestfn-engine --no-default-features \
-///     --features oci,testutil --release --test vm -- --ignored --nocapture boot_against_restore
+///   GUESTFN_VM_TIMING=1 cargo test -p guestfn-engine-oci --release --test vm -- \
+///     --ignored --nocapture boot_against_restore
 ///
 /// with the suite's GUESTFN_* files set. Prints each path's whole-run
 /// latency over the echo fixture; GUESTFN_VM_TIMING adds the sandbox's

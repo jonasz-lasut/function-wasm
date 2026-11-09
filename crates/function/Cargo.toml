@@ -20,7 +20,9 @@ clap = { version = "4", features = ["derive", "env"] }
 function-sdk-rust = "0.4.0"
 # The engine behind the runtime (src/engine.rs): the trait always, the
 # Wasmtime engine under the `wasm` feature, the OCI engine under `oci`.
-guestfn-engine = { path = "../engine", default-features = false, features = ["raw-codec"] }
+guestfn-engine = { path = "../engine" }
+guestfn-engine-oci = { path = "../engine-oci", optional = true }
+guestfn-engine-wasm = { path = "../engine-wasm", optional = true }
 # getrandom draws the compiled store's per-process key, hmac signs each
 # artifact under it (store.rs).
 getrandom = "0.4"
@@ -91,11 +93,11 @@ default = ["wasm"]
 # engine, or oci, the OCI engine of docs/one-pager-oci-runtime.md, built
 # with --no-default-features --features oci. With both on (--all-features,
 # the lint) wasm serves and the oci crate is compiled beside it.
-wasm = ["guestfn-engine/wasm"]
-oci = ["guestfn-engine/oci"]
+wasm = ["dep:guestfn-engine-wasm"]
+oci = ["dep:guestfn-engine-oci"]
 # The testing module (the in-memory registry, the signers, the runtime
 # builder, the greeting server, the open policy) and what it stands on:
 # rcgen and x509-cert for testsigstore, the in-memory Sigstore instance
 # (Fulcio CA, CT log, Rekor) the keyless tests sign against, and the
 # engine's WAT fixtures.
-testutil = ["dep:p256", "dep:rcgen", "dep:x509-cert", "dep:time", "guestfn-engine/testutil"]
+testutil = ["dep:p256", "dep:rcgen", "dep:x509-cert", "dep:time", "wasm", "guestfn-engine-wasm/testutil"]

@@ -363,7 +363,7 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
     // stored module here too (the OCI engine's VM snapshots), under the
     // same key, bound and gauge.
     compiled.remove_unfinished();
-    engine::keep_in(&engine, Arc::clone(&compiled));
+    engine.keep_in(Arc::clone(&compiled) as Arc<dyn guestfn_engine::ArtifactStore>);
     let compiled_store = Arc::clone(&compiled);
     let _modules = Arc::new(open(cache_dir.join(store::MODULES_DIR), true));
     // The resolver's manifest cache writes this store, keyed by the

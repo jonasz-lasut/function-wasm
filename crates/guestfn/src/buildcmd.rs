@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use guestfn_engine::componentize;
+use guestfn_engine_wasm::componentize;
 use guestfn_runtime::manifest::Manifest;
 
 use crate::scaffold;
