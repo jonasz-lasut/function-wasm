@@ -559,8 +559,8 @@ examples/function-oci-go      the hello function as an oci@1.0 module (#263, pha
                             scaffold plumbing, since the contract needs none. make push pushes the
                             image to REGISTRY (127.0.0.1:5000, the development loop's registry:3)
                             and runs guestfn push --image over it; publish-examples.yml pushes the
-                            image with buildx for amd64 and arm64 and publishes the module into
-                            the same repository. The build-oci-go job vets and tests it and builds
+                            image with buildx for amd64 and arm64 by digest, under no tag, and
+                            publishes the module into the same repository as its one tag. The build-oci-go job vets and tests it and builds
                             the image. Its render needs function-oci on a Linux machine with
                             /dev/kvm, so it has no render target.
   src/oci/                    the OCI engine of the function-oci runtime (docs/one-pager-oci-runtime.md,
