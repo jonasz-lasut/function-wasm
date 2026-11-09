@@ -322,12 +322,22 @@ fn restored_clones_share_nothing() {
         host.abs_diff(guest) <= 1,
         "guest clock {guest}, host {host}"
     );
-    let tmp = e
-        .compile(&fixture_image(&t.fixture, &["/fixture", "tmp"], "", &[]))
+    let leftover = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "leftover"],
+            "",
+            &[],
+        ))
         .unwrap();
-    let first = e.run(&tmp, b"", opts()).unwrap();
-    let second = e.run(&tmp, b"", opts()).unwrap();
-    assert_eq!(first, second, "a clone saw what another wrote");
+    for _ in 0..3 {
+        let seen = e.run(&leftover, b"", opts()).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&seen),
+            "tmp=absent root=absent",
+            "a clone saw what another wrote"
+        );
+    }
 }
 
 /// Boot against restore, by hand (#255):

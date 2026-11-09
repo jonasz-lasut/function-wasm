@@ -86,6 +86,20 @@ fn main() {
                 .unwrap_or("read-only");
             println!("tmp={} root={root}", String::from_utf8_lossy(&back));
         }
+        // Whether an earlier run left anything behind, then leave something:
+        // a second run must find both paths absent again.
+        "leftover" => {
+            let seen = |path: &str| {
+                if std::path::Path::new(path).exists() {
+                    "present"
+                } else {
+                    "absent"
+                }
+            };
+            print!("tmp={} root={}", seen("/tmp/probe"), seen("/probe"));
+            std::fs::write("/tmp/probe", b"scratch").expect("write /tmp/probe");
+            std::fs::write("/probe", b"overlay").expect("write /probe");
+        }
         "hostname" => {
             let name = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default();
             println!("{}", name.trim());
