@@ -9,7 +9,7 @@ oci:
   # inside the VM.
   args: ["--insecure"]
 name: function-oci-go
-version: 0.1.0
+version: 0.1.1
 description: The hello function as an OCI module, a Go process function-oci boots once per request.
 source: https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go
 # requires: nothing. The process gets the request and nothing else: the VM

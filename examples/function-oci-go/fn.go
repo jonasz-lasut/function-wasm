@@ -58,7 +58,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		response.Fatal(rsp, errors.Wrap(err, "cannot set greeting"))
 		return rsp, nil
 	}
-	desired["greeting"] = &resource.DesiredComposed{Resource: cm}
+	desired["greeting"] = &resource.DesiredComposed{Resource: cm, Ready: resource.ReadyTrue}
 
 	if err := response.SetDesiredComposedResources(rsp, desired); err != nil {
 		response.Fatal(rsp, errors.Wrapf(err, "cannot set desired composed resources in %T", rsp))

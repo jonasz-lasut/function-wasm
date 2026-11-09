@@ -29,7 +29,7 @@ func TestRunFunction(t *testing.T) {
 	observed := &fnv1.State{Composite: &fnv1.Resource{Resource: resource.MustStructJSON(xrJSON)}}
 	greeting := func(text string) *fnv1.State {
 		return &fnv1.State{Resources: map[string]*fnv1.Resource{
-			"greeting": {Resource: resource.MustStructJSON(`{"apiVersion":"v1","kind":"ConfigMap","data":{"greeting":"` + text + `"}}`)},
+			"greeting": {Resource: resource.MustStructJSON(`{"apiVersion":"v1","kind":"ConfigMap","data":{"greeting":"` + text + `"}}`), Ready: fnv1.Ready_READY_TRUE},
 		}}
 	}
 	success := []*fnv1.Condition{{Type: "FunctionSuccess", Status: fnv1.Status_STATUS_CONDITION_TRUE, Reason: "Success", Target: fnv1.Target_TARGET_COMPOSITE_AND_CLAIM.Enum()}}
