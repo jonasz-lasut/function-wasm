@@ -17,6 +17,15 @@ name: Tag
 on:
   workflow_dispatch:
     inputs:
+      component:
+        description: 'What is released: the tag is <component>-<version>'
+        type: choice
+        required: true
+        options:
+          - function-wasm
+          - function-oci
+          - guestfn
+          - wit
       version:
         description: 'Release version (e.g. v0.1.0)'
         required: true
@@ -35,6 +44,6 @@ jobs:
       - name: Create Tag
         uses: negz/create-tag@8dce6c9d9b12d161abe01c02d2b03f19e2e9e9bb # v2
         with:
-          version: ${{ github.event.inputs.version }}
+          version: ${{ github.event.inputs.component }}-${{ github.event.inputs.version }}
           message: ${{ github.event.inputs.message }}
           token: ${{ secrets.GITHUB_TOKEN }}

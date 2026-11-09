@@ -109,10 +109,8 @@ runtime it runs in and prints the same sentence.
 
 The OCI package's contract is young. Its documentation labels it alpha
 until the process contract and the sandbox flags have held through two
-minors. The repository's release tags are function-wasm's today:
-`v0.1.0` exists, and the latest is `v0.6.0`. The tags and releases get
-cleaned up for a monorepo, and the scheme that versions and releases the
-OCI package is open (decision 15).
+minors. The package has versions, tags and releases of its own
+(decision 15).
 
 ### The process contract
 
@@ -481,8 +479,7 @@ metrics don't change otherwise.
 
 The runtime refuses the old names with a sentence that states the new one,
 and `function validate` prints the same sentence. The `function-oci`
-package starts alpha. The scheme for its tags and releases is open
-(decision 15).
+package starts alpha, on its own tags and releases (decision 15).
 
 ## Alternatives
 
@@ -636,9 +633,11 @@ The owner decided these the same day:
     phase 5. Decision 3 remains its direction, and the design enforces the
     manifest's method and path rules. 0.1 doesn't wait for the proxy: it
     refuses a manifest that requires egress, by name.
-15. **Tags and releases.** The repository's tags and releases get cleaned
-    up for a monorepo. The scheme is an open item of
-    [#281](https://github.com/jonasz-lasut/guestfn/issues/281).
+15. **Tags and releases.** Each component has its own: git tags and GitHub
+    releases named `function-wasm-vX.Y.Z`, `function-oci-vX.Y.Z`,
+    `guestfn-vX.Y.Z` and `wit-vX.Y.Z`, and release branches named
+    `release-<component>-X.Y`. An OCI artifact's tag drops the prefix and
+    keeps the version.
 16. **Compatibility at 0.x.** Until function-oci's 1.0.0 a release may
     break anything the package has, and it announces a rename or a
     removal by refusing the old name by name. The wording of a fatal

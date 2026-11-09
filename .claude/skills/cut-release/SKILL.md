@@ -1,27 +1,38 @@
 ---
 name: cut-release
-description: Use when asked to cut a new minor or major release of function-wasm, ship a batch of merged main changes as a new version, or bump to a specific vX.Y.0 / vX.0.0 — e.g. "cut a minor release", "ship v1.1.0", "release the next major version", "bump to v2.0.0". Not for patch releases remediating CVEs (see remediate-cves) or ad hoc patch bumps.
+description: Use when asked to cut a new minor or major release of function-wasm, function-oci, guestfn or the WIT world, ship a batch of merged main changes as a new version, or bump to a specific vX.Y.0 / vX.0.0: for example "cut a minor release of function-oci", "ship guestfn v0.2.0", "release the next major version", "publish the WIT world". Not for patch releases remediating CVEs (see remediate-cves) or ad hoc patch bumps.
 ---
 
 # Cutting a Minor or Major Release
 
 ## Overview
 
-Cutting a minor or major release ships everything currently merged to `main` as
-a brand-new version line: a new `release-X.Y` branch, the release matrix run
-on it (the end-to-end suite against every Crossplane minor the project
-supports), tag, GitHub release, published package, and signed/attested
-artifacts. Unlike a CVE security patch (see `remediate-cves`), there is no fix
-to author — the branch is cut straight from `main` HEAD, and the version bump
-(minor vs major) is chosen by the user, never inferred.
+Cutting a minor or major release ships what is merged to `main` as a
+brand-new version line of one **component**. Each component has its own
+versions, git tags, GitHub releases and release branches:
 
-Through the 0.x line the repo kept exactly **one** `release-X.Y` branch at a
-time, the latest, because CVE remediations only ever targeted that line, so
-cutting a new line ended by retiring the superseded branch (step 11). From
-v1.0.0 on, superseded release branches **stay** (Jonasz, 2026-10-07): step 11
-retires only `release-0.*` branches, and a line that shipped as 1.0.0 or later
-is never deleted, so an older line can still take a patch. Patch releases
-never retire anything.
+| Component | Git tag and GitHub release | Release branch | Published as |
+|---|---|---|---|
+| `function-wasm` | `function-wasm-vX.Y.Z` | `release-function-wasm-X.Y` | `ghcr.io/jonasz-lasut/function-wasm:vX.Y.Z` |
+| `function-oci` | `function-oci-vX.Y.Z` | `release-function-oci-X.Y` | `ghcr.io/jonasz-lasut/function-oci:vX.Y.Z` |
+| `guestfn` | `guestfn-vX.Y.Z` | `release-guestfn-X.Y` | binaries attached to the GitHub release |
+| `wit` | `wit-vX.Y.Z` | `release-wit-X.Y` | `ghcr.io/jonasz-lasut/wasmfn/function:X.Y.Z` |
+
+An OCI artifact's tag drops the component prefix and keeps the version. The
+WIT world's is the bare package version, the form `wkg` writes. The
+published examples have no git tags or releases: `Publish Examples` runs on
+its own lifecycle.
+
+Unlike a CVE security patch (see `remediate-cves`), there is no fix to
+author: the branch is cut straight from `main` HEAD, and the component and
+the bump (minor or major) are chosen by the user, never inferred.
+
+Through a component's 0.x line the repository keeps **one** release branch
+of that component, the latest, because CVE remediations only ever target
+that line, so cutting a new line ends by retiring the superseded branch
+(step 11). From a component's v1.0.0 on, superseded release branches
+**stay** (Jonasz, 2026-10-07): step 11 retires only 0.x branches, so an
+older line can still take a patch. Patch releases never retire anything.
 
 ## When to use
 
@@ -32,27 +43,38 @@ never retire anything.
   from a tag (see `remediate-cves`).
 - **Not** for ad hoc patch-level bumps (`vX.Y.Z+1`) with no security finding
   behind them — this skill only computes minor or major bumps.
-- The bump type (minor vs major) must come from explicit user input. Never
-  infer it from the size of the diff — ask if it isn't stated.
+- The component and the bump type (minor or major) must come from explicit
+  user input. Never infer them from the diff: ask if they aren't stated.
 
 ## Procedure
 
 ### 1. Determine current version and confirm bump type
 
 ```bash
-TAG=$(gh release view --json tagName -q .tagName)   # e.g. v1.0.0
-MAJOR=$(echo "$TAG" | sed -E 's/^v([0-9]+)\.([0-9]+)\..*/\1/')
-MINOR=$(echo "$TAG" | sed -E 's/^v([0-9]+)\.([0-9]+)\..*/\2/')
+COMPONENT=function-wasm   # or function-oci, guestfn, wit: from the user
+TAG=$(gh release list --limit 200 --json tagName -q '.[].tagName' \
+  | grep -E "^${COMPONENT}-v[0-9]+\.[0-9]+\.[0-9]+$" | sort -V | tail -n 1)
+VERSION=${TAG#"$COMPONENT-"}   # e.g. v1.0.0; empty on the component's first release
+MAJOR=$(echo "$VERSION" | sed -E 's/^v([0-9]+)\.([0-9]+)\..*/\1/')
+MINOR=$(echo "$VERSION" | sed -E 's/^v([0-9]+)\.([0-9]+)\..*/\2/')
 ```
+
+Never use `gh release view` with no tag: the repository's latest release can
+be another component's.
 
 If the user has already stated minor or major (e.g. "cut a minor release"),
 use that directly. Otherwise ask before computing anything. Then:
 
-- **major** → `NEW_VERSION="v$((MAJOR+1)).0.0"`
-- **minor** → `NEW_VERSION="v${MAJOR}.$((MINOR+1)).0"`
+- **major**: `NEW_VERSION="v$((MAJOR+1)).0.0"`
+- **minor**: `NEW_VERSION="v${MAJOR}.$((MINOR+1)).0"`
+- **a component's first release** (`TAG` is empty): ask the user for the version.
+- **`wit`**: the version isn't a bump, it's the world's own:
+  `NEW_VERSION="v$(sed -nE 's/^package wasmfn:function@([^;]+);$/\1/p' wit/wasmfn-function.wit)"`.
+  Stop if that version has a release already or is a pre-release.
 
 ```bash
-NEW_BRANCH="release-$(echo "$NEW_VERSION" | sed -E 's/^v([0-9]+)\.([0-9]+)\..*/\1.\2/')"
+NEW_TAG="$COMPONENT-$NEW_VERSION"
+NEW_BRANCH="release-$COMPONENT-$(echo "$NEW_VERSION" | sed -E 's/^v([0-9]+)\.([0-9]+)\..*/\1.\2/')"
 ```
 
 ### 2. Verify `main` is release-ready
@@ -71,21 +93,24 @@ CI on `main` already covers lint (cargo fmt + clippy), the workspace tests
 (conformance and scaffold goldens included) and the render jobs, so a green run is a
 legitimate signal.
 
-**Bump the runtime-version references in docs to `$NEW_VERSION` before cutting**
-(there is no automated step for this): the `function-wasm` package tags in
-`README.md` and `docs/wasm/install.md` (the Install snippet) and
+**For a function, bump the runtime-version references in docs to
+`$NEW_VERSION` before cutting** (there is no automated step for this): the
+package tags in `README.md` and `docs/wasm/install.md` or `docs/oci/install.md`
+(the Install snippet) and
 `examples/deployment-runtime-config-cedar.yaml`,
 and any example whose Composition installs the function, should name the version
 being released, not the previous one - a copy-pasted install of a tag that does
-not exist yet fails. Find them with `git grep -n 'function-wasm:v[0-9]'` and
+not exist yet fails. Find them with `git grep -n "$COMPONENT:v[0-9]"` and
 commit the bump to `main` before step 3, so CI stays green and the new branch
 carries it. Not this: illustrative `ghcr.io/example/...` module tags
 (arbitrary). Guests vendor their ABI glue under `internal/wasmfn`, so there is
 no separate SDK version to bump.
 
-**Refresh the scaffold templates' dependency pins, also before cutting**
-(`SECURITY.md`: users ship what `guestfn init` writes; Renovate cannot read
-`.tmpl`). Move each to its latest release: function-sdk-go
+**For `guestfn`, move the version in the install snippet of `README.md` and
+`docs/wasm/write-a-module.md` to `$NEW_VERSION`, and refresh the scaffold
+templates' dependency pins, before cutting** (`SECURITY.md`: users ship what
+`guestfn init` writes; Renovate cannot read `.tmpl`). Move each to its latest
+release: function-sdk-go
 (`FALLBACK_SDK_VERSION` in `crates/guestfn/src/main.rs`, plus the
 `sdk_version` in `scaffold.rs`'s tests), the go `go.mod.tmpl`
 (its grpc floor too, dropped once a function-sdk-go release
@@ -117,18 +142,18 @@ If the branch already exists, **stop and report** rather than continuing —
 do not fall through to checkout/push.
 
 This is the mirror image of the CVE flow: a security patch reuses an
-*existing* `release-X.Y` cut from a tag; a new minor/major line is always a
+*existing* release branch cut from a tag; a new minor/major line is always a
 **brand-new** branch cut from `main` HEAD. If `origin/$NEW_BRANCH` already
 exists, this version line was already released — stop and report instead of
 pushing over it.
 
 ### 4. Confirm before anything externally visible
 
-Show the user `NEW_VERSION`, `NEW_BRANCH`, a summary of what's shipping
-(e.g. `git log --oneline "$TAG"..main`), and the existing `release-0.*`
+Show the user `NEW_TAG`, `NEW_BRANCH`, a summary of what's shipping
+(e.g. `git log --oneline "$TAG"..main`), and the component's existing 0.x
 branches that step 11 will delete once the release completes
-(`git ls-remote --heads origin 'release-0.*'`; from 1.0.0 on nothing is
-deleted). From here on every step is
+(`git ls-remote --heads origin "release-$COMPONENT-0.*"`; from its 1.0.0 on
+nothing is deleted). From here on every step is
 externally visible (pushed branch, public tag, GitHub release, published
 package) and isn't something you can quietly undo — get explicit
 confirmation before continuing.
@@ -141,8 +166,9 @@ git push -u origin "$NEW_BRANCH"
 
 ### 5b. Wait for the release matrix — `Release Matrix E2E`, on the new branch
 
-The push starts it (`.github/workflows/release-matrix-e2e.yml` runs on every
-push to a `release-*` branch, #189; its `workflow_dispatch` is for trying the
+For a function only: `guestfn` and `wit` have no matrix, so go to step 6. The
+push starts it (`.github/workflows/release-matrix-e2e.yml` runs on every
+push to a `release-function-*` branch, #189; its `workflow_dispatch` is for trying the
 matrix on another ref, not for releasing). Find the run the push started and
 wait for it, as for green CI:
 
@@ -168,31 +194,34 @@ before the release continues. Never cut the tag over a red matrix. On a
 release line cut before #189 merged the workflow does not exist on the
 branch and no run appears: say so and continue.
 
-### 6. Cut the tag — `Tag` workflow, from the new release branch
+### 6. Cut the tag: `Tag` workflow, from the new release branch
 
 ```bash
-gh workflow run Tag --ref "$NEW_BRANCH" -f version="$NEW_VERSION" \
-  -f message="Release $NEW_VERSION"
+gh workflow run Tag --ref "$NEW_BRANCH" -f component="$COMPONENT" -f version="$NEW_VERSION" \
+  -f message="Release $NEW_TAG"
 ```
 
-The workflow creates the `$NEW_VERSION` tag for the function and the CLI.
-Verify it exists before publishing:
-`git ls-remote --tags origin "$NEW_VERSION"`. There is no separate guest-SDK
+The workflow creates the `$NEW_TAG` tag. Verify it exists before publishing:
+`git ls-remote --tags origin "$NEW_TAG"`. There is no separate guest-SDK
 tag: each guest vendors its ABI glue under `internal/wasmfn` (the scaffold
 writes it), so nothing needs `go get`-ing at a pinned version.
 
 ### 7. Create the GitHub release
 
 ```bash
-gh release create "$NEW_VERSION" --target "$NEW_BRANCH" \
-  --title "$NEW_VERSION" \
+LATEST=false; [ "$COMPONENT" = function-wasm ] && LATEST=true
+gh release create "$NEW_TAG" --target "$NEW_BRANCH" \
+  --title "$NEW_TAG" --latest="$LATEST" \
   --notes "<summary of what's new since $TAG>"
 ```
+
+GitHub marks one release Latest, and that's function-wasm's, so another
+component's release never replaces it.
 
 (`--target` only matters if the tag doesn't already exist; the `Tag` workflow
 already created it, so this is just documentation-by-flag.)
 
-The notes state what the release serves, as `docs/abi-v2.md`'s versioning
+A `function-wasm` release's notes state what it serves, as `docs/abi-v2.md`'s versioning
 policy promises: the world (`wit/wasmfn-function.wit`'s package line),
 wasmtime (its entry in `Cargo.lock`) and the WASI interface versions the
 scaffolds vendor under `wit/deps/`, which are what a guest imports beside
@@ -212,29 +241,35 @@ scaffold.` A guest keeps running as long as the runtime's wasmtime serves
 the versions it was built against, so a release that moves any of them
 says which, and what a guest does about it (re-vendor `wit/deps/`, rebuild).
 
-### 8. Publish the package — `Publish Function`, from the new tag
+### 8. Publish: from the new tag
 
 ```bash
-gh workflow run "Publish Function" --ref "$NEW_VERSION" -f function=function-wasm -f version="$NEW_VERSION"
+case "$COMPONENT" in
+  function-*) gh workflow run "Publish Function" --ref "$NEW_TAG" -f function="$COMPONENT" -f version="$NEW_VERSION" ;;
+  guestfn)    gh workflow run "Publish guestfn" --ref "$NEW_TAG" -f version="$NEW_VERSION" ;;
+  wit)        gh workflow run "Publish WIT" --ref "$NEW_TAG" ;;
+esac
 ```
 
-Must run from the **tag**, not the branch — it builds the function binary
-from that exact tagged source. `function-oci` is published the same way, with
-`-f function=function-oci`, when its first release comes.
+Must run from the **tag**, not the branch, so it builds from that exact
+tagged source. `Publish guestfn` refuses any other ref and attaches the
+binaries to the GitHub release of step 7. `version` is the bare `vX.Y.Z`,
+which is the OCI tag and the version stamped into the binary.
 
-The run publishes the package only; the WIT world has its own workflow,
-`Publish WIT` (`publish-wit.yml`), run by hand when the world version moves. The use-case examples
-have a lifecycle of their own: `Publish Examples` (`publish-examples.yml`),
-run by hand from `main` when an example's `guestfn.yaml` `version` moved, and
-never part of a release.
+The use-case examples have a lifecycle of their own: `Publish Examples`
+(`publish-examples.yml`), run by hand from `main` when an example's
+`guestfn.yaml` `version` moved, and never part of a release.
 
-### 9. Sign & attest — `Supply Chain and Xpkg Extensions`, from `main`
+### 9. Sign & attest: `Supply Chain and Xpkg Extensions`, from `main`
+
+For a function only (`Publish guestfn` and `Publish WIT` sign and attest what
+they publish):
 
 ```bash
-gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f function=function-wasm -f version="$NEW_VERSION"
+gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f function="$COMPONENT" -f version="$NEW_VERSION"
 ```
 
-Runs from `main`, not the tag — it signs/attests the image already published
+Runs from `main`, not the tag: it signs/attests the image already published
 to ghcr/xpkg.upbound.io by tag and appends Marketplace extensions (SBOM,
 README, release notes), so it should use the newest signing logic on `main`
 rather than whatever was frozen on the release branch at cut time.
@@ -249,52 +284,57 @@ until-loop pattern is the sanctioned way to poll rather than a manual sleep
 loop. Only once all three have concluded successfully, move on to branch
 retirement.
 
-### 11. Retire superseded 0.x release branches, then report
+### 11. Retire the component's superseded 0.x branches, then report
 
-The 0.x line kept only its latest `release-0.Y` branch: CVE remediations
-(`remediate-cves`) target the newest release line, so once `NEW_VERSION` is
-fully released an older 0.x branch is dead weight (its history is preserved
-by the `v0.Y.Z` tags). Delete every remote `release-0.*` branch except
-`NEW_BRANCH`:
+A component's 0.x line keeps only its latest release branch: CVE remediations
+(`remediate-cves`) target the newest line, so once `NEW_TAG` is fully released
+an older 0.x branch of that component is dead weight (its history is preserved
+by its tags). Delete every other remote 0.x branch of **this component**:
 
 ```bash
-git ls-remote --heads origin 'release-0.*' | sed 's|.*refs/heads/||' \
+git ls-remote --heads origin "release-$COMPONENT-0.*" | sed 's|.*refs/heads/||' \
   | grep -vx "$NEW_BRANCH" \
   | while read -r OLD; do git push origin --delete "$OLD"; done
 ```
 
-From v1.0.0 on, superseded release branches stay (Jonasz, 2026-10-07): a
-`release-1.Y` or later branch is never deleted, so an older line can take a
-patch (`remediate-cves` on that branch) after a newer line has shipped. The
-command above deletes nothing once the 0.x branches are gone.
+From a component's v1.0.0 on, superseded release branches stay (Jonasz,
+2026-10-07), so an older line can take a patch (`remediate-cves` on that
+branch) after a newer line has shipped. The command above matches 0.x
+branches alone.
 
-Run this **only after** steps 6–9 have all concluded successfully — if the
+Run this **only after** steps 6–9 have all concluded successfully: if the
 release dies partway, the previous line must stay patchable. (Stale local
 copies are harmless; clean them up with `git branch -D` if present.)
 
-Then report the new version released, the branch it lives on, and which
+Then report the new tag released, the branch it lives on, and which
 superseded release branches, if any, were deleted.
 
 ## Quick reference
 
 | Step | Ref to run from | Key inputs |
 |---|---|---|
-| Cut branch | `main` HEAD | new `release-X.Y` |
-| `Release Matrix E2E` | started by the push of `release-X.Y` | none; `gh run watch --exit-status` on it |
-| `Tag` | new release branch (`release-X.Y`) | `version`, `message` |
-| (n/a) `gh release create` | — | tag name, `--target` branch |
-| `Publish Function` | the new tag (`vX.Y.0` / `vX.0.0`) | `function` (`function-wasm`), `version` |
-| `Supply Chain and Xpkg Extensions` | `main` | `function` (`function-wasm`), `version` |
-| Retire old branches | n/a | delete every `release-0.*` except the new one; 1.0.0+ lines are kept |
+| Cut branch | `main` HEAD | new `release-<component>-X.Y` |
+| `Release Matrix E2E` (functions) | started by the push of `release-function-*` | none; `gh run watch --exit-status` on it |
+| `Tag` | new release branch | `component`, `version`, `message` |
+| (n/a) `gh release create` | n/a | `<component>-vX.Y.Z`, `--target` branch, `--latest` only for function-wasm |
+| `Publish Function` (functions) | the new tag | `function`, `version` (`vX.Y.Z`) |
+| `Publish guestfn` | the new tag | `version` (`vX.Y.Z`) |
+| `Publish WIT` | the new tag | none |
+| `Supply Chain and Xpkg Extensions` (functions) | `main` | `function`, `version` (`vX.Y.Z`) |
+| Retire old branches | n/a | the component's 0.x branches except the new one |
 
 ## Common mistakes
 
 - Cutting the release branch from an existing tag instead of `main` HEAD —
   that's the CVE-patch pattern; a new minor/major line must include
   everything merged to `main`.
-- Inferring minor vs major from the diff instead of the user's explicit
-  input.
-- Not checking whether `NEW_BRANCH` already exists — each `release-X.Y` line
+- Inferring the component, or minor vs major, from the diff instead of the
+  user's explicit input.
+- Using `gh release view` with no tag, which returns the repository's latest
+  release of any component.
+- Passing the prefixed tag as `version` to `Publish Function` or the supply
+  chain workflow: the image is tagged with the version alone, `vX.Y.Z`.
+- Not checking whether `NEW_BRANCH` already exists — each release line
   is cut exactly once; if it exists, this version was already released.
 - Cutting from a red `main` — unlike CVE remediation there's no fix step or
   completeness gate to catch this, so a broken `main` ships broken as-is.
@@ -312,10 +352,11 @@ superseded release branches, if any, were deleted.
   versions: the versioning policy in `docs/abi-v2.md` promises them.
 - Using this skill for a patch bump (`vX.Y.Z+1`) — that path belongs to
   `remediate-cves`, which reuses an existing branch instead of cutting one.
-- Leaving a superseded `release-0.Y` branch behind after the new line
-  ships: the 0.x line holds exactly one release branch, the latest.
-- Deleting a `release-1.Y` or later branch: from 1.0.0 on every released
-  line keeps its branch.
+- Leaving a superseded 0.x branch of the component behind after the new line
+  ships: a component's 0.x line holds exactly one release branch, the latest.
+- Deleting a 1.x or later release branch: from a component's 1.0.0 on every
+  released line keeps its branch.
+- Retiring another component's branch: step 11 covers this component alone.
 - Deleting the old branch before steps 6–9 have all succeeded — a
   half-finished release leaves no patchable line if the old branch is gone.
 - Retiring a release branch after a *patch* release — patches ride the

@@ -16,9 +16,11 @@ name: Publish WIT
 
 # The ABI v2 WIT world, wit/wasmfn-function.wit, as a CNCF Wasm OCI artifact
 # (wkg's format) at ghcr.io/jonasz-lasut/wasmfn/function:<world version>,
-# signed and attested like the images (#106). Run by hand from the commit
-# whose world is to be published: the world version moves independently of
-# the runtimes', and a pre-release version is never published. Nothing here
+# signed and attested like the images (#106). Run by hand from the
+# wit-v<world version> tag of the commit whose world is to be published:
+# the world version moves independently of the runtimes', and a
+# pre-release version is never published. Its OCI tag is the bare package
+# version, the form wkg writes. Nothing here
 # checks the registry first, so look before running on a world version that
 # is already there.
 

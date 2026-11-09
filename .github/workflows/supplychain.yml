@@ -127,7 +127,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RELEASE_BODY=$(gh release view ${{ inputs.version }} --repo jonasz-lasut/guestfn --json body -q .body 2>/dev/null || true)
+          RELEASE_BODY=$(gh release view ${{ inputs.function }}-${{ inputs.version }} --repo jonasz-lasut/guestfn --json body -q .body 2>/dev/null || true)
           if [ -n "$RELEASE_BODY" ]; then
             echo "$RELEASE_BODY" >> "release_notes.md"
           fi

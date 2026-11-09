@@ -10,16 +10,11 @@ description: Use when asked to remediate CVEs, security vulnerabilities, or GitH
 `.github/workflows/grype-scan.yml` runs weekly (Mondays 05:00 UTC) and scans
 each function's latest release image with Grype, one matrix leg per function,
 uploading the SARIF results to GitHub code scanning against
-`refs/tags/<that tag>` under the leg's own category:
+`refs/tags/<that tag>` under the leg's own category.
 
-- **function-wasm**: the ghcr image of the **latest GitHub release** (the
-  repository's releases are function-wasm's).
-- **function-oci**: the newest `vX.Y.Z` tag of `ghcr.io/jonasz-lasut/function-oci`,
-  since it has no release of its own yet and the monorepo tag scheme is
-  undecided (#281). With no such tag the leg ends green with a notice. It
-  files results only under a git tag of the image tag's name that contains
-  `Dockerfile.oci`, and fails when there is none: then the scan has to
-  follow whatever tag scheme was decided.
+Each leg takes its function's newest `<function>-vX.Y.Z` GitHub release, scans
+`ghcr.io/jonasz-lasut/<function>:vX.Y.Z` and files the results under that git
+tag. A function with no release ends green with a notice.
 
 Grype reads the package metadata of the Chainguard base both images share
 (Wolfi's glibc, libgcc, libstdc++, CA certificates). It sees no crate inside
@@ -48,27 +43,27 @@ publish → sign. What ships is decided by the completeness gate in step 4.
 ### 1. Identify the target release branch
 
 ```bash
-TAG=$(gh release view --json tagName -q .tagName)               # e.g. v1.0.0
-BRANCH=release-$(echo "$TAG" | sed -E 's/^v([0-9]+)\.([0-9]+)\..*/\1.\2/')  # release-1.0
+FUNCTION=function-wasm   # or function-oci: the one the finding is against
+TAG=$(gh release list --limit 200 --json tagName -q '.[].tagName' \
+  | grep -E "^${FUNCTION}-v[0-9]+\.[0-9]+\.[0-9]+$" | sort -V | tail -n 1)   # e.g. function-wasm-v1.0.0
+VERSION=${TAG#"$FUNCTION-"}                                     # v1.0.0
+BRANCH="release-$FUNCTION-$(echo "$VERSION" | sed -E 's/^v([0-9]+)\.([0-9]+)\..*/\1.\2/')"  # release-function-wasm-1.0
 git fetch origin
 git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "$TAG"
 ```
 
-If `origin/$BRANCH` doesn't exist yet, it must be cut from the release **tag**,
-never from `main` HEAD — a security patch must not carry unreleased changes.
+Never use `gh release view` with no tag: the repository's latest release can
+be another component's. If `origin/$BRANCH` doesn't exist yet, it must be cut
+from the release **tag**, never from `main` HEAD: a security patch must not
+carry unreleased changes.
 
-The latest release is the default target. From v1.0.0 on, superseded
-release branches are kept (`cut-release` step 11), so an older line can be
-patched when the user asks for it: set `TAG` to that line's latest tag
-(`gh release list`) and derive `BRANCH` from it the same way.
-
-The commands above find function-wasm's release. A function-oci finding
-targets the image tag the scan's function-oci leg printed. Before
-function-oci's first release there is no release to patch: the fix lands on
-`main` like any change. After it, which branch and tag a function-oci patch
-uses, and whether it shares function-wasm's, depends on the monorepo tag
-scheme (#281), which is undecided: ask the user for `TAG` and `BRANCH`
-rather than deriving them.
+The function's latest release is the default target. From its v1.0.0 on,
+superseded release branches are kept (`cut-release` step 11), so an older line
+can be patched when the user asks for it: set `TAG` to that line's latest tag
+(`gh release list`) and derive `VERSION` and `BRANCH` from it the same way.
+Before a function's first release there is nothing to patch: the fix lands on
+`main` like any change. A fix that patches both functions is one run of this
+procedure per function.
 
 ### 2. Pull the CVE list from code scanning
 
@@ -217,19 +212,18 @@ git push origin "$BRANCH"
 ### 6. Cut the patch tag — `Tag` workflow, from the release branch
 
 ```bash
-NEW_VERSION=$(echo "$TAG" | awk -F. -v OFS=. '{$NF+=1} 1')   # v1.0.0 -> v1.0.1
-gh workflow run Tag --ref "$BRANCH" -f version="$NEW_VERSION" \
+NEW_VERSION=$(echo "$VERSION" | awk -F. -v OFS=. '{$NF+=1} 1')   # v1.0.0 -> v1.0.1
+NEW_TAG="$FUNCTION-$NEW_VERSION"
+gh workflow run Tag --ref "$BRANCH" -f component="$FUNCTION" -f version="$NEW_VERSION" \
   -f message="Security patch: <CVE/GHSA summary>"
 ```
-
-This is function-wasm's tag. A function-oci patch's tag and version depend
-on the undecided tag scheme (#281): take them from the user, as in step 1.
 
 ### 7. Create the GitHub release
 
 ```bash
-gh release create "$NEW_VERSION" --target "$BRANCH" \
-  --title "$NEW_VERSION" \
+LATEST=false; [ "$FUNCTION" = function-wasm ] && LATEST=true
+gh release create "$NEW_TAG" --target "$BRANCH" \
+  --title "$NEW_TAG" --latest="$LATEST" \
   --notes "Security patch release. Remediates: <CVE/GHSA list>."
 ```
 
@@ -242,18 +236,16 @@ regression.
 ### 8. Publish the package — `Publish Function`, from the new tag
 
 ```bash
-gh workflow run "Publish Function" --ref "$NEW_VERSION" -f function=function-wasm -f version="$NEW_VERSION"
+gh workflow run "Publish Function" --ref "$NEW_TAG" -f function="$FUNCTION" -f version="$NEW_VERSION"
 ```
 
 Must run from the **tag**, not the branch — it builds the runtime image from
-that exact tagged source, with the Go version that tag's `go.mod` declares.
-`function-oci` is published the same way, with `-f function=function-oci`,
-once it has a release; a fix that patches both functions publishes each.
+that exact tagged source. `version` is the bare `vX.Y.Z`, the image's tag.
 
 ### 9. Sign & attest — `Supply Chain and Xpkg Extensions`, from `main`
 
 ```bash
-gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f function=function-wasm -f version="$NEW_VERSION"
+gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f function="$FUNCTION" -f version="$NEW_VERSION"
 ```
 
 Runs from `main`, not the tag — unlike step 8, this workflow doesn't build
@@ -281,9 +273,9 @@ its warning block.
 
 | Workflow | Ref to run from | Key inputs |
 |---|---|---|
-| `Tag` | release branch (`release-X.Y`) | `version`, `message` |
-| (n/a) `gh release create` | — | tag name, `--target` branch |
-| `Publish Function` | the new tag (`vX.Y.Z+1`) | `function` (`function-wasm` or `function-oci`), `version` |
+| `Tag` | release branch (`release-<function>-X.Y`) | `component`, `version`, `message` |
+| (n/a) `gh release create` | n/a | `<function>-vX.Y.Z`, `--target` branch, `--latest` only for function-wasm |
+| `Publish Function` | the new tag (`<function>-vX.Y.Z+1`) | `function` (`function-wasm` or `function-oci`), `version` (`vX.Y.Z+1`) |
 | `Supply Chain and Xpkg Extensions` | `main` | `function` (`function-wasm` or `function-oci`), `version` |
 | `Grype Vulnerability Scan` | `main` (scans each function's latest release image) | — |
 
@@ -297,7 +289,9 @@ its warning block.
   remediates nothing; halt at step 4 and report.
 - Committing a scaffold golden change as part of a "pure" dependency bump
   without reading it — that diff is what `guestfn init` will generate.
-- Cutting `release-X.Y` from `main` HEAD instead of the release tag — leaks
+- Using `gh release view` with no tag, which returns the repository's latest
+  release of any component.
+- Cutting the release branch from `main` HEAD instead of the release tag — leaks
   unreleased changes into a security patch.
 - Running `Publish Function` against the branch instead of the new
   tag — builds a moving target if the branch gets more commits later.

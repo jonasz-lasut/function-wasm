@@ -48,8 +48,7 @@ jobs:
     name: Scan ${{ matrix.function }}
     runs-on: ubuntu-latest
     strategy:
-      # A function with no image, or no tag to file its results under, says
-      # nothing about the other function's image.
+      # A function with no release says nothing about the other's image.
       fail-fast: false
       matrix:
         include:
@@ -71,58 +70,22 @@ jobs:
           FUNCTION: ${{ matrix.function }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          case "${FUNCTION}" in
-            function-wasm)
-              # The repository's releases are function-wasm's: the latest
-              # one's tag names the image and the ref of the results.
-              TAG=$(gh release view --repo "${REPOSITORY}" --json tagName -q .tagName)
-              ;;
-            function-oci)
-              # function-oci has no release yet, and the tag scheme of two
-              # functions in one repository is undecided (#281): its image
-              # is the newest vX.Y.Z tag of its own registry repository,
-              # whatever function-wasm's latest release is. GHCR refuses
-              # a repository it doesn't serve anonymously (403 today, 401
-              # and 404 read the same), which Grype couldn't pull either.
-              ghcr() { curl -sS -o "${RUNNER_TEMP}/ghcr.json" -w '%{http_code}' "$@"; }
-              TAG=
-              STATUS=$(ghcr "https://ghcr.io/token?scope=repository:jonasz-lasut/${FUNCTION}:pull&service=ghcr.io")
-              if [ "${STATUS}" = 200 ]; then
-                TOKEN=$(jq -r .token "${RUNNER_TEMP}/ghcr.json")
-                STATUS=$(ghcr -H "Authorization: Bearer ${TOKEN}" "https://ghcr.io/v2/jonasz-lasut/${FUNCTION}/tags/list?n=1000")
-              fi
-              case "${STATUS}" in
-                200)
-                  TAG=$(jq -r '.tags // [] | .[] | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' "${RUNNER_TEMP}/ghcr.json" \
-                    | sort -V | tail -n 1)
-                  ;;
-                401|403|404) ;;
-                *)
-                  echo "::error::ghcr.io answered HTTP ${STATUS} for the tags of ${FUNCTION}"
-                  exit 1
-                  ;;
-              esac
-              if [ -z "${TAG}" ]; then
-                echo "::notice title=No ${FUNCTION} image::ghcr.io/jonasz-lasut/${FUNCTION} has no public release image (a vX.Y.Z tag) to scan yet"
-                echo "found=false" >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
-              # The results go to the git tag of the image's name, as
-              # function-wasm's do, and only to a tag that can build
-              # function-oci: function-wasm's tags through v0.6.0 have no
-              # Dockerfile.oci, so a function-oci v0.1.0 published under
-              # another tag scheme is never filed under function-wasm's
-              # v0.1.0.
-              if ! gh api "repos/${REPOSITORY}/contents/Dockerfile.oci?ref=${TAG}" --silent; then
-                echo "::error title=No source tag for ${FUNCTION}::ghcr.io/jonasz-lasut/${FUNCTION}:${TAG} has no git tag ${TAG} with a Dockerfile.oci to file its results under; the scan has to follow the release tag scheme (#281)"
-                exit 1
-              fi
-              ;;
-          esac
+          # The repository's releases are per component, so "the latest
+          # release" says nothing about one function: the newest
+          # <function>-vX.Y.Z release is its own. The image is tagged with
+          # the version alone, and the results go to the git tag.
+          TAG=$(gh release list --repo "${REPOSITORY}" --limit 200 --json tagName -q '.[].tagName' \
+            | grep -E "^${FUNCTION}-v[0-9]+\.[0-9]+\.[0-9]+$" | sort -V | tail -n 1 || true)
+          if [ -z "${TAG}" ]; then
+            echo "::notice title=No ${FUNCTION} release::${FUNCTION} has no release to scan yet"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           SHA=$(gh api repos/"${REPOSITORY}"/commits/"${TAG}" --jq .sha)
           {
             echo "found=true"
             echo "tag=${TAG}"
+            echo "version=${TAG#"${FUNCTION}-"}"
             echo "sha=${SHA}"
           } >> "$GITHUB_OUTPUT"
 
@@ -134,7 +97,7 @@ jobs:
       - name: Scan Latest Release Image
         if: steps.release.outputs.found == 'true'
         run: |
-          ${{ steps.grype-install.outputs.cmd }} ghcr.io/jonasz-lasut/${{ matrix.function }}:${{ steps.release.outputs.tag }} \
+          ${{ steps.grype-install.outputs.cmd }} ghcr.io/jonasz-lasut/${{ matrix.function }}:${{ steps.release.outputs.version }} \
             -o table \
             -o sarif=grype-results.sarif
 
