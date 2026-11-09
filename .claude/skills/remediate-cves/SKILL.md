@@ -127,7 +127,7 @@ base, each fixed its own way:
 - **The runtime and the init** (`/function`, `/usr/lib/guestfn/init`): crates
   of the same `Cargo.lock`, so a crate advisory is the `cargo update` above
   and patches both functions. `cargo deny` checks the graph with every
-  feature on, the `oci` engine's crates included.
+  feature on, the OCI engine's crates included.
 - **Firecracker** (`/usr/lib/guestfn/firecracker`): move `FIRECRACKER_VERSION`
   in `Dockerfile.oci` to the fixed release with both `FIRECRACKER_SHA256_*`
   checksums (Renovate's `firecracker` pull request does this), and with it

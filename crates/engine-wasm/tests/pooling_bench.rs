@@ -9,7 +9,7 @@
 use std::time::Instant;
 
 fn engine(pooling: bool) -> wasmtime::Engine {
-    // The runtime's own settings (engine::new), so the comparison is over
+    // The engine's own settings (Wasmtime::new), so the comparison is over
     // the configuration the runtime would actually ship.
     let mut c = wasmtime::Config::new();
     c.epoch_interruption(true);

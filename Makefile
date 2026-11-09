@@ -131,8 +131,8 @@ e2e_oci_wanted = { [ "$(E2E_OCI)" = "1" ] || { [ "$(E2E_OCI)" = "auto" ] && $(E2
 # The OCI runtime's pieces (docs/one-pager-oci-runtime.md): the Firecracker
 # release and the guest kernel its CI publishes, fetched by hack/oci-tools.sh
 # at the versions and checksums Dockerfile.oci pins (the one place they are
-# written), and the engine crate's two binaries, the init and the test
-# fixture, built static for musl. Every one of them is a Linux binary: a
+# written), and the guest init and the test fixture (crates/oci-init,
+# crates/oci-fixture), built static for musl. Every one of them is a Linux binary: a
 # Linux host builds them natively, any other host through Docker (the
 # image from Dockerfile.oci, the test module as a process in a rust
 # container), and oci.test runs on Linux alone.

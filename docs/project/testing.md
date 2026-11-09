@@ -17,13 +17,13 @@ second.
 
 | The change | The test |
 |---|---|
-| a guest-visible behaviour of the engine (a trap, a limit, a WASI interface) | a WAT fixture in `crates/engine/tests/engine.rs`, or a setting of the committed guest driven from `crates/engine/tests/committed_guest.rs` |
+| a guest-visible behaviour of the engine (a trap, a limit, a WASI interface) | a WAT fixture in `crates/engine-wasm/tests/engine.rs`, or a setting of the committed guest driven from `crates/engine-wasm/tests/committed_guest.rs` |
 | an Input rule, a refusal, a policy decision | a unit test beside the code, a fixture under `crates/function/testdata/validate/` and a conformance golden |
 | a scaffold change | the template, then `UPDATE_GOLDENS=1 cargo test -p guestfn`; the guest suite builds the goldens |
-| a fixture or stand-in a test needs | `guestfn_engine::testing` for a guest component, `guestfn_runtime::testing` for a registry, a signer, an in-process runtime, a server or a policy (both behind the `testutil` feature) |
+| a fixture or stand-in a test needs | `guestfn_engine_wasm::testing` for a guest component, `guestfn_runtime::testing` for a registry, a signer, an in-process runtime, a server or a policy (both behind the `testutil` feature) |
 | something only Crossplane shows, such as a condition, an event, a resolved `requirements` entry, a pod restart or a scraped metric | a feature in the end-to-end suite |
 
-`UPDATE_GOLDENS=1 cargo test -p guestfn-runtime --test conformance` records a
+`UPDATE_GOLDENS=1 cargo test -p function-wasm --test conformance` records a
 conformance golden. A re-record is a behaviour change, so say so in the commit.
 A suite uses the shared `testing` modules and never declares its own copy of a
 fixture.
@@ -151,7 +151,7 @@ variants are the same declarations under `manifests/oci`, around the module
 as a process. Each has its own digest,
 because the runtime caches a signature verdict per digest and two variants
 sharing one would share a verdict. The same `fn.wasm` is the engine's `wasi:http` fixture
-(`crates/engine/tests/committed_guest.rs`).
+(`crates/engine-wasm/tests/committed_guest.rs`).
 
 ### Running it locally
 
@@ -191,7 +191,7 @@ For `function-oci`:
 
 - the `oci-go` build job, which vets and tests the process guest and builds
   its image, pushing nothing
-- a build job that compiles the runtime with the `oci` engine,
+- a build job that compiles `function-oci`,
   the init and the test module as a process (musl), fetches the pinned
   Firecracker and kernel (`make oci.tools`) and then runs the OCI engine's
   suite in real VMs under the runner's KVM over those files
@@ -229,8 +229,8 @@ adds the two before it.
 `release-matrix-e2e.yml` runs on every push to a `release-function-wasm-X.Y`
 or `release-function-oci-X.Y` branch. It
 builds both runtimes from the branch once: `function-wasm`'s in
-`build-tools`, and `function-oci`'s pieces in `build-oci` (the runtime with
-the `oci` engine, the init, the test module as a process, the pinned
+`build-tools`, and `function-oci`'s pieces in `build-oci` (the
+`function-oci` binary, the init, the test module as a process, the pinned
 Firecracker and kernel), as the `e2e.yml` jobs of the same names do. It then
 runs `make e2e E2E_OCI=1` three times in parallel, one kind cluster per
 version with both packages installed from those pieces and every profile of

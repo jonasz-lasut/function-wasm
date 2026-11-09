@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft (a second runtime that runs OCI images in a microVM behind the same manifest and policy layers as a WebAssembly module. The owner settled the packaging and the contract and the egress and the artifact and the names and the order on 2026-11-05. The renames and the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247). The first `function-oci` build runs a process under Firecracker behind the `Sandbox` seam. On 2026-11-09 the owner kept Firecracker for now and left scaffolding and building an image to its author, with `guestfn push` to publish it. Snapshots are in 0.1 as an alpha feature. The egress proxy gets a design of its own first, in [#280](https://github.com/jonasz-lasut/guestfn/issues/280), and [#281](https://github.com/jonasz-lasut/guestfn/issues/281) has the order to 0.1)
+* Status: draft (a second runtime that runs OCI images in a microVM behind the same manifest and policy layers as a WebAssembly module. The owner settled the packaging and the contract and the egress and the artifact and the names and the order on 2026-11-05. The renames and the Engine trait and the manifest's type merged on 2026-11-06 (#244, #246, #247). The first `function-oci` build runs a process under Firecracker behind the `Sandbox` seam. On 2026-11-09 the owner kept Firecracker for now and left scaffolding and building an image to its author, with `guestfn push` to publish it. The engines and the two functions became crates of their own the same day. Snapshots are in 0.1 as an alpha feature. The egress proxy gets a design of its own first, in [#280](https://github.com/jonasz-lasut/guestfn/issues/280), and [#281](https://github.com/jonasz-lasut/guestfn/issues/281) has the order to 0.1)
 * Tracking: https://github.com/jonasz-lasut/guestfn/issues/239
 
 ## Summary
@@ -90,11 +90,11 @@ layout and its contract verdict, for `guestfn` and `validate --resolve`.
 `run` serves one request under `RunOptions`, with the egress requester, the
 env, the private scratch and the deadline. `version` namespaces the
 compiled store, and the engine registers its own metric series. The
-Wasmtime engine in `crates/engine` keeps its behaviour behind the trait. An
-`oci` module of the same crate runs the microVM behind the same trait,
-through a `Sandbox` trait of its own with Firecracker behind it. A Cargo
-feature of the `function` crate selects the engine, and each package
-image builds the binary with its own:
+Wasmtime engine in `crates/engine-wasm` keeps its behaviour behind the
+trait. `crates/engine-oci` runs the microVM behind the same trait, through
+a `Sandbox` trait of its own with Firecracker behind it. Each package has
+a binary crate, `crates/function-wasm` and `crates/function-oci`, that
+hands the runtime its engine and the engine's flags:
 
 | package | engine | image contents beyond the binary | the node needs |
 |---|---|---|---|
@@ -413,27 +413,27 @@ The `v1beta1` deprecation goes with the old group.
 
 ## Code shape
 
-- `crates/function`: `engine.rs` selects the engine by Cargo feature
-  (`wasm`, `oci`) and names it `Selected`; `runner.rs`, `cache.rs`,
-  `validate.rs` and `ops.rs` take the trait. `manifest.rs` gains the
+- `crates/function`: the runtime as a library, generic over the trait.
+  `cli.rs` is the entry point the two binaries call. `manifest.rs` gains the
   `Contract` enum and `image`. `oci.rs` reads the wrapping artifact, and
   `resolver.rs` fetches an image through it into a layout.
-- `crates/engine`, the one engine crate (the owner asked for few crates,
-  2026-11-06): the `Engine` trait and what every engine shares at its
-  root, the Wasmtime engine under the `wasm` feature, the OCI engine under
-  `oci` as the `oci` module - the `Sandbox` trait with Firecracker
+- `crates/engine`: the `Engine` trait and what the engines share. The image
+  layout's writer is here so `resolver.rs` can use it.
+- `crates/engine-wasm`: the Wasmtime engine.
+- `crates/engine-oci`: the `Sandbox` trait with Firecracker
   behind it (`firecracker.rs`: the machine config, the devices, the
   lifecycle), `rootfs.rs` unpacking the layers into the squashfs root
   filesystem, `layout.rs` reading the image layout the runtime hands over,
   `image.rs` holding the image config and the run description,
   `initrd.rs` packing the initramfs around the init, `run.rs` applying the
   bounds and wording the fatals, with the egress bridge onto
-  `HttpRequester` to come - and, as the crate's two binaries built static
-  for musl with no feature on, the guest init (`guestfn-init`: it mounts,
-  overlays, starts the process and relays the streams; the proxy with its
-  authority comes with the egress phase) and the fixture process the VM
-  tests run. `protocol.rs` is what the init and the host say to each
-  other (`Description`, `Exit`, the frame kinds), framed over vsock.
+  `HttpRequester` to come.
+- `crates/oci-init`, the guest init (`guestfn-init`, static for musl): it
+  mounts, overlays, starts the process and relays the streams. The proxy
+  with its authority comes with the egress phase. `crates/oci-fixture` is
+  the function the VM tests run, and `crates/oci-protocol` is what the init
+  and the host say to each other (`Description`, `Exit`, the frame kinds),
+  framed over vsock.
 - `crates/guestfn`: `push.rs` appends the manifest to an image under
   `--image`, and `inspect.rs` describes a module image. `buildcmd.rs`
   refuses an `oci@0.1` manifest.
@@ -571,6 +571,9 @@ package starts alpha, on its own tags and releases (decision 15).
 - **A separate repository.** The policy, proxy and tooling code is most of
   the product and changes together. Rejected.
 
+- **One engine crate with a Cargo feature per engine.** The first build's
+  shape. With both features on `wasm` served, so the workspace's lint and
+  tests never compiled the `function-oci` build (decision 1).
 - **A container sandbox for machines without KVM.** A sandbox behind
   `--insecure` would run the image through the Docker daemon or a rootless
   `crun`, with the same init protocol over a Unix socket and a warning at
@@ -582,9 +585,10 @@ package starts alpha, on its own tags and releases (decision 15).
 
 The owner settled these on 2026-11-05:
 
-1. **Packaging.** Separate packages from one workspace, each built with its
-   engine's Cargo feature. `function-wasm` keeps its size and runs
-   without a device. `function-oci` needs `/dev/kvm`.
+1. **Packaging.** Separate packages from one workspace, each a binary crate
+   over the generic runtime, with a crate per engine (Jonasz, 2026-11-09,
+   after Cargo features that exclude each other). `function-wasm` keeps its
+   size and runs without a device. `function-oci` needs `/dev/kvm`.
 2. **The contract.** A gRPC server in the VM: the image is an ordinary
    Crossplane function, and the host calls it over vsock (Jonasz,
    2026-11-09, [#258](https://github.com/jonasz-lasut/guestfn/issues/258)).
@@ -671,9 +675,9 @@ The owner decided this the same day:
 order from these phases to 0.1, the package's first release.
 
 1. Done (#247): the `Engine` trait (first in its own crate, folded back into
-   `crates/engine` on 2026-11-06 at the owner's ask),
-   `crates/function` generic over it as `engine::Selected`, Wasmtime behind
-   it with no behaviour change and the goldens unchanged.
+   `crates/engine` on 2026-11-06 at the owner's ask, with each engine in a
+   crate of its own since 2026-11-09), `crates/function` generic over it,
+   Wasmtime behind it with no behaviour change and the goldens unchanged.
 2. Done. #244 renamed the manifest file and the media type. #246
    moved the Input group and generated the CRD. #247 added the manifest's
    `type` with its per-type contract, with `type: oci` refused by name.
@@ -681,10 +685,10 @@ order from these phases to 0.1, the package's first release.
    `image` with `guestfn push --image`, which first published a wrapping
    artifact and now appends the manifest to the image as a layer (decision
    11), read back by `guestfn inspect`.
-3. Done, on Firecracker: the engine crate's `oci` module behind the
+3. Done, on Firecracker: the OCI engine behind the
    `Sandbox` trait, the init and its protocol, the layer unpacking into
    squashfs, the VM lifecycle, the bounds, `function validate --resolve`
-   for images, the `oci` Cargo feature of the `function` crate with its
+   for images, the `function-oci` binary with its
    flags, the image fetch of the resolver with the manifest read out of
    the image's annotated layer, and the env bindings and the credentials
    through the init.

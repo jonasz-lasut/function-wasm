@@ -12,7 +12,7 @@ Use two terminals. In the checkout, start the runtime with
 `--module-dir` set to your project directory (an absolute path is simplest):
 
 ```shell
-cargo run --release -p guestfn-runtime -- --insecure --debug --module-dir=<your project directory>
+cargo run --release -p function-wasm -- --insecure --debug --module-dir=<your project directory>
 ```
 
 In your project directory, build the module and render with the Development

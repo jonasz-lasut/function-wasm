@@ -176,7 +176,7 @@ touches faults in from the memory file. Nested virtualization makes a fault
 and a boot expensive: a boot on this machine takes four times the 270 ms a
 CI runner measured. The ratio between the two paths transfers better than
 the milliseconds do. The VM suite prints both paths' times, and
-`boot_against_restore` in `crates/engine/tests/vm.rs` is the benchmark,
+`boot_against_restore` in `crates/engine-oci/tests/vm.rs` is the benchmark,
 run by hand.
 
 On GitHub's runners (x86-64) the VM suite ran twice on 2026-11-09, on

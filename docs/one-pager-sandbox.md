@@ -90,7 +90,7 @@ every request that hit them.
 
 `privateTmp` is a per-run directory under the host's temp dir (`$TMPDIR`),
 named `function-wasm-private-tmp-*` and created before the store
-(`crates/engine/src/sandbox.rs`). It's pre-opened read/write at `/tmp`,
+(`crates/engine-wasm/src/sandbox.rs`). It's pre-opened read/write at `/tmp`,
 and removed when the run's value drops, on every path out (success, trap,
 exit, deadline, host error); a removal failure is logged, never a result. It's
 the only directory a guest is ever given, so a module can't read an
@@ -108,7 +108,7 @@ request's writes: a full tmpfs fails the guest's write, not the runtime
 ### Network
 
 A module can't open a socket. It asks through `wasi:http` (0.3 `client.send`
-and 0.2 `outgoing-handler`), and `crates/engine/src/wasihttp.rs` bridges both
+and 0.2 `outgoing-handler`), and `crates/engine-wasm/src/wasihttp.rs` bridges both
 onto one `HttpRequester` grant that `crates/function/src/egress.rs`
 provides. The policy stays in the runtime, and every guest language
 with a `wasi:http` client has egress. The host:
