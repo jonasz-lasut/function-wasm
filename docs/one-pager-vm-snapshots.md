@@ -2,12 +2,12 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft (the prototype behind `--vm-snapshots` merged with #278, off by default. Snapshots are in 0.1 as an alpha feature; #279 has what's left)
+* Status: draft (an alpha feature in 0.1 behind `--enable-vm-snapshots`, off by default; #279 has what's left)
 
 `function-oci` boots a microVM for each request
 ([OCI runtime](one-pager-oci-runtime.md)), and the boot is most of a short
 run: the kernel start, the mounts and the vsock connect come before the
-process does anything. With `--vm-snapshots` the runtime boots an image's
+process does anything. With `--enable-vm-snapshots` the runtime boots an image's
 VM once and freezes it where the init waits for a run. Each later request
 gets a fresh VM restored from that snapshot. Fresh instance per request
 still holds: a clone runs one process, and the runtime kills the clone with
@@ -52,6 +52,24 @@ that run. A boot with the flag off still starts `firecracker` with
 `--no-api`. Firecracker takes and loads a snapshot through its API alone,
 and these two paths open the socket for it. The socket is in the run's
 private directory, and the release binary keeps its seccomp filters.
+
+### Warm-up and first runs
+
+Warm-up takes the snapshot of each `--warm-modules` image before the pod
+reports ready, for the VM a step with no `limits.memory` of its own gets.
+The first request of a warmed image then restores. An image the warm-up
+didn't load gets its snapshot at its first run, and a step with its own
+`limits.memory` gets one at the first run with that limit.
+
+A run doesn't wait for a snapshot another run is making, because making
+one takes longer than a boot: 1.5 s against 1.1 s in the measurements. A
+run that finds the snapshot in the making boots, as it would with the flag
+off, and no request waits past its deadline for the snapshot of another.
+
+A VM reserves its whole memory from `--max-total-run-memory` before a
+restore as before a boot. A restored `firecracker` resided at 20.6 MiB
+after the echo run, but the guest may use its whole memory, and the pool
+counts that ceiling.
 
 ### Freshness of a clone
 
@@ -150,7 +168,8 @@ path after one warm-up run.
 The first run of an image takes 1.75 s with snapshots on: the boot, then
 about 0.6 s to write the memory file and rewrite it sparse. That file is
 576 MiB long and 44 MiB on disk, and the state file is 6 KiB. The second
-request of an image saves more than the snapshot cost.
+request of an image saves more than the snapshot cost. With the snapshot
+taken at warm-up, the first run of the image took 252 ms.
 
 A clone runs its process slower than a booted VM does, because each page it
 touches faults in from the memory file. Nested virtualization makes a fault
@@ -164,10 +183,11 @@ suite prints both paths' times, and `boot_against_restore` in
 
 Jonasz settled these on 2026-11-09, with these measurements:
 
-- The prototype merges behind `--vm-snapshots`, off by default, and
+- The prototype merges behind a flag, off by default, and
   [#279](https://github.com/jonasz-lasut/guestfn/issues/279) continues
   from it.
-- Snapshots are in 0.1 as an alpha feature, behind the same flag.
+- Snapshots are in 0.1 as an alpha feature, and the flag is
+  `--enable-vm-snapshots`.
 - A snapshot belongs to one image. Its key is the image and the VM size,
   since `limits.memory` resizes the VM.
 - Restore goes through the release binary's API socket, and the engine
@@ -213,8 +233,6 @@ Jonasz settled these on 2026-11-09, with these measurements:
 
 [#279](https://github.com/jonasz-lasut/guestfn/issues/279) tracks it:
 
-- a snapshot at warm-up, and the wait of concurrent first requests under
-  the request's deadline
-- whether a restored run may reserve less memory than the whole VM
-- an `oci` e2e profile with the flag on, and a troubleshooting entry
 - the numbers from a GitHub runner, the first x86 run among them
+- restores under load, which the measurements ran one at a time
+- whether the flag is on by default once the feature leaves alpha

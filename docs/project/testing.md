@@ -101,6 +101,7 @@ before its first test and waits for the rollout. Each binary uses one profile.
 | `wasm/strict` | the refusals of a narrow operator layer, the read fence's ceiling among them |
 | `wasm/lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
 | `oci/default` | the `function-oci` package ([the OCI runtime](../oci/install.md)) beside `function-wasm`, running the test module as a process in a Firecracker VM, and the published `function-oci-go` example. Its runtime config mounts the `wasm/default` policy |
+| `oci/snapshots` | the `oci/default` profile with `--enable-vm-snapshots` and the published `function-oci-go` warmed. Its tests cover the snapshot the warm-up takes, runs restored from a snapshot, and an env binding in a restored process |
 
 The `default` profile runs the runtime with `--cosign-key` (the suite's key)
 and `--cosign-trusted-root` (the in-memory Sigstore instance's root merged with
