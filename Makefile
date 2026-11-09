@@ -59,8 +59,9 @@ include build/makelib/local.xpkg.mk
 #                     the kvm device plugin when the node has /dev/kvm, the
 #                     XRD), function-wasm's image and package installed from
 #                     it, and function-oci beside it when the kind node has
-#                     /dev/kvm (E2E_OCI=auto, the default; 1 requires it, 0
-#                     leaves it out, what CI's two cluster jobs set)
+#                     /dev/kvm (E2E_OCI=auto, the default; 1 requires it, as
+#                     CI's oci cluster job and the release matrix set; 0
+#                     leaves it out, as CI's wasm cluster job sets)
 # make e2e.wasm-profile.<p>
 #                     one wasm profile's suite (default, strict, lifecycle):
 #                     cargo test --test wasm_<p>, which switches function-wasm
@@ -110,7 +111,8 @@ FUNCTION_RUNTIME_CONFIG := e2e-wasm-default
 # installs it when the kind node has /dev/kvm, which the pod opens there
 # and the node inherits from the host (a Linux host with KVM has it, and
 # so does Colima with nested virtualization; Docker Desktop has not); 1
-# requires it and 0 leaves it out, which CI's two cluster jobs set.
+# requires it (CI's oci cluster job and the release matrix) and 0 leaves it
+# out (CI's wasm cluster job).
 E2E_OCI ?= auto
 E2E_NODE_HAS_KVM := docker exec $(KIND_CLUSTER_NAME)-control-plane test -c /dev/kvm
 e2e_oci_wanted = { [ "$(E2E_OCI)" = "1" ] || { [ "$(E2E_OCI)" = "auto" ] && $(E2E_NODE_HAS_KVM) 2>/dev/null; }; }

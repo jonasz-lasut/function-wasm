@@ -195,8 +195,8 @@ The jobs cache under `e2e-` keys that no trusted workflow restores, and the
 workflow sets `cache-mode: write` because a comment-started run gets a
 read-only cache token.
 
-GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs
-install, and the kind node inherits it. The node's device is `root:kvm 0660`
+GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs and
+the release matrix's legs install, and the kind node inherits it. The node's device is `root:kvm 0660`
 whatever the rule says, and the pod's user is the package's. The suite's
 setup installs the device plugin
 (`crates/e2e/cluster/kvm-device-plugin.yaml`), reads the node's `kvm`
@@ -215,15 +215,19 @@ the function supports the same three. Every `/e2e` run tests the current minor, 
 adds the two before it.
 
 `release-matrix-e2e.yml` runs on every push to a `release-X.Y` branch. It
-builds the `function-wasm` runtime from the branch and runs `make e2e` three
-times in parallel, one kind cluster per version, and uploads the cluster dump
-for a failed version. Each leg installs `function-wasm` from that runtime.
-`function-oci` follows the Makefile's `E2E_OCI=auto` default. When the kind
-node has `/dev/kvm`, the leg builds the pieces itself (the test module as a
-process natively, the image from `Dockerfile.oci` in Docker) and installs
-the package. A node without the device leaves the package out. Both
-functions leave through `Publish Function`. A red leg blocks either.
-`gh workflow run "Release Matrix E2E" --ref <ref>` runs it by hand on any ref.
+builds both runtimes from the branch once: `function-wasm`'s in
+`build-tools`, and `function-oci`'s pieces in `build-oci` (the runtime with
+the `oci` engine, the init, the test module as a process, the pinned
+Firecracker and kernel), as the `e2e.yml` jobs of the same names do. It then
+runs `make e2e E2E_OCI=1` three times in parallel, one kind cluster per
+version with both packages installed from those pieces and every profile of
+both runtimes, after the udev rule that gives the runner's kind node
+`/dev/kvm`, and uploads the cluster dump for a failed version. One cluster
+per version runs both runtimes. The matrix checks that the release works on
+that Crossplane; a leg per runtime would double the runners for no new
+proof. Both functions leave through `Publish Function`. A red leg blocks
+either. `gh workflow run "Release Matrix E2E" --ref <ref>` runs it by hand on
+any ref.
 
 The Makefile's `CROSSPLANE_VERSION` default names the current version. The
 workflow's `env` (`CROSSPLANE_PREVIOUS`, `CROSSPLANE_OLDEST`) pins the latest
