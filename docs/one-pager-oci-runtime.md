@@ -249,7 +249,7 @@ proxy settings). It starts the process and pipes the request to its stdin.
 It streams stderr to the host as it arrives and collects stdout to end of
 file. After the exit it reports the status. The runtime then kills the VM,
 which discards every change the run made, and a fresh instance per request
-holds. `--vm-snapshots` restores a snapshot of the booted VM in place of
+holds. `--enable-vm-snapshots` restores a snapshot of the booted VM in place of
 the boot ([Snapshots](#snapshots)).
 
 **Bounds.** `limits.timeout` is the VM's wall clock, the boot included.
@@ -280,7 +280,7 @@ sentence as its body. Without a `requires.egress` grant the init skips the
 proxy and the variables. A VMM's own socket forwarding (libkrun's TSI) is
 off: it would give the guest the pod's network. The design has to answer
 what this direction doesn't, such as the clients the proxy covers, the
-authority under `--vm-snapshots` and the wire between the init and the
+authority under `--enable-vm-snapshots` and the wire between the init and the
 host.
 
 **Credentials and env.** `requires.env` bindings become process environment
@@ -372,7 +372,7 @@ same `Sandbox` trait, if demand appears.
 
 ### Snapshots
 
-`--vm-snapshots` restores a snapshot of an image's booted VM in place of a
+`--enable-vm-snapshots` restores a snapshot of an image's booted VM in place of a
 boot. It's a prototype, off by default and Firecracker's alone, and 0.1
 includes it as an alpha feature (decision 13). On a laptop's nested KVM
 the median run went from 1123 ms to 250 ms.
@@ -626,7 +626,7 @@ The owner decided these the same day:
 13. **Snapshots.** A snapshot belongs to one image and has the image
     and the VM size as its key. Restores go through the release binary's
     API. 0.1 includes snapshots as an alpha feature behind
-    `--vm-snapshots`.
+    `--enable-vm-snapshots`.
     [Per-image microVM snapshots](one-pager-vm-snapshots.md) has the
     design and the image-independent snapshot it rejected.
 14. **The egress design.** The proxy gets a design of its own first, in
@@ -686,7 +686,7 @@ order from these phases to 0.1, the package's first release.
    operators page are in the tree. Left: the package's first release,
    0.1.0.
 7. A prototype ([#255](https://github.com/jonasz-lasut/guestfn/issues/255)):
-   snapshots per image behind `--vm-snapshots`
+   snapshots per image behind `--enable-vm-snapshots`
    ([Per-image microVM snapshots](one-pager-vm-snapshots.md)), in 0.1 as
    an alpha feature (decision 13).
    [#279](https://github.com/jonasz-lasut/guestfn/issues/279) has what's

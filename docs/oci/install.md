@@ -131,7 +131,7 @@ memory before it boots.
 | `--guest-kernel` | `/usr/lib/guestfn/vmlinux` | the guest kernel, an uncompressed `vmlinux` |
 | `--guest-init` | `/usr/lib/guestfn/init` | the init the runtime boots as the VM's first process |
 | `--vm-vcpus` | `1` | vCPUs per VM |
-| `--vm-snapshots` | off | restore a snapshot of the booted VM per image in place of a boot. A prototype: the [design record](../one-pager-vm-snapshots.md) has what it does and what it measured |
+| `--enable-vm-snapshots` | off | restore a snapshot of the booted VM per image in place of a boot. Warm-up takes the snapshot of a `--warm-modules` image, and an image's first run takes it otherwise. An alpha feature: the [design record](../one-pager-vm-snapshots.md) has what it does and what it measured |
 
 The package image includes the three files. `--module-stack-limit` has no
 meaning for a process and the runtime ignores it. `--module-timeout` and a

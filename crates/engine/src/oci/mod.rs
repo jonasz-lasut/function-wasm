@@ -293,6 +293,10 @@ impl Engine for Oci {
         run::run(self, m, request, opts)
     }
 
+    fn warm(&self, m: &Module) -> Result<(), Error> {
+        run::prepare(self, m)
+    }
+
     fn version() -> String {
         version()
     }
@@ -404,6 +408,24 @@ mod tests {
             vec![(scratch, false), (entry.clone(), true)]
         );
         assert_eq!(*store.used.lock().unwrap(), vec![entry]);
+    }
+
+    /// Warm-up has the sandbox prepare the machine a step with no limits
+    /// of its own gets: the default memory limit plus the VM's overhead.
+    #[test]
+    fn warm_prepares_the_default_machine() {
+        let fake = FakeSandbox::new(Default::default(), |_: &VmSpec<'_>| unreachable!());
+        let prepared = fake.prepared();
+        let e = engine(fake);
+        let m = e
+            .compile(&fixture_image(b"#!/bin/sh\n", &["/app/run"], "", &[]))
+            .unwrap();
+        e.warm(&m).unwrap();
+        let default_mib = Config::default().memory_limit >> 20;
+        assert_eq!(
+            *prepared.lock().unwrap(),
+            vec![default_mib + run::VM_OVERHEAD_MIB]
+        );
     }
 
     #[test]

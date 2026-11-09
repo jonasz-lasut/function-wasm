@@ -125,7 +125,7 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               `engine::Selected` and `engine::Module`, so a second engine is a
                               second feature and no other change here; `engine::EngineArgs`
                               are the engine's own flags (none for wasm; --vmm, --guest-kernel,
-                              --guest-init, --vm-vcpus and the prototype --vm-snapshots for oci), flattened into serve's and
+                              --guest-init, --vm-vcpus and the alpha --enable-vm-snapshots for oci), flattened into serve's and
                               validate's, and `engine::new` builds it. `Selected::KIND` is the
                               module type the package serves (the resolver fetches by it, the
                               manifest's check_type refuses the other type's manifest by name)
@@ -271,7 +271,8 @@ crates/engine/              the engines, one crate (guestfn-engine): what every 
   src/lib.rs                  the Engine trait (compile, inspect, serialize, deserialize_file,
                               stored - the module once the runtime stored its artifact, a
                               no-op but for the OCI engine, which continues from the stored
-                              root filesystem - run, version, config; KIND the module type the
+                              root filesystem - warm - what warm-up makes ready for a first
+                              run, the OCI engine's VM snapshot - run, version, config; KIND the module type the
                               engine serves, CONTRACT the manifest contract it implements),
                               ArtifactStore (where an engine keeps files it derives from a
                               module at run time, implemented by the runtime's compiled store),
@@ -589,7 +590,9 @@ examples/function-oci-go      the hello function as an oci@1.0 module (#263, pha
                               Firecracker, the kernel and the init (docs/one-pager-vm-snapshots.md),
                               the memo of made snapshots on the loaded Image (sandbox.rs
                               SnapshotMemo), a missing or refused one made again, a failed one
-                              costing the run a boot). A module
+                              costing the run a boot, one taken at warm-up for the default
+                              machine (Sandbox::prepare), and a run that finds one in the
+                              making booting instead of waiting). A module
                               is an OCI image layout tar (layout.rs: index, platform manifest,
                               config and layers, every blob verified, plus the Writer the
                               resolver assembles one with), compiled by applying the layers
@@ -624,7 +627,7 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             state dumped under _output/e2e/logs when a test fails; fixtures.rs:
                             the Guest XRD, a Composition per test, the Guest XR, Secrets;
                             profile.rs: the profiles per runtime (wasm: default, strict,
-                            lifecycle; oci: default), each switching its runtime's Function by
+                            lifecycle; oci: default, snapshots), each switching its runtime's Function by
                             runtimeConfigRef once per test binary; registry.rs: the in-cluster
                             registry:3 with TLS from a generated CA and Basic auth, the pusher
                             that attaches signatures through the sha256-<hex> referrers tag
@@ -750,7 +753,7 @@ A guest's returned error becomes a fatal result on a fresh response, a panic in 
 
 ### Caches
 
-Three on-disk stores under `/tmp/guestfn-cache` (fixed; `store.rs`): `modules/<digest>` — every fetched blob, verified on read, never held in memory; `compiled/<engine::version()>/<digest>` — wasmtime artifacts, each with a `<digest>.mac` sidecar, the HMAC-SHA256 of the artifact under 32 bytes the process draws at startup (`main.rs`, `store.rs::with_key`): `path()` refuses and removes an entry whose sidecar is missing or another key's (a stale miss), so a planted artifact never loads and a restart compiles everything again, the volume keeping the fetched modules only (`version()` = the wasmtime crate version from Cargo.lock + OS/arch, the `rust-` prefix keeping it apart from any other runtime's directory; other version dirs reaped at startup once a day old); under `--vm-snapshots` the OCI engine keeps a stored image's VM snapshot there too, a state file and a sparse memory file beside the root filesystem, signed and verified by the same key through the engine's `ArtifactStore` and counted by what the disk allocated (`docs/one-pager-vm-snapshots.md`); `manifests/<manifest digest>` — raw module manifests under their own digest (the layer's for OCI, `manifestDigest` for HTTP), verified on read, with the pinning-digest memo in memory (`resolver.rs`); beside them `tuf/<instance>/`, the verified TUF metadata and trusted root of `--cosign-trust-instance` (`trustroot.rs`), outside the sweep. In memory: compiled modules only, idle TTL 10 min, LRU-bounded by `--max-cached-modules`, single-flight loads with `--max-concurrent-compiles` slots, or nothing with `--enable-memory-cache=false`. Keys are digests stated in the Input; `--max-cache-size` LRU-sweeps the disk stores to nine tenths at startup and every ten minutes. Full design: `docs/one-pager-cache.md`.
+Three on-disk stores under `/tmp/guestfn-cache` (fixed; `store.rs`): `modules/<digest>` — every fetched blob, verified on read, never held in memory; `compiled/<engine::version()>/<digest>` — wasmtime artifacts, each with a `<digest>.mac` sidecar, the HMAC-SHA256 of the artifact under 32 bytes the process draws at startup (`main.rs`, `store.rs::with_key`): `path()` refuses and removes an entry whose sidecar is missing or another key's (a stale miss), so a planted artifact never loads and a restart compiles everything again, the volume keeping the fetched modules only (`version()` = the wasmtime crate version from Cargo.lock + OS/arch, the `rust-` prefix keeping it apart from any other runtime's directory; other version dirs reaped at startup once a day old); under `--enable-vm-snapshots` the OCI engine keeps a stored image's VM snapshot there too, a state file and a sparse memory file beside the root filesystem, signed and verified by the same key through the engine's `ArtifactStore` and counted by what the disk allocated (`docs/one-pager-vm-snapshots.md`); `manifests/<manifest digest>` — raw module manifests under their own digest (the layer's for OCI, `manifestDigest` for HTTP), verified on read, with the pinning-digest memo in memory (`resolver.rs`); beside them `tuf/<instance>/`, the verified TUF metadata and trusted root of `--cosign-trust-instance` (`trustroot.rs`), outside the sweep. In memory: compiled modules only, idle TTL 10 min, LRU-bounded by `--max-cached-modules`, single-flight loads with `--max-concurrent-compiles` slots, or nothing with `--enable-memory-cache=false`. Keys are digests stated in the Input; `--max-cache-size` LRU-sweeps the disk stores to nine tenths at startup and every ten minutes. Full design: `docs/one-pager-cache.md`.
 
 ### Readiness, warm-up and the run bound
 
@@ -944,7 +947,7 @@ A new refusal gets its entry there, beside its fixture under `testdata/validate/
 - `docs/one-pager-abi-v2.md` — ABI v2 on the component model and this Rust host (the port delivered its phases 1-4; the v2 spike is issue #65)
 - `docs/one-pager-three-layer-authz.md`, `docs/one-pager-read-fence.md`, `docs/one-pager-trust-model.md`, `docs/one-pager-sandbox.md` — the authorization and sandbox model
 - `docs/one-pager-cache.md`, `docs/one-pager-resource-governance.md` — caches, bounds, fairness and the egress rate limit
-- `docs/one-pager-oci-runtime.md`, `docs/one-pager-vm-snapshots.md` - the OCI runtime, and its per-image VM snapshots behind `--vm-snapshots` (the design, the measurements, the decisions; #279 has what is left)
+- `docs/one-pager-oci-runtime.md`, `docs/one-pager-vm-snapshots.md` - the OCI runtime, and its per-image VM snapshots behind `--enable-vm-snapshots` (the design, the measurements, the decisions; #279 has what is left)
 - `docs/one-pager-module-source-schema.md`, `docs/one-pager-module-manifest.md` — the Input and the manifest (manifests by reference included)
 - `docs/project/testing.md` - the two test tiers, where a new test goes, the end-to-end suite's profiles, module and workflow
 - `docs/one-pager-use-case-examples.md` - the use-case examples: why these, how they are tested (scaffold goldens, shared plumbing, unit tests, the build jobs), how they are published

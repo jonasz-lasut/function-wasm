@@ -116,6 +116,7 @@ pub fn image_layout(config: &[u8], layers: &[(&str, &[u8])]) -> Result<Vec<u8>, 
 pub struct FakeSandbox {
     seen: Arc<Mutex<Vec<Description>>>,
     answer: Box<dyn Fn(&VmSpec<'_>) -> Outcome + Send + Sync>,
+    prepared: Arc<Mutex<Vec<u64>>>,
 }
 
 impl FakeSandbox {
@@ -126,7 +127,13 @@ impl FakeSandbox {
         FakeSandbox {
             seen,
             answer: Box::new(answer),
+            prepared: Arc::default(),
         }
+    }
+
+    /// The memory in MiB of every VM the sandbox was asked to prepare.
+    pub fn prepared(&self) -> Arc<Mutex<Vec<u64>>> {
+        Arc::clone(&self.prepared)
     }
 }
 
@@ -141,5 +148,13 @@ impl Sandbox for FakeSandbox {
             .expect("poisoned")
             .push(spec.description.clone());
         Ok((self.answer)(&spec))
+    }
+
+    fn prepare(&self, spec: VmSpec<'_>) -> Result<(), Error> {
+        self.prepared
+            .lock()
+            .expect("poisoned")
+            .push(spec.memory_mib);
+        Ok(())
     }
 }

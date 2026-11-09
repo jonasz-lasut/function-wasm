@@ -345,6 +345,22 @@ fn restored_clones_share_nothing() {
 struct DirStore {
     dir: PathBuf,
     refuse: std::sync::atomic::AtomicBool,
+    /// Files sealed: two for every snapshot made.
+    sealed: std::sync::atomic::AtomicUsize,
+}
+
+impl DirStore {
+    fn new(dir: &std::path::Path) -> std::sync::Arc<DirStore> {
+        std::sync::Arc::new(DirStore {
+            dir: dir.to_path_buf(),
+            refuse: Default::default(),
+            sealed: Default::default(),
+        })
+    }
+
+    fn snapshots_made(&self) -> usize {
+        self.sealed.load(std::sync::atomic::Ordering::Relaxed) / 2
+    }
 }
 
 impl ArtifactStore for DirStore {
@@ -356,6 +372,8 @@ impl ArtifactStore for DirStore {
         let entry = self.dir.join(name);
         std::fs::rename(self.dir.join(format!("{name}.put-keep")), &entry)
             .map_err(|e| e.to_string())?;
+        self.sealed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(entry)
     }
 
@@ -383,10 +401,7 @@ fn a_stored_image_keeps_its_snapshot_in_the_store() {
     let Some(t) = tools() else { return };
     let e = engine_with(&t, Config::default(), true);
     let dir = tempfile::tempdir().unwrap();
-    let store = std::sync::Arc::new(DirStore {
-        dir: dir.path().to_path_buf(),
-        refuse: Default::default(),
-    });
+    let store = DirStore::new(dir.path());
     e.keep_in(std::sync::Arc::clone(&store) as std::sync::Arc<dyn ArtifactStore>);
     let compiled = e
         .compile(&fixture_image(
@@ -455,6 +470,73 @@ fn a_stored_image_keeps_its_snapshot_in_the_store() {
     assert_eq!(e.run(&refused, b"five", opts()).unwrap(), b"five");
     assert_eq!(kept().len(), 2, "made again after the refusal");
     assert_eq!(e.run(&refused, b"six", opts()).unwrap(), b"six");
+}
+
+/// A stored image for the snapshot tests: the echo fixture compiled,
+/// written into dir as the store would and continued from there.
+fn stored_echo(t: &Tools, e: &Oci, dir: &std::path::Path) -> guestfn_engine::oci::Module {
+    let compiled = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "echo"],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    let entry = dir.join("sha256-test");
+    std::fs::write(&entry, e.serialize(&compiled).unwrap()).unwrap();
+    e.stored(compiled, &entry)
+}
+
+/// Warm-up takes the snapshot, so an image's first request restores it
+/// and pays for no boot.
+#[test]
+fn the_warm_up_makes_the_snapshot() {
+    let Some(t) = tools() else { return };
+    let e = engine_with(&t, Config::default(), true);
+    let dir = tempfile::tempdir().unwrap();
+    let store = DirStore::new(dir.path());
+    e.keep_in(std::sync::Arc::clone(&store) as std::sync::Arc<dyn ArtifactStore>);
+    let stored = stored_echo(&t, &e, dir.path());
+    e.warm(&stored).unwrap();
+    assert_eq!(
+        store.snapshots_made(),
+        1,
+        "the snapshot is there before a run"
+    );
+    let started = std::time::Instant::now();
+    assert_eq!(e.run(&stored, b"first", opts()).unwrap(), b"first");
+    eprintln!("the first run after warm-up took {:?}", started.elapsed());
+    assert_eq!(store.snapshots_made(), 1, "the first run restored it");
+    // A second warm-up of a loaded image finds the snapshot it has.
+    e.warm(&stored).unwrap();
+    assert_eq!(store.snapshots_made(), 1);
+}
+
+/// Concurrent first runs of one image don't wait for one another's
+/// snapshot: one makes it and the others boot, since making a snapshot
+/// takes longer than a boot. Every run answers, and one snapshot exists.
+#[test]
+fn concurrent_first_runs_make_one_snapshot_and_do_not_wait() {
+    let Some(t) = tools() else { return };
+    let e = std::sync::Arc::new(engine_with(&t, Config::default(), true));
+    let dir = tempfile::tempdir().unwrap();
+    let store = DirStore::new(dir.path());
+    e.keep_in(std::sync::Arc::clone(&store) as std::sync::Arc<dyn ArtifactStore>);
+    let stored = stored_echo(&t, &e, dir.path());
+    let runs: Vec<_> = (0..3u8)
+        .map(|i| {
+            let e = std::sync::Arc::clone(&e);
+            let m = std::sync::Arc::clone(&stored);
+            std::thread::spawn(move || e.run(&m, &[b'a' + i], opts()))
+        })
+        .collect();
+    for (i, run) in runs.into_iter().enumerate() {
+        assert_eq!(run.join().unwrap().unwrap(), vec![b'a' + i as u8]);
+    }
+    assert_eq!(store.snapshots_made(), 1);
+    assert_eq!(e.run(&stored, b"after", opts()).unwrap(), b"after");
+    assert_eq!(store.snapshots_made(), 1);
 }
 
 /// Boot against restore, by hand (#255):

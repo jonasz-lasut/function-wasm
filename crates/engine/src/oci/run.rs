@@ -92,6 +92,57 @@ pub(crate) fn run(
     result
 }
 
+/// The store a stored image's files live in, with the root filesystem
+/// marked used: every run reads that file from the store, and each one is
+/// a use, or the sweep would take a busy image's file for the least
+/// recently used.
+fn store_of<'a>(engine: &'a Oci, image: &Image) -> Option<&'a dyn crate::ArtifactStore> {
+    match &image.rootfs {
+        Rootfs::Stored(path) => engine.store.get().map(|store| {
+            store.used(path);
+            store.as_ref()
+        }),
+        Rootfs::Scratch(_) => None,
+    }
+}
+
+/// What a first run would otherwise make, at warm-up: the sandbox takes
+/// its snapshot of the image for the machine a step with no limits of its
+/// own gets. A step that sets `limits.memory` runs another machine, and
+/// its first run makes that one. The VM that is frozen reserves its
+/// memory as a run's does.
+pub(crate) fn prepare(engine: &Oci, image: &Image) -> Result<(), Error> {
+    let opts = RunOptions::default();
+    let limits = engine.effective(&opts);
+    let deadline = Instant::now() + limits.timeout;
+    let process_mib = limits.memory_limit.div_ceil(1 << 20).max(MIN_PROCESS_MIB);
+    let memory_mib = process_mib + VM_OVERHEAD_MIB;
+    let _reservation = match &engine.mem {
+        Some(pool) => {
+            pool.reserve(memory_mib << 20, deadline).map_err(Error)?;
+            Some(Reservation {
+                pool: Arc::clone(pool),
+                n: memory_mib << 20,
+            })
+        }
+        None => None,
+    };
+    let description = image.config.describe(&opts);
+    engine.sandbox.prepare(VmSpec {
+        kernel: &engine.options.kernel,
+        initrd: engine.initrd.as_ref(),
+        rootfs: image.rootfs.path(),
+        memory_mib,
+        vcpus: engine.options.vcpus,
+        description: &description,
+        request: &[],
+        deadline,
+        scratch: engine.scratch.path(),
+        snapshots: &image.snapshots,
+        store: store_of(engine, image),
+    })
+}
+
 fn boot_and_run(
     engine: &Oci,
     image: &Image,
@@ -111,16 +162,6 @@ fn boot_and_run(
     }
     let mut description = image.config.describe(opts);
     description.memory_max = process_mib << 20;
-    // A stored root filesystem is read from the store's file by every run:
-    // each one is a use, or the sweep would take a busy image's file for
-    // the least recently used.
-    let store = match &image.rootfs {
-        Rootfs::Stored(path) => engine.store.get().map(|store| {
-            store.used(path);
-            store.as_ref()
-        }),
-        Rootfs::Scratch(_) => None,
-    };
     let outcome = engine.sandbox.run(VmSpec {
         kernel: &engine.options.kernel,
         initrd: engine.initrd.as_ref(),
@@ -132,7 +173,7 @@ fn boot_and_run(
         deadline,
         scratch: engine.scratch.path(),
         snapshots: &image.snapshots,
-        store,
+        store: store_of(engine, image),
     })?;
     log_stderr(&outcome.stderr, opts);
     if !outcome.console.is_empty() {

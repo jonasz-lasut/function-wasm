@@ -49,21 +49,25 @@ pub enum Profile {
     WasmLifecycle,
     /// function-oci under the wasm default profile's policy and verifiers.
     OciDefault,
+    /// The oci default with VM snapshots on and the published example
+    /// warmed.
+    OciSnapshots,
 }
 
 impl Profile {
     /// Every profile, in the order setup creates their cluster objects.
-    pub const ALL: [Profile; 4] = [
+    pub const ALL: [Profile; 5] = [
         Profile::WasmDefault,
         Profile::WasmStrict,
         Profile::WasmLifecycle,
         Profile::OciDefault,
+        Profile::OciSnapshots,
     ];
 
     pub fn runtime(self) -> Runtime {
         match self {
             Profile::WasmDefault | Profile::WasmStrict | Profile::WasmLifecycle => Runtime::Wasm,
-            Profile::OciDefault => Runtime::Oci,
+            Profile::OciDefault | Profile::OciSnapshots => Runtime::Oci,
         }
     }
 
@@ -74,6 +78,7 @@ impl Profile {
             Profile::WasmDefault | Profile::OciDefault => "default",
             Profile::WasmStrict => "strict",
             Profile::WasmLifecycle => "lifecycle",
+            Profile::OciSnapshots => "snapshots",
         }
     }
 
@@ -104,16 +109,17 @@ impl Profile {
             Profile::WasmStrict => include_str!("../profiles/wasm/strict/drc.yaml"),
             Profile::WasmLifecycle => include_str!("../profiles/wasm/lifecycle/drc.yaml"),
             Profile::OciDefault => include_str!("../profiles/oci/default/drc.yaml"),
+            Profile::OciSnapshots => include_str!("../profiles/oci/snapshots/drc.yaml"),
         }
     }
 
     /// The profile whose policy ConfigMap this profile's runtime config
-    /// mounts: itself, or the wasm default for the oci default (its
+    /// mounts: itself, or the wasm default for the oci profiles (their
     /// drc.yaml names e2e-policy-wasm-default). Setup writes a policy when
     /// a wanted profile mounts it, so the oci cluster needs no wasm profile.
     pub fn policy_source(self) -> Profile {
         match self {
-            Profile::OciDefault => Profile::WasmDefault,
+            Profile::OciDefault | Profile::OciSnapshots => Profile::WasmDefault,
             own => own,
         }
     }
@@ -125,7 +131,7 @@ impl Profile {
             Profile::WasmDefault => Some(include_str!("../profiles/wasm/default/policy.cedar")),
             Profile::WasmStrict => Some(include_str!("../profiles/wasm/strict/policy.cedar")),
             Profile::WasmLifecycle => Some(include_str!("../profiles/wasm/lifecycle/policy.cedar")),
-            Profile::OciDefault => None,
+            Profile::OciDefault | Profile::OciSnapshots => None,
         }
     }
 

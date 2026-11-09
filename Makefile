@@ -101,7 +101,7 @@ E2E_DIR := $(OUTPUT_DIR)/e2e
 # The profiles, one test target each: crates/e2e/tests/<runtime>_<profile>.rs
 # over crates/e2e/profiles/<runtime>/<profile>/.
 E2E_WASM_PROFILES := default strict lifecycle
-E2E_OCI_PROFILES := default
+E2E_OCI_PROFILES := default snapshots
 E2E_CARGO := cargo run -q -p guestfn-e2e --features cluster
 E2E_GUEST_DIR := crates/e2e/guest
 FUNCTION_PKG_EXAMPLES := examples/function-wasm-go/example

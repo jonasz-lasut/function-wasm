@@ -1,0 +1,68 @@
+# The oci snapshots profile: the oci default profile (its policy, its
+# verifiers, /dev/kvm from the node's device plugin) with VM snapshots on
+# (docs/one-pager-vm-snapshots.md) and the published function-oci-go
+# example warmed, so the pod is ready once that image's snapshot is made
+# and the example's first request restores it.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: e2e-oci-snapshots
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      strategy: {}
+      template:
+        spec:
+          containers:
+          - name: package-runtime
+            image: function-oci-e2e:dev
+            args:
+            - --sandbox-policy-file=/etc/guestfn/policy/policy.cedar
+            - --cosign-key=/etc/guestfn/cosign/cosign.pub
+            - --cosign-trusted-root=/etc/guestfn/trusted-root/trusted_root.json
+            - --debug
+            - --enable-vm-snapshots
+            - --warm-modules=ghcr.io/jonasz-lasut/guestfn/examples/oci-go@sha256:83f5bac9b73db9f3781f14722db279c4e1cd147c8fb464613f558f17a5c11ccc
+            # Ready means warmed, and warmed means the published example's
+            # snapshot exists: /readyz answers 503 until then
+            # (docs/operators/readiness.md).
+            readinessProbe:
+              httpGet:
+                path: /readyz
+                port: 8081
+              periodSeconds: 2
+            resources:
+              limits:
+                devic.es/kvm: "1"
+            env:
+            - name: SSL_CERT_FILE
+              value: /etc/guestfn/registry-ca/ca.crt
+            - name: SSL_CERT_DIR
+              value: /etc/ssl/certs
+            volumeMounts:
+            - name: policy
+              mountPath: /etc/guestfn/policy
+              readOnly: true
+            - name: cosign-key
+              mountPath: /etc/guestfn/cosign
+              readOnly: true
+            - name: trusted-root
+              mountPath: /etc/guestfn/trusted-root
+              readOnly: true
+            - name: registry-ca
+              mountPath: /etc/guestfn/registry-ca
+              readOnly: true
+          volumes:
+          - name: policy
+            configMap:
+              name: e2e-policy-wasm-default
+          - name: cosign-key
+            secret:
+              secretName: e2e-cosign-key
+          - name: trusted-root
+            configMap:
+              name: e2e-trusted-root
+          - name: registry-ca
+            configMap:
+              name: e2e-registry-ca

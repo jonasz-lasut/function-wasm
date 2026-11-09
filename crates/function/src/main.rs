@@ -472,11 +472,12 @@ async fn serve_main(args: ServeArgs) -> Result<(), String> {
         let readiness = readiness.clone();
         let resolver = Arc::clone(&resolver);
         let module_cache = Arc::clone(&module_cache);
+        let engine = Arc::clone(&engine);
         tokio::spawn(async move {
             if let Some(refresher) = refresher {
                 refresher.start().await;
             }
-            ops::warm(&entries, &resolver, &module_cache).await;
+            ops::warm(&entries, &resolver, &module_cache, &engine).await;
             readiness.ready();
             health.set_serving::<grpc::RawFunctionServer>().await;
         });
