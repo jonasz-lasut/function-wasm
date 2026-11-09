@@ -35,7 +35,7 @@ use serde_json::json;
 const PUBLISHED_WASM: &str = "ghcr.io/jonasz-lasut/guestfn/examples/wasm-go@sha256:253aadf6a20a3fa8c487fa57e1f0133d39e66093ee4b25ba4433a00247e1c159";
 /// The published `examples/function-oci-go`: a module image for both
 /// platforms the runtime serves, under the same signer.
-const PUBLISHED_OCI: &str = "ghcr.io/jonasz-lasut/guestfn/examples/oci-go@sha256:a11795674f24539afe03a1aca13a05b1dc03eb55ebda1bffdebd2b9089651447";
+const PUBLISHED_OCI: &str = "ghcr.io/jonasz-lasut/guestfn/examples/oci-go@sha256:f0b0fd646ca7270d1bb1683a86e8387ed72fff4989c1c26e7e789ea9ea99dd80";
 const REGISTRY_IMAGE: &str = "registry:3";
 /// The device plugin that admits the node's /dev/kvm into function-oci's
 /// pod (docs/oci/install.md, "Node requirements"), and the
