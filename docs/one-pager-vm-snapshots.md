@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: draft (the prototype behind `--vm-snapshots` merged with #278, off by default; #279 has what's left)
+* Status: draft (the prototype behind `--vm-snapshots` merged with #278, off by default. Snapshots are in 0.1 as an alpha feature; #279 has what's left)
 
 `function-oci` boots a microVM for each request
 ([OCI runtime](one-pager-oci-runtime.md)), and the boot is most of a short
@@ -139,6 +139,7 @@ Jonasz settled these on 2026-11-09, with these measurements:
 - The prototype merges behind `--vm-snapshots`, off by default, and
   [#279](https://github.com/jonasz-lasut/guestfn/issues/279) continues
   from it.
+- Snapshots are in 0.1 as an alpha feature, behind the same flag.
 - A snapshot belongs to one image. Its key is the image and the VM size,
   since `limits.memory` resizes the VM.
 - Restore goes through the release binary's API socket, and the engine
