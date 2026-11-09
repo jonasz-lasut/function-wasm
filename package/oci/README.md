@@ -18,8 +18,10 @@ build: the process gets its own kernel, a writable root filesystem the VM
 discards, and `/tmp`, with no network device.
 
 > [!CAUTION]
-> **Alpha.** function-oci has no release yet; `Publish Function` publishes
-> it under `ghcr.io/jonasz-lasut/function-oci`. The pod needs `/dev/kvm`.
+> **Alpha.** function-oci is 0.x, and until 1.0.0 a release may break
+> anything ([Compatibility](https://jonasz-lasut.github.io/guestfn/contract/compatibility.html#function-oci-at-0x)).
+> The pod needs `/dev/kvm`, and the sandbox has had no independent security
+> review.
 
 ```yaml
 apiVersion: apiextensions.crossplane.io/v1
