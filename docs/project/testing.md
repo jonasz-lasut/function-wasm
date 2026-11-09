@@ -187,7 +187,8 @@ For `function-oci`:
   Firecracker and kernel (`make oci.tools`)
 - an engine job that runs the OCI engine's suite in real VMs under the
   runner's KVM (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of
-  skipping)
+  skipping); while issue #272 is open, the `e2e` status names its verdict
+  in the description and never fails on it
 - a second cluster job that installs both runtimes (`E2E_OCI=1`) and runs the
   `oci` profiles
 
