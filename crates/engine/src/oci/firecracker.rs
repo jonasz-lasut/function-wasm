@@ -47,6 +47,15 @@ struct Snapshots {
     fingerprint: std::sync::OnceLock<String>,
 }
 
+/// A lock attempt's guard, or None while the lock is taken.
+fn unless_taken<G>(attempt: std::sync::TryLockResult<G>) -> Option<G> {
+    match attempt {
+        Ok(guard) => Some(guard),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+        Err(std::sync::TryLockError::Poisoned(e)) => panic!("poisoned: {e}"),
+    }
+}
+
 impl Firecracker {
     pub fn new(binary: PathBuf) -> Firecracker {
         Firecracker {
@@ -278,7 +287,9 @@ impl Firecracker {
     /// None while another run is making it and this one does not wait:
     /// making a snapshot takes longer than a boot, so a run that finds the
     /// slot taken boots, as it would without snapshots, and no request
-    /// waits past its deadline for another's snapshot.
+    /// waits past its deadline for another's snapshot. Looking one up
+    /// takes the slot's read side, so runs restoring side by side never
+    /// turn each other away.
     fn snapshot(
         &self,
         snapshots: &Snapshots,
@@ -286,27 +297,43 @@ impl Firecracker {
         wait: bool,
     ) -> Result<Option<Arc<Snapshot>>, String> {
         let slot = spec.snapshots.slot(spec.memory_mib, spec.vcpus);
-        let mut slot = if wait {
-            slot.lock().expect("poisoned")
-        } else {
-            match slot.try_lock() {
-                Ok(slot) => slot,
-                Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
-                Err(std::sync::TryLockError::Poisoned(e)) => panic!("poisoned: {e}"),
-            }
-        };
         let count = |event| {
             metrics::CACHE_EVENTS
                 .with_label_values(&[metrics::CACHE_SNAPSHOT, event])
                 .inc()
         };
-        if let Some(snapshot) = &*slot {
-            if snapshot.state.is_file() && snapshot.mem.is_file() {
+        let restorable = |snapshot: &Snapshot| {
+            let there = snapshot.state.is_file() && snapshot.mem.is_file();
+            if there {
                 if let Some(store) = spec.store {
                     store.used(&snapshot.state);
                     store.used(&snapshot.mem);
                 }
                 count(metrics::EVENT_HIT);
+            }
+            there
+        };
+        let Some(memo) = (if wait {
+            Some(slot.read().expect("poisoned"))
+        } else {
+            unless_taken(slot.try_read())
+        }) else {
+            return Ok(None);
+        };
+        if let Some(snapshot) = memo.as_ref().filter(|s| restorable(s)) {
+            return Ok(Some(Arc::clone(snapshot)));
+        }
+        drop(memo);
+        let Some(mut slot) = (if wait {
+            Some(slot.write().expect("poisoned"))
+        } else {
+            unless_taken(slot.try_write())
+        }) else {
+            return Ok(None);
+        };
+        if let Some(snapshot) = &*slot {
+            // Another run may have made it between the two locks.
+            if restorable(snapshot) {
                 return Ok(Some(Arc::clone(snapshot)));
             }
             // The sweep took a file from under the image: made again.
@@ -656,7 +683,7 @@ impl Sandbox for Firecracker {
                         *spec
                             .snapshots
                             .slot(spec.memory_mib, spec.vcpus)
-                            .lock()
+                            .write()
                             .expect("poisoned") = None;
                         let _ = std::fs::remove_file(&snapshot.state);
                         let _ = std::fs::remove_file(&snapshot.mem);
@@ -825,6 +852,45 @@ fn talk(
 mod tests {
     use super::*;
     use crate::protocol::Description;
+
+    /// Only a snapshot in the making turns a run away: a run that meets
+    /// another looking the snapshot up restores it too.
+    #[test]
+    fn only_a_snapshot_in_the_making_turns_a_run_away() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (state, mem) = (dir.path().join("state"), dir.path().join("mem"));
+        std::fs::write(&state, b"").expect("state");
+        std::fs::write(&mem, b"").expect("mem");
+        let memo = crate::oci::sandbox::SnapshotMemo::default();
+        let slot = memo.slot(64, 1);
+        *slot.write().expect("poisoned") = Some(Arc::new(Snapshot { state, mem }));
+        let description = Description::default();
+        let spec = VmSpec {
+            kernel: dir.path(),
+            initrd: dir.path(),
+            rootfs: dir.path(),
+            memory_mib: 64,
+            vcpus: 1,
+            description: &description,
+            request: b"",
+            deadline: Instant::now(),
+            scratch: dir.path(),
+            snapshots: &memo,
+            store: None,
+        };
+        let firecracker = Firecracker::new("firecracker".into());
+        let snapshots = Snapshots::default();
+
+        let looking = slot.read().expect("poisoned");
+        let found = firecracker.snapshot(&snapshots, &spec, false);
+        assert!(found.expect("a lookup").is_some());
+        drop(looking);
+
+        let making = slot.write().expect("poisoned");
+        let found = firecracker.snapshot(&snapshots, &spec, false);
+        assert!(found.expect("a lookup").is_none());
+        drop(making);
+    }
 
     /// The API client reads a success from the status line and puts the
     /// VMM's own words into a failure.

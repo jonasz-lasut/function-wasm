@@ -116,21 +116,12 @@ async fn guests_created_at_once_restore_the_warmed_snapshot() -> Result<()> {
         let names = ns.guests_at_once("load", GUESTS, &step, json!({})).await?;
         let greetings: Vec<String> = names.iter().map(|n| format!("hello {n}")).collect();
         wait_greetings(&ns, &greetings).await?;
-        // Later reconciles restore too, so one run that boots beside a
-        // restore doesn't decide this.
-        let deadline = std::time::Instant::now() + WAIT;
-        loop {
-            let scraped = scrape(&ns).await?;
-            let restored = snapshots(&scraped, "hit") - before;
-            if restored >= GUESTS as f64 {
-                break;
-            }
-            ensure!(
-                std::time::Instant::now() < deadline,
-                "{restored} restored runs for {GUESTS} Guests\n{scraped}"
-            );
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        }
+        let scraped = scrape(&ns).await?;
+        let restored = snapshots(&scraped, "hit") - before;
+        ensure!(
+            restored >= GUESTS as f64,
+            "{restored} restored runs for {GUESTS} Guests\n{scraped}"
+        );
         for pod in k8s::function_pods_of(&ns.client, &PROFILE.pod_selector()).await? {
             let name = pod.metadata.name.context("a pod with no name")?;
             let log = k8s::function_log(&ns.client, &name).await?;
