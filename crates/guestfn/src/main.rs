@@ -23,7 +23,9 @@ const FALLBACK_GO_VERSION: &str = "1.26";
 #[derive(Parser, Debug)]
 #[command(
     name = "guestfn",
-    version,
+    // A release build states the version it was released as, which moves
+    // apart from the runtimes' (GUESTFN_VERSION is theirs).
+    version = option_env!("GUESTFN_CLI_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
     about = "Scaffold, build and publish WebAssembly guest functions for function-wasm."
 )]
 struct Cli {
