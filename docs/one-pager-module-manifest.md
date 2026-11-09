@@ -8,8 +8,8 @@
   reference are a section here)
 
 A module declares what it needs in a manifest: the sandbox capabilities it
-can't run without, the schema of the `config` it reads and the oldest runtime
-it works on, plus, advisory only, the kinds it composes. For an OCI artifact
+can't run without and the schema of the `config` it reads, plus, advisory
+only, the kinds it composes. For an OCI artifact
 the manifest is a second layer of the artifact. A `Path` or `HTTP` source
 names its `guestfn.yaml` by reference. The runtime reads it before the run and fails
 fast, with a message that identifies the module and the refusing policy layer,
@@ -116,7 +116,6 @@ A miss is a fatal result, counted as `refused`, before the module runs:
 module oci ghcr.io/example/greeter@sha256:3f2a… requires egress GET to host "api.example.com" (requires.egress.http[0]), which the operator policy (--sandbox-policy-file) does not permit
 … which the compositionPolicy does not permit
 … requires a private /tmp (requires.filesystem.privateTmp), which the operator policy (--sandbox-policy-file) does not permit for this request
-… requires runtime v0.3.0 or newer, this is v0.2.1
 … config does not match the module's schema: /greeting: got number, want string
 ```
 
@@ -252,9 +251,9 @@ change the module, and `--cosign-key` covers both. A manifest by reference is
 pinned where it can be: an `HTTP` manifest by `manifestDigest`. `config.schema`
 runs a validator over Composition-authored data, and a manifest, and so its
 schema, is bounded to 64 KiB. Reading the manifest parses JSON, never
-WebAssembly. Failing closed on unknown `requires.*` means a module built for a
-newer runtime is refused with a message, not run without a capability it
-counted on. These checks never read the composite resource.
+WebAssembly. Failing closed on unknown `requires.*` means a module asking for a
+capability this runtime doesn't know is refused with a message, not run
+without it. These checks never read the composite resource.
 
 ## Decisions
 

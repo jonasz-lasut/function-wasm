@@ -33,11 +33,9 @@ The project is at 0.6 and the owner accepts breaking changes before 1.0.
 The names tied to WebAssembly that the OCI runtime would inherit change
 outright, with no alias: the manifest file becomes `guestfn.yaml`, the
 artifact's media types move under `vnd.guestfn`, and both packages serve
-the Input as `guestfn.crossplane.io/v1`. The record proposed Firecracker
-as the sandbox. The owner asked for an evaluation of the candidates
-instead, which the Sandbox evaluation section holds. Firecracker stays
-for now (Jonasz, 2026-11-09). The first build runs on it, and the spike
-the evaluation planned didn't run.
+the Input as `guestfn.crossplane.io/v1`. Firecracker is the sandbox for
+now (Jonasz, 2026-11-09). The status stays `draft` until the first
+`function-oci` package, which makes it `implemented, revision 1.0`.
 
 ## Goals
 
@@ -199,7 +197,7 @@ config:
 ```
 
 The other fields keep their meaning and their validation. `guestfn manifest
-validate` holds `image` to a digest-pinned reference and refuses it in a
+validate` holds `oci.image` to a digest-pinned reference and refuses it in a
 `wasm@1.0` manifest. `guestfn push --image <ref@sha256:…>` writes the
 image's digest into the published manifest as the module's provenance and
 appends the manifest to that image, with no module file read. `guestfn
@@ -213,9 +211,7 @@ one change, with no alias.
 
 ### The sandbox
 
-Firecracker is the sandbox for now (decision 8). The design below holds
-for every candidate in the evaluation. Where a candidate differs, the
-evaluation says how.
+Firecracker is the sandbox for now (decision 8).
 
 **What boots.** The runtime unpacks the image's layers once per image
 digest, applies the whiteouts and preserves ownership and modes without
@@ -313,70 +309,11 @@ pod's cgroup is the jail, without `privileged` and without
 Firecracker has no macOS port, and a machine without KVM has no loop
 (decision 9).
 
-### Sandbox evaluation
-
-The owner asked which sandbox fits before the record commits to one, and
-weighs a Rust code base as a plus. The comparison remains here as the
-evaluation wrote it. The candidates below all run an unmodified OCI image
-under a guest kernel, except the last two rows, which the table keeps for
-contrast. Edera, a Xen-based runtime the owner asked about, is under
-Alternatives: it sandboxes pods at the node, not requests inside a pod.
-
-| candidate | language | form | rootfs | host-mediated I/O | macOS | notes |
-|---|---|---|---|---|---|---|
-| [libkrun](https://github.com/libkrun/libkrun) | Rust | a library linked into the binary, with a Rust API | virtio-fs from a directory, without a block image | vsock, with TSI off | yes, HVF on ARM64 | kernel from libkrunfw. crun's `krun` handler runs OCI containers on it today. Apache-2.0 |
-| [Firecracker](https://github.com/firecracker-microvm/firecracker) | Rust | a separate process driven over an API socket | block devices only, so the ext4 writer | vsock | no | 1.17.0; snapshots and restore; the jailer; the widest production record |
-| [cloud-hypervisor](https://github.com/cloud-hypervisor/cloud-hypervisor) | Rust | a separate process driven over an API socket | virtio-fs and block | vsock | no | 54; a fuller device model than the runtime needs |
-| [Dragonball](https://github.com/kata-containers/kata-containers/tree/main/src/dragonball) | Rust | a library inside Kata's Rust runtime | virtio-fs and block | vsock | no | the default VMM of Kata 4.0's runtime-rs; built for Kata's shim |
-| [gVisor](https://gvisor.dev) | Go | a user-space kernel behind an OCI runtime, `runsc` | a directory | pipes | Linux only | the systrap platform runs without `/dev/kvm`. A software boundary. Go |
-| crun, youki | C, Rust | OCI runtimes | a directory | pipes | Linux only | namespaces on the host kernel; the development fallback at most |
-
-The criteria, in the order the owner weighs them:
-
-1. **The boundary.** A guest kernel under a hypervisor, with the device
-   model as what the guest can attack. Every microVM candidate passes. gVisor's boundary
-   is a user-space kernel, smaller than a container's exposure but
-   software.
-2. **Rust.** libkrun, Firecracker, cloud-hypervisor and Dragonball are
-   Rust. libkrun alone offers a Rust API the engine links directly, which
-   spares the engine a sidecar process, its API socket and its
-   supervision.
-3. **The image's root filesystem.** virtio-fs removes the ext4 writer and
-   the block image cache: the runtime unpacks the layers into a directory
-   and the VMM shares it read-only. Firecracker has block devices only.
-4. **The development loop.** libkrun runs on macOS over HVF, with the same
-   binary, the same kernel and the same init. Firecracker, cloud-hypervisor,
-   Dragonball and gVisor need a container fallback on a laptop.
-5. **Operations.** A library needs `/dev/kvm` and nothing else in the
-   image. A process needs its binary, its socket directory and a
-   supervisor. Firecracker's jailer adds a second layer the pod's cgroup
-   and seccomp already provide.
-6. **Maturity.** Firecracker runs Lambda and Fargate. libkrun runs
-   podman's machines and crun's `krun` handler. Its `main` is a 2.0 with
-   an API still moving, and the engine would pin a `stable-*` branch.
-   cloud-hypervisor runs Kata deployments.
-
-On the criteria, libkrun leads and Firecracker is the alternative the
-project understands best. The evaluation planned a spike to pick one by
-measurement rather than by reading, with a prototype of each behind one
-`Sandbox` seam. The first build of `function-oci` is the Firecracker
-prototype. A static release binary, a published kernel and no library to
-link made it the one to write first. It runs the end-to-end suite's `oci`
-profile on a GitHub runner.
-
-The spike didn't run. Firecracker stays for now (Jonasz, 2026-11-09,
-decision 8), and the libkrun prototype and the comparison are off the
-path to 0.1, under Alternatives. The status stays `draft` until the first
-`function-oci` package, which makes it `implemented, revision 1.0`.
-gVisor stays the candidate for a cluster without `/dev/kvm`, behind the
-same `Sandbox` trait, if demand appears.
-
 ### Snapshots
 
 `--enable-vm-snapshots` restores a snapshot of an image's booted VM in place of a
 boot. It's a prototype, off by default and Firecracker's alone, and 0.1
-includes it as an alpha feature (decision 13). On a laptop's nested KVM
-the median run went from 1123 ms to 250 ms.
+includes it as an alpha feature (decision 13).
 [Per-image microVM snapshots](one-pager-vm-snapshots.md) is its design record.
 
 ### Offline validation and the CLI
@@ -394,7 +331,7 @@ scaffolds the project and builds the image (decision 12):
 | command | `oci@0.1` |
 |---|---|
 | `guestfn build` | refuses an `oci@0.1` manifest: the command builds WebAssembly modules, and the author builds the image with `docker build` (or `buildx`) |
-| `guestfn push --image <ref@sha256:…>` | appends the manifest to the image the author pushed, as one more layer, and writes the image's digest into the manifest's `image`. It doesn't read a module file |
+| `guestfn push --image <ref@sha256:…>` | appends the manifest to the image the author pushed, as one more layer, and writes the image's digest into the manifest's `oci.image`. It doesn't read a module file |
 | `guestfn inspect` | says that a module image is one and which image the manifest records as its origin, with the manifest's summary. `--pull` refuses it |
 | `guestfn scaffold composition` | unchanged |
 
@@ -415,7 +352,7 @@ The `v1beta1` deprecation goes with the old group.
 
 - `crates/function`: the runtime as a library, generic over the trait.
   `cli.rs` is the entry point the two binaries call. `manifest.rs` gains the
-  `Contract` enum and `image`. `oci.rs` reads the wrapping artifact, and
+  `Contract` enum and `oci.image`. `oci.rs` reads the wrapping artifact, and
   `resolver.rs` fetches an image through it into a layout.
 - `crates/engine`: the `Engine` trait and what the engines share. The image
   layout's writer is here so `resolver.rs` can use it.
@@ -439,11 +376,8 @@ The `v1beta1` deprecation goes with the old group.
   refuses an `oci@0.1` manifest.
 - `package/oci/` beside `package/wasm/`: one package root per runtime, each
   with its `crossplane.yaml` and a copy of the Input CRD.
-  `crates/function-oci/Dockerfile` adds the VMM and the kernel, and a
-  `kernel/` directory
-  holds the kernel configuration and the build the release workflow runs
-  where the project builds its own.
-- `.github/workflows`: the kernel build, `build-oci` jobs in `e2e.yml`, an
+  `crates/function-oci/Dockerfile` adds the VMM and the kernel.
+- `.github/workflows`: `build-oci` jobs in `e2e.yml`, an
   `oci` e2e profile on a KVM runner, and `publish-function.yml` publishing either
   package.
 
@@ -451,7 +385,7 @@ The `v1beta1` deprecation goes with the old group.
 
 - Unit: the layer unpacking against fixtures with whiteouts and
   ownership, read back from the form the sandbox boots. The init protocol
-  framing. The manifest's `contract`, `image` and per-engine rules. The
+  framing. The manifest's `contract`, `oci.image` and per-engine rules. The
   wrapping artifact in `push.rs`.
 - The engine's VM suite runs a static test image built in the test
   from a small binary that echoes a fixed response, unpacked and run under
@@ -470,7 +404,7 @@ The `v1beta1` deprecation goes with the old group.
 
 An operators page for the OCI runtime (install, the device and the flags),
 a guests page for the contract and for publishing an image as a
-module, the manifest page's `contract` and `image` fields, the artifact's
+module, the manifest page's `contract` and `oci.image` fields, the artifact's
 media types on the trust model page, the Input reference's `apiVersion`
 note, and the troubleshooting entries for the new refusals.
 
@@ -494,18 +428,11 @@ package starts alpha, on its own tags and releases (decision 15).
 
 - **gVisor as the sandbox.** A user-space kernel, with no KVM required on
   its systrap platform, slower system calls and a software-only boundary.
-  Behind the microVM candidates in the evaluation. A later sandbox behind
-  the same `Sandbox` trait if a cluster can't offer KVM.
-- **A libkrun prototype and the comparison.** The evaluation's spike was
-  one week for two prototypes behind one `Sandbox` seam, libkrun and
-  Firecracker, each running the committed test image's contract
-  with the init over vsock. Its measurements were to come from a KVM
-  runner and, for libkrun, an Apple Silicon laptop: time from `run` to
-  the process's first byte, request round trip for a 1 MiB request,
-  resident memory per idle VM, the unpacking time for a 100 MB image, the
-  behaviour under `limits.memory` and `limits.timeout`, and whether the
-  pod runs without `privileged`. Dropped from the path to 0.1 (Jonasz,
-  2026-11-09), with Firecracker staying for now.
+  A later sandbox behind the same `Sandbox` trait if a cluster can't offer
+  KVM.
+- **A libkrun prototype and a comparison.** A libkrun and a Firecracker
+  prototype behind one `Sandbox` seam. Dropped from the path to 0.1
+  (Jonasz, 2026-11-09), with Firecracker staying for now.
 - **Kata Containers through a RuntimeClass.** The runtime would create a
   Pod per request and talk to it. Seconds of latency per request, RBAC to
   create Pods and no `crossplane render`. Rejected.
@@ -683,7 +610,7 @@ order from these phases to 0.1, the package's first release.
    moved the Input group and generated the CRD. #247 added the manifest's
    `type` with its per-type contract, with `type: oci` refused by name.
    The next PR made `abi` the `contract` enum and added the manifest's
-   `image` with `guestfn push --image`, which first published a wrapping
+   `oci.image` with `guestfn push --image`, which first published a wrapping
    artifact and now appends the manifest to the image as a layer (decision
    11), read back by `guestfn inspect`.
 3. Done, on Firecracker: the OCI engine behind the
