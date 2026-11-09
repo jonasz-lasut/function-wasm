@@ -233,7 +233,11 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               artifact store, single-flight loads with compile slots; cache events
   src/store.rs                the content-addressed disk stores (modules, compiled/<version>,
                               manifests), verify-on-read, the LRU sweep to --max-cache-size,
-                              stale-version reaping
+                              stale-version reaping; the engine crate's ArtifactStore over the
+                              compiled store (begin, seal, sealed, used: a file written in
+                              place, signed and verified by a streamed MAC - the OCI engine's
+                              VM snapshots), an entry sized by what the disk allocated for it
+                              (a sparse memory file), remove_unfinished at startup
   src/egress.rs               HTTP egress through the host: SSRF block list judged per resolved
                               address (operator dialAddress rules punch holes), redirects re-checked
                               per hop, fixed budgets, the process-wide rate limit, one audit line
@@ -265,10 +269,15 @@ crates/engine/              the engines, one crate (guestfn-engine): what every 
                             init and test fixture as the crate's two binaries, built static for
                             musl with no feature on (make oci.init)
   src/lib.rs                  the Engine trait (compile, inspect, serialize, deserialize_file,
-                              run, version, config; KIND the module type the engine serves,
-                              CONTRACT the manifest contract it implements), Config (the
-                              ceilings), RunOptions (one run's narrowing and grants), Inspection
-                              (with details, an image's config lines) and Extern, Error
+                              stored - the module once the runtime stored its artifact, a
+                              no-op but for the OCI engine, which continues from the stored
+                              root filesystem - run, version, config; KIND the module type the
+                              engine serves, CONTRACT the manifest contract it implements),
+                              ArtifactStore (where an engine keeps files it derives from a
+                              module at run time, implemented by the runtime's compiled store),
+                              Config (the ceilings), RunOptions (one run's narrowing and
+                              grants), Inspection (with details, an image's config lines) and
+                              Extern, Error
   src/wire.rs,                the egress seam (HttpRequester, one send's request and response),
   concurrency.rs,             the fair run slots, the memory pool and the per-digest step slots,
   duration.rs, metrics.rs     Go-style durations, the Prometheus series (names, labels and
@@ -574,7 +583,13 @@ examples/function-oci-go      the hello function as an oci@1.0 module (#263, pha
                               parks the init and snapshots the VM through the API socket, the
                               memory file rewritten sparse, and every later run restores it
                               into a fresh process, the description carrying the host's clock
-                              and a seed for the init to set). A module
+                              and a seed for the init to set; a stored
+                              image's snapshot is two entries of the compiled store under the
+                              root filesystem's name, the machine shape and a fingerprint of
+                              Firecracker, the kernel and the init (docs/one-pager-vm-snapshots.md),
+                              the memo of made snapshots on the loaded Image (sandbox.rs
+                              SnapshotMemo), a missing or refused one made again, a failed one
+                              costing the run a boot). A module
                               is an OCI image layout tar (layout.rs: index, platform manifest,
                               config and layers, every blob verified, plus the Writer the
                               resolver assembles one with), compiled by applying the layers
@@ -735,7 +750,7 @@ A guest's returned error becomes a fatal result on a fresh response, a panic in 
 
 ### Caches
 
-Three on-disk stores under `/tmp/guestfn-cache` (fixed; `store.rs`): `modules/<digest>` — every fetched blob, verified on read, never held in memory; `compiled/<engine::version()>/<digest>` — wasmtime artifacts, each with a `<digest>.mac` sidecar, the HMAC-SHA256 of the artifact under 32 bytes the process draws at startup (`main.rs`, `store.rs::with_key`): `path()` refuses and removes an entry whose sidecar is missing or another key's (a stale miss), so a planted artifact never loads and a restart compiles everything again, the volume keeping the fetched modules only (`version()` = the wasmtime crate version from Cargo.lock + OS/arch, the `rust-` prefix keeping it apart from any other runtime's directory; other version dirs reaped at startup once a day old); `manifests/<manifest digest>` — raw module manifests under their own digest (the layer's for OCI, `manifestDigest` for HTTP), verified on read, with the pinning-digest memo in memory (`resolver.rs`); beside them `tuf/<instance>/`, the verified TUF metadata and trusted root of `--cosign-trust-instance` (`trustroot.rs`), outside the sweep. In memory: compiled modules only, idle TTL 10 min, LRU-bounded by `--max-cached-modules`, single-flight loads with `--max-concurrent-compiles` slots, or nothing with `--enable-memory-cache=false`. Keys are digests stated in the Input; `--max-cache-size` LRU-sweeps the disk stores to nine tenths at startup and every ten minutes. Full design: `docs/one-pager-cache.md`.
+Three on-disk stores under `/tmp/guestfn-cache` (fixed; `store.rs`): `modules/<digest>` — every fetched blob, verified on read, never held in memory; `compiled/<engine::version()>/<digest>` — wasmtime artifacts, each with a `<digest>.mac` sidecar, the HMAC-SHA256 of the artifact under 32 bytes the process draws at startup (`main.rs`, `store.rs::with_key`): `path()` refuses and removes an entry whose sidecar is missing or another key's (a stale miss), so a planted artifact never loads and a restart compiles everything again, the volume keeping the fetched modules only (`version()` = the wasmtime crate version from Cargo.lock + OS/arch, the `rust-` prefix keeping it apart from any other runtime's directory; other version dirs reaped at startup once a day old); under `--vm-snapshots` the OCI engine keeps a stored image's VM snapshot there too, a state file and a sparse memory file beside the root filesystem, signed and verified by the same key through the engine's `ArtifactStore` and counted by what the disk allocated (`docs/one-pager-vm-snapshots.md`); `manifests/<manifest digest>` — raw module manifests under their own digest (the layer's for OCI, `manifestDigest` for HTTP), verified on read, with the pinning-digest memo in memory (`resolver.rs`); beside them `tuf/<instance>/`, the verified TUF metadata and trusted root of `--cosign-trust-instance` (`trustroot.rs`), outside the sweep. In memory: compiled modules only, idle TTL 10 min, LRU-bounded by `--max-cached-modules`, single-flight loads with `--max-concurrent-compiles` slots, or nothing with `--enable-memory-cache=false`. Keys are digests stated in the Input; `--max-cache-size` LRU-sweeps the disk stores to nine tenths at startup and every ten minutes. Full design: `docs/one-pager-cache.md`.
 
 ### Readiness, warm-up and the run bound
 
@@ -743,7 +758,7 @@ Readiness is answered twice — gRPC health on the function port and plain-HTTP 
 
 ### Metrics
 
-`crates/engine/src/metrics.rs` registers the runtime's series, whose names, labels and buckets are contract: `guestfn_module_{compile,fetch,run}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` (its `skipped` outcome is a step with no module to run under `module.allowEmpty`), `hostcall_duration_seconds` and `memory_denials_total{reason}`: `hostcall_duration_seconds` (the host-import slice of a run, split by call_hook) and `memory_denials_total{reason}` (guest memory and table growths denied at the per-run ceiling or the pool), registered with prometheus-client (the OpenMetrics-native client; the runtime's own registry, prometheus-client has no default), served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port) - OpenMetrics 1.0 as the main format straight from prometheus-client's encoder, the classic text format derived from it (`metrics::classic_from_openmetrics`: counter families renamed with `_total`, `# EOF` dropped) only for an Accept header that asks for `text/plain` without accepting OpenMetrics (`ops.rs::wants_classic_text`); both renderings carry identical series. The `Labeled{Counter,Gauge,Histogram}` adapters in metrics.rs keep the prometheus crate's `with_label_values` call shape, so metric call sites never name prometheus-client; counters register named without their `_total` (the encoder appends it) and helps without their trailing period (prometheus-client appends one). `crates/function/src/grpcmetrics.rs` adds the gRPC server series (`grpc_server_{started,handled,msg_received,msg_sent}_total`, the names, labels and help strings of function-sdk-go's grpc-prometheus interceptor, so one dashboard reads every Crossplane function) as a tower layer around the whole router in grpc.rs, unary-only, every served method pre-created at zero as that interceptor's InitializeMetrics does, and no handling-time histogram. Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
+`crates/engine/src/metrics.rs` registers the runtime's series, whose names, labels and buckets are contract: `guestfn_module_{compile,fetch,run,snapshot}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` (its `skipped` outcome is a step with no module to run under `module.allowEmpty`), `hostcall_duration_seconds` and `memory_denials_total{reason}`: `hostcall_duration_seconds` (the host-import slice of a run, split by call_hook) and `memory_denials_total{reason}` (guest memory and table growths denied at the per-run ceiling or the pool), registered with prometheus-client (the OpenMetrics-native client; the runtime's own registry, prometheus-client has no default), served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port) - OpenMetrics 1.0 as the main format straight from prometheus-client's encoder, the classic text format derived from it (`metrics::classic_from_openmetrics`: counter families renamed with `_total`, `# EOF` dropped) only for an Accept header that asks for `text/plain` without accepting OpenMetrics (`ops.rs::wants_classic_text`); both renderings carry identical series. The `Labeled{Counter,Gauge,Histogram}` adapters in metrics.rs keep the prometheus crate's `with_label_values` call shape, so metric call sites never name prometheus-client; counters register named without their `_total` (the encoder appends it) and helps without their trailing period (prometheus-client appends one). `crates/function/src/grpcmetrics.rs` adds the gRPC server series (`grpc_server_{started,handled,msg_received,msg_sent}_total`, the names, labels and help strings of function-sdk-go's grpc-prometheus interceptor, so one dashboard reads every Crossplane function) as a tower layer around the whole router in grpc.rs, unary-only, every served method pre-created at zero as that interceptor's InitializeMetrics does, and no handling-time histogram. Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
 
 ### Signatures
 

@@ -87,12 +87,40 @@ vCPU count. The vCPU count is the operator's `--vm-vcpus`, one value for
 the runtime, which leaves `limits.memory` as what multiplies an image's
 snapshots.
 
-The prototype keeps snapshots in the engine's scratch directory for the
-life of the process. The compiled store's per-process key already stops an
-artifact from loading after a restart
-([Compiled-artifact cache key](one-pager-cache-key.md)). Moving the
-snapshots into the store adds the sweep's bound and the `cache_bytes`
-gauge, and no persistence.
+### In the compiled store
+
+The runtime keeps a snapshot beside the image's root filesystem in the
+compiled store, `compiled/<version>/`. It's a state file and a memory file.
+Their names start with the entry name of the root filesystem and go on
+with the VM's memory size, its vCPU count and a fingerprint of the
+Firecracker binary, the guest kernel, the init and the boot arguments. A
+different Firecracker, kernel or init looks under another name.
+
+Firecracker writes both files in place, since a VM's memory is too large to
+hand over as bytes. The store signs a file under its per-process key once
+the file is complete
+([Compiled-artifact cache key](one-pager-cache-key.md)). An unfinished file
+is no entry, and the runtime removes what an interrupted write left when it
+starts. The sweep bounds the snapshots with the store's other entries, and
+the `cache_bytes` gauge counts them. Both count a sparse file by what the
+disk allocated for it.
+
+A loaded image remembers its snapshots while it stays in memory. When the
+runtime loads the image again, the engine looks the snapshot up in the
+store, which verifies the signature over the whole file as it does for the
+root filesystem. The
+engine makes a snapshot again when the store refuses it or the sweep
+removed it from under a loaded image. When the engine can't make or
+restore a snapshot, that run boots, and the image goes without snapshots
+until the runtime loads it again.
+
+A compiled image first runs from a scratch file. Once the runtime has
+stored the root filesystem, the engine continues from the stored file
+(`Engine::stored`), because a snapshot records the path of the drive it
+mounted and a stored file keeps its path. Each run marks the stored root
+filesystem and the snapshot it restores as used, which keeps the files of
+a busy image out of the sweep. An image the runtime didn't store keeps its
+snapshots in the engine's scratch directory for the life of the process.
 
 ### The protocol
 
@@ -184,10 +212,8 @@ Jonasz settled these on 2026-11-09, with these measurements:
 
 [#279](https://github.com/jonasz-lasut/guestfn/issues/279) tracks it:
 
-- the snapshots in the compiled store under the sweep, which has to count a
-  sparse file's allocated blocks, with `engine::version()` naming the
-  Firecracker build and the guest kernel
 - a snapshot at warm-up, and the wait of concurrent first requests under
   the request's deadline
-- metrics, and an `oci` e2e profile with the flag on
+- whether a restored run may reserve less memory than the whole VM
+- an `oci` e2e profile with the flag on, and a troubleshooting entry
 - the numbers from a GitHub runner, the first x86 run among them
