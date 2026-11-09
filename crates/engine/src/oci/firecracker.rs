@@ -510,12 +510,15 @@ fn api_call(sock: &Path, method: &str, path: &str, body: &serde_json::Value) -> 
         .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(30))))
         .map_err(|e| format!("cannot configure the VMM's API socket: {e}"))?;
     let body = body.to_string();
-    write!(
-        stream,
+    // One write for the whole request: written piece by piece, a peer that
+    // answers and closes on the first piece breaks the pipe under the rest.
+    let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
-    )
-    .map_err(|e| format!("cannot send {method} {path} to the VMM: {e}"))?;
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("cannot send {method} {path} to the VMM: {e}"))?;
     let mut response = Vec::new();
     let mut buf = [0u8; 1024];
     // The status line is enough for success; an error's body follows its
@@ -735,9 +738,29 @@ mod tests {
                 },
             ] {
                 let (mut stream, _) = listener.accept().expect("accept");
+                // The whole request before the answer, as an HTTP server
+                // reads it: the headers, then the body they announce.
+                let mut request = Vec::new();
                 let mut buf = [0u8; 2048];
-                let n = stream.read(&mut buf).expect("request");
-                seen.push(String::from_utf8_lossy(&buf[..n]).to_string());
+                loop {
+                    let n = stream.read(&mut buf).expect("request");
+                    assert!(n > 0, "the request ended early");
+                    request.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&request);
+                    let Some(head) = text.find("\r\n\r\n") else {
+                        continue;
+                    };
+                    let length: usize = text[..head]
+                        .lines()
+                        .find_map(|l| l.strip_prefix("Content-Length: "))
+                        .expect("a Content-Length header")
+                        .parse()
+                        .expect("a length");
+                    if request.len() >= head + 4 + length {
+                        break;
+                    }
+                }
+                seen.push(String::from_utf8_lossy(&request).to_string());
                 stream.write_all(answer.as_bytes()).expect("answer");
             }
             seen
