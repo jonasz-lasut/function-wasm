@@ -3,6 +3,8 @@
 This page is for anyone who depends on function-wasm across releases:
 composition authors, operators and module authors. It lists what's stable
 throughout 1.x, what a minor release may add and how a removal is announced.
+function-oci, the OCI runtime, is alpha and has a section of its own,
+[function-oci at 0.x](#function-oci-at-0x).
 
 What a Composition, a flag, a dashboard or a CI job relies on keeps working
 on every 1.x release, with one exception: a minor release may add a refusal
@@ -60,3 +62,49 @@ same way at 0.6, with no alias for the old ones: the metric series
 `function_wasm_*` became `guestfn_*`, the cache directory
 `/tmp/function-wasm-cache` became `/tmp/guestfn-cache` and the stamped
 version variable `FUNCTION_WASM_VERSION` became `GUESTFN_VERSION`.
+
+## function-oci at 0.x
+
+function-oci runs an OCI image in a Firecracker microVM
+([Install function-oci](../oci/install.md)). It's alpha and 0.x, and
+function-wasm's 1.x promise doesn't extend to it. The design record keeps
+the alpha label until the process contract and the engine's flags have
+held through two minor releases
+([OCI runtime](../one-pager-oci-runtime.md#two-packages-one-workspace)).
+
+`oci@1.0` is the process contract
+([OCI modules](../oci/modules.md#the-process-contract)). The runtime runs
+the image's configured entrypoint and command once per request, as the
+image's configured user, in its configured working directory, with its
+configured environment plus the `requires.env` bindings the module was
+granted. The process reads the `RunFunctionRequest` bytes from standard
+input and writes the `RunFunctionResponse` bytes to standard output.
+Standard error is its log: a line that's a JSON object with `level` and
+`msg` logs at that level, and any other line logs at info. An exit status
+of zero with a response on standard output is a run, and any other ending
+is a fatal result on the step.
+
+A module's manifest declares the contract it follows, `contract: oci@1.0`,
+and function-oci refuses a version its engine doesn't offer. It offers
+`oci@1.0` alone. The `1.0` is the contract's version, not function-oci's.
+A minor version adds what a module may use, and a major version changes
+what the engine does with a module
+([Module manifests](../guests/module-manifests.md)). Beyond that the rules
+aren't defined yet: which changes to the process contract count as a
+minor, and whether a runtime that offers a later version keeps running
+`oci@1.0` images.
+
+A 0.x minor release may change the surfaces that only function-oci has:
+
+- The engine's flags and their defaults: `--vmm`, `--guest-kernel`,
+  `--guest-init` and `--vm-vcpus`
+  ([Install function-oci](../oci/install.md#flags)).
+- The wording of the engine's fatal results and of the refusals only
+  function-oci prints, such as `process exited with status <n>`. The
+  contract says what an exit means, not the sentence of the fatal
+  result, and the conformance goldens pin none of these sentences.
+- The metrics only function-oci emits:
+  `guestfn_module_snapshot_duration_seconds`, and the `snapshot` value of
+  the `cache` label on `guestfn_module_cache_events_total`.
+- Alpha features behind flags of their own, VM snapshots among them
+  ([Per-image microVM snapshots](../one-pager-vm-snapshots.md)).
