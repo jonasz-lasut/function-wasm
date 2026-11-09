@@ -31,7 +31,7 @@
 # below. Nothing else runs here: the guest suite, the example build jobs
 # and the OCI engine's VM suite do not depend on Crossplane.
 #
-# Runs on every push to a release-X.Y branch: the cut of a new line (the
+# Runs on every push to a release-function-<wasm|oci>-X.Y branch: the cut of a new line (the
 # cut-release skill pushes the branch, waits for this run and cuts the tag
 # only when it is green) and a patch on an existing one (remediate-cves).
 # A red version is a release blocker, or the floor the documentation then
@@ -46,7 +46,7 @@ name: Release Matrix E2E
 on:
   push:
     branches:
-      - 'release-*'
+      - 'release-function-*'
   workflow_dispatch:
 
 permissions:

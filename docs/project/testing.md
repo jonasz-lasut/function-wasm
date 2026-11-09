@@ -226,7 +226,8 @@ Crossplane maintains its three most recent minor releases
 the function supports the same three. Every `/e2e` run tests the current minor, and the matrix
 adds the two before it.
 
-`release-matrix-e2e.yml` runs on every push to a `release-X.Y` branch. It
+`release-matrix-e2e.yml` runs on every push to a `release-function-wasm-X.Y`
+or `release-function-oci-X.Y` branch. It
 builds both runtimes from the branch once: `function-wasm`'s in
 `build-tools`, and `function-oci`'s pieces in `build-oci` (the runtime with
 the `oci` engine, the init, the test module as a process, the pinned

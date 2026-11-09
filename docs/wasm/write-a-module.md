@@ -9,6 +9,9 @@ that exist as examples alone.
 Install the CLI and scaffold a project:
 
 ```shell
+# Prebuilt, from a guestfn-v* release (guestfn-linux-amd64, -linux-arm64, -darwin-amd64 or -darwin-arm64):
+curl -fsSLo guestfn https://github.com/jonasz-lasut/guestfn/releases/download/guestfn-v0.1.0/guestfn-linux-amd64 && chmod +x guestfn
+# Or from source:
 cargo install --git https://github.com/jonasz-lasut/guestfn guestfn
 
 guestfn init greeter --module github.com/example/greeter   # --lang go (default), rust, ts or python
