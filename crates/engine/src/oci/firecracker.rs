@@ -32,42 +32,62 @@ const CONSOLE_CAP: usize = 64 << 10;
 
 pub struct Firecracker {
     binary: PathBuf,
+    /// The snapshots this process made, when the engine was told to keep
+    /// them (`Options::snapshots`): None boots every run.
+    snapshots: Option<Snapshots>,
+}
+
+/// One VM frozen with its init parked: the state file and the memory file
+/// Firecracker wrote, which every later run of the same image restores.
+#[derive(Debug)]
+struct Snapshot {
+    state: PathBuf,
+    mem: PathBuf,
+}
+
+/// What a snapshot is good for: the root filesystem it mounted and the
+/// machine it was taken on. A snapshot restores only into the memory size
+/// and vCPU count it was taken with.
+type SnapshotKey = (PathBuf, u64, u8);
+
+/// One key's snapshot once made; its lock is held while it is being made.
+type SnapshotSlot = Arc<Mutex<Option<Arc<Snapshot>>>>;
+
+/// The snapshots by key, each made once: the lock per key is the single
+/// flight, so concurrent first runs of one image wait for one snapshot.
+#[derive(Default)]
+struct Snapshots {
+    made: Mutex<std::collections::HashMap<SnapshotKey, SnapshotSlot>>,
+    next: std::sync::atomic::AtomicU64,
 }
 
 impl Firecracker {
     pub fn new(binary: PathBuf) -> Firecracker {
-        Firecracker { binary }
+        Firecracker {
+            binary,
+            snapshots: None,
+        }
+    }
+
+    /// Firecracker restoring a snapshot per image in place of a boot
+    /// (#255): the first run of an image boots, parks the init and
+    /// snapshots the VM through the API socket; every later run restores
+    /// that snapshot into a fresh process. The prototype keeps snapshots
+    /// under the engine's scratch directory for the process's life.
+    pub fn with_snapshots(binary: PathBuf) -> Firecracker {
+        Firecracker {
+            binary,
+            snapshots: Some(Snapshots::default()),
+        }
     }
 
     pub fn binary(&self) -> &Path {
         &self.binary
     }
-}
 
-impl Sandbox for Firecracker {
-    fn name(&self) -> &'static str {
-        "firecracker"
-    }
-
-    fn run(&self, spec: VmSpec<'_>) -> Result<Outcome, Error> {
-        // Unix socket paths are short-limited (108 bytes): the scratch
-        // directory is the engine's, under the temp dir.
-        let dir = tempfile::Builder::new()
-            .prefix("vm-")
-            .tempdir_in(spec.scratch)
-            .map_err(|e| Error(format!("cannot create the VM's directory: {e}")))?;
-        let uds = dir.path().join("v.sock");
-        let host_port = dir.path().join(format!("v.sock_{}", crate::protocol::PORT));
-        let listener = UnixListener::bind(&host_port).map_err(|e| {
-            Error(format!(
-                "cannot listen for the guest on {}: {e}",
-                host_port.display()
-            ))
-        })?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| Error(format!("cannot configure the guest listener: {e}")))?;
-        let config = serde_json::json!({
+    /// The VM's configuration file, as the release binary reads it.
+    fn config(spec: &VmSpec<'_>, uds: &Path) -> serde_json::Value {
+        serde_json::json!({
             "boot-source": {
                 "kernel_image_path": spec.kernel,
                 "initrd_path": spec.initrd,
@@ -88,21 +108,42 @@ impl Sandbox for Firecracker {
                 "guest_cid": GUEST_CID,
                 "uds_path": uds,
             },
-        });
-        let config_path = dir.path().join("vm.json");
-        std::fs::write(&config_path, serde_json::to_vec(&config).expect("json"))
-            .map_err(|e| Error(format!("cannot write the VM's configuration: {e}")))?;
-        let mut child = Command::new(&self.binary)
-            .arg("--no-api")
-            .arg("--config-file")
-            .arg(&config_path)
-            .arg("--level")
-            .arg("Warning")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| Error(format!("cannot start {}: {e}", self.binary.display())))?;
+        })
+    }
+
+    /// The VM's directory with the guest's port bound in it. Unix socket
+    /// paths are short-limited (108 bytes): the scratch directory is the
+    /// engine's, under the temp dir.
+    fn workdir(spec: &VmSpec<'_>) -> Result<(tempfile::TempDir, PathBuf, UnixListener), Error> {
+        let dir = tempfile::Builder::new()
+            .prefix("vm-")
+            .tempdir_in(spec.scratch)
+            .map_err(|e| Error(format!("cannot create the VM's directory: {e}")))?;
+        let uds = dir.path().join("v.sock");
+        let host_port = dir.path().join(format!("v.sock_{}", crate::protocol::PORT));
+        let listener = UnixListener::bind(&host_port).map_err(|e| {
+            Error(format!(
+                "cannot listen for the guest on {}: {e}",
+                host_port.display()
+            ))
+        })?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|e| Error(format!("cannot configure the guest listener: {e}")))?;
+        Ok((dir, uds, listener))
+    }
+
+    /// Drives the run over the guest's connection, then stops the VM
+    /// whatever happened: a run leaves nothing behind.
+    fn finish(
+        &self,
+        mut child: Child,
+        listener: &UnixListener,
+        spec: &VmSpec<'_>,
+        started: Instant,
+        how: &str,
+    ) -> Outcome {
+        let ready = Instant::now();
         let console = Arc::new(Mutex::new(String::new()));
         let drain = |stream: Option<Box<dyn Read + Send>>, sink: Arc<Mutex<String>>| {
             std::thread::spawn(move || {
@@ -133,8 +174,10 @@ impl Sandbox for Firecracker {
                 .map(|s| Box::new(s) as Box<dyn Read + Send>),
             Arc::clone(&console),
         );
-        let result = drive(&listener, &mut child, &spec);
-        // Whatever happened, the VM goes: a run leaves nothing behind.
+        let mut connected = None;
+        let result = drive(listener, &mut child, spec, &mut connected);
+        let driven = Instant::now();
+        let usage = process_usage(child.id());
         let _ = child.kill();
         let _ = child.wait();
         let _ = out_thread.join();
@@ -149,13 +192,383 @@ impl Sandbox for Firecracker {
                 spec.description.argv.join(" ")
             );
         }
+        // Where a run's time went: until the VMM had its VM (the process
+        // start, and the snapshot load of a restore), until the init
+        // connected, until the process exited.
+        let connected = connected.unwrap_or(driven);
+        let ms =
+            |from: Instant, to: Instant| to.saturating_duration_since(from).as_secs_f64() * 1e3;
+        tracing::debug!(
+            how,
+            vmm_ms = ms(started, ready),
+            guest_ms = ms(ready, connected),
+            run_ms = ms(connected, driven),
+            "the VM's run, by phase"
+        );
+        if std::env::var_os("GUESTFN_VM_TIMING").is_some() {
+            eprintln!(
+                "vm-timing how={how} vmm_ms={:.1} guest_ms={:.1} run_ms={:.1} total_ms={:.1} vmm_rss_mib={:.1} vmm_minor_faults={}",
+                ms(started, ready),
+                ms(ready, connected),
+                ms(connected, driven),
+                ms(started, driven),
+                usage.0 as f64 / (1u64 << 20) as f64,
+                usage.1,
+            );
+        }
         let (stdout, stderr, end) = result;
-        Ok(Outcome {
+        Outcome {
             stdout,
             stderr,
             end,
             console,
+        }
+    }
+
+    /// A boot: the VM from its configuration file, with no API socket.
+    fn boot(&self, spec: VmSpec<'_>) -> Result<Outcome, Error> {
+        let started = Instant::now();
+        let (dir, uds, listener) = Self::workdir(&spec)?;
+        let config_path = dir.path().join("vm.json");
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec(&Self::config(&spec, &uds)).expect("json"),
+        )
+        .map_err(|e| Error(format!("cannot write the VM's configuration: {e}")))?;
+        let child = Command::new(&self.binary)
+            .arg("--no-api")
+            .arg("--config-file")
+            .arg(&config_path)
+            .arg("--level")
+            .arg("Warning")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| Error(format!("cannot start {}: {e}", self.binary.display())))?;
+        Ok(self.finish(child, &listener, &spec, started, "boot"))
+    }
+
+    /// The snapshot for this image and machine, made on the first call:
+    /// the VM boots with its API socket, the init connects and is parked,
+    /// and the paused VM is written out. The VM that made it never runs a
+    /// process.
+    fn snapshot(&self, snapshots: &Snapshots, spec: &VmSpec<'_>) -> Result<Arc<Snapshot>, String> {
+        let key = (spec.rootfs.to_path_buf(), spec.memory_mib, spec.vcpus);
+        let slot = {
+            let mut made = snapshots.made.lock().expect("poisoned");
+            Arc::clone(made.entry(key).or_default())
+        };
+        let mut slot = slot.lock().expect("poisoned");
+        if let Some(snapshot) = &*slot {
+            return Ok(Arc::clone(snapshot));
+        }
+        let started = Instant::now();
+        let n = snapshots
+            .next
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let keep = spec.scratch.join(format!("snapshot-{n}"));
+        std::fs::create_dir_all(&keep)
+            .map_err(|e| format!("cannot create {}: {e}", keep.display()))?;
+        let (dir, uds, listener) = Self::workdir(spec).map_err(|e| e.0)?;
+        let config_path = dir.path().join("vm.json");
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec(&Self::config(spec, &uds)).expect("json"),
+        )
+        .map_err(|e| format!("cannot write the VM's configuration: {e}"))?;
+        let api = dir.path().join("api.sock");
+        let mut child = Command::new(&self.binary)
+            .arg("--api-sock")
+            .arg(&api)
+            .arg("--config-file")
+            .arg(&config_path)
+            .arg("--level")
+            .arg("Warning")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("cannot start {}: {e}", self.binary.display()))?;
+        let result = (|| -> Result<Snapshot, String> {
+            let deadline = spec.deadline.min(Instant::now() + Duration::from_secs(30));
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((s, _)) => break s,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(format!("cannot accept the guest's connection: {e}")),
+                }
+                if Instant::now() >= deadline {
+                    return Err(GUEST_NEVER_CONNECTED.to_string());
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            };
+            stream
+                .set_nonblocking(false)
+                .and_then(|()| stream.set_read_timeout(Some(Duration::from_secs(10))))
+                .map_err(|e| format!("cannot configure the guest's connection: {e}"))?;
+            let hello: Hello = read_json(&mut stream, Kind::Hello)
+                .map_err(|e| format!("cannot read the init's hello: {e}"))?;
+            if hello.version != crate::protocol::VERSION {
+                return Err(format!(
+                    "the init speaks protocol version {}, this engine version {}",
+                    hello.version,
+                    crate::protocol::VERSION
+                ));
+            }
+            write_frame(&mut stream, Kind::Park, &[])
+                .map_err(|e| format!("cannot park the init: {e}"))?;
+            // The init answers and then waits on this connection, sending
+            // nothing: the VM is still when it is paused. The connection
+            // stays open until the snapshot is written, since its reset on
+            // restore is what wakes the init in a clone.
+            let (kind, _) =
+                read_frame(&mut stream).map_err(|e| format!("the init did not park: {e}"))?;
+            if kind != Kind::Parked {
+                return Err(format!("expected the init's Parked, got {kind:?}"));
+            }
+            api_call(
+                &api,
+                "PATCH",
+                "/vm",
+                &serde_json::json!({"state": "Paused"}),
+            )?;
+            let snapshot = Snapshot {
+                state: keep.join("state"),
+                mem: keep.join("mem"),
+            };
+            api_call(
+                &api,
+                "PUT",
+                "/snapshot/create",
+                &serde_json::json!({
+                    "snapshot_type": "Full",
+                    "snapshot_path": snapshot.state,
+                    "mem_file_path": snapshot.mem,
+                }),
+            )?;
+            drop(stream);
+            Ok(snapshot)
+        })();
+        let result = result.and_then(|snapshot| {
+            let (apparent, kept) = sparsify(&snapshot.mem)
+                .map_err(|e| format!("cannot rewrite the VM's memory file: {e}"))?;
+            Ok((snapshot, apparent, kept))
+        });
+        let _ = child.kill();
+        let _ = child.wait();
+        let (snapshot, apparent, kept) = result?;
+        let snapshot = Arc::new(snapshot);
+        tracing::debug!(
+            rootfs = %spec.rootfs.display(),
+            memory_mib = spec.memory_mib,
+            memory_file_bytes = apparent,
+            memory_file_kept_bytes = kept,
+            millis = started.elapsed().as_millis() as u64,
+            "snapshotted the VM"
+        );
+        if std::env::var_os("GUESTFN_VM_TIMING").is_some() {
+            eprintln!(
+                "vm-timing how=snapshot total_ms={:.1} memory_mib={} mem_file_mib={:.1} mem_file_kept_mib={:.1} state_kib={:.1}",
+                started.elapsed().as_secs_f64() * 1e3,
+                spec.memory_mib,
+                apparent as f64 / (1u64 << 20) as f64,
+                kept as f64 / (1u64 << 20) as f64,
+                std::fs::metadata(&snapshot.state)
+                    .map(|m| m.len())
+                    .unwrap_or(0) as f64
+                    / 1024.0,
+            );
+        }
+        *slot = Some(Arc::clone(&snapshot));
+        Ok(snapshot)
+    }
+
+    /// A restore in place of a boot: a fresh Firecracker process loads the
+    /// snapshot (its memory mapped privately from the file, so the clone's
+    /// writes are its own), the parked init connects to this run's socket
+    /// and the run proceeds as after a boot. The description carries the
+    /// host's clock and fresh randomness for the init to set.
+    fn restore(&self, spec: VmSpec<'_>, snapshot: &Snapshot) -> Result<Outcome, Error> {
+        let started = Instant::now();
+        let (dir, uds, listener) = Self::workdir(&spec)?;
+        let api = dir.path().join("api.sock");
+        let mut child = Command::new(&self.binary)
+            .arg("--api-sock")
+            .arg(&api)
+            .arg("--level")
+            .arg("Warning")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| Error(format!("cannot start {}: {e}", self.binary.display())))?;
+        if let Err(e) = api_call(
+            &api,
+            "PUT",
+            "/snapshot/load",
+            &serde_json::json!({
+                "snapshot_path": snapshot.state,
+                "mem_backend": {"backend_type": "File", "backend_path": snapshot.mem},
+                "resume_vm": true,
+                "vsock_override": {"uds_path": uds},
+            }),
+        ) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error(format!("cannot restore the VM's snapshot: {e}")));
+        }
+        let mut seed = [0u8; 32];
+        let seeded = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut seed));
+        let description = crate::protocol::Description {
+            now_unix_ns: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0),
+            seed: if seeded.is_ok() {
+                hex::encode(seed)
+            } else {
+                String::new()
+            },
+            ..spec.description.clone()
+        };
+        let spec = VmSpec {
+            description: &description,
+            ..spec
+        };
+        Ok(self.finish(child, &listener, &spec, started, "restore"))
+    }
+}
+
+/// Rewrites a memory file sparse, in place: Firecracker writes every page
+/// of the VM's memory, and most of a just-booted guest's are zero. A hole
+/// reads as zeros, so the restore maps the same content from a file that
+/// costs the disk only what the guest had touched. Returns the file's
+/// length and the bytes kept.
+fn sparsify(path: &Path) -> std::io::Result<(u64, u64)> {
+    use std::io::{Seek, SeekFrom};
+    const BLOCK: usize = 64 << 10;
+    let mut source = std::fs::File::open(path)?;
+    let len = source.metadata()?.len();
+    let sparse_path = path.with_extension("sparse");
+    let mut sparse = std::fs::File::create(&sparse_path)?;
+    let mut block = vec![0u8; BLOCK];
+    let mut offset = 0u64;
+    let mut kept = 0u64;
+    while offset < len {
+        let want = BLOCK.min((len - offset) as usize);
+        source.read_exact(&mut block[..want])?;
+        if block[..want].iter().any(|b| *b != 0) {
+            sparse.seek(SeekFrom::Start(offset))?;
+            sparse.write_all(&block[..want])?;
+            kept += want as u64;
+        }
+        offset += want as u64;
+    }
+    sparse.set_len(len)?;
+    sparse.sync_all()?;
+    std::fs::rename(&sparse_path, path)?;
+    Ok((len, kept))
+}
+
+/// The VMM process's resident memory in bytes and its minor page faults,
+/// from /proc: what a run cost the host, for the timing line. Zeros where
+/// /proc has no such file.
+fn process_usage(pid: u32) -> (u64, u64) {
+    let rss = std::fs::read_to_string(format!("/proc/{pid}/statm"))
+        .ok()
+        .and_then(|s| s.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map(|pages| pages * 4096)
+        .unwrap_or(0);
+    let faults = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|s| {
+            // The fields after the command, which may hold spaces.
+            let rest = s.rsplit_once(')')?.1.to_string();
+            rest.split_whitespace().nth(7)?.parse::<u64>().ok()
         })
+        .unwrap_or(0);
+    (rss, faults)
+}
+
+/// One request to Firecracker's API socket: HTTP/1.1 over the Unix socket,
+/// a JSON body, 204 on success. The socket appears a moment after the
+/// process starts, so the connect is tried for a while.
+fn api_call(sock: &Path, method: &str, path: &str, body: &serde_json::Value) -> Result<(), String> {
+    let started = Instant::now();
+    let mut stream = loop {
+        match UnixStream::connect(sock) {
+            Ok(s) => break s,
+            Err(e) if started.elapsed() > Duration::from_secs(5) => {
+                return Err(format!("cannot reach the VMM's API socket: {e}"));
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(1)),
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(30))))
+        .map_err(|e| format!("cannot configure the VMM's API socket: {e}"))?;
+    let body = body.to_string();
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .map_err(|e| format!("cannot send {method} {path} to the VMM: {e}"))?;
+    let mut response = Vec::new();
+    let mut buf = [0u8; 1024];
+    // The status line is enough for success; an error's body follows its
+    // headers and fits a read or two.
+    loop {
+        let n = stream
+            .read(&mut buf)
+            .map_err(|e| format!("cannot read the VMM's answer to {method} {path}: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        response.extend_from_slice(&buf[..n]);
+        let text = String::from_utf8_lossy(&response);
+        if let Some(head_end) = text.find("\r\n\r\n") {
+            let length = text[..head_end]
+                .lines()
+                .find_map(|l| {
+                    l.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                })
+                .unwrap_or(0);
+            if response.len() >= head_end + 4 + length {
+                break;
+            }
+        }
+    }
+    let text = String::from_utf8_lossy(&response);
+    let status = text.split_whitespace().nth(1).unwrap_or("");
+    if status.starts_with('2') {
+        return Ok(());
+    }
+    let detail = text.split("\r\n\r\n").nth(1).unwrap_or("").trim();
+    Err(format!(
+        "the VMM answered {method} {path} with {status}: {detail}"
+    ))
+}
+
+impl Sandbox for Firecracker {
+    fn name(&self) -> &'static str {
+        "firecracker"
+    }
+
+    fn run(&self, spec: VmSpec<'_>) -> Result<Outcome, Error> {
+        if let Some(snapshots) = &self.snapshots {
+            match self.snapshot(snapshots, &spec) {
+                Ok(snapshot) => return self.restore(spec, &snapshot),
+                // A snapshot that cannot be made costs the boot it was
+                // meant to save, never the run.
+                Err(e) => tracing::warn!(error = %e, "cannot snapshot the VM; booting it"),
+            }
+        }
+        self.boot(spec)
     }
 }
 
@@ -172,6 +585,7 @@ fn drive(
     listener: &UnixListener,
     child: &mut Child,
     spec: &VmSpec<'_>,
+    connected: &mut Option<Instant>,
 ) -> (Vec<u8>, Vec<u8>, Ended) {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -203,8 +617,9 @@ fn drive(
                 )),
             );
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(1));
     };
+    *connected = Some(Instant::now());
     let end = match talk(stream, spec, &mut stdout, &mut stderr) {
         Ok(exit) => Ended::Exit(exit),
         Err(Talk::Deadline) => Ended::Deadline,
@@ -299,6 +714,62 @@ mod tests {
     use super::*;
     use crate::protocol::Description;
 
+    /// The API client reads a success from the status line and puts the
+    /// VMM's own words into a failure.
+    #[test]
+    fn an_api_call_reports_the_vmm_s_answer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sock = dir.path().join("api.sock");
+        let listener = UnixListener::bind(&sock).expect("listener");
+        let server = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for answer in [
+                "HTTP/1.1 204 \r\nServer: Firecracker API\r\nConnection: keep-alive\r\n\r\n"
+                    .to_string(),
+                {
+                    let body = r#"{"fault_message":"Load snapshot error: no such file"}"#;
+                    format!(
+                        "HTTP/1.1 400 \r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                },
+            ] {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).expect("request");
+                seen.push(String::from_utf8_lossy(&buf[..n]).to_string());
+                stream.write_all(answer.as_bytes()).expect("answer");
+            }
+            seen
+        });
+        let body = serde_json::json!({"state": "Paused"});
+        assert_eq!(api_call(&sock, "PATCH", "/vm", &body), Ok(()));
+        let err = api_call(&sock, "PUT", "/snapshot/load", &body).unwrap_err();
+        assert_eq!(
+            err,
+            r#"the VMM answered PUT /snapshot/load with 400: {"fault_message":"Load snapshot error: no such file"}"#
+        );
+        let seen = server.join().expect("server");
+        assert!(seen[0].starts_with("PATCH /vm HTTP/1.1\r\n"), "{}", seen[0]);
+        assert!(seen[0].ends_with(r#"{"state":"Paused"}"#), "{}", seen[0]);
+    }
+
+    /// A sparse memory file reads as the one Firecracker wrote and keeps
+    /// only its non-zero blocks.
+    #[test]
+    fn a_sparse_memory_file_reads_the_same() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mem");
+        let mut content = vec![0u8; (1 << 20) + 4096];
+        content[70_000] = 7;
+        content[(1 << 20) + 100] = 9;
+        std::fs::write(&path, &content).expect("write");
+        let (len, kept) = sparsify(&path).expect("sparsify");
+        assert_eq!(len, content.len() as u64);
+        assert_eq!(kept, (64 << 10) + 4096);
+        assert_eq!(std::fs::read(&path).expect("read"), content);
+    }
+
     /// A guest that never connects is the sandbox's failure, worded as
     /// such, not the module's deadline: the process never ran.
     #[test]
@@ -325,7 +796,7 @@ mod tests {
             deadline: Instant::now() + Duration::from_millis(50),
             scratch: dir.path(),
         };
-        let (stdout, stderr, end) = drive(&listener, &mut child, &spec);
+        let (stdout, stderr, end) = drive(&listener, &mut child, &spec, &mut None);
         let _ = child.kill();
         let _ = child.wait();
         assert!(stdout.is_empty() && stderr.is_empty());
