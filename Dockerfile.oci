@@ -7,8 +7,11 @@
 # both pinned by checksum. The pod needs /dev/kvm (docs/oci/install.md).
 ARG RUST_VERSION=1
 ARG FIRECRACKER_VERSION=v1.17.0
-# The checksums of firecracker-${FIRECRACKER_VERSION}-<arch>.tgz.
+# The checksums of firecracker-${FIRECRACKER_VERSION}-<arch>.tgz. Renovate
+# moves each with a version beside it: the amd64 one with the version line,
+# the arm64 one with the marker over it, which states the version once more.
 ARG FIRECRACKER_SHA256_AMD64=06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558
+# renovate: firecracker v1.17.0 arm64
 ARG FIRECRACKER_SHA256_ARM64=e351ebe4f7a16b5873bbd51005d2e6767103cff4d5ebc829df2d3f95a93e2256
 # The kernel: firecracker-ci/<ci>/<arch>/vmlinux-<version> in Firecracker's
 # artifact bucket (https://s3.amazonaws.com/spec.ccfc.min), the microvm
