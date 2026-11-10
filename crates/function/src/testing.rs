@@ -91,6 +91,15 @@ pub mod registry {
             self.0.manifests.insert(tag.to_string(), manifest);
         }
 
+        /// Names a stored manifest with a tag of one repository, so two
+        /// repositories can each have a version of the same number.
+        pub fn tag_in(&mut self, repository: &str, tag: &str, digest: &str) {
+            let manifest = self.0.manifests[digest].clone();
+            self.0
+                .manifests
+                .insert(format!("{repository}:{tag}"), manifest);
+        }
+
         /// A module artifact: the wasm layer, the module manifest layer when
         /// given, and an empty config, titled so two modules of the same
         /// bytes get distinct digests. Returns the artifact's manifest digest.

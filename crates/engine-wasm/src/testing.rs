@@ -13,7 +13,17 @@ use std::fmt::Write as _;
 /// A WIT package's source in its published binary form, what `wkg build`
 /// writes.
 pub fn encoded_wit_package(text: &str) -> Vec<u8> {
+    encoded_wit_package_over(text, &[])
+}
+
+/// The same for a package that refers to others, given in dependency order.
+pub fn encoded_wit_package_over(text: &str, dependencies: &[&str]) -> Vec<u8> {
     let mut resolve = wit_parser::Resolve::default();
+    for (index, dependency) in dependencies.iter().enumerate() {
+        resolve
+            .push_str(format!("dependency-{index}.wit"), dependency)
+            .expect("parse the WIT dependency");
+    }
     let package = resolve
         .push_str("package.wit", text)
         .expect("parse the WIT package");

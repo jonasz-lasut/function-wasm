@@ -131,6 +131,8 @@ pub struct WitPackage {
     pub version: Option<String>,
     /// The package as WIT source, in wit-component's printed format.
     pub text: String,
+    /// The packages it refers to, as `namespace:name` and version, sorted.
+    pub dependencies: Vec<(String, Option<String>)>,
 }
 
 /// Decodes a WIT package from the component a registry publishes it as,
@@ -148,10 +150,23 @@ pub fn decode_wit_package(wasm: &[u8]) -> Result<WitPackage, Error> {
         .print(&resolve, package, &[])
         .map_err(|e| Error(format!("cannot print the WIT package: {e:#}")))?;
     let name = &resolve.packages[package].name;
+    let mut dependencies: Vec<(String, Option<String>)> = resolve
+        .packages
+        .iter()
+        .filter(|(id, _)| *id != package)
+        .map(|(_, other)| {
+            (
+                format!("{}:{}", other.name.namespace, other.name.name),
+                other.name.version.as_ref().map(ToString::to_string),
+            )
+        })
+        .collect();
+    dependencies.sort();
     Ok(WitPackage {
         name: format!("{}:{}", name.namespace, name.name),
         version: name.version.as_ref().map(ToString::to_string),
         text: printer.output.to_string(),
+        dependencies,
     })
 }
 

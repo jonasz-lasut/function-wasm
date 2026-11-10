@@ -6,7 +6,9 @@ use std::path::Path;
 use std::process::Command;
 
 use guestfn_engine_wasm::componentize::decode_wit_package;
-use guestfn_runtime::testing::guests::{encoded_wit_package, tiny_component};
+use guestfn_runtime::testing::guests::{
+    encoded_wit_package, encoded_wit_package_over, tiny_component,
+};
 use guestfn_runtime::testing::registry::Registry;
 
 /// A component that does not implement the world.
@@ -773,10 +775,7 @@ fn wit_fetch_restores_a_copy_that_drifted_from_the_lock() {
     std::fs::write(guest.path().join("wit/deps/guestfn-function.wit"), "edited").expect("drift");
     let (stdout, stderr, ok) = guestfn(guest.path(), &["wit", "fetch"]);
     assert!(ok, "stderr: {stderr}");
-    assert!(
-        stdout.contains("wrote wit/deps/guestfn-function.wit"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("wrote 1 of 1 packages"), "{stdout}");
     assert_eq!(
         read(guest.path(), "wit/deps/guestfn-function.wit"),
         printed(&contract("1.0.0"))
@@ -849,6 +848,90 @@ fn build_pulls_what_the_lock_pins_before_the_toolchain_runs() {
     assert!(!ok);
     assert!(
         stderr.contains(&format!("cannot fetch manifest {missing}")),
+        "{stderr}"
+    );
+}
+
+const WASI_IO: &str =
+    "package wasi:io@0.2.12;\n\ninterface streams {\n  resource input-stream;\n}\n";
+const WASI_HTTP: &str = "package wasi:http@0.2.12;\n\ninterface outgoing-handler {\n  use wasi:io/streams@0.2.12.{input-stream};\n}\n";
+
+fn publish_wasi(registry: &mut Registry) {
+    let io = encoded_wit_package(WASI_IO);
+    let digest = registry.module(&io, None, "io");
+    registry.tag_in("webassembly/wasi/io", "0.2.12", &digest);
+    let http = encoded_wit_package_over(WASI_HTTP, &[WASI_IO]);
+    let digest = registry.module(&http, None, "http");
+    registry.tag_in("webassembly/wasi/http", "0.2.12", &digest);
+}
+
+fn guest_importing_http(version: &str) -> tempfile::TempDir {
+    let guest = guest_on(version);
+    std::fs::write(
+        guest.path().join("wit/world.wit"),
+        format!(
+            "package local:guest;\n\nworld function {{\n    include guestfn:function/function-sync@{version};\n\n    import wasi:http/outgoing-handler@0.2.12;\n}}\n"
+        ),
+    )
+    .expect("guest world");
+    guest
+}
+
+fn wit_update_with_wasi(dir: &Path, registry: &str) -> (String, String, bool) {
+    let repository = format!("{registry}/guestfn/function");
+    let wasi = format!("{registry}/webassembly/wasi");
+    guestfn(
+        dir,
+        &[
+            "wit",
+            "update",
+            "--repository",
+            repository.as_str(),
+            "--wasi-repository",
+            wasi.as_str(),
+        ],
+    )
+}
+
+#[test]
+fn wit_update_pins_what_the_world_imports_and_what_that_refers_to() {
+    let mut registry = Registry::new();
+    publish(&mut registry, "1.0.0", &contract("1.0.0"), "contract");
+    publish_wasi(&mut registry);
+    let registry = registry.serve();
+    let guest = guest_importing_http("1.0.0");
+
+    let (stdout, stderr, ok) = wit_update_with_wasi(guest.path(), &registry);
+    assert!(ok, "stderr: {stderr}");
+    assert!(stdout.contains("wrote 3 packages"), "{stdout}");
+    assert!(read(guest.path(), "wit/deps/http.wit").contains("package wasi:http@0.2.12;"));
+    assert!(read(guest.path(), "wit/deps/io.wit").contains("package wasi:io@0.2.12;"));
+    let lock = read(guest.path(), "guestfn.lock");
+    for name in ["guestfn:function", "wasi:http", "wasi:io"] {
+        assert!(lock.contains(&format!("name: {name}\n")), "{lock}");
+    }
+
+    std::fs::remove_file(guest.path().join("wit/deps/io.wit")).expect("remove");
+    let (stdout, stderr, ok) = guestfn(guest.path(), &["wit", "fetch"]);
+    assert!(ok, "stderr: {stderr}");
+    assert!(stdout.contains("wrote 1 of 3 packages"), "{stdout}");
+    assert!(guest.path().join("wit/deps/io.wit").is_file());
+}
+
+#[test]
+fn wit_fetch_refuses_an_import_the_lock_does_not_pin() {
+    let guest = guest_importing_http("1.0.0");
+    pin(
+        guest.path(),
+        "ghcr.io/x/guestfn/function",
+        "1.0.0",
+        "sha256:unused",
+    );
+
+    let (_, stderr, ok) = guestfn(guest.path(), &["wit", "fetch"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("imports wasi:http 0.2.12, which guestfn.lock does not pin"),
         "{stderr}"
     );
 }

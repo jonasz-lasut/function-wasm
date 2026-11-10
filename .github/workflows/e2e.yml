@@ -273,6 +273,14 @@ jobs:
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-go/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-go
+          fi
+
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -386,6 +394,14 @@ jobs:
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-rust/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-rust
+          fi
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
@@ -446,6 +462,14 @@ jobs:
         run: |
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-zig/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-zig
+          fi
 
       # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
       # below: the setup action picks a community mirror and has hung for
@@ -547,6 +571,14 @@ jobs:
         run: |
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-c/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-c
+          fi
 
       # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
       # below: the setup action picks a community mirror and has hung for
@@ -663,6 +695,14 @@ jobs:
         run: |
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-cpp/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-cpp
+          fi
 
       # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
       # below: the setup action picks a community mirror and has hung for
@@ -785,6 +825,14 @@ jobs:
         run: |
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-odin/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-odin
+          fi
 
       # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
       # below: the setup action picks a community mirror and has hung for
@@ -925,6 +973,14 @@ jobs:
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-moonbit/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-moonbit
+          fi
+
       # What the official installer does for one pinned release: the
       # toolchain tarball under ~/.moon, the core beside it, bundled for the
       # wasm and wasm-gc targets (the latter runs moon test), checksums
@@ -1023,6 +1079,14 @@ jobs:
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-ts/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-ts
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -1067,6 +1131,14 @@ jobs:
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
 
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-python/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-python
+          fi
+
       - name: Cache the pip Packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -1105,6 +1177,14 @@ jobs:
         run: |
           chmod +x "${RUNNER_TEMP}/e2e-tools/function-wasm" "${RUNNER_TEMP}/e2e-tools/guestfn"
           echo "GUESTFN=${RUNNER_TEMP}/e2e-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-csharp/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-csharp
+          fi
 
       # NativeAOT-LLVM's linux-x64 compiler: the Makefile builds with the
       # host's dotnet here, no container.
