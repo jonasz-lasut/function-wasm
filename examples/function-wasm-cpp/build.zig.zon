@@ -17,8 +17,8 @@
         // a file or a clock. The sources build.zig lists are compiled with
         // zig cc, like nanopb.
         .mbedtls = .{
-            .url = "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-3.6.5.tar.gz",
-            .hash = "N-V-__8AAIvwlAIZbpoVC3YR52HdYcdnnw0Zzs6aGpR7wA1K",
+            .url = "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-3.6.7.tar.gz",
+            .hash = "N-V-__8AALrvlQKVtYlvv9dpBnbrJfdwR_F0wAgwsvZhAF1Y",
         },
     },
     .paths = .{
