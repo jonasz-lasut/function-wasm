@@ -14,8 +14,8 @@
 
 name: Publish WIT
 
-# The ABI v2 WIT world, wit/wasmfn-function.wit, as a CNCF Wasm OCI artifact
-# (wkg's format) at ghcr.io/jonasz-lasut/wasmfn/function:<world version>,
+# The ABI v2 WIT world, wit/guestfn-function.wit, as a CNCF Wasm OCI artifact
+# (wkg's format) at ghcr.io/jonasz-lasut/guestfn/function:<world version>,
 # signed and attested like the images (#106). Run by hand from the
 # wit-v<world version> tag of the commit whose world is to be published:
 # the world version moves independently of the runtimes', and a
@@ -37,7 +37,7 @@ jobs:
   publish-wit:
     runs-on: ubuntu-26.04
     env:
-      WIT_REPOSITORY: jonasz-lasut/wasmfn/function
+      WIT_REPOSITORY: jonasz-lasut/guestfn/function
       # Installed from the release binary and checked against its digest
       # rather than through cargo-binstall's install script.
       WKG_VERSION: 0.16.1
@@ -51,15 +51,15 @@ jobs:
       - name: Read the World Version
         id: world
         run: |
-          version=$(sed -nE 's/^package wasmfn:function@([^;]+);$/\1/p' wit/wasmfn-function.wit)
+          version=$(sed -nE 's/^package guestfn:function@([^;]+);$/\1/p' wit/guestfn-function.wit)
           if [ -z "${version}" ]; then
-            echo "::error::wit/wasmfn-function.wit declares no package version"
+            echo "::error::wit/guestfn-function.wit declares no package version"
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           case "${version}" in
             *-*)
-              echo "::notice::wasmfn:function@${version} is a pre-release; not publishing it"
+              echo "::notice::guestfn:function@${version} is a pre-release; not publishing it"
               echo "publish=false" >> "$GITHUB_OUTPUT"
               ;;
             *)
@@ -93,10 +93,10 @@ jobs:
         env:
           WORLD_VERSION: ${{ steps.world.outputs.version }}
         run: |
-          "${RUNNER_TEMP}/wkg" build --wit-dir wit -o wasmfn-function.wasm
-          output=$("${RUNNER_TEMP}/wkg" oci push "ghcr.io/${WIT_REPOSITORY}:${WORLD_VERSION}" wasmfn-function.wasm \
-            --annotation "org.opencontainers.image.title=wasmfn:function" \
-            --annotation "org.opencontainers.image.description=The function-wasm ABI v2 WIT world" \
+          "${RUNNER_TEMP}/wkg" build --wit-dir wit -o guestfn-function.wasm
+          output=$("${RUNNER_TEMP}/wkg" oci push "ghcr.io/${WIT_REPOSITORY}:${WORLD_VERSION}" guestfn-function.wasm \
+            --annotation "org.opencontainers.image.title=guestfn:function" \
+            --annotation "org.opencontainers.image.description=The guestfn ABI v2 WIT package, its async and sync worlds" \
             --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --annotation "org.opencontainers.image.version=${WORLD_VERSION}" \
             --annotation "org.opencontainers.image.licenses=Apache-2.0")

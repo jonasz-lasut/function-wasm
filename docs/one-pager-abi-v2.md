@@ -2,11 +2,11 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 0.7 (rewritten in the present tense over the
-  Rust workspace. The Rust host has served since v0.3.0, the world froze at
-  `wasmfn:function@2.0.0` on 2026-10-07 and ABI v1 was removed in 1.0.0;
-  publishing the world, #106, waits on the `rust` scaffold's stable
-  toolchain)
+* Status: implemented, revision 0.8 (rewritten in the present tense over the
+  Rust workspace. The Rust host has served since v0.3.0, the world froze on
+  2026-10-07, took the name `guestfn:function@1.0.0` and a sync form on
+  2026-11-10, and ABI v1 was removed in 1.0.0;
+  `Publish WIT` publishes the world from a `wit-v<version>` tag, #106)
 
 function-wasm runs guests as WebAssembly components against one WIT world,
 and its host is written in Rust. This record explains why those are one
@@ -42,7 +42,7 @@ The move brings these with it:
 
 ## What ABI v2 is
 
-A guest is a component targeting the WIT world `wasmfn:function@2.0.0`:
+A guest is a component targeting the WIT world `guestfn:function@1.0.0`:
 
 - It exports `run: async func(list<u8>) -> result<list<u8>, string>`.
   Protobuf `RunFunctionRequest` bytes go in and `RunFunctionResponse` bytes
@@ -64,9 +64,9 @@ interfaces, so defining the world against 0.2 and lifting it later would
 have meant cutting two worlds and designing the streams and budgets twice.
 Wasmtime enabled component-model async by default in v46, so the host had
 nothing to wait for. A `run` lifted sync satisfies the async world,
-which is what the WAT test fixtures and the `ts`, `python`, `c`, `zig` and
-`go` scaffolds use. Wasmtime calls its 0.3 support experimental, so a release that
-moves those interfaces is re-vendored and taken on `2.0.0` in place until
+which is what the WAT test fixtures use and what the package's
+`function-sync` world states for the toolchains that need it. Wasmtime calls its 0.3 support experimental, so a release that
+moves those interfaces is re-vendored and taken on `1.0.0` in place until
 the world is published (`abi-v2.md`, "Versioning").
 
 Async matters less here than for most hosts. A fresh instance per request

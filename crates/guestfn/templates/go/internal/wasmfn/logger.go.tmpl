@@ -8,7 +8,7 @@ import (
 )
 
 // Level is a level of the world's typed log import (log-level in
-// wasmfn:function): the host renders a line at its own level of the same
+// guestfn:function): the host renders a line at its own level of the same
 // name, and shows debug lines only under --debug.
 type Level uint8
 

@@ -155,10 +155,10 @@ policy: it requires no capability.
   after it** (`import log from "log"`, typed by `src/log.d.ts`), and esbuild
   must keep it external (`--external:log`).
 - `wit/world.wit`: this guest's own world, in a `local:guest` package: the
-  [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
-  restated with `run` declared **sync**, because componentize-js cannot
-  async-lift a custom world's export yet, and a sync-lifted function
-  satisfies the runtime's async world.
+  [ABI v2 contract](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)'s `function-sync`
+  world, included with `run` declared **sync**, because componentize-js
+  cannot async-lift a custom world's export yet, and a sync-lifted function
+  satisfies the runtime's async world. `wit/deps/` carries the contract.
 - `proto/run_function.proto`, `src/gen/` and `src/log.d.ts` are the ts
   scaffold's plumbing (`guestfn init --lang ts`), kept identical to it:
   crossplane's `RunFunction` contract, vendored, and protobuf-es's `js+dts`

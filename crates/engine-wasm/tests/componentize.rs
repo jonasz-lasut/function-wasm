@@ -59,7 +59,7 @@ fn core_module(rsp: &[u8], imports: &str) -> String {
 const FD_WRITE: &str =
     r#"(import "wasi_snapshot_preview1" "fd_write" (func (param i32 i32 i32 i32) (result i32)))"#;
 
-/// The runtime's world (wit/wasmfn-function.wit) embedded into the module
+/// The runtime's world (wit/guestfn-function.wit) embedded into the module
 /// as wit-bindgen embeds it - through the engine's own embed, the one
 /// guestfn build runs over a Go guest's wit/. The world is taken as is, its
 /// `run` declared async: wit-component lifts a plain `run` export with the
@@ -309,4 +309,34 @@ fn a_malformed_section_fails_the_wrap() {
     let msg = err.to_string();
     assert!(msg.starts_with("cannot componentize module: "), "{msg}");
     assert!(msg.contains("component-type:x"), "{msg}");
+}
+
+/// `guestfn wit update` writes what it decodes from the published artifact,
+/// so a refreshed guest's copy is the file every scaffold vendors only while
+/// the contract is in the printer's format.
+#[test]
+fn the_contract_round_trips_through_its_published_form() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../wit/guestfn-function.wit"
+    ))
+    .expect("read the contract");
+    let decoded = guestfn_engine_wasm::componentize::decode_wit_package(
+        &guestfn_engine_wasm::testing::encoded_wit_package(&source),
+    )
+    .expect("decode the contract");
+    assert_eq!(decoded.name, "guestfn:function");
+    assert_eq!(
+        decoded.text, source,
+        "wit/guestfn-function.wit is not in the printer's format: run `wasm-tools component wit wit` over it and copy the result into every guest's wit/deps"
+    );
+}
+
+#[test]
+fn a_component_is_no_wit_package() {
+    let err = guestfn_engine_wasm::componentize::decode_wit_package(
+        &guestfn_engine_wasm::testing::tiny_component(),
+    )
+    .expect_err("a component");
+    assert!(err.0.contains("not a WIT package"), "{}", err.0);
 }

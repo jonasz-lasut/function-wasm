@@ -8,11 +8,11 @@ the one `zig` binary is the C toolchain, the build system and the package
 fetcher, and `guestfn build` wraps the core module it links into the
 component - no wasm-tools, no adapter download.
 
-- `wit/world.wit` is this guest's world: the `wasmfn:function` contract
-  restated in a `local:guest` package with `run` declared sync (a sync-lifted
-  `run` satisfies the runtime's async world) and
-  `wasi:http/outgoing-handler@0.2.12` imported for the greeting fetch;
-  `wit/deps/` carries the WASI 0.2.12 packages. `zig build gen-bindings` runs
+- `wit/world.wit` is this guest's world, in a `local:guest` package: it
+  includes the `guestfn:function` contract's `function-sync` world (`run`
+  declared sync, which satisfies the runtime's async world) and imports
+  `wasi:http/outgoing-handler@0.2.12` for the greeting fetch; `wit/deps/`
+  carries the contract and the WASI 0.2.12 packages. `zig build gen-bindings` runs
   [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C
   generator (`wit-bindgen-cli` 0.62.0) over it into `src/gen` - `function.h`,
   `function.c` and `function_component_type.o`, the object carrying the

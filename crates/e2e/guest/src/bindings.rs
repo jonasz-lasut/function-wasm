@@ -1,5 +1,5 @@
 //! The ABI v2 world, over the rust scaffold's wit/ (the vendored
-//! wasmfn:function contract plus the wasi:http client): wit-bindgen
+//! guestfn:function contract plus the wasi:http client): wit-bindgen
 //! generates the component bindings, and this module implements the async
 //! `run` export and the GET over `wasi:http/client@0.3.0` the egress knob
 //! makes. wasm-only: native tests drive `run_function` with a fetch double.

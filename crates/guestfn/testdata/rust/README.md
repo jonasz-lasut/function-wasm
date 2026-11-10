@@ -19,7 +19,7 @@ cargo runs here; delete the file once 1.100.0 is out.
   vendored; `build.rs` compiles it with `prost-build` (needs `protoc`).
 - `wit/world.wit` is this guest's own world, in a `local:guest` package -
   the contract plus the `wasi:http` client it fetches with. `wit/deps/`
-  carries what it builds on: `wasmfn-function.wit`, the
+  carries what it builds on: `guestfn-function.wit`, the
   [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
   vendored byte-identical to the runtime's copy, and the wasi WIT the
   client needs.

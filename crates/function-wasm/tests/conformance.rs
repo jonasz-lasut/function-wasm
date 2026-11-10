@@ -396,7 +396,7 @@ fn validate_resolve_matches_the_goldens() {
         e.serialize(&m).expect("serialize")
     };
     std::fs::write(dir.path().join("precompiled.wasm"), &artifact).expect("write");
-    // A component implementing the wasmfn:function world with no imports,
+    // A component implementing the guestfn:function world with no imports,
     // and one that does not implement it (the world typecheck is the load
     // refusal).
     let component = wat::parse_str(

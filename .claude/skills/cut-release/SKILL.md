@@ -16,7 +16,7 @@ versions, git tags, GitHub releases and release branches:
 | `function-wasm` | `function-wasm-vX.Y.Z` | `release-function-wasm-X.Y` | `ghcr.io/jonasz-lasut/function-wasm:vX.Y.Z` |
 | `function-oci` | `function-oci-vX.Y.Z` | `release-function-oci-X.Y` | `ghcr.io/jonasz-lasut/function-oci:vX.Y.Z` |
 | `guestfn` | `guestfn-vX.Y.Z` | `release-guestfn-X.Y` | binaries attached to the GitHub release |
-| `wit` | `wit-vX.Y.Z` | `release-wit-X.Y` | `ghcr.io/jonasz-lasut/wasmfn/function:X.Y.Z` |
+| `wit` | `wit-vX.Y.Z` | `release-wit-X.Y` | `ghcr.io/jonasz-lasut/guestfn/function:X.Y.Z` |
 
 An OCI artifact's tag drops the component prefix and keeps the version. The
 WIT world's is the bare package version, the form `wkg` writes. The
@@ -27,12 +27,11 @@ Unlike a CVE security patch (see `remediate-cves`), there is no fix to
 author: the branch is cut straight from `main` HEAD, and the component and
 the bump (minor or major) are chosen by the user, never inferred.
 
-Through a component's 0.x line the repository keeps **one** release branch
-of that component, the latest, because CVE remediations only ever target
-that line, so cutting a new line ends by retiring the superseded branch
-(step 11). From a component's v1.0.0 on, superseded release branches
-**stay** (Jonasz, 2026-10-07): step 11 retires only 0.x branches, so an
-older line can still take a patch. Patch releases never retire anything.
+Every release branch **stays**: cutting a new line never deletes a
+superseded one, at any version, because the repository keeps its full
+release history (Jonasz, 2026-11-10). Through a component's 0.x line CVE
+remediations target its latest branch alone. From its v1.0.0 on, an older
+line can still take a patch.
 
 ## When to use
 
@@ -69,7 +68,7 @@ use that directly. Otherwise ask before computing anything. Then:
 - **minor**: `NEW_VERSION="v${MAJOR}.$((MINOR+1)).0"`
 - **a component's first release** (`TAG` is empty): ask the user for the version.
 - **`wit`**: the version isn't a bump, it's the world's own:
-  `NEW_VERSION="v$(sed -nE 's/^package wasmfn:function@([^;]+);$/\1/p' wit/wasmfn-function.wit)"`.
+  `NEW_VERSION="v$(sed -nE 's/^package guestfn:function@([^;]+);$/\1/p' wit/guestfn-function.wit)"`.
   Stop if that version has a release already or is a pre-release.
 
 ```bash
@@ -150,10 +149,7 @@ pushing over it.
 ### 4. Confirm before anything externally visible
 
 Show the user `NEW_TAG`, `NEW_BRANCH`, a summary of what's shipping
-(e.g. `git log --oneline "$TAG"..main`), and the component's existing 0.x
-branches that step 11 will delete once the release completes
-(`git ls-remote --heads origin "release-$COMPONENT-0.*"`; from its 1.0.0 on
-nothing is deleted). From here on every step is
+(e.g. `git log --oneline "$TAG"..main`). From here on every step is
 externally visible (pushed branch, public tag, GitHub release, published
 package) and isn't something you can quietly undo — get explicit
 confirmation before continuing.
@@ -222,20 +218,20 @@ component's release never replaces it.
 already created it, so this is just documentation-by-flag.)
 
 A `function-wasm` release's notes state what it serves, as `docs/abi-v2.md`'s versioning
-policy promises: the world (`wit/wasmfn-function.wit`'s package line),
+policy promises: the world (`wit/guestfn-function.wit`'s package line),
 wasmtime (its entry in `Cargo.lock`) and the WASI interface versions the
 scaffolds vendor under `wit/deps/`, which are what a guest imports beside
 the world. Read them from the tree being released:
 
 ```bash
-sed -nE 's/^package (wasmfn:function@[^;]+);/\1/p' wit/wasmfn-function.wit
+sed -nE 's/^package (guestfn:function@[^;]+);/\1/p' wit/guestfn-function.wit
 rg -n '^name = "wasmtime"$' -A1 Cargo.lock | rg -o 'version = ".*"'
 rg -I -o --no-heading '^package wasi:(cli|clocks|http|io)@[0-9][^;]*' \
   crates/guestfn/templates/*/wit/deps | sed 's/package //' | sort -u
 ```
 
 One sentence in the notes carries them, for example: `Serves
-wasmfn:function@2.0.0 on wasmtime 49.0.2: WASI 0.2.12 (cli, clocks, http,
+guestfn:function@1.0.0 on wasmtime 49.0.2: WASI 0.2.12 (cli, clocks, http,
 io) for the sync scaffolds and WASI 0.3.0 (clocks, http) for the rust
 scaffold.` A guest keeps running as long as the runtime's wasmtime serves
 the versions it was built against, so a release that moves any of them
@@ -281,33 +277,12 @@ needs the tag from step 6 to exist, step 9 needs the image step 8 published.
 Find each run with `gh run list --workflow="<name>" --limit 1` and wait on it
 (`gh run watch <run-id> --exit-status`); if using the Monitor tool, its
 until-loop pattern is the sanctioned way to poll rather than a manual sleep
-loop. Only once all three have concluded successfully, move on to branch
-retirement.
+loop. Only once all three have concluded successfully, move on to the report.
 
-### 11. Retire the component's superseded 0.x branches, then report
+### 11. Report
 
-A component's 0.x line keeps only its latest release branch: CVE remediations
-(`remediate-cves`) target the newest line, so once `NEW_TAG` is fully released
-an older 0.x branch of that component is dead weight (its history is preserved
-by its tags). Delete every other remote 0.x branch of **this component**:
-
-```bash
-git ls-remote --heads origin "release-$COMPONENT-0.*" | sed 's|.*refs/heads/||' \
-  | grep -vx "$NEW_BRANCH" \
-  | while read -r OLD; do git push origin --delete "$OLD"; done
-```
-
-From a component's v1.0.0 on, superseded release branches stay (Jonasz,
-2026-10-07), so an older line can take a patch (`remediate-cves` on that
-branch) after a newer line has shipped. The command above matches 0.x
-branches alone.
-
-Run this **only after** steps 6–9 have all concluded successfully: if the
-release dies partway, the previous line must stay patchable. (Stale local
-copies are harmless; clean them up with `git branch -D` if present.)
-
-Then report the new tag released, the branch it lives on, and which
-superseded release branches, if any, were deleted.
+Report the new tag released and the branch it lives on. Leave every earlier
+release branch where it is: the repository keeps its full release history.
 
 ## Quick reference
 
@@ -321,7 +296,6 @@ superseded release branches, if any, were deleted.
 | `Publish guestfn` | the new tag | `version` (`vX.Y.Z`) |
 | `Publish WIT` | the new tag | none |
 | `Supply Chain and Xpkg Extensions` (functions) | `main` | `function`, `version` (`vX.Y.Z`) |
-| Retire old branches | n/a | the component's 0.x branches except the new one |
 
 ## Common mistakes
 
@@ -352,13 +326,5 @@ superseded release branches, if any, were deleted.
   versions: the versioning policy in `docs/abi-v2.md` promises them.
 - Using this skill for a patch bump (`vX.Y.Z+1`) — that path belongs to
   `remediate-cves`, which reuses an existing branch instead of cutting one.
-- Leaving a superseded 0.x branch of the component behind after the new line
-  ships: a component's 0.x line holds exactly one release branch, the latest.
-- Deleting a 1.x or later release branch: from a component's 1.0.0 on every
-  released line keeps its branch.
-- Retiring another component's branch: step 11 covers this component alone.
-- Deleting the old branch before steps 6–9 have all succeeded — a
-  half-finished release leaves no patchable line if the old branch is gone.
-- Retiring a release branch after a *patch* release — patches ride the
-  existing branch; retirement only happens when a new minor/major line
-  supersedes it.
+- Deleting a release branch, of any version or any component, superseded or
+  not: the repository keeps its full release history.

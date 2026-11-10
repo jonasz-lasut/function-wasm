@@ -14,10 +14,10 @@ wasi-sdk, no wasm-tools, no adapter download. There is no `guestfn init
 --lang odin`: this example is the Odin path
 ([#155](https://github.com/jonasz-lasut/guestfn/issues/155)).
 
-- `wit/world.wit` and `wit/deps/` are the `c` flavour's: the
-  `wasmfn:function` contract restated in a `local:guest` package with `run`
-  declared sync and `wasi:http/outgoing-handler@0.2.12` imported for the
-  greeting fetch. `src/gen` is wit-bindgen's C output over it (`function.h`,
+- `wit/world.wit` and `wit/deps/` are the `c` flavour's: a
+  `local:guest` package that includes the `guestfn:function` contract's
+  `function-sync` world and imports `wasi:http/outgoing-handler@0.2.12` for
+  the greeting fetch. `src/gen` is wit-bindgen's C output over it (`function.h`,
   `function.c`, `function_component_type.o`), byte for byte the `c`
   flavour's, checked in; `make gen-bindings` regenerates it.
 - `proto/` and `src/fnv1` are the vendored crossplane proto and the nanopb

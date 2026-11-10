@@ -1,5 +1,5 @@
 //! The WAT component fixtures every suite in the workspace drives the
-//! engine with: hand-written components implementing the wasmfn:function
+//! engine with: hand-written components implementing the guestfn:function
 //! world with a sync-lifted `run` (the canonical ABI accepts a sync
 //! implementation of the world's async run), each misbehaving in one way or
 //! returning fixed bytes, plus the smallest component the runtime's and
@@ -9,6 +9,16 @@
 //! main module can import both the memory and the lowered function.
 
 use std::fmt::Write as _;
+
+/// A WIT package's source in its published binary form, what `wkg build`
+/// writes.
+pub fn encoded_wit_package(text: &str) -> Vec<u8> {
+    let mut resolve = wit_parser::Resolve::default();
+    let package = resolve
+        .push_str("package.wit", text)
+        .expect("parse the WIT package");
+    wit_component::encode(&resolve, package).expect("encode the WIT package")
+}
 
 /// Assembles WAT into a wasm binary.
 pub fn wasm(wat: &str) -> Vec<u8> {

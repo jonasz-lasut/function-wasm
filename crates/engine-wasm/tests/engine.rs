@@ -1,5 +1,5 @@
 //! Wasmtime tests over WAT fixtures: components implementing the
-//! wasmfn:function world: a component that returns fixed response bytes,
+//! guestfn:function world: a component that returns fixed response bytes,
 //! components that misbehave in one way each, the world typecheck refusals,
 //! and the sandbox reached through WASI 0.2's own interfaces.
 //!
@@ -444,7 +444,7 @@ fn world_typecheck_refusals() {
             .expect_err(name);
         assert!(
             err.to_string()
-                .starts_with("component does not implement the wasmfn:function@2.0.0 world:"),
+                .starts_with("component does not implement the guestfn:function@1.0.0 world:"),
             "{name}: unexpected: {err}"
         );
     }

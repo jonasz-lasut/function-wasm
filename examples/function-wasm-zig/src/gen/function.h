@@ -569,6 +569,8 @@ typedef struct {
   } val;
 } wasi_http_outgoing_handler_result_own_future_incoming_response_error_code_t;
 
+// The level of a guest log line, rendered at the runtime's level of the
+// same name; debug lines show only when the runtime runs under --debug.
 typedef uint8_t function_log_level_t;
 
 #define FUNCTION_LOG_LEVEL_DEBUG 0
@@ -1115,6 +1117,8 @@ extern bool wasi_http_types_http_error_code(wasi_http_types_borrow_io_error_t er
 extern bool wasi_http_outgoing_handler_handle(wasi_http_outgoing_handler_own_outgoing_request_t request, wasi_http_outgoing_handler_own_request_options_t *maybe_options, wasi_http_outgoing_handler_own_future_incoming_response_t *ret, wasi_http_outgoing_handler_error_code_t *err);
 
 // Imported Functions from `function`
+// Structured logging through the host: one line, message plus key-value
+// pairs, attached to the module's identity in the runtime's log.
 extern void function_log(function_log_level_t level, function_string_t *msg, function_list_tuple2_string_string_t *kv);
 
 // Exported Functions from `function`

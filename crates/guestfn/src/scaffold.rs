@@ -271,7 +271,7 @@ mod tests {
             ),
             (
                 "function-wasm-ts",
-                &["proto/", "src/gen/", "src/log.d.ts"],
+                &["proto/", "src/gen/", "src/log.d.ts", "wit/deps/"],
                 Options {
                     lang: LANG_TS.into(),
                     name: "function-wasm-ts".into(),
@@ -313,24 +313,38 @@ mod tests {
         }
     }
 
-    /// The rust scaffold vendors the ABI v2 world the engine compiles
-    /// (wit/wasmfn-function.wit) byte for byte as a dependency of the
-    /// guest's own world; the golden and plumbing tests above carry that on
-    /// to the golden and to the Rust example.
+    /// Every guest vendors the package the engine compiles
+    /// (wit/guestfn-function.wit) byte for byte as a dependency of its own
+    /// world: a WIT package that appears twice must have the same contents.
+    /// The golden and plumbing tests above carry the scaffolds' copies on to
+    /// their goldens and paired examples; the examples with no scaffold are
+    /// read here.
     #[test]
     fn render_matches_the_runtime_world() {
-        let runtime_world = "wit/wasmfn-function.wit";
-        let vendored_world = "wit/deps/wasmfn-function.wit";
+        let runtime_world = "wit/guestfn-function.wit";
+        let vendored_world = "wit/deps/guestfn-function.wit";
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let runtime = std::fs::read(repo.join(runtime_world)).expect("read the runtime's world");
-        let files = render(golden(LANG_RUST)).expect("render");
-        assert_eq!(
-            String::from_utf8_lossy(&runtime),
-            String::from_utf8_lossy(&files[vendored_world]),
-            "templates/rust/{vendored_world} differs from the runtime's {runtime_world} (the \
-             root world is canonical: copy it into the template and the Rust example's \
-             wit/deps, then run UPDATE_GOLDENS=1 cargo test -p guestfn)"
-        );
+        for lang in [LANG_GO, LANG_PYTHON, LANG_RUST, LANG_TS] {
+            let files = render(golden(lang)).expect("render");
+            assert_eq!(
+                String::from_utf8_lossy(&runtime),
+                String::from_utf8_lossy(&files[vendored_world]),
+                "templates/{lang}/{vendored_world} differs from the runtime's {runtime_world} (the \
+                 root world is canonical: copy it into every guest's wit/deps, then run \
+                 UPDATE_GOLDENS=1 cargo test -p guestfn)"
+            );
+        }
+        for example in ["c", "cpp", "csharp", "moonbit", "odin", "zig"] {
+            let path = format!("examples/function-wasm-{example}/{vendored_world}");
+            let vendored =
+                std::fs::read(repo.join(&path)).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert_eq!(
+                String::from_utf8_lossy(&runtime),
+                String::from_utf8_lossy(&vendored),
+                "{path} differs from the runtime's {runtime_world}"
+            );
+        }
     }
 
     #[test]

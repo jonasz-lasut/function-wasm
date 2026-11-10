@@ -8,6 +8,7 @@ mod inspect;
 mod manifestcmd;
 mod push;
 mod scaffold;
+mod witcmd;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -57,6 +58,9 @@ enum Command {
     /// manifest.
     #[command(subcommand)]
     Scaffold(ScaffoldCmd),
+    /// Keep a guest's copy of the guestfn:function WIT package current.
+    #[command(subcommand)]
+    Wit(witcmd::WitCmd),
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -267,6 +271,7 @@ fn main() -> ExitCode {
         Command::Inspect(cmd) => cmd.run(),
         Command::Manifest(cmd) => cmd.run(),
         Command::Scaffold(ScaffoldCmd::Composition(cmd)) => cmd.run(),
+        Command::Wit(cmd) => cmd.run(),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

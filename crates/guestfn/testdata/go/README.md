@@ -15,11 +15,11 @@ that performs requests through the host over `wasi:http@0.2`
 (`config.greetingUrl` uses it); the manifest's `requires.egress` decides which
 are allowed, as the Cedar policy layers permit it.
 
-- `wit/world.wit` is this guest's world: the `wasmfn:function` contract
-  restated in a `local:guest` package with `run` declared sync (a sync-lifted
-  `run` satisfies the runtime's async world) and
-  `wasi:http/outgoing-handler@0.2.12` imported for `HTTPClient`; `wit/deps/`
-  carries the WASI 0.2.12 packages.
+- `wit/world.wit` is this guest's world, in a `local:guest` package: it
+  includes the `guestfn:function` contract's `function-sync` world (`run`
+  declared sync, which satisfies the runtime's async world) and imports
+  `wasi:http/outgoing-handler@0.2.12` for `HTTPClient`; `wit/deps/` carries the
+  contract and the WASI 0.2.12 packages.
 - `internal/bindings/` is [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s
   Go output over it (`wit-bindgen-cli` 0.62.0), checked in, so a plain
   `go build` needs only Go; regenerate it after a change to the world with

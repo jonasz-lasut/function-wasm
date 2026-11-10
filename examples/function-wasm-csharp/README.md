@@ -216,11 +216,11 @@ sidecar:
   bindings: the `run` export, the typed log adapter and the blocking
   `wasi:http` fetch.
 - `wit/world.wit` is this guest's world, in a `local:guest` package of its
-  own: the wasmfn contract with a sync `run`, because wit-bindgen's C# async
-  bindings (0.58 through 0.62) do not compile for this world yet - a
-  sync-lifted function satisfies the runtime's async world - plus the
-  `wasi:http@0.2` import it fetches with; `wit/deps/` carries the WASI 0.2
-  WIT that import needs. The .NET runtime inside the component imports
+  own: the `guestfn:function` contract's `function-sync` world, because
+  wit-bindgen's C# async bindings (0.58 through 0.62) do not compile for its
+  `function` world yet - a sync-lifted function satisfies the runtime's async
+  world - plus the `wasi:http@0.2` import it fetches with; `wit/deps/`
+  carries the contract and the WASI 0.2 WIT that import needs. The .NET runtime inside the component imports
   WASI 0.2.6 for itself, the filesystem the private `/tmp` arrives through
   included.
 - `proto/run_function.proto` is crossplane's `RunFunction` contract,

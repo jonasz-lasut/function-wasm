@@ -194,10 +194,11 @@ v2 with its namespaced `s3.aws.m.upbound.io` resources.
   log adapter, and the CMDB request over `wasi:http@0.2`'s
   `outgoing-handler` on componentize-py's poll loop.
 - `wit/world.wit` is this guest's own world, in a `local:guest` package:
-  the [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
-  restated with `run` declared **sync** (componentize-py takes the sync
-  shape, and a sync-lifted function satisfies the runtime's async world),
-  plus the `wasi:http` import the request goes through.
+  it includes the `function-sync` world of the
+  [ABI v2 contract](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
+  (componentize-py takes the sync shape, and a sync-lifted function
+  satisfies the runtime's async world), plus the `wasi:http` import the
+  request goes through.
 - `proto/run_function.proto`, `src/gen/run_function_pb2.py` and
   `wit/deps/` are the python scaffold's plumbing (`guestfn init --lang
   python`), kept identical to it: crossplane's `RunFunction` contract,
