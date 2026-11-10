@@ -249,3 +249,12 @@ The Makefile's `CROSSPLANE_VERSION` default names the current version. The
 workflow's `env` (`CROSSPLANE_PREVIOUS`, `CROSSPLANE_OLDEST`) pins the latest
 patch of the two older minors. A red version blocks the release: the release
 process pushes the branch, waits for the matrix and tags only when it's green.
+
+The matrix also runs the OCI engine's VM suite (`make oci.test`) on the three
+most recent Firecracker minors, each on the guest kernel the image pins, since
+6.18 is the one guest kernel line Firecracker still supports. The Dockerfile's
+pin is the current version, and the workflow's `env`
+(`FIRECRACKER_PREVIOUS`, `FIRECRACKER_OLDEST`) pins the latest patch of the
+two older minors. A last job writes what passed to a `tested-versions`
+artifact, and the release skills use it to open the pull request that updates
+the table in `README.md`.

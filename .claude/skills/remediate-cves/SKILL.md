@@ -267,6 +267,23 @@ published to ghcr/xpkg.upbound.io by tag and appends Marketplace extensions
 `main` rather than whatever was frozen on the release branch at cut time.
 A function-oci package gets the same run with `-f function=function-oci`.
 
+### 9b. Record what was tested
+
+For a function only. The release matrix recorded what it passed: update the
+`README.md` table from that record and open the pull request.
+
+```bash
+RUN=$(gh run list --workflow "Release Matrix E2E" --branch "$BRANCH" --status success --limit 1 --json databaseId -q '.[0].databaseId')
+RECORD=$(mktemp -d)
+gh run download "$RUN" -n tested-versions -D "$RECORD"
+git fetch origin main && git checkout -b "claude/tested-versions-$NEW_TAG" origin/main
+hack/tested-versions.sh "$FUNCTION" "$NEW_VERSION" "$RECORD/tested-versions.json"
+git add README.md && git commit --no-gpg-sign -m "docs: tested versions of $NEW_TAG"
+git push -u origin HEAD
+gh pr create --title "docs: tested versions of $NEW_TAG" \
+  --body "Updates the tested-versions table for \`$NEW_TAG\` from [its release matrix run]($(gh run view "$RUN" --json url -q .url))."
+```
+
 ### 10. Sequencing, verification, and reporting
 
 Each of steps 6–9 must finish successfully before the next starts — step 8

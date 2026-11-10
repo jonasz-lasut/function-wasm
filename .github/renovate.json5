@@ -163,10 +163,10 @@
       // default take any release and hold the two older pins to the latest
       // patch of their own minor.
       customType: 'regex',
-      description: 'the Crossplane versions the end-to-end suite installs',
+      description: 'the Crossplane versions the end-to-end suite installs, and the older Firecracker minors of the release matrix',
       managerFilePatterns: ['/^Makefile$/', '/^\\.github/workflows/release-matrix-e2e\\.ya?ml$/'],
       matchStrings: [
-        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\s+CROSSPLANE_[A-Z_]+ ?[?:]?=? ?'?(?<currentValue>\\d+\\.\\d+\\.\\d+)'?",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\s+(?:CROSSPLANE|FIRECRACKER)_[A-Z_]+ ?[?:]?=? ?'?(?<currentValue>\\d+\\.\\d+\\.\\d+)'?",
       ],
       extractVersionTemplate: '^v(?<version>.*)$',
       versioningTemplate: 'semver',
@@ -287,7 +287,7 @@
     // one PR moves the version and both digests, and it is the signal for
     // the kernel bump by hand.
     {
-      matchDepNames: ['firecracker'],
+      matchDepNames: ['firecracker', 'firecracker-microvm/firecracker'],
       groupName: 'firecracker',
     },
     // GitHub Actions: let a release settle before pulling its digest, batch
@@ -392,7 +392,7 @@
     {
       matchManagers: ['custom.regex'],
       matchFileNames: ['.github/workflows/release-matrix-e2e.yml'],
-      matchDepNames: ['crossplane/crossplane'],
+      matchDepNames: ['crossplane/crossplane', 'firecracker-microvm/firecracker'],
       matchUpdateTypes: ['major', 'minor'],
       enabled: false,
     },
