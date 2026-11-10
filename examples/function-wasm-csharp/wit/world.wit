@@ -1,3 +1,4 @@
+// WASI at the version wasmtime-wasi-http 50.0.1 links.
 /// This guest's world: the guestfn:function contract in its sync form
 /// (wit-bindgen's C# async bindings do not compile for it yet), plus
 /// wasi:http@0.2's outgoing-handler to fetch the bundle. The runtime serves

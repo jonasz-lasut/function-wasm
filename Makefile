@@ -339,6 +339,7 @@ e2e.dump: $(KUBECTL)
 # the verdict the runtime will give it.
 e2e.guest:
 	@$(INFO) building $(E2E_GUEST_DIR)/fn.wasm
+	@cargo run -q -p guestfn -- wit fetch --dir $(E2E_GUEST_DIR) || $(FAIL)
 	@cd $(E2E_GUEST_DIR) && cargo build --release --target wasm32-wasip3 || $(FAIL)
 	@cp $(E2E_GUEST_DIR)/target/wasm32-wasip3/release/e2e_guest.wasm $(E2E_GUEST_DIR)/fn.wasm
 	@cargo run -q -p guestfn -- inspect $(E2E_GUEST_DIR)/fn.wasm || $(FAIL)
@@ -370,7 +371,7 @@ e2e.guest:
 # the c world again; no template). It runs the pinned wit-bindgen in each,
 # mirrors the go result into its template (the module path templated as
 # [[ .Module ]]) and refreshes the goldens - after a change to a world, a
-# re-vendoring of the WASI WIT, or a wit-bindgen bump (the generated files'
+# move of the guests' WASI versions, or a wit-bindgen bump (the generated files'
 # header names the version; e2e.yml's drift checks install the same one).
 .PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens vendor-docs-highlight gen-bindings tools tools-clean vale design-records
 # The steps rewrite one another's inputs; never run them side by side.

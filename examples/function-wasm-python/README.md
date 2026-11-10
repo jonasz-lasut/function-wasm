@@ -200,8 +200,8 @@ v2 with its namespaced `s3.aws.m.upbound.io` resources.
   satisfies the runtime's async world), plus the `wasi:http` import the
   request goes through.
 - `proto/run_function.proto`, `src/gen/run_function_pb2.py` and
-  `wit/deps/` are the python scaffold's plumbing (`guestfn init --lang
+  `guestfn.lock` are the python scaffold's plumbing (`guestfn init --lang
   python`), kept identical to it: crossplane's `RunFunction` contract,
   protoc's Python codec for it (`make gen-proto` redoes it; the `protobuf`
-  runtime refuses code from a newer protoc) and the wasi 0.2 WIT the
-  `wasi:http` import needs.
+  runtime refuses code from a newer protoc) and the digests of the WIT
+  packages it builds against.

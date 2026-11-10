@@ -191,23 +191,19 @@
       datasourceTemplate: 'github-releases',
     },
     {
-      // The wasmtime-wasi-http release every vendored WASI WIT file under a
-      // wit/deps/ was copied from: its src/p3/wit/deps for the rust scaffold
-      // and function-wasm-rust, its wit/deps for the python and go
-      // scaffolds, function-wasm-python, function-wasm-c, function-wasm-zig, function-wasm-odin, function-wasm-moonbit,
-      // function-wasm-go and function-wasm-csharp (templates and goldens included: the
-      // files are plain .wit in all of them). Same tripwire as the proto: a
-      // bump PR moves the version in every header at once; it does NOT
-      // re-download the WIT, so treat the PR as the signal to re-vendor by
-      // hand (keeping the p3 http.wit's service/middleware trim) and refresh
-      // the goldens. The header names an exact release, hence semver rather
+      // The wasmtime-wasi-http release whose WASI versions a guest's
+      // wit/world.wit imports, stated in a comment above its package line.
+      // Same tripwire as the proto: a bump PR moves the version in every
+      // comment at once; it does NOT move the imports, so treat the PR as the
+      // signal to move them to the versions the release links and run
+      // guestfn wit update in each guest. The versioning is stated rather
       // than the crate datasource's cargo ranges, under which `49.0.2` reads
       // as `^49.0.2`.
       customType: 'regex',
-      description: 'wasmtime-wasi-http release the vendored WASI WIT came from',
-      managerFilePatterns: ['/(^|/)wit/deps/[^/]+\\.wit$/'],
+      description: 'wasmtime-wasi-http release whose WASI versions the guests import',
+      managerFilePatterns: ['/(^|/)wit/world\\.wit$/'],
       matchStrings: [
-        'Vendored from wasmtime-wasi-http (?<currentValue>\\d+\\.\\d+\\.\\d+) ',
+        'WASI at the version wasmtime-wasi-http (?<currentValue>\\d+\\.\\d+\\.\\d+) links',
       ],
       depNameTemplate: 'wasmtime-wasi-http',
       datasourceTemplate: 'crate',
@@ -313,8 +309,8 @@
     // on the siblings' pins; once the manifest requirement changes it skips
     // that step and one `cargo update --workspace` moves the whole family.
     // Hence their own group, and `bump` so every update changes Cargo.toml.
-    // The vendored WASI WIT headers join the group, so the PR that moves
-    // the crates is also the one that asks for the re-vendoring. So does
+    // The WASI comments in the guests' worlds join the group, so the PR that moves
+    // the crates is also the one that asks for moving the guests' imports. So does
     // the wasip1 adapter provider: built in the wasmtime repository and
     // published at its version, it is the adapter guestfn build links into
     // a component (crates/engine-wasm/src/componentize.rs) and must stay the one

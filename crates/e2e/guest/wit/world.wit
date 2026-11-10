@@ -1,0 +1,13 @@
+// WASI at the version wasmtime-wasi-http 50.0.1 links.
+/// This guest's own world, in a local package: the guestfn:function contract
+/// (pulled into deps/ at build, as guestfn.lock pins it) plus
+/// the wasi:http client it fetches greetings with. A component may import
+/// more than the wasmfn world names; the host links wasi:http for every v2
+/// run and the grant decides what answers it.
+package local:guest;
+
+world function {
+    include guestfn:function/function@1.0.0;
+
+    import wasi:http/client@0.3.0;
+}

@@ -11,8 +11,8 @@ wasm-tools, no adapter download.
 - `wit/world.wit` is this guest's world, in a `local:guest` package: it
   includes the `guestfn:function` contract's `function-sync` world (`run`
   declared sync, which satisfies the runtime's async world) and imports
-  `wasi:http/outgoing-handler@0.2.12` for the greeting fetch; `wit/deps/`
-  carries the contract and the WASI 0.2.12 packages. `zig build gen-bindings` runs
+  `wasi:http/outgoing-handler@0.2.12` for the greeting fetch. `guestfn build` pulls
+  the packages `guestfn.lock` pins into `wit/deps/`, which stays out of git. `zig build gen-bindings` runs
   [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s C
   generator (`wit-bindgen-cli` 0.62.0) over it into `src/gen` - `function.h`,
   `function.c` and `function_component_type.o`, the object carrying the

@@ -12,7 +12,7 @@ MODULE := github.com/jonasz-lasut/guestfn/examples/function-wasm-go
 GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 WIT_BINDGEN ?= wit-bindgen
 
-.PHONY: build lint test gen-bindings render clean
+.PHONY: build lint test gen-bindings render clean wit-deps
 
 build: ## Compile the guest to fn.wasm (a component: go build, the world embedded, the wasip1 adapter linked)
 	$(GUESTFN) build --dir $(CURDIR)
@@ -30,7 +30,7 @@ test: ## Run the guest's unit tests natively
 
 # wit-bindgen overwrites its own files and leaves export_wit_world/run.go,
 # the hand-written slot, alone.
-gen-bindings: ## Regenerate internal/bindings from wit/ (needs wit-bindgen 0.62.0)
+gen-bindings: wit-deps ## Regenerate internal/bindings from wit/ (needs wit-bindgen 0.62.0)
 	$(WIT_BINDGEN) go wit -w function --pkg-name $(MODULE)/internal/bindings --out-dir internal/bindings
 
 render: build ## Start the runtime serving this directory and crossplane render example/
@@ -39,3 +39,6 @@ render: build ## Start the runtime serving this directory and crossplane render 
 
 clean:
 	rm -f fn.wasm
+
+wit-deps: ## Pull the WIT packages guestfn.lock pins into wit/deps
+	$(GUESTFN) wit fetch --dir $(CURDIR)

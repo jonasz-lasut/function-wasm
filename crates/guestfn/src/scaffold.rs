@@ -251,6 +251,7 @@ mod tests {
                     "internal/wasmfn/",
                     "internal/bindings/",
                     "wit/",
+                    "guestfn.lock",
                     ".golangci.yml",
                 ],
                 Options {
@@ -262,7 +263,7 @@ mod tests {
             ),
             (
                 "function-wasm-rust",
-                &["proto/", "wit/deps/", "build.rs", "rust-toolchain.toml"],
+                &["proto/", "guestfn.lock", "build.rs", "rust-toolchain.toml"],
                 Options {
                     lang: LANG_RUST.into(),
                     name: "function-wasm-rust".into(),
@@ -271,7 +272,7 @@ mod tests {
             ),
             (
                 "function-wasm-ts",
-                &["proto/", "src/gen/", "src/log.d.ts", "wit/deps/"],
+                &["proto/", "src/gen/", "src/log.d.ts", "guestfn.lock"],
                 Options {
                     lang: LANG_TS.into(),
                     name: "function-wasm-ts".into(),
@@ -280,7 +281,7 @@ mod tests {
             ),
             (
                 "function-wasm-python",
-                &["proto/", "src/gen/", "wit/deps/"],
+                &["proto/", "src/gen/", "guestfn.lock"],
                 Options {
                     lang: LANG_PYTHON.into(),
                     name: "function-wasm-python".into(),
@@ -313,38 +314,54 @@ mod tests {
         }
     }
 
-    /// Every guest vendors the package the engine compiles
-    /// (wit/guestfn-function.wit) byte for byte as a dependency of its own
-    /// world: a WIT package that appears twice must have the same contents.
-    /// The golden and plumbing tests above carry the scaffolds' copies on to
-    /// their goldens and paired examples; the examples with no scaffold are
-    /// read here.
+    /// Every guest pins the package the engine compiles
+    /// (wit/guestfn-function.wit), at its version and by one digest: the
+    /// four scaffolds through what they render, and the examples with no
+    /// scaffold read here.
     #[test]
     fn render_matches_the_runtime_world() {
-        let runtime_world = "wit/guestfn-function.wit";
-        let vendored_world = "wit/deps/guestfn-function.wit";
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let runtime = std::fs::read(repo.join(runtime_world)).expect("read the runtime's world");
+        let runtime = std::fs::read_to_string(repo.join("wit/guestfn-function.wit"))
+            .expect("read the runtime's world");
+        let version = runtime
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("package guestfn:function@")?
+                    .strip_suffix(';')
+            })
+            .expect("the runtime's world declares its version");
+        let pin_of = |origin: &str, lock: &str| -> String {
+            let (_, entry) = lock
+                .split_once("- name: guestfn:function\n")
+                .unwrap_or_else(|| panic!("{origin} does not pin guestfn:function"));
+            let mut fields = entry.lines().map(str::trim);
+            assert_eq!(
+                fields.next(),
+                Some(format!("version: {version}").as_str()),
+                "{origin} pins another version of the runtime's world (guestfn wit update moves it)"
+            );
+            fields
+                .find_map(|field| field.strip_prefix("digest: "))
+                .unwrap_or_else(|| panic!("{origin} pins no digest"))
+                .to_string()
+        };
+        let mut digests = std::collections::BTreeSet::new();
         for lang in [LANG_GO, LANG_PYTHON, LANG_RUST, LANG_TS] {
             let files = render(golden(lang)).expect("render");
-            assert_eq!(
-                String::from_utf8_lossy(&runtime),
-                String::from_utf8_lossy(&files[vendored_world]),
-                "templates/{lang}/{vendored_world} differs from the runtime's {runtime_world} (the \
-                 root world is canonical: copy it into every guest's wit/deps, then run \
-                 UPDATE_GOLDENS=1 cargo test -p guestfn)"
-            );
+            let lock = String::from_utf8_lossy(&files["guestfn.lock"]).into_owned();
+            digests.insert(pin_of(lang, &lock));
         }
         for example in ["c", "cpp", "csharp", "moonbit", "odin", "zig"] {
-            let path = format!("examples/function-wasm-{example}/{vendored_world}");
-            let vendored =
-                std::fs::read(repo.join(&path)).unwrap_or_else(|e| panic!("{path}: {e}"));
-            assert_eq!(
-                String::from_utf8_lossy(&runtime),
-                String::from_utf8_lossy(&vendored),
-                "{path} differs from the runtime's {runtime_world}"
-            );
+            let origin = format!("examples/function-wasm-{example}/guestfn.lock");
+            let lock = std::fs::read_to_string(repo.join(&origin))
+                .unwrap_or_else(|e| panic!("{origin}: {e}"));
+            digests.insert(pin_of(&origin, &lock));
         }
+        assert_eq!(
+            digests.len(),
+            1,
+            "the guests pin different artifacts: {digests:?}"
+        );
     }
 
     #[test]

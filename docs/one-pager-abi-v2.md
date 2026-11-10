@@ -2,11 +2,12 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 0.8 (rewritten in the present tense over the
+* Status: implemented, revision 0.9 (rewritten in the present tense over the
   Rust workspace. The Rust host has served since v0.3.0, the world froze on
   2026-10-07, took the name `guestfn:function@1.0.0` and a sync form on
   2026-11-10, and ABI v1 was removed in 1.0.0;
-  `Publish WIT` publishes the world from a `wit-v<version>` tag, #106)
+  `Publish WIT` publishes the world from a `wit-v<version>` tag, #106,
+  and guests pull it and WASI at build, pinned by digest in `guestfn.lock`)
 
 function-wasm runs guests as WebAssembly components against one WIT world,
 and its host is written in Rust. This record explains why those are one
@@ -66,8 +67,8 @@ Wasmtime enabled component-model async by default in v46, so the host had
 nothing to wait for. A `run` lifted sync satisfies the async world,
 which is what the WAT test fixtures use and what the package's
 `function-sync` world states for the toolchains that need it. Wasmtime calls its 0.3 support experimental, so a release that
-moves those interfaces is re-vendored and taken on `1.0.0` in place until
-the world is published (`abi-v2.md`, "Versioning").
+moves those interfaces moves the WASI versions guests import (`abi-v2.md`,
+"Versioning").
 
 Async matters less here than for most hosts. A fresh instance per request
 doesn't need concurrent calls into one instance, which leaves the benefit in

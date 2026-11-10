@@ -87,13 +87,11 @@ A module manifest declares `contract: wasm@1.0`, this world. Another version is 
 - Within 1.x, `run`'s signature, the `log` import (the `log-level` cases included) and anything else already in the world stay as they are. Changing or removing any of them is `2.0.0`, a world every guest is rebuilt against.
 - A new field of `RunFunctionRequest` or `RunFunctionResponse` moves no world version. Payload evolution is Protobuf's.
 
-A guest vendors the WASI 0.2 and 0.3 interfaces it imports under its `wit/deps/`, from the wasmtime-wasi-http release the runtime builds on. The release notes list the WASI versions the runtime links. A guest built against an older vendored set keeps running while those versions are linked, and otherwise fails the world typecheck at load.
-
-Until `1.0.0` is published, a Wasmtime release that moves the WASI 0.3 interfaces is taken on `1.0.0` itself, and guests are rebuilt.
+A guest declares the WASI 0.2 or 0.3 interfaces it imports in `wit/world.wit`, at the versions the wasmtime-wasi-http release the runtime builds on links. The release notes list the WASI versions the runtime links. A guest built against an older set keeps running while those versions are linked, and otherwise fails the world typecheck at load.
 
 ## Getting the world
 
-Guest toolchains read a local `wit/` directory, and a guest keeps the package there as a file, `wit/deps/guestfn-function.wit`, byte-identical to the runtime's copy. Keep that file unmodified, because a WIT package that appears twice must have the same contents.
+Guest toolchains read a local `wit/` directory, so `guestfn build` fills it. A guest commits `wit/world.wit` and `guestfn.lock`, which pins the digest of every package the guest builds against, and `wit/deps/` stays out of version control.
 
 The guest's own world, `wit/world.wit` in a `local:guest` package, includes one of the two worlds beside whatever else the guest imports:
 
@@ -113,9 +111,9 @@ world function {
 
 `Publish WIT` (`publish-wit.yml`), run by hand from a `wit-v<version>` tag, publishes the package, signed and attested, as an OCI artifact in the CNCF Wasm OCI layout, the format of `wkg`: `ghcr.io/jonasz-lasut/guestfn/function:<version>`. A published version is never pushed again.
 
-`guestfn wit update` bumps a guest to a published version. It installs the newest version of the major the guest's `include` declares, or the version `--version` names, moves the version in the `include` in `wit/world.wit`, and pins the artifact's digest in `guestfn.lock`. Regenerate any bindings you check in afterward. `--dir` names the project and `--repository` a mirror.
+`guestfn wit update` bumps a guest to a published version. It installs the newest version of the major the guest's `include` declares, or the version `--version` names, and moves the version in the `include` in `wit/world.wit`. It also writes the WASI packages the world imports, at the versions the world declares, and everything those refer to, from `ghcr.io/webassembly/wasi`. `guestfn.lock` pins every package's digest. Regenerate any bindings you check in afterward. `--dir` names the project, and `--repository` and `--wasi-repository` name mirrors.
 
-With a `guestfn.lock` present, `guestfn build` pulls exactly the pinned digest into `wit/deps/` before it calls the toolchain, and a copy that changed is written back. `guestfn wit fetch` does the same for a build that doesn't go through `guestfn build`. A project with no lock keeps the copy it has.
+With a `guestfn.lock` present, `guestfn build` pulls exactly the pinned digests into `wit/deps/` before it calls the toolchain, and a copy that changed is written back. `guestfn wit fetch` does the same for a build that doesn't go through `guestfn build`. A project with no lock keeps the copy it has.
 
 To fetch the package with [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools) instead, map the namespace in its configuration:
 
@@ -124,4 +122,4 @@ To fetch the package with [`wkg`](https://github.com/bytecodealliance/wasm-pkg-t
 guestfn = { registry = "guestfn", metadata = { preferredProtocol = "oci", "oci" = { registry = "ghcr.io", namespacePrefix = "jonasz-lasut/" } } }
 ```
 
-`wkg get guestfn:function@1.0.0 --format wit` then writes `guestfn_function@1.0.0.wit`, the file a guest keeps under `wit/deps/`.
+`wkg get guestfn:function@1.0.0 --format wit` then writes `guestfn_function@1.0.0.wit`, the file a guest that doesn't use `guestfn` keeps under `wit/deps/`.

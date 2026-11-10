@@ -8,7 +8,7 @@
 # moonx, no install) the checked-in codec (make gen-proto). Render needs the
 # crossplane CLI and Docker. GUESTFN and FUNCTION_BIN (read by ../render.sh)
 # can name prebuilt binaries instead.
-.PHONY: build test lint gen-proto gen-bindings render clean
+.PHONY: build test lint gen-proto gen-bindings render clean wit-deps
 
 ROOT := $(abspath ../..)
 GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
@@ -54,7 +54,7 @@ gen-proto: ## Regenerate src/fnv1 from proto/ (needs protoc; protoc-gen-mbt runs
 # does the same for protoc-gen-mbt's codec).
 GENERATED_WARN_LIST := -44-implicit_impl_as_method-deprecated_syntax-deprecated
 
-gen-bindings: ## Regenerate the wit-bindgen output under src/ from wit/ (needs wit-bindgen 0.62.0)
+gen-bindings: wit-deps ## Regenerate the wit-bindgen output under src/ from wit/ (needs wit-bindgen 0.62.0)
 	$(WIT_BINDGEN) moonbit wit --world function --out-dir src --ignore-module-file \
 		--project-name $(MODULE) --derive-show --derive-eq
 	printf '{\n  "warn-list": "$(GENERATED_WARN_LIST)",\n  "import": [\n    { "path": "$(MODULE)/wasmfn", "alias": "wasmfn" }\n  ]\n}\n' \
@@ -68,3 +68,6 @@ render: build ## Start the runtime serving this directory and crossplane render 
 
 clean:
 	rm -rf _build .mooncakes fn.wasm
+
+wit-deps: ## Pull the WIT packages guestfn.lock pins into wit/deps
+	$(GUESTFN) wit fetch --dir $(CURDIR)

@@ -152,6 +152,31 @@ fn command(dir: &Path, name: &str, args: &[&str], envs: &[(&str, &str)]) -> bool
 }
 
 /// Builds one guest with its toolchain; None skips the guest.
+/// Pulls what a scaffold's guestfn.lock pins into its wit/deps, as guestfn
+/// build does first for a user. The suite drives each toolchain itself, and
+/// guestfn is a binary this crate cannot link. This cargo runs from the
+/// workspace with the environment it was given: command() drops
+/// RUSTUP_TOOLCHAIN for the guests' own builds, under which rustup would act
+/// on any toolchain file a dependency's build script runs beside.
+fn fetch_wit(dir: &Path) -> bool {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let mut run = std::process::Command::new(cargo);
+    run.current_dir(workspace)
+        .args(["run", "--quiet", "-p", "guestfn"]);
+    if !cfg!(debug_assertions) {
+        run.arg("--release");
+    }
+    run.args(["--", "wit", "fetch", "--dir"]).arg(dir);
+    match run.status() {
+        Ok(status) => status.success(),
+        Err(e) => {
+            eprintln!("cannot run guestfn wit fetch: {e}");
+            false
+        }
+    }
+}
+
 fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
     let dir = guest_dir(guest);
     let out_s = out.to_string_lossy().into_owned();
@@ -159,6 +184,9 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
         "go" => {
             if !on_path("go") {
                 return skip(guest, "go not on PATH");
+            }
+            if !fetch_wit(&dir) {
+                return Some(Vec::new());
             }
             // A scaffold's go.mod has no go.sum yet; guestfn init tidies it.
             // -checklinkname=0 admits the bindings runtime's linkname to
@@ -214,6 +242,9 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
             if !String::from_utf8_lossy(&targets.stdout).contains("wasm32-wasip3") {
                 return skip(guest, "wasm32-wasip3 target not installed");
             }
+            if !fetch_wit(&dir) {
+                return Some(Vec::new());
+            }
             if !command(
                 &dir,
                 "cargo",
@@ -235,6 +266,9 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
             if !on_path("npm") {
                 return skip(guest, "npm not on PATH");
             }
+            if !fetch_wit(&dir) {
+                return Some(Vec::new());
+            }
             // A scaffold has no lockfile: npm install resolves it the way a
             // user's first build does.
             if !command(&dir, "npm", &["install", "--no-audit", "--no-fund"], &[])
@@ -248,6 +282,9 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
         "python" => {
             if !on_path("python3") {
                 return skip(guest, "python3 not on PATH");
+            }
+            if !fetch_wit(&dir) {
+                return Some(Vec::new());
             }
             // The venv is a kept cache; the requirements are installed every
             // run, which is cheap once they are satisfied.

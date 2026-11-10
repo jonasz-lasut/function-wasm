@@ -6,7 +6,10 @@
 # every other host (macOS) runs dotnet in the .NET SDK container - `make
 # build DOTNET=dotnet` forces the host's own. Render needs the crossplane CLI
 # and Docker.
-.PHONY: build lint test render gen-proto bundles clean
+.PHONY: build lint test render gen-proto bundles clean wit-deps
+
+ROOT := $(abspath ../..)
+GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 
 SDK_IMAGE := mcr.microsoft.com/dotnet/sdk:10.0
 # A named volume keeps the container's NuGet packages and WASI SDK between
@@ -20,11 +23,11 @@ DOTNET := docker run --rm -v "$(CURDIR):/src" -v $(CACHE_VOLUME):/root -w /src \
 	-e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 $(SDK_IMAGE) dotnet
 endif
 
-build: ## Compile the guest to fn.wasm (a component)
+build: wit-deps ## Compile the guest to fn.wasm (a component)
 	$(DOTNET) build -c Release DashboardBundle.csproj
 	cp bin/Release/net10.0/wasi-wasm/publish/function-wasm-csharp.wasm fn.wasm
 
-lint: ## Check formatting and code style (dotnet format), protoc's codec left out
+lint: wit-deps ## Check formatting and code style (dotnet format), protoc's codec left out
 	$(DOTNET) format DashboardBundle.csproj --verify-no-changes --exclude src/Gen
 	$(DOTNET) format test/DashboardBundle.Tests.csproj --verify-no-changes --exclude src/Gen
 
@@ -43,3 +46,6 @@ render: build ## Start the runtime serving this directory and crossplane render 
 
 clean:
 	rm -rf bin obj test/bin test/obj fn.wasm
+
+wit-deps: ## Pull the WIT packages guestfn.lock pins into wit/deps
+	$(GUESTFN) wit fetch --dir $(CURDIR)

@@ -1,0 +1,34 @@
+# Written by guestfn wit update. guestfn build pulls exactly this.
+packages:
+  - name: guestfn:function
+    version: 1.0.0
+    repository: ghcr.io/jonasz-lasut/guestfn/function
+    digest: sha256:0f2b846b758d1f4dc1e8aa0559e0fa0b8019e55aea51c285cc9a88e657bd6476
+  - name: wasi:cli
+    version: 0.2.12
+    repository: ghcr.io/webassembly/wasi/cli
+    digest: sha256:f09df2b84c18b4c1a43c206717330757f95e489ce1cb58c64c59b1d492ce1036
+  - name: wasi:clocks
+    version: 0.2.12
+    repository: ghcr.io/webassembly/wasi/clocks
+    digest: sha256:67b51bd0fae87a148aae9695b3c4954573cad80b8b3e8320bcab75ce46bb9a45
+  - name: wasi:filesystem
+    version: 0.2.12
+    repository: ghcr.io/webassembly/wasi/filesystem
+    digest: sha256:b6c6dd03b1ce5a3364c54ffdafef19af2559bce6804b83b467d59ce498012842
+  - name: wasi:http
+    version: 0.2.12
+    repository: ghcr.io/webassembly/wasi/http
+    digest: sha256:38778f9245591a1c02c5a424b4680828f044cf9680bbbb89e0c0004239512600
+  - name: wasi:io
+    version: 0.2.12
+    repository: ghcr.io/webassembly/wasi/io
+    digest: sha256:bbcae4acc9a8e4d910f50d53cdb7fdb3649fdb6f18b4e226a671bca8fbc5df4d
+  - name: wasi:random
+    version: 0.2.12
+    repository: ghcr.io/webassembly/wasi/random
+    digest: sha256:5e5258f95a6ba5d50d9954ac72dcfcdcc3c13de93f67367d5f1406ba000a8eb2
+  - name: wasi:sockets
+    version: 0.2.12
+    repository: ghcr.io/webassembly/wasi/sockets
+    digest: sha256:7df3e6101805ad8e8d5af3c54b8aa0a7bb6cdce5f1093e3b8512a9d887a27f8a
