@@ -19,11 +19,12 @@ extension does not exist in wasm; the fallback engages by itself).
   checked in (`protoc --python_out=src/gen -I proto run_function.proto`
   redoes it; the `protobuf` runtime refuses code from a newer protoc).
 - `wit/world.wit` is this guest's own world, in a `local:guest` package:
-  the [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
-  restated with `run` declared **sync** (componentize-py takes the sync
-  shape, and a sync-lifted function satisfies the runtime's async world),
-  plus the `wasi:http` import it fetches with. `wit/deps/` carries the
-  wasi 0.2 WIT that import needs.
+  it includes the `function-sync` world of the
+  [ABI v2 contract](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
+  (componentize-py takes the sync shape, and a sync-lifted function
+  satisfies the runtime's async world), plus the `wasi:http` import it
+  fetches with. `wit/deps/` carries the contract and the wasi 0.2 WIT that
+  import needs.
 - `src/fn.py` - `run_function` over the protobuf messages (edit this),
   ordinary Python, natively testable with a fetch double.
 - `src/app.py` (wasm only) - the world wiring: the `run` export, the typed

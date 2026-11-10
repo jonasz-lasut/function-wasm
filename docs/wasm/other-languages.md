@@ -4,7 +4,7 @@ This page is for a module author choosing a guest language. It lists the four
 flavours `guestfn init` scaffolds, the guests that exist only as examples, and
 what the project hasn't tested. Pick a flavour, scaffold it, then follow [Write
 a module](write-a-module.md). Any toolchain that produces a component for the
-[ABI v2](../abi-v2.md) world, `wasmfn:function`, works: the runtime checks the
+[ABI v2](../abi-v2.md) world, `guestfn:function`, works: the runtime checks the
 world and never the language.
 
 ## Scaffolded flavours

@@ -164,7 +164,7 @@ pulled from `ghcr.io` with its real signature.
 published as CNCF Wasm OCI artifacts, with their module manifests:
 
 - **Names:** `ghcr.io/jonasz-lasut/guestfn/examples/<runtime>-<lang>`, beside the WIT
-  world at `wasmfn/function`. A namespace per kind of artifact is the
+  world at `guestfn/function`. A namespace per kind of artifact is the
   convention across OCI-distributed WebAssembly plugins (Kubewarden's
   `policies/`, wasmCloud's `components/`).
 - **Versions:** each example's own semver from its `guestfn.yaml`, tagged
@@ -235,7 +235,7 @@ as examples, checked by their build jobs, like Odin, MoonBit, C# and C++, and
 ## Open questions
 
 The world's publication ([#106](https://github.com/jonasz-lasut/guestfn/issues/106)):
-the examples target `wasmfn:function@2.0.0`, frozen on 2026-10-07
+the examples target `guestfn:function@1.0.0`, frozen on 2026-10-07
 ([#77](https://github.com/jonasz-lasut/guestfn/issues/77)). The
 `Publish WIT` workflow (`publish-wit.yml`) publishes it, run by hand and no
 earlier than when the `rust` scaffold's `rust-toolchain.toml`, which pins a beta

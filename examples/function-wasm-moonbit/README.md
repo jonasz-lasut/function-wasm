@@ -13,11 +13,11 @@ links and wraps that into the component - no wasm-tools, no adapter
 `guestfn build` detects and builds a MoonBit project by its `moon.mod`,
 `guestfn init` does not scaffold one.
 
-- `wit/world.wit` is this guest's world: the `wasmfn:function` contract
-  restated in a `local:guest` package with `run` declared sync (a sync-lifted
-  `run` satisfies the runtime's async world) and
-  `wasi:http/outgoing-handler@0.2.12` imported for the greeting fetch;
-  `wit/deps/` carries the WASI 0.2.12 packages. It is `examples/function-wasm-c`'s
+- `wit/world.wit` is this guest's world, in a `local:guest` package: it
+  includes the `guestfn:function` contract's `function-sync` world (`run`
+  declared sync, which satisfies the runtime's async world) and imports
+  `wasi:http/outgoing-handler@0.2.12` for the greeting fetch; `wit/deps/`
+  carries the contract and the WASI 0.2.12 packages. It is `examples/function-wasm-c`'s
   `wit/`, byte for byte. `make gen-bindings` runs
   [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s MoonBit
   generator (`wit-bindgen-cli` 0.62.0) over it into `src/`: `gen/` (the

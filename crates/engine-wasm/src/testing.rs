@@ -1,5 +1,5 @@
 //! The WAT component fixtures every suite in the workspace drives the
-//! engine with: hand-written components implementing the wasmfn:function
+//! engine with: hand-written components implementing the guestfn:function
 //! world with a sync-lifted `run` (the canonical ABI accepts a sync
 //! implementation of the world's async run), each misbehaving in one way or
 //! returning fixed bytes, plus the smallest component the runtime's and

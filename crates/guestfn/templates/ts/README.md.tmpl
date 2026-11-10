@@ -21,11 +21,13 @@ which cannot exist inside a SpiderMonkey component.
   plus full types - checked in (`npm run gen-proto` redoes it, needs
   `protoc`).
 - `wit/world.wit` is this guest's own world, in a `local:guest` package:
-  the [ABI v2 world](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
-  restated with `run` declared **sync**. componentize-js cannot async-lift
-  a custom world's export yet, and a sync-lifted function satisfies the
-  runtime's async world; the TypeScript still awaits freely -
-  componentize-js resolves the promise before the export returns.
+  it includes the `function-sync` world of the
+  [ABI v2 contract](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md),
+  with `run` declared **sync**. componentize-js cannot async-lift a custom
+  world's export yet, and a sync-lifted function satisfies the runtime's
+  async world; the TypeScript still awaits freely - componentize-js
+  resolves the promise before the export returns. `wit/deps/` carries the
+  contract.
 - `src/fn.ts` - `runFunction` over the protobuf-es messages (edit this),
   natively testable (`npm test`) with a fetch double.
 - `src/main.ts` (wasm only) - the world wiring: the `run` export and the

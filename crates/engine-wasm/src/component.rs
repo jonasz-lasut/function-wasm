@@ -1,4 +1,4 @@
-//! The host of the wasmfn:function world (wit/wasmfn-function.wit,
+//! The host of the guestfn:function world (wit/guestfn-function.wit,
 //! docs/abi-v2.md): the bindgen, the store data of one run, the linker
 //! every component is resolved against, and the run itself. The world
 //! typecheck at load is the ABI check: the one place the contract is
@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// The world a guest implements, named in refusals.
-pub const ABI_V2_WORLD: &str = "wasmfn:function@2.0.0";
+pub const ABI_V2_WORLD: &str = "guestfn:function@1.0.0";
 
 /// The world's one host import beyond WASI, as the component names it.
 pub(crate) const LOG_IMPORT: &str = "log";

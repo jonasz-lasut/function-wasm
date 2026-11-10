@@ -16,7 +16,7 @@ versions, git tags, GitHub releases and release branches:
 | `function-wasm` | `function-wasm-vX.Y.Z` | `release-function-wasm-X.Y` | `ghcr.io/jonasz-lasut/function-wasm:vX.Y.Z` |
 | `function-oci` | `function-oci-vX.Y.Z` | `release-function-oci-X.Y` | `ghcr.io/jonasz-lasut/function-oci:vX.Y.Z` |
 | `guestfn` | `guestfn-vX.Y.Z` | `release-guestfn-X.Y` | binaries attached to the GitHub release |
-| `wit` | `wit-vX.Y.Z` | `release-wit-X.Y` | `ghcr.io/jonasz-lasut/wasmfn/function:X.Y.Z` |
+| `wit` | `wit-vX.Y.Z` | `release-wit-X.Y` | `ghcr.io/jonasz-lasut/guestfn/function:X.Y.Z` |
 
 An OCI artifact's tag drops the component prefix and keeps the version. The
 WIT world's is the bare package version, the form `wkg` writes. The
@@ -68,7 +68,7 @@ use that directly. Otherwise ask before computing anything. Then:
 - **minor**: `NEW_VERSION="v${MAJOR}.$((MINOR+1)).0"`
 - **a component's first release** (`TAG` is empty): ask the user for the version.
 - **`wit`**: the version isn't a bump, it's the world's own:
-  `NEW_VERSION="v$(sed -nE 's/^package wasmfn:function@([^;]+);$/\1/p' wit/wasmfn-function.wit)"`.
+  `NEW_VERSION="v$(sed -nE 's/^package guestfn:function@([^;]+);$/\1/p' wit/guestfn-function.wit)"`.
   Stop if that version has a release already or is a pre-release.
 
 ```bash
@@ -218,20 +218,20 @@ component's release never replaces it.
 already created it, so this is just documentation-by-flag.)
 
 A `function-wasm` release's notes state what it serves, as `docs/abi-v2.md`'s versioning
-policy promises: the world (`wit/wasmfn-function.wit`'s package line),
+policy promises: the world (`wit/guestfn-function.wit`'s package line),
 wasmtime (its entry in `Cargo.lock`) and the WASI interface versions the
 scaffolds vendor under `wit/deps/`, which are what a guest imports beside
 the world. Read them from the tree being released:
 
 ```bash
-sed -nE 's/^package (wasmfn:function@[^;]+);/\1/p' wit/wasmfn-function.wit
+sed -nE 's/^package (guestfn:function@[^;]+);/\1/p' wit/guestfn-function.wit
 rg -n '^name = "wasmtime"$' -A1 Cargo.lock | rg -o 'version = ".*"'
 rg -I -o --no-heading '^package wasi:(cli|clocks|http|io)@[0-9][^;]*' \
   crates/guestfn/templates/*/wit/deps | sed 's/package //' | sort -u
 ```
 
 One sentence in the notes carries them, for example: `Serves
-wasmfn:function@2.0.0 on wasmtime 49.0.2: WASI 0.2.12 (cli, clocks, http,
+guestfn:function@1.0.0 on wasmtime 49.0.2: WASI 0.2.12 (cli, clocks, http,
 io) for the sync scaffolds and WASI 0.3.0 (clocks, http) for the rust
 scaffold.` A guest keeps running as long as the runtime's wasmtime serves
 the versions it was built against, so a release that moves any of them

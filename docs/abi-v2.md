@@ -2,12 +2,12 @@
 
 This page is for people who write a guest toolchain or its glue. It states what the runtime requires of a module and what it provides, so you can build to the contract exactly. It assumes you know WIT and the component model; to write a function, start at [Write a module](wasm/write-a-module.md). Grants are on [Cedar policy](operators/cedar-policy.md), the Input on the [Input reference](operators/input-reference.md) and the manifest on [Module manifests](guests/module-manifests.md).
 
-A guest is a WebAssembly component targeting the WIT world `wasmfn:function@2.0.0` ([`wit/wasmfn-function.wit`](https://github.com/jonasz-lasut/guestfn/blob/main/wit/wasmfn-function.wit)). The payload is Protobuf: `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out. The canonical ABI moves memory, so a guest has no allocator export. ABI v2 is the only ABI the runtime serves.
+A guest is a WebAssembly component targeting a world of the WIT package `guestfn:function@1.0.0` ([`wit/guestfn-function.wit`](https://github.com/jonasz-lasut/guestfn/blob/main/wit/guestfn-function.wit)). The payload is Protobuf: `RunFunctionRequest` bytes in, `RunFunctionResponse` bytes out. The canonical ABI moves memory, so a guest has no allocator export. ABI v2 is the only ABI the runtime serves.
 
 ## The world
 
 ```wit
-package wasmfn:function@2.0.0;
+package guestfn:function@1.0.0;
 
 world function {
     enum log-level { debug, info, warn, error }
@@ -20,7 +20,8 @@ world function {
 
 - `run` handles one request. The host passes the caller's raw `RunFunctionRequest` bytes and returns the guest's `RunFunctionResponse` bytes verbatim. The host edits out the step credentials the module wasn't granted, and the pull credential in every case. `run` is `async`, so a guest may await its imports, `wasi:http` especially. The host meters the guest's compute while it does. A sync-lifted `run` also satisfies the world, because the canonical ABI accepts a sync function where an async one is expected.
 - `log` is structured logging through the host, with typed values. The host attaches the module's identity to every line and renders it at the runtime's level of the same name. `debug` lines appear only under `--debug`.
-- The runtime typechecks `log-level` exactly, so `log` changes only with `3.0.0`.
+- The runtime typechecks `log-level` exactly, so `log` changes only with `2.0.0`.
+- `function-sync`, the package's second world, is this contract with `run` declared sync, for a toolchain that can't async-lift it. The runtime checks every guest against `function`.
 
 ## WASI and the sandbox
 
@@ -74,44 +75,49 @@ module is a core module, which function-wasm 1.0.0 no longer runs (ABI v1 was re
 
 The runtime reports it as a fatal result (`cannot load module <desc>: …`), and `guestfn build`, `guestfn inspect` and `function validate --resolve` print the same sentence. Detection has no flag and no Input field.
 
-A typecheck refusal begins `component does not implement the wasmfn:function@2.0.0 world: …`.
+A typecheck refusal begins `component does not implement the guestfn:function@1.0.0 world: …`.
 
 A module manifest declares `contract: wasm@1.0`, this world. Another version is refused before the module is looked at: `contract wasm@0.9 is not one the wasm engine implements: wasm@1.0`.
 
 ## Versioning
 
-`wasmfn:function@2.0.0` is the contract from function-wasm 1.0.0 on. The world's version moves on its own, by what a change asks of guests:
+`guestfn:function@1.0.0` is the contract from function-wasm 1.0.0 on. The world's version moves on its own, by what a change asks of guests:
 
-- A 2.x minor may only add imports: a new interface or a new function. A component imports only what it uses. The runtime serves a guest built against an earlier 2.x unchanged. A guest that imports the addition declares the contract minor that added it, and a runtime that doesn't offer that contract refuses it by name.
-- Within 2.x, `run`'s signature, the `log` import (the `log-level` cases included) and anything else already in the world stay as they are. Changing or removing any of them is `3.0.0`, a world every guest is rebuilt against.
+- A 1.x minor may only add imports: a new interface or a new function. A component imports only what it uses. The runtime serves a guest built against an earlier 1.x unchanged. A guest that imports the addition declares the contract minor that added it, and a runtime that doesn't offer that contract refuses it by name.
+- Within 1.x, `run`'s signature, the `log` import (the `log-level` cases included) and anything else already in the world stay as they are. Changing or removing any of them is `2.0.0`, a world every guest is rebuilt against.
 - A new field of `RunFunctionRequest` or `RunFunctionResponse` moves no world version. Payload evolution is Protobuf's.
 
 A guest vendors the WASI 0.2 and 0.3 interfaces it imports under its `wit/deps/`, from the wasmtime-wasi-http release the runtime builds on. The release notes list the WASI versions the runtime links. A guest built against an older vendored set keeps running while those versions are linked, and otherwise fails the world typecheck at load.
 
-Until `2.0.0` is published, a Wasmtime release that moves the WASI 0.3 interfaces is taken on `2.0.0` itself, and guests are rebuilt.
+Until `1.0.0` is published, a Wasmtime release that moves the WASI 0.3 interfaces is taken on `1.0.0` itself, and guests are rebuilt.
 
 ## Getting the world
 
-Guest toolchains read a local `wit/` directory, and a guest keeps the world there as a file.
+Guest toolchains read a local `wit/` directory, and a guest keeps the package there as a file, `wit/deps/guestfn-function.wit`, byte-identical to the runtime's copy. Keep that file unmodified, because a WIT package that appears twice must have the same contents.
 
-`guestfn init --lang rust` writes it to `wit/deps/wasmfn-function.wit`, byte-identical to the runtime's copy. The guest's own world, `wit/world.wit` in a `local:guest` package, includes it beside whatever else the guest imports. Keep the contract's file unmodified, because a WIT package that appears twice must have the same contents. Put a guest's additions in its own world.
+The guest's own world, `wit/world.wit` in a `local:guest` package, includes one of the two worlds beside whatever else the guest imports:
 
-The `ts`, `python`, `c`, `zig` and `go` scaffolds restate the world in `wit/world.wit` with `run` declared sync. That signature is the one jco, componentize-py, the shared wit-bindgen C bindings of the `c` and `zig` scaffolds, and wit-bindgen's Go bindings take today. It satisfies the world.
+```wit
+package local:guest;
+
+world function {
+    include guestfn:function/function-sync@1.0.0;
+
+    import wasi:http/outgoing-handler@0.2.12;
+}
+```
+
+`guestfn init` writes both files. The `rust` scaffold includes `function`. The `go`, `ts` and `python` scaffolds and the C, C++, Zig, Odin, MoonBit and C# examples include `function-sync`, the signature their toolchains take today.
 
 ### Publication
 
-The release that brings a new world version publishes it, signed and attested:
-
-- as an OCI artifact in the CNCF Wasm OCI layout, the format of `wkg`: `ghcr.io/jonasz-lasut/wasmfn/function:<version>`;
-- as `wasmfn-wit-<version>.tar.gz` on that GitHub release.
-
-A published version is never pushed again. `publish-wit` holds a world back while the `rust` scaffold's `rust-toolchain.toml` pins a beta channel, so `2.0.0` is unpublished until the scaffold builds on stable Rust ([#106](https://github.com/jonasz-lasut/guestfn/issues/106), [#129](https://github.com/jonasz-lasut/guestfn/issues/129)).
+`Publish WIT` (`publish-wit.yml`), run by hand from a `wit-v<version>` tag, publishes the package, signed and attested, as an OCI artifact in the CNCF Wasm OCI layout, the format of `wkg`: `ghcr.io/jonasz-lasut/guestfn/function:<version>`. A published version is never pushed again.
 
 Once a version is published, map the namespace in the [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools) configuration:
 
 ```toml
 [namespace_registries]
-wasmfn = { registry = "wasmfn", metadata = { preferredProtocol = "oci", "oci" = { registry = "ghcr.io", namespacePrefix = "jonasz-lasut/" } } }
+guestfn = { registry = "guestfn", metadata = { preferredProtocol = "oci", "oci" = { registry = "ghcr.io", namespacePrefix = "jonasz-lasut/" } } }
 ```
 
-`wkg get wasmfn:function@2.0.0 --format wit` then writes `wasmfn_function@2.0.0.wit`, the file a guest keeps under `wit/deps/`.
+`wkg get guestfn:function@1.0.0 --format wit` then writes `guestfn_function@1.0.0.wit`, the file a guest keeps under `wit/deps/`.

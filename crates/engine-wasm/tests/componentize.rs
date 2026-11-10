@@ -59,7 +59,7 @@ fn core_module(rsp: &[u8], imports: &str) -> String {
 const FD_WRITE: &str =
     r#"(import "wasi_snapshot_preview1" "fd_write" (func (param i32 i32 i32 i32) (result i32)))"#;
 
-/// The runtime's world (wit/wasmfn-function.wit) embedded into the module
+/// The runtime's world (wit/guestfn-function.wit) embedded into the module
 /// as wit-bindgen embeds it - through the engine's own embed, the one
 /// guestfn build runs over a Go guest's wit/. The world is taken as is, its
 /// `run` declared async: wit-component lifts a plain `run` export with the

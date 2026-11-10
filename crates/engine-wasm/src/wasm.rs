@@ -1,8 +1,8 @@
 //! Runs function-wasm guest modules with wasmtime.
 //!
 //! The host half of the guest ABI (docs/abi-v2.md): a guest is a
-//! WebAssembly component implementing the `wasmfn:function` world
-//! (wit/wasmfn-function.wit), whose `run` export takes protobuf-encoded
+//! WebAssembly component implementing the `guestfn:function` world
+//! (wit/guestfn-function.wit), whose `run` export takes protobuf-encoded
 //! RunFunctionRequest bytes and returns RunFunctionResponse bytes. Every
 //! run gets a fresh store and instance; the Wasmtime, its linker and the
 //! compiled components are shared. A core module (ABI v1, removed in
@@ -326,7 +326,7 @@ impl Wasmtime {
     }
 
     /// Resolves the component's imports against the linker and typechecks
-    /// it against the wasmfn:function world, once, so every run skips that
+    /// it against the guestfn:function world, once, so every run skips that
     /// work.
     fn pre(&self, c: wasmtime::component::Component) -> Result<Module, Error> {
         let pre = self
