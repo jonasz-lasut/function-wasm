@@ -103,8 +103,8 @@ goldens pin none of function-oci's sentences.
 
 Among what a 0.x release may change:
 
-- The engine's flags and their defaults: `--vmm`, `--guest-kernel`,
-  `--guest-init` and `--vm-vcpus`
+- The engine's flags and their defaults: `--vmm-binary-path`, `--guest-kernel-path`,
+  `--guest-init-path` and `--vm-vcpus`
   ([Install function-oci](../oci/install.md#flags)).
 - The wording of the engine's fatal results and of the refusals only
   function-oci prints.
