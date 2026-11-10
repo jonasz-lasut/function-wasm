@@ -146,10 +146,21 @@ This is the mirror image of the CVE flow: a security patch reuses an
 exists, this version line was already released — stop and report instead of
 pushing over it.
 
-### 4. Confirm before anything externally visible
+### 4. Draft the release notes and confirm before anything externally visible
 
-Show the user `NEW_TAG`, `NEW_BRANCH`, a summary of what's shipping
-(e.g. `git log --oneline "$TAG"..main`). From here on every step is
+Load the `writing-style` skill and draft the notes from
+`release-notes-template.md` beside this file, for a reader deciding whether to
+upgrade and what it will take. Work from what the pull requests merged since
+`$TAG` changed (`git log --oneline "$TAG"..main`), not from their titles.
+Delete any section with nothing to say, and leave out what changes nothing for
+that reader: dependency bumps with no change in behaviour, refactors, CI and
+test-only work. Write the draft to a file outside the repository (`$NOTES`).
+
+Show the user `NEW_TAG`, `NEW_BRANCH` and the whole draft, then **stop until
+the user approves the text of the notes**. Agreeing to the release isn't
+approving its notes, and `$NOTES` doesn't change after approval without asking
+again. Release notes are what a user reads to decide whether to upgrade, so
+they get the same review as the code. From here on every step is
 externally visible (pushed branch, public tag, GitHub release, published
 package) and isn't something you can quietly undo — get explicit
 confirmation before continuing.
@@ -190,14 +201,17 @@ before the release continues. Never cut the tag over a red matrix. On a
 release line cut before #189 merged the workflow does not exist on the
 branch and no run appears: say so and continue.
 
-### 6. Cut the tag: `Tag` workflow, from the new release branch
+### 6. Cut the tag: through the GitHub API, on the new release branch
 
 ```bash
-gh workflow run Tag --ref "$NEW_BRANCH" -f component="$COMPONENT" -f version="$NEW_VERSION" \
-  -f message="Release $NEW_TAG"
+SHA=$(git rev-parse "origin/$NEW_BRANCH")
+OBJ=$(gh api 'repos/{owner}/{repo}/git/tags' -f tag="$NEW_TAG" \
+  -f message="Release $NEW_TAG" -f object="$SHA" -f type=commit --jq .sha)
+gh api 'repos/{owner}/{repo}/git/refs' -f ref="refs/tags/$NEW_TAG" -f sha="$OBJ" --jq .ref
 ```
 
-The workflow creates the `$NEW_TAG` tag. Verify it exists before publishing:
+That creates the annotated `$NEW_TAG` on the branch's head, with no local tag
+and no signature. Verify it exists before publishing:
 `git ls-remote --tags origin "$NEW_TAG"`. There is no separate guest-SDK
 tag: each guest vendors its ABI glue under `internal/wasmfn` (the scaffold
 writes it), so nothing needs `go get`-ing at a pinned version.
@@ -206,16 +220,18 @@ writes it), so nothing needs `go get`-ing at a pinned version.
 
 ```bash
 LATEST=false; [ "$COMPONENT" = function-wasm ] && LATEST=true
-gh release create "$NEW_TAG" --target "$NEW_BRANCH" \
+gh release create "$NEW_TAG" --verify-tag --target "$NEW_BRANCH" \
   --title "$NEW_TAG" --latest="$LATEST" \
-  --notes "<summary of what's new since $TAG>"
+  --notes-file "$NOTES"
 ```
+
+`$NOTES` is the text approved in step 4, unchanged.
 
 GitHub marks one release Latest, and that's function-wasm's, so another
 component's release never replaces it.
 
-(`--target` only matters if the tag doesn't already exist; the `Tag` workflow
-already created it, so this is just documentation-by-flag.)
+(Step 6 created the tag and `--verify-tag` refuses to continue without it, so
+`--target` only documents the branch.)
 
 A `function-wasm` release's notes state what it serves, as `docs/abi-v2.md`'s versioning
 policy promises: the world (`wit/guestfn-function.wit`'s package line),
@@ -274,10 +290,10 @@ rather than whatever was frozen on the release branch at cut time.
 
 Each of steps 6–9 must finish successfully before the next starts — step 8
 needs the tag from step 6 to exist, step 9 needs the image step 8 published.
-Find each run with `gh run list --workflow="<name>" --limit 1` and wait on it
+Find each workflow's run with `gh run list --workflow="<name>" --limit 1` and wait on it
 (`gh run watch <run-id> --exit-status`); if using the Monitor tool, its
 until-loop pattern is the sanctioned way to poll rather than a manual sleep
-loop. Only once all three have concluded successfully, move on to the report.
+loop. Only once all of them have concluded successfully, move on to the report.
 
 ### 11. Report
 
@@ -290,7 +306,7 @@ release branch where it is: the repository keeps its full release history.
 |---|---|---|
 | Cut branch | `main` HEAD | new `release-<component>-X.Y` |
 | `Release Matrix E2E` (functions) | started by the push of `release-function-*` | none; `gh run watch --exit-status` on it |
-| `Tag` | new release branch | `component`, `version`, `message` |
+| Tag through the GitHub API | head of the new release branch | `$NEW_TAG`, message |
 | (n/a) `gh release create` | n/a | `<component>-vX.Y.Z`, `--target` branch, `--latest` only for function-wasm |
 | `Publish Function` (functions) | the new tag | `function`, `version` (`vX.Y.Z`) |
 | `Publish guestfn` | the new tag | `version` (`vX.Y.Z`) |
@@ -326,5 +342,7 @@ release branch where it is: the repository keeps its full release history.
   versions: the versioning policy in `docs/abi-v2.md` promises them.
 - Using this skill for a patch bump (`vX.Y.Z+1`) — that path belongs to
   `remediate-cves`, which reuses an existing branch instead of cutting one.
+- Publishing release notes the user hasn't approved, or editing them after
+  approval without asking again.
 - Deleting a release branch, of any version or any component, superseded or
   not: the repository keeps its full release history.

@@ -199,10 +199,21 @@ Compare what got fixed against the full CVE list from step 2.
   ```
 
 - **Nothing was fixed — no open CVE was a dependency bump** →
-  **stop here.** Do not push, and do not trigger `Tag`, `Publish
+  **stop here.** Do not push, and do not create the tag or trigger `Publish
   Function`, or `Supply Chain and Xpkg Extensions` — an empty patch release
   remediates nothing. Leave `$BRANCH` as you found it and report the
   warning(s) above.
+
+### 4b. Draft the release notes for approval
+
+Load the `writing-style` skill and draft the notes from
+`../cut-release/release-notes-template.md`, filling its Security section: each
+CVE or GHSA, what it affected and whether a reader was exposed. Say so if any
+finding was skipped under the wasm exception, because the next weekly scan
+reports it against this release again and that must not read as a regression.
+Write the draft to a file outside the repository (`$NOTES`), show the user all
+of it, and **stop until the user approves its text**. `$NOTES` doesn't change
+after approval without asking again. Nothing is pushed before that.
 
 ### 5. Push
 
@@ -210,29 +221,29 @@ Compare what got fixed against the full CVE list from step 2.
 git push origin "$BRANCH"
 ```
 
-### 6. Cut the patch tag — `Tag` workflow, from the release branch
+### 6. Cut the patch tag: through the GitHub API, on the release branch
 
 ```bash
 NEW_VERSION=$(echo "$VERSION" | awk -F. -v OFS=. '{$NF+=1} 1')   # v1.0.0 -> v1.0.1
 NEW_TAG="$FUNCTION-$NEW_VERSION"
-gh workflow run Tag --ref "$BRANCH" -f component="$FUNCTION" -f version="$NEW_VERSION" \
-  -f message="Security patch: <CVE/GHSA summary>"
+SHA=$(git rev-parse "origin/$BRANCH")
+OBJ=$(gh api 'repos/{owner}/{repo}/git/tags' -f tag="$NEW_TAG" \
+  -f message="Security patch: <CVE/GHSA summary>" -f object="$SHA" -f type=commit --jq .sha)
+gh api 'repos/{owner}/{repo}/git/refs' -f ref="refs/tags/$NEW_TAG" -f sha="$OBJ" --jq .ref
 ```
 
 ### 7. Create the GitHub release
 
 ```bash
 LATEST=false; [ "$FUNCTION" = function-wasm ] && LATEST=true
-gh release create "$NEW_TAG" --target "$BRANCH" \
+gh release create "$NEW_TAG" --verify-tag --target "$BRANCH" \
   --title "$NEW_TAG" --latest="$LATEST" \
-  --notes "Security patch release. Remediates: <CVE/GHSA list>."
+  --notes-file "$NOTES"
 ```
 
-(`--target` only matters if the tag doesn't already exist; the `Tag` workflow
-already created it, so this is just documentation-by-flag.) If findings were
-skipped under the wasm exception, say so in the notes — the next weekly scan
-will report them against this release again, and that must not read as a
-regression.
+(Step 6 created the tag and `--verify-tag` refuses to continue without it, so
+`--target` only documents the branch.) `$NOTES` is the text approved in step
+4b, unchanged.
 
 ### 8. Publish the package — `Publish Function`, from the new tag
 
@@ -274,7 +285,7 @@ its warning block.
 
 | Workflow | Ref to run from | Key inputs |
 |---|---|---|
-| `Tag` | release branch (`release-<function>-X.Y`) | `component`, `version`, `message` |
+| Tag through the GitHub API | head of the release branch (`release-<function>-X.Y`) | `$NEW_TAG`, message |
 | (n/a) `gh release create` | n/a | `<function>-vX.Y.Z`, `--target` branch, `--latest` only for function-wasm |
 | `Publish Function` | the new tag (`<function>-vX.Y.Z+1`) | `function` (`function-wasm` or `function-oci`), `version` (`vX.Y.Z+1`) |
 | `Supply Chain and Xpkg Extensions` | `main` | `function` (`function-wasm` or `function-oci`), `version` |
