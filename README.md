@@ -3,15 +3,11 @@
 [![CI](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml)
 [![Docs](https://github.com/jonasz-lasut/guestfn/actions/workflows/docs.yml/badge.svg)](https://jonasz-lasut.github.io/guestfn/)
 
-> [!CAUTION]
-> **Experimental.** guestfn is young: neither sandbox has had an
-> independent security review, and nothing here has run in production yet.
-> From 1.0.0 the Input, the guest contracts, the runtime flags and the rest
-> of what [Compatibility](https://jonasz-lasut.github.io/guestfn/contract/compatibility.html) lists change only
-> through its deprecation policy; before it they could change between
-> minor releases. Try it, break it and
-> [open an issue](https://github.com/jonasz-lasut/guestfn/issues),
-> but don't build a platform on it yet.
+Neither sandbox has had an independent security review. From 1.0.0 the
+Input, the guest contracts, the runtime flags and the rest of what
+[Compatibility](https://jonasz-lasut.github.io/guestfn/contract/compatibility.html)
+lists change only through its deprecation policy. Before it they could
+change between minor releases.
 
 guestfn builds [Crossplane](https://crossplane.io) composition functions
 that run code supplied through a Composition step's Input, in a sandbox,
