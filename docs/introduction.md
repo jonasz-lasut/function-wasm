@@ -2,15 +2,10 @@
 
 [![CI](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasz-lasut/guestfn/actions/workflows/ci.yml)
 
-> [!CAUTION]
-> **Experimental.** function-wasm is young: the sandbox hasn't had an
-> independent security review, and nothing here has run in production yet.
-> From 1.0.0 the Input, the guest ABI, the runtime flags and the rest of
-> what [Compatibility](contract/compatibility.md) lists change only
-> through its deprecation policy; before it they could change between
-> minor releases. Try it, break it and
-> [open an issue](https://github.com/jonasz-lasut/guestfn/issues),
-> but don't build a platform on it yet.
+The sandbox hasn't had an independent security review. From 1.0.0 the
+Input, the guest ABI, the runtime flags and the rest of what
+[Compatibility](contract/compatibility.md) lists change only through its
+deprecation policy. Before it they could change between minor releases.
 
 This page is for Crossplane users deciding whether to run composition
 logic as WebAssembly modules. It assumes you know Compositions and pipeline
