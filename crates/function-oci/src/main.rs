@@ -14,24 +14,24 @@ struct EngineArgs {
     #[arg(
         long,
         default_value = "/usr/lib/guestfn/firecracker",
-        env = "GUESTFN_VMM"
+        env = "VMM_BINARY_PATH"
     )]
-    vmm: PathBuf,
+    vmm_binary_path: PathBuf,
 
     /// The guest kernel, an uncompressed vmlinux.
     #[arg(
         long,
         default_value = "/usr/lib/guestfn/vmlinux",
-        env = "GUESTFN_KERNEL"
+        env = "GUEST_KERNEL_PATH"
     )]
-    guest_kernel: PathBuf,
+    guest_kernel_path: PathBuf,
 
     /// The init the runtime boots as the VM's first process.
-    #[arg(long, default_value = "/usr/lib/guestfn/init", env = "GUESTFN_INIT")]
-    guest_init: PathBuf,
+    #[arg(long, default_value = "/usr/lib/guestfn/init", env = "GUEST_INIT_PATH")]
+    guest_init_path: PathBuf,
 
     /// vCPUs per VM.
-    #[arg(long, default_value_t = 1, env = "GUESTFN_VM_VCPUS")]
+    #[arg(long, default_value_t = 1, env = "VM_VCPUS")]
     vm_vcpus: u8,
 
     /// Restore a VM snapshot per image in place of a boot: the runtime
@@ -39,7 +39,7 @@ struct EngineArgs {
     /// it with the init waiting, and restores that snapshot into a fresh
     /// VM for every later run. An alpha feature, off by default
     /// (docs/one-pager-vm-snapshots.md).
-    #[arg(long, env = "GUESTFN_ENABLE_VM_SNAPSHOTS")]
+    #[arg(long, default_value_t = false, env = "ENABLE_VM_SNAPSHOTS", action = clap::ArgAction::Set)]
     enable_vm_snapshots: bool,
 }
 
@@ -50,9 +50,9 @@ fn main() -> ExitCode {
             Oci::new(
                 config,
                 Options {
-                    vmm: args.vmm.clone(),
-                    kernel: args.guest_kernel.clone(),
-                    init: args.guest_init.clone(),
+                    vmm: args.vmm_binary_path.clone(),
+                    kernel: args.guest_kernel_path.clone(),
+                    init: args.guest_init_path.clone(),
                     vcpus: args.vm_vcpus,
                     snapshots: args.enable_vm_snapshots,
                 },

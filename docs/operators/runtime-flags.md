@@ -11,11 +11,11 @@ These flags set the ceilings that a step's `limits` can't exceed ([Input referen
 | flag | env | default | `validate` | purpose |
 |---|---|---|---|---|
 | `--module-dir` | `MODULE_DIR` | unset | yes | directory served for `path` sources; unset refuses them |
-| `--max-module-size` | | `128 MB` | yes | largest module accepted |
-| `--module-timeout` | | `30s` | yes | wall-clock budget of one run, and the ceiling for `limits.timeout` |
-| `--module-memory-limit` | | `512 MB` | yes | memory one run may use: its linear memories and tables (a host pointer per element) together, the initial memory included; also the ceiling for `limits.memory` |
+| `--module-size-limit` | `MODULE_SIZE_LIMIT` | `128 MB` | yes | largest module accepted |
+| `--module-timeout` | `MODULE_TIMEOUT` | `30s` | yes | wall-clock budget of one run, and the ceiling for `limits.timeout` |
+| `--module-memory-limit` | `MODULE_MEMORY_LIMIT` | `512 MB` | yes | memory one run may use: its linear memories and tables (a host pointer per element) together, the initial memory included; also the ceiling for `limits.memory` |
 | `--module-stack-limit` | `MODULE_STACK_LIMIT` | `512 KB` | no | call stack one run may use. Past it the run fails with `trap: call stack exhausted`. No Input field narrows it |
-| `--ttl` | | `60s` | no | TTL of responses the runtime itself produces (fatal results); a module sets its own |
+| `--ttl` | `TTL` | `60s` | no | TTL of responses the runtime itself produces (fatal results); a module sets its own |
 
 ## Concurrency
 

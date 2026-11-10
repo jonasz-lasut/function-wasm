@@ -239,7 +239,7 @@ impl<E: Engine> WasmFunction<E> {
             pull_credential = name;
         }
 
-        // resolve hashes a path module's file (up to --max-module-size) on
+        // resolve hashes a path module's file (up to --module-size-limit) on
         // a stamp miss, so it runs off the async executor like the other
         // blocking steps.
         let resolved = {

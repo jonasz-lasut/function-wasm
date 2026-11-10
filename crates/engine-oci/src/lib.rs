@@ -105,7 +105,10 @@ impl Oci {
         } else {
             firecracker::Firecracker::new(options.vmm.clone())
         });
-        for (what, path) in [("--vmm", &options.vmm), ("--guest-kernel", &options.kernel)] {
+        for (what, path) in [
+            ("--vmm-binary-path", &options.vmm),
+            ("--guest-kernel-path", &options.kernel),
+        ] {
             if !path.is_file() {
                 return Err(Error(format!(
                     "{what} {} is not a file: the OCI runtime's image carries it under /usr/lib/guestfn",
@@ -139,7 +142,7 @@ impl Oci {
         }
         let init = std::fs::read(&options.init).map_err(|e| {
             Error(format!(
-                "cannot read the guest init --guest-init {}: {e}",
+                "cannot read the guest init --guest-init-path {}: {e}",
                 options.init.display()
             ))
         })?;

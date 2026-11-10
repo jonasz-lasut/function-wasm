@@ -50,15 +50,15 @@ struct ServeArgs<A: clap::Args> {
     module_dir: Option<PathBuf>,
 
     /// Maximum size of a module in MB.
-    #[arg(long, default_value_t = 128)]
-    max_module_size: u64,
+    #[arg(long, default_value_t = 128, env = "MODULE_SIZE_LIMIT")]
+    module_size_limit: u64,
 
     /// Maximum wall-clock time one module run may take.
-    #[arg(long, default_value = "30s", value_parser = duration::parse)]
+    #[arg(long, default_value = "30s", value_parser = duration::parse, env = "MODULE_TIMEOUT")]
     module_timeout: Duration,
 
     /// Maximum linear memory of a running module in MB.
-    #[arg(long, default_value_t = 512)]
+    #[arg(long, default_value_t = 512, env = "MODULE_MEMORY_LIMIT")]
     module_memory_limit: u64,
 
     /// Maximum call stack of a running module in KB.
@@ -166,7 +166,7 @@ struct ServeArgs<A: clap::Args> {
 
     /// Time to live for function responses the runtime itself produces
     /// (fatal results); a module sets the TTL of its own responses.
-    #[arg(long, value_parser = duration::parse)]
+    #[arg(long, value_parser = duration::parse, env = "TTL")]
     ttl: Option<Duration>,
 
     /// Bound in MB on the on-disk caches together (fetched modules and
@@ -389,7 +389,7 @@ where
     let blobs = Arc::clone(&_modules);
 
     let resolver = Arc::new(
-        resolver::Resolver::new(args.module_dir, args.max_module_size << 20, Some(blobs))
+        resolver::Resolver::new(args.module_dir, args.module_size_limit << 20, Some(blobs))
             .with_manifest_store(Arc::clone(&manifests))
             .serving(E::KIND),
     );

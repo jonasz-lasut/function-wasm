@@ -43,7 +43,7 @@ for memory, restart with an empty cache and begin again.
 | concurrent compiles | semaphore around fetch and compile | `--max-concurrent-compiles` | 1 | further first requests, and those waiting on the same load, queue |
 | one cold load, wall clock | `tokio::time::timeout` around the load's thread | `--module-compile-timeout` | `0s` (unbounded) | the request fails with a fatal result that states the bound; the compile finishes on its thread, keeps its slot until then and stores its artifact; counted in `cache_events_total{cache="compiled",event="timeout"}` |
 | disk | LRU sweep over the stores, a read counting as a use | `--max-cache-size` | 0 (unbounded) | entries removed down to nine tenths of the bound, at startup and every ten minutes |
-| module size | cap on fetched bytes, and on tar extraction at eight times the cap | `--max-module-size` | 128 MB | the fetch fails: a fatal result |
+| module size | cap on fetched bytes, and on tar extraction at eight times the cap | `--module-size-limit` | 128 MB | the fetch fails: a fatal result |
 | concurrent runs | fair run slots, taken after the module is loaded | `--max-concurrent-runs` | 0 (the caller's concurrency) | a further request waits under its own deadline |
 | concurrent runs of one step | per-digest semaphore, taken before the global slot | `limits.concurrency` | 0 (the global bound only) | a further request of this step waits under its own deadline |
 | total run memory | pool charged as guests grow | `--max-total-run-memory` | 0 (unbounded) | a growth the pool can't serve before the run's deadline is denied |

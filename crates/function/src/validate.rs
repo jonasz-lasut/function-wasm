@@ -67,15 +67,15 @@ pub struct ValidateArgs<A: clap::Args> {
     module_dir: Option<PathBuf>,
 
     /// Maximum size of a module in MB.
-    #[arg(long, default_value_t = 128)]
-    max_module_size: u64,
+    #[arg(long, default_value_t = 128, env = "MODULE_SIZE_LIMIT")]
+    module_size_limit: u64,
 
     /// Maximum wall-clock time one module run may take.
-    #[arg(long, default_value = "30s", value_parser = duration::parse)]
+    #[arg(long, default_value = "30s", value_parser = duration::parse, env = "MODULE_TIMEOUT")]
     module_timeout: Duration,
 
     /// Maximum linear memory of a running module in MB.
-    #[arg(long, default_value_t = 512)]
+    #[arg(long, default_value_t = 512, env = "MODULE_MEMORY_LIMIT")]
     module_memory_limit: u64,
 
     /// PEM file with one or more cosign public keys.
@@ -276,7 +276,7 @@ where
         // compile the runtime would, for the verdict the runtime would reach.
         engine = Some(build(ceilings, &args.engine).map_err(|e| e.to_string())?);
         resolver = Some(
-            Resolver::new(args.module_dir.clone(), args.max_module_size << 20, None)
+            Resolver::new(args.module_dir.clone(), args.module_size_limit << 20, None)
                 .serving(E::KIND),
         );
     }

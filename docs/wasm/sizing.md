@@ -16,7 +16,7 @@ Budget a pod's memory as the sum of three terms:
 
 ## Cold start
 
-A cold start compiles every module once. `--max-module-size` bounds a
+A cold start compiles every module once. `--module-size-limit` bounds a
 compile's input, `--max-concurrent-compiles` how many run at once (each
 about 1 GB at peak for a large Go module, per Measurements) and
 `--module-compile-timeout` how long one may take. The request's own deadline

@@ -307,7 +307,7 @@ impl Resolver {
     /// The OCI runtime's fetch: the pinned reference is an image or an
     /// index, whose manifest for this platform, config and layers come
     /// down through the blob store, verified against their digests and
-    /// bounded together by --max-module-size, and go to the engine as one
+    /// bounded together by --module-size-limit, and go to the engine as one
     /// image layout. An image with the annotated manifest layer `guestfn
     /// push --image` appends is an oci@0.1 module: its manifest is read
     /// out of that one layer first and remembered under the pinning digest
@@ -364,7 +364,7 @@ impl Resolver {
             total += bytes.len() as u64;
             if total > self.max_size {
                 return Err(format!(
-                    "image exceeds the size limit of {} bytes (--max-module-size)",
+                    "image exceeds the size limit of {} bytes (--module-size-limit)",
                     self.max_size
                 ));
             }

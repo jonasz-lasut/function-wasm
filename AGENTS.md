@@ -121,9 +121,9 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                             and the testutil feature (the Wasmtime engine, for the testing module)
   src/cli.rs                  clap CLI: serve (default) + validate subcommand, behind cli::run, which
                               each package's binary calls with its engine's flags as a clap::Args
-                              type (none for wasm; --vmm, --guest-kernel, --guest-init, --vm-vcpus
+                              type (none for wasm; --vmm-binary-path, --guest-kernel-path, --guest-init-path, --vm-vcpus
                               and the alpha --enable-vm-snapshots for oci) and a builder; every ceiling flag
-                              (module-dir, max-module-size, module-timeout, module-memory-limit,
+                              (module-dir, module-size-limit, module-timeout, module-memory-limit,
                               module-stack-limit, module-compile-timeout, sandbox-policy-file, cosign-key,
                               cosign-trusted-root, cosign-trust-instance, cosign-tuf-refresh,
                               egress-rate-limit-*, cache and concurrency bounds, max-cache-size,

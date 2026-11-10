@@ -106,7 +106,7 @@ spec:
                 # Run budgets (upper bounds; a Composition's limits ask for less).
                 - --module-timeout=30s
                 - --module-memory-limit=512      # MB
-                - --max-module-size=128          # MB
+                - --module-size-limit=128          # MB
                 - --max-concurrent-runs=8
                 # Signatures: keys here, per-repository requirement in the policy.
                 - --cosign-key=/etc/guestfn/cosign/cosign.pub
