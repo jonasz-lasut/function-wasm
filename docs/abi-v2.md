@@ -113,7 +113,9 @@ world function {
 
 `Publish WIT` (`publish-wit.yml`), run by hand from a `wit-v<version>` tag, publishes the package, signed and attested, as an OCI artifact in the CNCF Wasm OCI layout, the format of `wkg`: `ghcr.io/jonasz-lasut/guestfn/function:<version>`. A published version is never pushed again.
 
-`guestfn wit update` refreshes a guest's copy from that artifact. It installs the newest version of the major the copy declares, or the version `--version` names, and moves the version in the `include` in `wit/world.wit`. Regenerate any bindings you check in afterward. `--dir` names the project and `--repository` a mirror.
+`guestfn wit update` bumps a guest to a published version. It installs the newest version of the major the guest's `include` declares, or the version `--version` names, moves the version in the `include` in `wit/world.wit`, and pins the artifact's digest in `guestfn.lock`. Regenerate any bindings you check in afterward. `--dir` names the project and `--repository` a mirror.
+
+With a `guestfn.lock` present, `guestfn build` pulls exactly the pinned digest into `wit/deps/` before it calls the toolchain, and a copy that changed is written back. `guestfn wit fetch` does the same for a build that doesn't go through `guestfn build`. A project with no lock keeps the copy it has.
 
 To fetch the package with [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools) instead, map the namespace in its configuration:
 

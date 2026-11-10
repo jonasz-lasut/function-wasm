@@ -14,7 +14,7 @@ guestfn-engine = { path = "../engine" }
 guestfn-engine-wasm = { path = "../engine-wasm" }
 hex = "0.4"
 include_dir = "0.7"
-semver = "1"
+semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde-saphyr = "2"

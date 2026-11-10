@@ -73,6 +73,9 @@ impl BuildCmd {
         } else {
             self.lang.clone()
         };
+        if let Some(crate::witcmd::Refresh::Written(line)) = crate::witcmd::refresh(&self.dir)? {
+            println!("{line}");
+        }
         build_guest(&lang, &self.dir, &out)?;
         if self.wasm_opt {
             let out_s = out.to_string_lossy().into_owned();

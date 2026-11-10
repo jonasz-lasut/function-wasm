@@ -608,10 +608,12 @@ fn contract(version: &str) -> String {
     )
 }
 
-fn publish(registry: &mut Registry, tag: &str, package: &str) {
+/// Publishes a package under a tag; `title` keeps two pushes of one tag apart.
+fn publish(registry: &mut Registry, tag: &str, package: &str, title: &str) -> String {
     let wasm = encoded_wit_package(package);
-    let digest = registry.module(&wasm, None, tag);
+    let digest = registry.module(&wasm, None, title);
     registry.tag(tag, &digest);
+    digest
 }
 
 fn printed(package: &str) -> String {
@@ -638,6 +640,16 @@ fn guest_on(version: &str) -> tempfile::TempDir {
     dir
 }
 
+fn pin(dir: &Path, repository: &str, version: &str, digest: &str) {
+    std::fs::write(
+        dir.join("guestfn.lock"),
+        format!(
+            "packages:\n  - name: guestfn:function\n    version: {version}\n    repository: {repository}\n    digest: {digest}\n"
+        ),
+    )
+    .expect("write the lock");
+}
+
 fn read(dir: &Path, name: &str) -> String {
     std::fs::read_to_string(dir.join(name)).expect("read the project's file")
 }
@@ -650,10 +662,14 @@ fn wit_update(dir: &Path, registry: &str, extra: &[&str]) -> (String, String, bo
 }
 
 #[test]
-fn wit_update_installs_the_newest_of_the_major_and_moves_the_include() {
+fn wit_update_bumps_to_the_newest_of_the_major_and_pins_it() {
     let mut registry = Registry::new();
+    let mut newest_digest = String::new();
     for version in ["1.0.0", "1.1.0", "1.2.0-rc.1", "2.0.0"] {
-        publish(&mut registry, version, &contract(version));
+        let digest = publish(&mut registry, version, &contract(version), version);
+        if version == "1.1.0" {
+            newest_digest = digest;
+        }
     }
     let registry = registry.serve();
     let guest = guest_on("1.0.0");
@@ -676,6 +692,9 @@ fn wit_update_installs_the_newest_of_the_major_and_moves_the_include() {
         read(guest.path(), "wit/world.wit").contains("function-sync@1.1.0;"),
         "the include did not move"
     );
+    let lock = read(guest.path(), "guestfn.lock");
+    assert!(lock.contains("version: 1.1.0"), "{lock}");
+    assert!(lock.contains(&format!("digest: {newest_digest}")), "{lock}");
 
     let (stdout, stderr, ok) = wit_update(guest.path(), &registry, &[]);
     assert!(ok, "stderr: {stderr}");
@@ -688,8 +707,8 @@ fn wit_update_installs_the_newest_of_the_major_and_moves_the_include() {
 #[test]
 fn wit_update_takes_a_new_major_only_when_named() {
     let mut registry = Registry::new();
-    publish(&mut registry, "1.0.0", &contract("1.0.0"));
-    publish(&mut registry, "2.0.0", &contract("2.0.0"));
+    publish(&mut registry, "1.0.0", &contract("1.0.0"), "a");
+    publish(&mut registry, "2.0.0", &contract("2.0.0"), "b");
     let registry = registry.serve();
     let guest = guest_on("1.0.0");
 
@@ -709,6 +728,7 @@ fn wit_update_refuses_another_package_and_leaves_the_guest_alone() {
         &mut registry,
         "1.1.0",
         "package other:thing@1.1.0;\n\nworld w {\n}\n",
+        "a",
     );
     let registry = registry.serve();
     let guest = guest_on("1.0.0");
@@ -721,6 +741,7 @@ fn wit_update_refuses_another_package_and_leaves_the_guest_alone() {
         "{stderr}"
     );
     assert_eq!(read(guest.path(), "wit/deps/guestfn-function.wit"), before);
+    assert!(!guest.path().join("guestfn.lock").exists());
 }
 
 #[test]
@@ -728,6 +749,106 @@ fn wit_update_names_what_it_needs_in_a_directory_that_is_no_guest() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (_, stderr, ok) = wit_update(dir.path(), &empty_registry(), &[]);
     assert!(!ok);
-    assert!(stderr.contains("wit/deps/guestfn-function.wit"), "{stderr}");
+    assert!(stderr.contains("wit/world.wit"), "{stderr}");
     assert!(stderr.contains("guestfn init writes it"), "{stderr}");
+}
+
+#[test]
+fn wit_fetch_restores_a_copy_that_drifted_from_the_lock() {
+    let mut registry = Registry::new();
+    let digest = publish(&mut registry, "1.0.0", &contract("1.0.0"), "a");
+    let registry = registry.serve();
+    let guest = guest_on("1.0.0");
+    pin(
+        guest.path(),
+        &format!("{registry}/guestfn/function"),
+        "1.0.0",
+        &digest,
+    );
+
+    let (stdout, stderr, ok) = guestfn(guest.path(), &["wit", "fetch"]);
+    assert!(ok, "stderr: {stderr}");
+    assert!(stdout.contains("matches guestfn.lock"), "{stdout}");
+
+    std::fs::write(guest.path().join("wit/deps/guestfn-function.wit"), "edited").expect("drift");
+    let (stdout, stderr, ok) = guestfn(guest.path(), &["wit", "fetch"]);
+    assert!(ok, "stderr: {stderr}");
+    assert!(
+        stdout.contains("wrote wit/deps/guestfn-function.wit"),
+        "{stdout}"
+    );
+    assert_eq!(
+        read(guest.path(), "wit/deps/guestfn-function.wit"),
+        printed(&contract("1.0.0"))
+    );
+}
+
+#[test]
+fn wit_fetch_pulls_the_pinned_digest_after_the_tag_moved() {
+    let mut registry = Registry::new();
+    let digest = publish(&mut registry, "1.0.0", &contract("1.0.0"), "first");
+    let moved = format!("/// Pushed again.\n{}", contract("1.0.0"));
+    publish(&mut registry, "1.0.0", &moved, "second");
+    let registry = registry.serve();
+    let guest = guest_on("1.0.0");
+    std::fs::remove_file(guest.path().join("wit/deps/guestfn-function.wit")).expect("remove");
+    pin(
+        guest.path(),
+        &format!("{registry}/guestfn/function"),
+        "1.0.0",
+        &digest,
+    );
+
+    let (_, stderr, ok) = guestfn(guest.path(), &["wit", "fetch"]);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(
+        read(guest.path(), "wit/deps/guestfn-function.wit"),
+        printed(&contract("1.0.0"))
+    );
+}
+
+#[test]
+fn wit_fetch_refuses_an_include_the_lock_does_not_pin() {
+    let guest = guest_on("1.0.0");
+    pin(
+        guest.path(),
+        "ghcr.io/x/guestfn/function",
+        "1.1.0",
+        "sha256:unused",
+    );
+
+    let (_, stderr, ok) = guestfn(guest.path(), &["wit", "fetch"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("includes guestfn:function 1.0.0, but guestfn.lock pins 1.1.0"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn wit_fetch_says_what_writes_a_missing_lock() {
+    let guest = guest_on("1.0.0");
+    let (_, stderr, ok) = guestfn(guest.path(), &["wit", "fetch"]);
+    assert!(!ok);
+    assert!(stderr.contains("guestfn wit update writes it"), "{stderr}");
+}
+
+#[test]
+fn build_pulls_what_the_lock_pins_before_the_toolchain_runs() {
+    let registry = empty_registry();
+    let guest = guest_on("1.0.0");
+    let missing = format!("sha256:{}", "b".repeat(64));
+    pin(
+        guest.path(),
+        &format!("{registry}/guestfn/function"),
+        "1.0.0",
+        &missing,
+    );
+
+    let (_, stderr, ok) = guestfn(guest.path(), &["build", "--lang", "go"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains(&format!("cannot fetch manifest {missing}")),
+        "{stderr}"
+    );
 }
