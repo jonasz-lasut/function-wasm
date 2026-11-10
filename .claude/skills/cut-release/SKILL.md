@@ -146,10 +146,21 @@ This is the mirror image of the CVE flow: a security patch reuses an
 exists, this version line was already released — stop and report instead of
 pushing over it.
 
-### 4. Confirm before anything externally visible
+### 4. Draft the release notes and confirm before anything externally visible
 
-Show the user `NEW_TAG`, `NEW_BRANCH`, a summary of what's shipping
-(e.g. `git log --oneline "$TAG"..main`). From here on every step is
+Load the `writing-style` skill and draft the notes from
+`release-notes-template.md` beside this file, for a reader deciding whether to
+upgrade and what it will take. Work from what the pull requests merged since
+`$TAG` changed (`git log --oneline "$TAG"..main`), not from their titles.
+Delete any section with nothing to say, and leave out what changes nothing for
+that reader: dependency bumps with no change in behaviour, refactors, CI and
+test-only work. Write the draft to a file outside the repository (`$NOTES`).
+
+Show the user `NEW_TAG`, `NEW_BRANCH` and the whole draft, then **stop until
+the user approves the text of the notes**. Agreeing to the release isn't
+approving its notes, and `$NOTES` doesn't change after approval without asking
+again. Release notes are what a user reads to decide whether to upgrade, so
+they get the same review as the code. From here on every step is
 externally visible (pushed branch, public tag, GitHub release, published
 package) and isn't something you can quietly undo — get explicit
 confirmation before continuing.
@@ -211,8 +222,10 @@ writes it), so nothing needs `go get`-ing at a pinned version.
 LATEST=false; [ "$COMPONENT" = function-wasm ] && LATEST=true
 gh release create "$NEW_TAG" --verify-tag --target "$NEW_BRANCH" \
   --title "$NEW_TAG" --latest="$LATEST" \
-  --notes "<summary of what's new since $TAG>"
+  --notes-file "$NOTES"
 ```
+
+`$NOTES` is the text approved in step 4, unchanged.
 
 GitHub marks one release Latest, and that's function-wasm's, so another
 component's release never replaces it.
@@ -329,5 +342,7 @@ release branch where it is: the repository keeps its full release history.
   versions: the versioning policy in `docs/abi-v2.md` promises them.
 - Using this skill for a patch bump (`vX.Y.Z+1`) — that path belongs to
   `remediate-cves`, which reuses an existing branch instead of cutting one.
+- Publishing release notes the user hasn't approved, or editing them after
+  approval without asking again.
 - Deleting a release branch, of any version or any component, superseded or
   not: the repository keeps its full release history.

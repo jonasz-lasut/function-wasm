@@ -204,6 +204,17 @@ Compare what got fixed against the full CVE list from step 2.
   remediates nothing. Leave `$BRANCH` as you found it and report the
   warning(s) above.
 
+### 4b. Draft the release notes for approval
+
+Load the `writing-style` skill and draft the notes from
+`../cut-release/release-notes-template.md`, filling its Security section: each
+CVE or GHSA, what it affected and whether a reader was exposed. Say so if any
+finding was skipped under the wasm exception, because the next weekly scan
+reports it against this release again and that must not read as a regression.
+Write the draft to a file outside the repository (`$NOTES`), show the user all
+of it, and **stop until the user approves its text**. `$NOTES` doesn't change
+after approval without asking again. Nothing is pushed before that.
+
 ### 5. Push
 
 ```bash
@@ -227,14 +238,12 @@ gh api 'repos/{owner}/{repo}/git/refs' -f ref="refs/tags/$NEW_TAG" -f sha="$OBJ"
 LATEST=false; [ "$FUNCTION" = function-wasm ] && LATEST=true
 gh release create "$NEW_TAG" --verify-tag --target "$BRANCH" \
   --title "$NEW_TAG" --latest="$LATEST" \
-  --notes "Security patch release. Remediates: <CVE/GHSA list>."
+  --notes-file "$NOTES"
 ```
 
 (Step 6 created the tag and `--verify-tag` refuses to continue without it, so
-`--target` only documents the branch.) If findings were
-skipped under the wasm exception, say so in the notes — the next weekly scan
-will report them against this release again, and that must not read as a
-regression.
+`--target` only documents the branch.) `$NOTES` is the text approved in step
+4b, unchanged.
 
 ### 8. Publish the package — `Publish Function`, from the new tag
 
