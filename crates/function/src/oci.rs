@@ -971,15 +971,20 @@ pub mod testregistry {
                         .lock()
                         .expect("poisoned")
                         .keys()
-                        .filter(|name| !name.starts_with("sha256:"))
+                        .filter(|name| !name.contains(':'))
                         .cloned()
                         .collect();
                     (
                         "200 OK",
                         serde_json::json!({ "tags": tags }).to_string().into_bytes(),
                     )
-                } else if let Some(digest) = path.split("/manifests/").nth(1) {
-                    match manifests.lock().expect("poisoned").get(digest) {
+                } else if let Some((repository, reference)) = path
+                    .strip_prefix("/v2/")
+                    .and_then(|p| p.split_once("/manifests/"))
+                {
+                    let manifests = manifests.lock().expect("poisoned");
+                    let scoped = format!("{repository}:{reference}");
+                    match manifests.get(&scoped).or_else(|| manifests.get(reference)) {
                         Some(m) => ("200 OK", m.clone()),
                         None => ("404 Not Found", Vec::new()),
                     }
