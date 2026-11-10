@@ -123,6 +123,38 @@ pub fn embed_world(
     Ok(wasm)
 }
 
+/// A WIT package read back from its published binary form.
+#[derive(Debug, PartialEq)]
+pub struct WitPackage {
+    /// `namespace:name`, without a version.
+    pub name: String,
+    pub version: Option<String>,
+    /// The package as WIT source, in wit-component's printed format.
+    pub text: String,
+}
+
+/// Decodes a WIT package from the component a registry publishes it as,
+/// the format `wkg build` writes, back into source text.
+pub fn decode_wit_package(wasm: &[u8]) -> Result<WitPackage, Error> {
+    let decoded = wit_parser::decoding::decode(wasm)
+        .map_err(|e| Error(format!("cannot read the WIT package: {e:#}")))?;
+    let wit_parser::decoding::DecodedWasm::WitPackage(resolve, package) = decoded else {
+        return Err(Error(
+            "cannot read the WIT package: this is a component, not a WIT package".to_string(),
+        ));
+    };
+    let mut printer = wit_component::WitPrinter::default();
+    printer
+        .print(&resolve, package, &[])
+        .map_err(|e| Error(format!("cannot print the WIT package: {e:#}")))?;
+    let name = &resolve.packages[package].name;
+    Ok(WitPackage {
+        name: format!("{}:{}", name.namespace, name.name),
+        version: name.version.as_ref().map(ToString::to_string),
+        text: printer.output.to_string(),
+    })
+}
+
 /// Wraps a core module carrying wit-bindgen's `component-type*` section
 /// into a component, linking the wasip1 reactor adapter when the module
 /// imports `wasi_snapshot_preview1`. The result is what wasm-tools

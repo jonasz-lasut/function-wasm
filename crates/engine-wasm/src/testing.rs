@@ -10,6 +10,16 @@
 
 use std::fmt::Write as _;
 
+/// A WIT package's source in its published binary form, what `wkg build`
+/// writes.
+pub fn encoded_wit_package(text: &str) -> Vec<u8> {
+    let mut resolve = wit_parser::Resolve::default();
+    let package = resolve
+        .push_str("package.wit", text)
+        .expect("parse the WIT package");
+    wit_component::encode(&resolve, package).expect("encode the WIT package")
+}
+
 /// Assembles WAT into a wasm binary.
 pub fn wasm(wat: &str) -> Vec<u8> {
     wat::parse_str(wat).expect("the fixture's WAT assembles")

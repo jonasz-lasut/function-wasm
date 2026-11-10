@@ -5,7 +5,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use guestfn_runtime::testing::guests::tiny_component;
+use guestfn_engine_wasm::componentize::decode_wit_package;
+use guestfn_runtime::testing::guests::{encoded_wit_package, tiny_component};
 use guestfn_runtime::testing::registry::Registry;
 
 /// A component that does not implement the world.
@@ -599,4 +600,134 @@ fn scaffold_composition_from_a_file() {
     assert!(ok);
     assert!(stdout.contains("kind: Composition"), "{stdout}");
     assert!(stdout.contains("mode: Pipeline"), "{stdout}");
+}
+
+fn contract(version: &str) -> String {
+    format!(
+        "package guestfn:function@{version};\n\nworld function-sync {{\n  export run: func(request: list<u8>) -> result<list<u8>, string>;\n}}\n"
+    )
+}
+
+fn publish(registry: &mut Registry, tag: &str, package: &str) {
+    let wasm = encoded_wit_package(package);
+    let digest = registry.module(&wasm, None, tag);
+    registry.tag(tag, &digest);
+}
+
+fn printed(package: &str) -> String {
+    decode_wit_package(&encoded_wit_package(package))
+        .expect("decode the package")
+        .text
+}
+
+fn guest_on(version: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("wit/deps")).expect("wit/deps");
+    std::fs::write(
+        dir.path().join("wit/deps/guestfn-function.wit"),
+        printed(&contract(version)),
+    )
+    .expect("vendored package");
+    std::fs::write(
+        dir.path().join("wit/world.wit"),
+        format!(
+            "package local:guest;\n\nworld function {{\n    include guestfn:function/function-sync@{version};\n}}\n"
+        ),
+    )
+    .expect("guest world");
+    dir
+}
+
+fn read(dir: &Path, name: &str) -> String {
+    std::fs::read_to_string(dir.join(name)).expect("read the project's file")
+}
+
+fn wit_update(dir: &Path, registry: &str, extra: &[&str]) -> (String, String, bool) {
+    let repository = format!("{registry}/guestfn/function");
+    let mut args = vec!["wit", "update", "--repository", repository.as_str()];
+    args.extend_from_slice(extra);
+    guestfn(dir, &args)
+}
+
+#[test]
+fn wit_update_installs_the_newest_of_the_major_and_moves_the_include() {
+    let mut registry = Registry::new();
+    for version in ["1.0.0", "1.1.0", "1.2.0-rc.1", "2.0.0"] {
+        publish(&mut registry, version, &contract(version));
+    }
+    let registry = registry.serve();
+    let guest = guest_on("1.0.0");
+
+    let (stdout, stderr, ok) = wit_update(guest.path(), &registry, &[]);
+    assert!(ok, "stderr: {stderr}");
+    assert!(
+        stdout.contains("guestfn:function 1.0.0 -> 1.1.0"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("guestfn:function 2.0.0 is published"),
+        "{stdout}"
+    );
+    assert_eq!(
+        read(guest.path(), "wit/deps/guestfn-function.wit"),
+        printed(&contract("1.1.0"))
+    );
+    assert!(
+        read(guest.path(), "wit/world.wit").contains("function-sync@1.1.0;"),
+        "the include did not move"
+    );
+
+    let (stdout, stderr, ok) = wit_update(guest.path(), &registry, &[]);
+    assert!(ok, "stderr: {stderr}");
+    assert!(
+        stdout.contains("guestfn:function 1.1.0 is up to date"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn wit_update_takes_a_new_major_only_when_named() {
+    let mut registry = Registry::new();
+    publish(&mut registry, "1.0.0", &contract("1.0.0"));
+    publish(&mut registry, "2.0.0", &contract("2.0.0"));
+    let registry = registry.serve();
+    let guest = guest_on("1.0.0");
+
+    let (stdout, stderr, ok) = wit_update(guest.path(), &registry, &["--version", "2.0.0"]);
+    assert!(ok, "stderr: {stderr}");
+    assert!(
+        stdout.contains("guestfn:function 1.0.0 -> 2.0.0"),
+        "{stdout}"
+    );
+    assert!(read(guest.path(), "wit/world.wit").contains("function-sync@2.0.0;"));
+}
+
+#[test]
+fn wit_update_refuses_another_package_and_leaves_the_guest_alone() {
+    let mut registry = Registry::new();
+    publish(
+        &mut registry,
+        "1.1.0",
+        "package other:thing@1.1.0;\n\nworld w {\n}\n",
+    );
+    let registry = registry.serve();
+    let guest = guest_on("1.0.0");
+    let before = read(guest.path(), "wit/deps/guestfn-function.wit");
+
+    let (_, stderr, ok) = wit_update(guest.path(), &registry, &[]);
+    assert!(!ok, "a foreign package was installed");
+    assert!(
+        stderr.contains("holds other:thing, not guestfn:function"),
+        "{stderr}"
+    );
+    assert_eq!(read(guest.path(), "wit/deps/guestfn-function.wit"), before);
+}
+
+#[test]
+fn wit_update_names_what_it_needs_in_a_directory_that_is_no_guest() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (_, stderr, ok) = wit_update(dir.path(), &empty_registry(), &[]);
+    assert!(!ok);
+    assert!(stderr.contains("wit/deps/guestfn-function.wit"), "{stderr}");
+    assert!(stderr.contains("guestfn init writes it"), "{stderr}");
 }

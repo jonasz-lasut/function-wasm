@@ -245,6 +245,20 @@ impl RegistryClient {
             .map_err(|e| format!("cannot fetch {label}: {e}"))
     }
 
+    /// Lists the repository's tags, bounded to limit bytes.
+    pub fn tags(&self, limit: usize) -> Result<Vec<String>, String> {
+        #[derive(Deserialize)]
+        struct TagList {
+            #[serde(default)]
+            tags: Option<Vec<String>>,
+        }
+        let url = format!("{}/v2/{}/tags/list?n=1000", self.base, self.repository);
+        let raw = self.get_as(&url, None, limit, "tag list")?;
+        let list: TagList =
+            serde_json::from_slice(&raw).map_err(|e| format!("cannot parse the tag list: {e}"))?;
+        Ok(list.tags.unwrap_or_default())
+    }
+
     /// Fetches a small blob read straight from the registry rather than
     /// through the blob store, bounded to limit and verified against its
     /// digest here.
@@ -952,6 +966,18 @@ pub mod testregistry {
                     } else {
                         ("404 Not Found", Vec::new())
                     }
+                } else if path.contains("/tags/list") {
+                    let tags: Vec<String> = manifests
+                        .lock()
+                        .expect("poisoned")
+                        .keys()
+                        .filter(|name| !name.starts_with("sha256:"))
+                        .cloned()
+                        .collect();
+                    (
+                        "200 OK",
+                        serde_json::json!({ "tags": tags }).to_string().into_bytes(),
+                    )
                 } else if let Some(digest) = path.split("/manifests/").nth(1) {
                     match manifests.lock().expect("poisoned").get(digest) {
                         Some(m) => ("200 OK", m.clone()),

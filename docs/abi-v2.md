@@ -113,7 +113,9 @@ world function {
 
 `Publish WIT` (`publish-wit.yml`), run by hand from a `wit-v<version>` tag, publishes the package, signed and attested, as an OCI artifact in the CNCF Wasm OCI layout, the format of `wkg`: `ghcr.io/jonasz-lasut/guestfn/function:<version>`. A published version is never pushed again.
 
-Once a version is published, map the namespace in the [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools) configuration:
+`guestfn wit update` refreshes a guest's copy from that artifact. It installs the newest version of the major the copy declares, or the version `--version` names, and moves the version in the `include` in `wit/world.wit`. Regenerate any bindings you check in afterward. `--dir` names the project and `--repository` a mirror.
+
+To fetch the package with [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools) instead, map the namespace in its configuration:
 
 ```toml
 [namespace_registries]

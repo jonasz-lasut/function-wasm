@@ -1723,6 +1723,7 @@ dependencies = [
  "guestfn-runtime",
  "hex",
  "include_dir",
+ "semver",
  "serde",
  "serde-saphyr",
  "serde_json",
