@@ -57,9 +57,9 @@ be another component's. If `origin/$BRANCH` doesn't exist yet, it must be cut
 from the release **tag**, never from `main` HEAD: a security patch must not
 carry unreleased changes.
 
-The function's latest release is the default target. From its v1.0.0 on,
-superseded release branches are kept (`cut-release` step 11), so an older line
-can be patched when the user asks for it: set `TAG` to that line's latest tag
+The function's latest release is the default target. Every release branch is
+kept, and from a function's v1.0.0 on an older line can be patched when the
+user asks for it: set `TAG` to that line's latest tag
 (`gh release list`) and derive `VERSION` and `BRANCH` from it the same way.
 Before a function's first release there is nothing to patch: the fix lands on
 `main` like any change. A fix that patches both functions is one run of this
