@@ -14,7 +14,7 @@ crossplane=$(jq -r '[.crossplane[] | (split(".")[0:2] | join(".")) + " (v" + . +
 case "$function" in
   function-wasm) row="| $version | $crossplane |" ;;
   function-oci)
-    vms=$(jq -r '.kernel as $kernel | [.firecracker[] | . + " × " + $kernel] | join(", ")' "$record")
+    vms=$(jq -r '[.vms[] | .firecracker + " × " + .kernel] | join(", ")' "$record")
     row="| $version | $crossplane | $vms |"
     ;;
   *) echo "unknown function $function (function-wasm or function-oci)" >&2; exit 1 ;;

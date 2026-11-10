@@ -28,14 +28,13 @@
 # (docs.crossplane.io/latest/learn/release-cycle), so the matrix is the
 # current one - the Makefile's CROSSPLANE_VERSION default, what every /e2e
 # run tests - and the latest patch of the two minors before it, pinned
-# below. The OCI engine's VM suite runs beside it, once per Firecracker
-# minor of the three most recent: the Dockerfile's pin and the latest patch
-# of the two minors before it, pinned below, each on the pinned guest kernel
-# (6.18 is the one line Firecracker still supports for guests). A last job
-# records what passed, for the tested-versions table in README.md. Nothing
-# else runs here: the guest suite and the example build jobs depend on
-# neither.
-#
+# below. The OCI engine's VM suite runs beside it on nine pairs: the three
+# most recent Firecracker minors against the three guest kernel lines
+# Firecracker supports (docs/kernel-policy.md upstream). The pair the image
+# pins blocks the release, and any other pair that fails stays out of the
+# record a last job writes for the tested-versions tables in README.md.
+# Nothing else runs here: the guest suite and the example build jobs depend
+# on neither.
 # Runs on every push to a release-function-<wasm|oci>-X.Y branch: the cut of a new line (the
 # cut-release skill pushes the branch, waits for this run and cuts the tag
 # only when it is green) and a patch on an existing one (remediate-cves).
@@ -74,6 +73,13 @@ env:
   FIRECRACKER_PREVIOUS: '1.17.0'
   # renovate: datasource=github-releases depName=firecracker-microvm/firecracker
   FIRECRACKER_OLDEST: '1.16.2'
+  # The two older guest kernel lines, x86_64 like the runners, from the
+  # artifact prefix the Dockerfile's KERNEL_CI pins. That bucket publishes no
+  # checksums, so these move by hand with KERNEL_CI.
+  KERNEL_PREVIOUS: '6.1.188'
+  KERNEL_PREVIOUS_SHA256: '31fe88d6c72b93d5c9c63cca599ccadec49fd35673bbfd04850d6c00ff27f032'
+  KERNEL_OLDEST: '5.10.271'
+  KERNEL_OLDEST_SHA256: '38d9d7a4096e95df6d236c6372e5b8f8928892503517cb723187c31cc418bc74'
 
 jobs:
   # The release runtime, built once and handed to every cluster job.
@@ -280,18 +286,23 @@ jobs:
         run: |
           echo "- Crossplane ${{ steps.select.outputs.crossplane }} (${{ matrix.crossplane }}), function-wasm and function-oci: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
 
+  # Only the pair the image pins blocks a release. Another pair that fails
+  # uploads no record of itself, so it stays out of the table.
   vm-suite:
-    name: vm suite (firecracker ${{ matrix.firecracker }})
+    name: vm suite (firecracker ${{ matrix.firecracker }}, kernel ${{ matrix.kernel }})
     runs-on: ubuntu-26.04
+    continue-on-error: ${{ matrix.firecracker != 'current' || matrix.kernel != 'current' }}
     strategy:
       fail-fast: false
       matrix:
         firecracker: [current, previous, oldest]
+        kernel: [current, previous, oldest]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
@@ -320,18 +331,48 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm
 
-      - name: Select the Firecracker Release
+      - name: Select the Firecracker Release and the Guest Kernel
+        id: select
         run: |
+          firecracker=$(sed -nE 's/^ARG FIRECRACKER_VERSION=v//p' crates/function-oci/Dockerfile | head -n 1)
+          kernel=$(sed -nE 's/^ARG KERNEL_VERSION=//p' crates/function-oci/Dockerfile | head -n 1)
           case "${{ matrix.firecracker }}" in
-            current) ;;
-            previous) echo "OCI_FIRECRACKER_VERSION=v${FIRECRACKER_PREVIOUS}" >> "$GITHUB_ENV" ;;
-            oldest) echo "OCI_FIRECRACKER_VERSION=v${FIRECRACKER_OLDEST}" >> "$GITHUB_ENV" ;;
+            previous) firecracker=$FIRECRACKER_PREVIOUS ;;
+            oldest) firecracker=$FIRECRACKER_OLDEST ;;
           esac
+          case "${{ matrix.kernel }}" in
+            previous) kernel=$KERNEL_PREVIOUS; sha=$KERNEL_PREVIOUS_SHA256 ;;
+            oldest) kernel=$KERNEL_OLDEST; sha=$KERNEL_OLDEST_SHA256 ;;
+            *) sha= ;;
+          esac
+          echo "OCI_FIRECRACKER_VERSION=v${firecracker}" >> "$GITHUB_ENV"
+          if [ -n "$sha" ]; then
+            echo "OCI_KERNEL_VERSION=${kernel}" >> "$GITHUB_ENV"
+            echo "OCI_KERNEL_SHA256=${sha}" >> "$GITHUB_ENV"
+          fi
+          echo "firecracker=${firecracker}" >> "$GITHUB_OUTPUT"
+          echo "kernel=${kernel}" >> "$GITHUB_OUTPUT"
 
       - name: Run the Engine Suite in VMs
         env:
           GUESTFN_REQUIRE_KVM: "1"
         run: make oci.test
+
+      - name: Record the Pair
+        env:
+          FIRECRACKER: ${{ steps.select.outputs.firecracker }}
+          KERNEL: ${{ steps.select.outputs.kernel }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pair"
+          jq -n --arg firecracker "$FIRECRACKER" --arg kernel "$KERNEL" \
+            '{firecracker: $firecracker, kernel: $kernel}' > "${RUNNER_TEMP}/pair/pair.json"
+
+      - name: Upload the Pair
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-pair-${{ matrix.firecracker }}-${{ matrix.kernel }}
+          path: ${{ runner.temp }}/pair/pair.json
+          if-no-files-found: error
 
   # What the legs above passed, for hack/tested-versions.sh. The release
   # skills read it once a release is out and open the pull request that
@@ -348,16 +389,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Download the Passing Pairs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: vm-pair-*
+          path: pairs
+
       - name: Write the Record
         run: |
           crossplane=$(sed -nE 's/^CROSSPLANE_VERSION \?= //p' Makefile)
-          firecracker=$(sed -nE 's/^ARG FIRECRACKER_VERSION=v//p' crates/function-oci/Dockerfile | head -n 1)
-          kernel=$(sed -nE 's/^ARG KERNEL_VERSION=//p' crates/function-oci/Dockerfile | head -n 1)
+          vms=$(jq -s 'sort_by((.firecracker | split(".") | map(tonumber)), (.kernel | split(".") | map(tonumber))) | reverse' pairs/*/pair.json)
           jq -n \
             --arg c1 "$crossplane" --arg c2 "$CROSSPLANE_PREVIOUS" --arg c3 "$CROSSPLANE_OLDEST" \
-            --arg f1 "$firecracker" --arg f2 "$FIRECRACKER_PREVIOUS" --arg f3 "$FIRECRACKER_OLDEST" \
-            --arg kernel "$kernel" \
-            '{crossplane: [$c1, $c2, $c3], firecracker: [$f1, $f2, $f3], kernel: $kernel}' > tested-versions.json
+            --argjson vms "$vms" \
+            '{crossplane: [$c1, $c2, $c3], vms: $vms}' > tested-versions.json
           cat tested-versions.json
 
       - name: Upload the Record
