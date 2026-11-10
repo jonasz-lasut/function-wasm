@@ -75,6 +75,26 @@ guestfn push ghcr.io/example/tagger:v0.1.0-module --image ghcr.io/example/tagger
 Each function's README has the Composition step and the install snippet:
 [function-wasm](package/wasm/README.md), [function-oci](package/oci/README.md).
 
+## Tested versions
+
+What each function's latest release passed on the [release matrix](https://jonasz-lasut.github.io/guestfn/project/testing.html#the-release-matrix).
+
+### function-wasm
+
+<!-- tested-versions:function-wasm:start -->
+| Release | Crossplane |
+|---|---|
+| v0.6.0 | not recorded |
+<!-- tested-versions:function-wasm:end -->
+
+### function-oci
+
+<!-- tested-versions:function-oci:start -->
+| Release | Crossplane | Firecracker × guest kernel |
+|---|---|---|
+| v0.1.0 | 2.4 (v2.4.3), 2.3 (v2.3.7), 2.2 (v2.2.7) | 1.18.0 × 6.18.56, 1.18.0 × 6.1.188, 1.18.0 × 5.10.271, 1.17.0 × 6.18.56, 1.17.0 × 6.1.188, 1.17.0 × 5.10.271, 1.16.2 × 6.18.56, 1.16.2 × 6.1.188, 1.16.2 × 5.10.271 |
+<!-- tested-versions:function-oci:end -->
+
 ## Documentation
 
 The manual at <https://jonasz-lasut.github.io/guestfn/> comes from [`docs/`](docs), built with mdBook. Start from the page

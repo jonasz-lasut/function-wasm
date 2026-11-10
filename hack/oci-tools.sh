@@ -8,6 +8,10 @@
 # other pins is fetched again.
 #
 #   hack/oci-tools.sh <x86_64|aarch64> <directory>
+# OCI_FIRECRACKER_VERSION (vX.Y.Z) fetches another release instead, checked
+# against the checksum file that release publishes, and OCI_KERNEL_VERSION
+# with OCI_KERNEL_SHA256 another guest kernel of the pinned artifact prefix:
+# the release matrix's older legs.
 #
 # writes <directory>/firecracker and <directory>/vmlinux.
 set -euo pipefail
@@ -33,6 +37,15 @@ kernel_sha=$(arg "KERNEL_SHA256_$suffix")
 [ -n "$fc_version" ] && [ -n "$fc_sha" ] && [ -n "$kernel_ci" ] && [ -n "$kernel_version" ] && [ -n "$kernel_sha" ] \
   || { echo "cannot read the pins from $dockerfile" >&2; exit 1; }
 
+if [ -n "${OCI_FIRECRACKER_VERSION:-}" ] && [ "$OCI_FIRECRACKER_VERSION" != "$fc_version" ]; then
+  fc_version=$OCI_FIRECRACKER_VERSION
+  fc_sha=$(curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/$fc_version/firecracker-$fc_version-$arch.tgz.sha256.txt" | awk '{print $1}')
+  [ -n "$fc_sha" ] || { echo "cannot read the checksum of firecracker $fc_version" >&2; exit 1; }
+fi
+if [ -n "${OCI_KERNEL_VERSION:-}" ]; then
+  kernel_version=$OCI_KERNEL_VERSION
+  kernel_sha=${OCI_KERNEL_SHA256:?OCI_KERNEL_VERSION needs OCI_KERNEL_SHA256}
+fi
 pins="firecracker $fc_version kernel $kernel_ci $kernel_version $arch"
 if [ -x "$dir/firecracker" ] && [ -f "$dir/vmlinux" ] && [ "$(cat "$dir/.pins" 2>/dev/null)" = "$pins" ]; then
   exit 0
