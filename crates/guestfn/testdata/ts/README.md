@@ -26,8 +26,8 @@ which cannot exist inside a SpiderMonkey component.
   with `run` declared **sync**. componentize-js cannot async-lift a custom
   world's export yet, and a sync-lifted function satisfies the runtime's
   async world; the TypeScript still awaits freely - componentize-js
-  resolves the promise before the export returns. `wit/deps/` carries the
-  contract.
+  resolves the promise before the export returns. `guestfn build` pulls the
+  contract `guestfn.lock` pins into `wit/deps/`, which stays out of git.
 - `src/fn.ts` - `runFunction` over the protobuf-es messages (edit this),
   natively testable (`npm test`) with a fetch double.
 - `src/main.ts` (wasm only) - the world wiring: the `run` export and the

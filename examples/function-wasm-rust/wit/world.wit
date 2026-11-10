@@ -1,5 +1,6 @@
+// WASI at the version wasmtime-wasi-http 50.0.1 links.
 /// This guest's own world, in a local package: the guestfn:function contract
-/// (deps/guestfn-function.wit, kept byte-identical to the runtime's copy) plus
+/// (pulled into deps/ at build, as guestfn.lock pins it) plus
 /// the wasi:http client it fetches Cloudflare's IP ranges with. A component
 /// may import more than the wasmfn world names; the host links wasi:http for
 /// every v2 run and the grant decides what answers it.

@@ -1,0 +1,6 @@
+# Written by guestfn wit update. guestfn build pulls exactly this.
+packages:
+  - name: guestfn:function
+    version: 1.0.0
+    repository: ghcr.io/jonasz-lasut/guestfn/function
+    digest: sha256:0f2b846b758d1f4dc1e8aa0559e0fa0b8019e55aea51c285cc9a88e657bd6476

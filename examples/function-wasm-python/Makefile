@@ -1,14 +1,17 @@
 # The function-wasm-python guest in Python, componentized with componentize-py: needs
 # python3 (protoc only to regenerate the checked-in codec). Render needs
 # the crossplane CLI and Docker.
-.PHONY: build test render gen-proto clean
+.PHONY: build test render gen-proto clean wit-deps
+
+ROOT := $(abspath ../..)
+GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 
 .venv: requirements.txt
 	python3 -m venv .venv
 	.venv/bin/pip install --quiet -r requirements.txt
 	touch .venv
 
-build: .venv ## Componentize the guest to fn.wasm
+build: .venv wit-deps ## Componentize the guest to fn.wasm
 	VIRTUAL_ENV=$(CURDIR)/.venv .venv/bin/componentize-py -d wit -w function componentize app -p src -p src/gen -o fn.wasm
 
 test: .venv ## Run the unit tests natively under python
@@ -23,3 +26,6 @@ render: build ## Start the runtime serving this directory and crossplane render 
 
 clean:
 	rm -rf .venv fn.wasm src/__pycache__ src/gen/__pycache__ test/__pycache__
+
+wit-deps: ## Pull the WIT packages guestfn.lock pins into wit/deps
+	$(GUESTFN) wit fetch --dir $(CURDIR)

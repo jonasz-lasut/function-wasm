@@ -10,7 +10,7 @@ record fails the prose job until both say the same.
 
 | design record | status |
 |---|---|
-| [ABI v2 and the Rust host](../one-pager-abi-v2.md) | Implemented, revision 0.8 |
+| [ABI v2 and the Rust host](../one-pager-abi-v2.md) | Implemented, revision 0.9 |
 | [Compiled-artifact cache key](../one-pager-cache-key.md) | Implemented, revision 1.0 |
 | [Module and compiled artifacts cache](../one-pager-cache.md) | Implemented, revision 2.7 |
 | [Module configuration from the composite resource](../one-pager-module-config.md) | Implemented, revision 1.0 |

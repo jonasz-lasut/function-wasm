@@ -236,14 +236,14 @@ component's release never replaces it.
 A `function-wasm` release's notes state what it serves, as `docs/abi-v2.md`'s versioning
 policy promises: the world (`wit/guestfn-function.wit`'s package line),
 wasmtime (its entry in `Cargo.lock`) and the WASI interface versions the
-scaffolds vendor under `wit/deps/`, which are what a guest imports beside
+scaffolds pin in `guestfn.lock`, which are what a guest imports beside
 the world. Read them from the tree being released:
 
 ```bash
 sed -nE 's/^package (guestfn:function@[^;]+);/\1/p' wit/guestfn-function.wit
 rg -n '^name = "wasmtime"$' -A1 Cargo.lock | rg -o 'version = ".*"'
-rg -I -o --no-heading '^package wasi:(cli|clocks|http|io)@[0-9][^;]*' \
-  crates/guestfn/templates/*/wit/deps | sed 's/package //' | sort -u
+rg -I --no-heading -A1 '^  - name: wasi:(cli|clocks|http|io)$' crates/guestfn/templates/*/guestfn.lock \
+  | rg -o '(wasi:[a-z]+|[0-9]+\.[0-9]+\.[0-9]+)' | paste - - | sort -u
 ```
 
 One sentence in the notes carries them, for example: `Serves
@@ -251,7 +251,8 @@ guestfn:function@1.0.0 on wasmtime 49.0.2: WASI 0.2.12 (cli, clocks, http,
 io) for the sync scaffolds and WASI 0.3.0 (clocks, http) for the rust
 scaffold.` A guest keeps running as long as the runtime's wasmtime serves
 the versions it was built against, so a release that moves any of them
-says which, and what a guest does about it (re-vendor `wit/deps/`, rebuild).
+says which, and what a guest does about it (move the imports in
+`wit/world.wit`, run `guestfn wit update`, rebuild).
 
 ### 8. Publish: from the new tag
 

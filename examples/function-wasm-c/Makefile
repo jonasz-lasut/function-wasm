@@ -11,7 +11,7 @@
 ROOT := $(abspath ../..)
 GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 
-.PHONY: build test lint gen-proto gen-bindings render clean
+.PHONY: build test lint gen-proto gen-bindings render clean wit-deps
 
 build: ## Compile the guest to fn.wasm (a component)
 	$(GUESTFN) build --dir $(CURDIR)
@@ -25,7 +25,7 @@ lint: ## Check build.zig's formatting (the C sources are compiled by zig cc, whi
 gen-proto: ## Regenerate src/fnv1 from proto/ (needs nanopb_generator)
 	zig build gen-proto
 
-gen-bindings: ## Regenerate src/gen from wit/ (needs wit-bindgen 0.62.0)
+gen-bindings: wit-deps ## Regenerate src/gen from wit/ (needs wit-bindgen 0.62.0)
 	zig build gen-bindings
 
 render: build ## Start the runtime serving this directory and crossplane render example/
@@ -34,3 +34,6 @@ render: build ## Start the runtime serving this directory and crossplane render 
 
 clean:
 	rm -rf .zig-cache zig-out zig-pkg zig-prefix fn.wasm
+
+wit-deps: ## Pull the WIT packages guestfn.lock pins into wit/deps
+	$(GUESTFN) wit fetch --dir $(CURDIR)

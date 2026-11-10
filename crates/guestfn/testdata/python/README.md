@@ -23,8 +23,8 @@ extension does not exist in wasm; the fallback engages by itself).
   [ABI v2 contract](https://github.com/jonasz-lasut/guestfn/blob/main/docs/abi-v2.md)
   (componentize-py takes the sync shape, and a sync-lifted function
   satisfies the runtime's async world), plus the `wasi:http` import it
-  fetches with. `wit/deps/` carries the contract and the wasi 0.2 WIT that
-  import needs.
+  fetches with. `guestfn build` pulls the packages `guestfn.lock` pins
+  into `wit/deps/`, which stays out of git.
 - `src/fn.py` - `run_function` over the protobuf messages (edit this),
   ordinary Python, natively testable with a fetch double.
 - `src/app.py` (wasm only) - the world wiring: the `run` export, the typed

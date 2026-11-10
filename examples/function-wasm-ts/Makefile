@@ -2,12 +2,15 @@
 # npm (protoc only to regenerate the checked-in codec). Render needs the
 # crossplane CLI and Docker (the composition's first step,
 # function-go-templating, runs in a container).
-.PHONY: build test render gen-proto clean
+.PHONY: build test render gen-proto clean wit-deps
+
+ROOT := $(abspath ../..)
+GUESTFN ?= cargo run --manifest-path $(ROOT)/Cargo.toml --release -p guestfn --
 
 node_modules: package-lock.json
 	npm ci --no-audit --no-fund
 
-build: node_modules ## Bundle and componentize the guest to fn.wasm
+build: node_modules wit-deps ## Bundle and componentize the guest to fn.wasm
 	npm run build
 
 test: node_modules ## Type-check, then run the unit tests natively under node
@@ -22,3 +25,6 @@ render: build ## Start the runtime serving this directory and crossplane render 
 
 clean:
 	rm -rf dist fn.wasm node_modules
+
+wit-deps: ## Pull the WIT packages guestfn.lock pins into wit/deps
+	$(GUESTFN) wit fetch --dir $(CURDIR)

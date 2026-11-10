@@ -1,3 +1,4 @@
+// WASI at the version wasmtime-wasi-http 50.0.1 links.
 /// This guest's world: the guestfn:function contract in its sync form (the
 /// shape its generator binds without a callback-driven task), plus
 /// wasi:http@0.2's outgoing-handler for its greeting fetch. The runtime

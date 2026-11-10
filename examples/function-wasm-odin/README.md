@@ -14,7 +14,7 @@ wasi-sdk, no wasm-tools, no adapter download. There is no `guestfn init
 --lang odin`: this example is the Odin path
 ([#155](https://github.com/jonasz-lasut/guestfn/issues/155)).
 
-- `wit/world.wit` and `wit/deps/` are the `c` flavour's: a
+- `wit/world.wit` and `guestfn.lock` are the `c` flavour's: a
   `local:guest` package that includes the `guestfn:function` contract's
   `function-sync` world and imports `wasi:http/outgoing-handler@0.2.12` for
   the greeting fetch. `src/gen` is wit-bindgen's C output over it (`function.h`,
