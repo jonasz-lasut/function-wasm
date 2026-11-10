@@ -237,7 +237,5 @@ as examples, checked by their build jobs, like Odin, MoonBit, C# and C++, and
 The world's publication ([#106](https://github.com/jonasz-lasut/guestfn/issues/106)):
 the examples target `guestfn:function@1.0.0`, frozen on 2026-10-07
 ([#77](https://github.com/jonasz-lasut/guestfn/issues/77)). The
-`Publish WIT` workflow (`publish-wit.yml`) publishes it, run by hand and no
-earlier than when the `rust` scaffold's `rust-toolchain.toml`, which pins a beta
-channel (`beta-2026-10-05` today), is off beta and the scaffold builds on stable Rust
-([#129](https://github.com/jonasz-lasut/guestfn/issues/129)).
+`Publish WIT` workflow (`publish-wit.yml`) publishes it, run by hand from a
+`wit-v<version>` tag.

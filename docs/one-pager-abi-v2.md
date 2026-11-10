@@ -6,8 +6,7 @@
   Rust workspace. The Rust host has served since v0.3.0, the world froze on
   2026-10-07, took the name `guestfn:function@1.0.0` and a sync form on
   2026-11-10, and ABI v1 was removed in 1.0.0;
-  publishing the world, #106, waits on the `rust` scaffold's stable
-  toolchain)
+  `Publish WIT` publishes the world from a `wit-v<version>` tag, #106)
 
 function-wasm runs guests as WebAssembly components against one WIT world,
 and its host is written in Rust. This record explains why those are one
