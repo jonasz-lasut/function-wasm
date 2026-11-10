@@ -190,14 +190,17 @@ before the release continues. Never cut the tag over a red matrix. On a
 release line cut before #189 merged the workflow does not exist on the
 branch and no run appears: say so and continue.
 
-### 6. Cut the tag: `Tag` workflow, from the new release branch
+### 6. Cut the tag: through the GitHub API, on the new release branch
 
 ```bash
-gh workflow run Tag --ref "$NEW_BRANCH" -f component="$COMPONENT" -f version="$NEW_VERSION" \
-  -f message="Release $NEW_TAG"
+SHA=$(git rev-parse "origin/$NEW_BRANCH")
+OBJ=$(gh api 'repos/{owner}/{repo}/git/tags' -f tag="$NEW_TAG" \
+  -f message="Release $NEW_TAG" -f object="$SHA" -f type=commit --jq .sha)
+gh api 'repos/{owner}/{repo}/git/refs' -f ref="refs/tags/$NEW_TAG" -f sha="$OBJ" --jq .ref
 ```
 
-The workflow creates the `$NEW_TAG` tag. Verify it exists before publishing:
+That creates the annotated `$NEW_TAG` on the branch's head, with no local tag
+and no signature. Verify it exists before publishing:
 `git ls-remote --tags origin "$NEW_TAG"`. There is no separate guest-SDK
 tag: each guest vendors its ABI glue under `internal/wasmfn` (the scaffold
 writes it), so nothing needs `go get`-ing at a pinned version.
@@ -206,7 +209,7 @@ writes it), so nothing needs `go get`-ing at a pinned version.
 
 ```bash
 LATEST=false; [ "$COMPONENT" = function-wasm ] && LATEST=true
-gh release create "$NEW_TAG" --target "$NEW_BRANCH" \
+gh release create "$NEW_TAG" --verify-tag --target "$NEW_BRANCH" \
   --title "$NEW_TAG" --latest="$LATEST" \
   --notes "<summary of what's new since $TAG>"
 ```
@@ -214,8 +217,8 @@ gh release create "$NEW_TAG" --target "$NEW_BRANCH" \
 GitHub marks one release Latest, and that's function-wasm's, so another
 component's release never replaces it.
 
-(`--target` only matters if the tag doesn't already exist; the `Tag` workflow
-already created it, so this is just documentation-by-flag.)
+(Step 6 created the tag and `--verify-tag` refuses to continue without it, so
+`--target` only documents the branch.)
 
 A `function-wasm` release's notes state what it serves, as `docs/abi-v2.md`'s versioning
 policy promises: the world (`wit/guestfn-function.wit`'s package line),
@@ -274,10 +277,10 @@ rather than whatever was frozen on the release branch at cut time.
 
 Each of steps 6–9 must finish successfully before the next starts — step 8
 needs the tag from step 6 to exist, step 9 needs the image step 8 published.
-Find each run with `gh run list --workflow="<name>" --limit 1` and wait on it
+Find each workflow's run with `gh run list --workflow="<name>" --limit 1` and wait on it
 (`gh run watch <run-id> --exit-status`); if using the Monitor tool, its
 until-loop pattern is the sanctioned way to poll rather than a manual sleep
-loop. Only once all three have concluded successfully, move on to the report.
+loop. Only once all of them have concluded successfully, move on to the report.
 
 ### 11. Report
 
@@ -290,7 +293,7 @@ release branch where it is: the repository keeps its full release history.
 |---|---|---|
 | Cut branch | `main` HEAD | new `release-<component>-X.Y` |
 | `Release Matrix E2E` (functions) | started by the push of `release-function-*` | none; `gh run watch --exit-status` on it |
-| `Tag` | new release branch | `component`, `version`, `message` |
+| Tag through the GitHub API | head of the new release branch | `$NEW_TAG`, message |
 | (n/a) `gh release create` | n/a | `<component>-vX.Y.Z`, `--target` branch, `--latest` only for function-wasm |
 | `Publish Function` (functions) | the new tag | `function`, `version` (`vX.Y.Z`) |
 | `Publish guestfn` | the new tag | `version` (`vX.Y.Z`) |
