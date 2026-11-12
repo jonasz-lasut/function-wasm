@@ -89,7 +89,7 @@ Design choices to keep:
   Cloudflare's list (an empty answer would have deleted them).
 - **Tenancy comes from the namespace, never from the `spec`.** `function-wasm-python` keys
   the shared Secret by the XR's namespace, which cluster RBAC sets. Keying by a
-  `spec` field would let an XR in team A's namespace spend team B's token.
+  `spec` field would let an XR in the namespace of team A spend the token of team B.
 - **A module sees only the credentials its manifest names.** `function-wasm-python`
   declares `requires.credentials: [cmdb]`, and the runtime forwards that
   credential only where both policy layers permit `spendCredential`; the pull
@@ -135,16 +135,18 @@ pulled from `ghcr.io` with its real signature.
   fatal, logs. A scaffold has no lockfile. The suite resolves dependencies
   the way a user's first build does, which caught the Go 1.27 break in
   [#117](https://github.com/jonasz-lasut/guestfn/issues/117).
-- **Examples share only the plumbing with their scaffold**: the vendored ABI
-  glue, the generated codecs, the proto and the WIT, held byte-identical by
-  `examples_share_the_scaffold_plumbing` for the four pairs, Go, Rust,
+- **Examples share only the plumbing with their scaffold** - the vendored ABI
+  glue, the generated codecs, the proto and the WIT - which
+  `examples_share_the_scaffold_plumbing` holds byte-identical for the four
+  pairs, Go, Rust,
   TypeScript and Python. The function, its manifest and its example manifests
   are the example's own. An example with no scaffold has the plumbing in its
-  own tree, and its build job's drift check holds the generated code to the
-  pinned generators.
+  own tree, and the drift check of its build job compares the generated code
+  with the pinned generators.
 - **Each example has unit tests in its language**, covering each fatal path.
-- **Each example has a `build-<lang>` job** in the `/e2e` workflow (`e2e.yml`):
-  its toolchain, the build, test and lint targets, and a drift check of its
+- **Each example has a `build-<lang>` job** in the `/e2e` workflow (`e2e.yml`)
+  covering its toolchain, the build, test and lint targets, and a drift check of
+  its
   generated codec and bindings.
 - **Nothing in CI asserts what an example composes.** The Kubernetes-native
   end-to-end suite (`crates/e2e`, [testing](project/testing.md), #185) drives a
@@ -152,7 +154,7 @@ pulled from `ghcr.io` with its real signature.
   covers the runtime behaviour the examples rely on (signatures, `module.from`,
   egress, credentials, env, the private `/tmp`, requirements, fatals, limits),
   and an example's unit tests cover its own logic.
-- **`make render` is each example's development loop.** `examples/render.sh`
+- **`make render` is the development loop of each example.** `examples/render.sh`
   runs `function validate` over every `example/xr*.yaml`, then serves the
   directory with `example/policy.cedar` as the operator policy and
   `example/fixtures/` on a local HTTP server for `crossplane render`
@@ -167,13 +169,13 @@ published as CNCF Wasm OCI artifacts, with their module manifests:
   world at `guestfn/function`. A namespace per kind of artifact is the
   convention across OCI-distributed WebAssembly plugins (Kubewarden's
   `policies/`, wasmCloud's `components/`).
-- **Versions:** each example's own semver from its `guestfn.yaml`, tagged
-  `v<version>`, independent of the runtime's. A version already published is
-  never pushed again (the same registry probe as `publish-wit`), so a run
+- **Versions:** each example's semver comes from its `guestfn.yaml` and is
+  tagged `v<version>`, independent of the runtime's. A version already published
+  is never pushed again (the same registry probe as `publish-wit`). Each run
   publishes only the examples whose version moved, and a published tag remains
   immutable.
-- **When:** when a maintainer runs the workflow, from `main`, after an
-  example's version moved. The examples have a lifecycle of their own. A
+- **When:** a maintainer runs the workflow from `main` after the version of an
+  example moved. The examples have a lifecycle of their own. A
   release neither builds nor carries them, and a failed example build stays
   out of the package's publish run.
 - **Signing:** keyless cosign plus SLSA provenance from the publish workflow,

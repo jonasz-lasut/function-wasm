@@ -26,10 +26,9 @@ below closes both. The operator-facing summary is the manual's
   exactly as the author of a native function's Composition is.
 - A **composite resource author** may, when the Composition says so
   (`module.from`), choose which module runs by writing a field of their XR.
-  They're trusted with less: they can pick code, within the
-  `compositionPolicy`'s `pullModule` permits, but can't widen what it may do
-  or spend what it may not. The runtime reads `compositionPolicy` and
-  `limits` from the Input only.
+  They're trusted with less. They can pick code within the `pullModule` permits
+  of the `compositionPolicy` but can't widen what it may do or spend what it may
+  not. The runtime reads `compositionPolicy` and `limits` from the Input only.
 - A **module author** publishes signed or unsigned artifacts and declares in
   the manifest what the module can't run without (`requires`), the step
   credentials it reads among them. Their code runs in the sandbox with the
@@ -213,11 +212,11 @@ The guest receives the whole `RunFunctionRequest` less every step credential
 it wasn't granted (the pull credential always): observed and desired state,
 context, extra resources, `config`, and the credentials its manifest names
 that both Cedar layers permit. It runs in a fresh Wasmtime store with WASI
-0.3 and 0.2 and no sockets. It has two ways out: the typed `log` import, and
-`wasi:http`, which the host performs only within an egress grant its manifest
-requires and both Cedar layers permit (`grantEgress`) and refuses otherwise.
-A wall-clock deadline and a memory cap over linear memories and tables bound the run, and stdout and
-stderr go to the pod's log.
+0.3 and 0.2 and no sockets. It has two ways out: the typed `log` import and
+`wasi:http`. The host performs `wasi:http` only within an egress grant its
+manifest requires and both Cedar layers permit (`grantEgress`), and refuses it
+otherwise. A wall-clock deadline and a memory cap over linear memories and
+tables bound the run, and stdout and stderr go to the pod's log.
 
 The guest has no pre-opened directories and no environment unless its
 manifest's `requires` asks and the policy layers permit. Then it gets a

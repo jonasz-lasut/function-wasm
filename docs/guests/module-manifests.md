@@ -51,7 +51,7 @@ The fields:
   (`ghcr.io/acme/tagger@sha256:…`), which `guestfn push --image` writes into
   the published manifest, so the file may leave it out. `oci.args` are the
   arguments for the function's binary, replacing the image's command and
-  keeping its entrypoint; a function on a Crossplane SDK needs
+  keeping its entrypoint. A function on a Crossplane SDK needs
   `["--insecure"]`. A `wasm@1.0` manifest has no `oci`, and the runtime
   refuses one that sets it.
 - `name`, `version`, `description` and `source`: what the module says about
@@ -68,9 +68,9 @@ that must stay a string. `function validate` reads a Composition file the
 same way.
 
 - `config.schema`: a JSON Schema (draft 2020-12) for the Input's `config`.
-  It must be self-contained: a `$ref` to a URL or a file is refused at load,
-  and `pattern` takes the `regex` crate's syntax, which has no look-around
-  and no back-references. Non-secret configuration belongs in `config`, not in env.
+  It must be self-contained: the runtime refuses a `$ref` to a URL or a file at
+  load. `pattern` takes the `regex` crate's syntax, which has no look-around and
+  no back-references. Non-secret configuration belongs in `config`, not in env.
 - `composes`: what the module writes, advisory
   ([below](#the-composes-declaration)).
 - `requires.resources`: what the module asks Crossplane for, advisory
@@ -91,7 +91,7 @@ and remains runnable afterward. The Composition pins the result, a
 signature covers image and manifest together, and the runtime reads the
 manifest out of that one layer before it pulls the rest. `guestfn inspect`
 says that a module image is one. function-wasm refuses it by name, since
-the OCI runtime's package serves it.
+the package for the OCI runtime serves it.
 
 A `path` or `http` source has no OCI manifest layer. It can reference its
 `guestfn.yaml` instead, with `module.manifestPath` or `module.http.manifestURL`

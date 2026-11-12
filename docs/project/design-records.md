@@ -5,7 +5,7 @@ headed by its owner, reviewers and status (draft, implemented with a
 revision, withdrawn or superseded). Each describes the design in today's Rust workspace,
 the alternatives it rejected and the questions still open. The
 status below is each document's own. `make vale` checks this table and
-the book's contents against every record's status line. A revised
+the book's contents against the status line of every record. A revised
 record fails the prose job until both say the same.
 
 | design record | status |

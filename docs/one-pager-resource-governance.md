@@ -51,7 +51,7 @@ for memory, restart with an empty cache and begin again.
 | one run, HTTP egress | per-run budgets, fixed at 16 requests, 4 MiB of response bytes, 5 redirects and a 10 s timeout per request | none | as stated | the request is answered with an error the guest reads; the run goes on |
 | HTTP egress rate | token bucket per module digest | `--egress-rate-limit-per-minute`, `--egress-rate-limit-burst` | off | a budget error the guest reads; the run goes on |
 
-A run's wall clock meters guest compute. Time blocked in `wasi:http` is
+The wall clock of a run meters guest compute. Time blocked in `wasi:http` is
 credited back to the epoch deadline, so a slow upstream doesn't spend
 `limits.timeout`. The request's own gRPC deadline stays the hard cap. Without
 one the credit is still bounded: every egress request is cut at the run's
@@ -122,7 +122,7 @@ could ever fit.
 
 The acquisition order is the step slot, the global slot, then memory as the run
 grows. A run waiting for the pool keeps its run slots, and runs with partial
-reservations can wait on each other. The run's deadline bounds each wait and
+reservations can wait on each other. The deadline of the run bounds each wait and
 denies the growth when it passes. A cycle lasts no longer than a deadline.
 
 ### Egress rate
@@ -144,8 +144,8 @@ idle buckets. The operator sets the rate, and a Composition can't change it.
 
 The [sizing page](wasm/sizing.md) has the measurements. The terms are:
 
-- **Memory** is the resident compiled modules, plus `--max-concurrent-compiles`
-  times the peak of compiling the largest module, plus concurrent runs times the
+- **Memory** is the resident compiled modules plus `--max-concurrent-compiles`
+  times the peak of compiling the largest module plus concurrent runs times the
   per-run figure. `--max-concurrent-runs`, when set, caps the last factor (at
   `--module-memory-limit` per run in the worst case), and `--max-total-run-memory`
   caps the sum of what runs claim.
@@ -204,7 +204,7 @@ engine. It also changes the generated code, which needs a separate compiled
 cache namespace. The epoch deadline, a wall clock that credits
 `wasi:http` time back, remains the run bound.
 
-**A response cache for egress.** Caching a module's HTTP responses would cut
+**A response cache for egress.** Caching the HTTP responses of a module would cut
 the thousand identical requests per sweep that the rate limit now bounds. The
 invalidation semantics (TTL, `Cache-Control`, key correctness across headers)
 add more complexity than the benefit repays when modules already run in

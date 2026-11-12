@@ -26,8 +26,7 @@ image: the code that runs in your cluster. function-oci's image also
 contains a guest init built from the same workspace, the Firecracker binary
 from Firecracker's release archive and the guest kernel that Firecracker's
 CI builds. The maintainers fix a vulnerability here as a patch release of
-the latest release line. Every pull request runs `cargo deny` over the
-workspace's dependency graph (`deny.toml`, with every feature on), so a
+the latest release line. Every pull request runs `cargo deny` over the dependency graph of the workspace (`deny.toml`, with every feature on), so a
 published advisory against a pinned crate fails the merge, and the same
 check runs every week against `main`. Renovate opens a pull request when an
 advisory affects one of the workspace's crates.

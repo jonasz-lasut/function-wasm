@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 2.7 (revision 2.7 keys the compiled tier per process, the cache key record's design. Revision 2.6 puts the manifests tier to use, the performance audit's perf-02 under the F-5 rule. Revision 2.5 states the cache posture of the 1.0 audit's F-5, and 2.4 the compiled tier's trust boundary. Revision 2.3 rewrote the record in the present tense over the Rust workspace, where warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
+* Status: implemented, revision 2.7 (revision 2.7 keys the compiled tier per process, the cache key record's design. Revision 2.6 puts the manifests tier to use, perf-02 of the performance audit under the F-5 rule. Revision 2.5 states the cache posture of the 1.0 audit's F-5, and 2.4 the compiled tier's trust boundary. Revision 2.3 rewrote the record in the present tense over the Rust workspace, where warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
 
 function-wasm keeps its caches on disk under one fixed directory, every entry
 addressed by a content digest, plus a bounded in-memory tier for compiled
@@ -146,8 +146,8 @@ RunFunction (crates/function/src/runner.rs)
   and shared with the page cache instead of copied onto the heap. Restarts and
   rolling upgrades cost that map instead of a compile; a Wasmtime upgrade costs
   one compile per module and, a day later, drops the old directory.
-- **Fetched modules on disk.** Written after every successful fetch, read
-  before any download. An HTTP server outage doesn't stop reconciling for
+- **Fetched modules on disk.** Written after every successful fetch, read before
+  any download. With it, an HTTP server outage doesn't stop reconciling for
   modules seen before, and a rescheduled pod with a volume never re-pulls. An
   OCI module whose artifact is gone costs one manifest read (a few KB, to
   learn the layer digest) and no download. Served files (`module.path`) aren't

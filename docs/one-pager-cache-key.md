@@ -27,9 +27,9 @@ in memory and writes it nowhere, logs it nowhere and shares it with nothing.
   refuses it.
 - `path` reads the entry and its sidecar, recomputes the MAC and compares
   it in constant time before it hands the path to the engine. A missing or
-  wrong sidecar is `Lookup::Stale`: the store removes both files, the cache
-  counts `cache_events_total{cache="compiled-disk",event="stale"}` and
-  compiles the module again, writing a new entry under its own key.
+  wrong sidecar is `Lookup::Stale`: the store removes both files and the cache
+  counts `cache_events_total{cache="compiled-disk",event="stale"}`. The module
+  compiles again, writing a new entry under its own key.
 - The sweep and the `cache_bytes` gauge skip sidecars, and the sweep removes
   a sidecar with its entry.
 
@@ -87,5 +87,6 @@ artifact.
 ## Contract impact
 
 An operator configures nothing, and the refusal wording and the goldens are
-the same as before. The trust model's cache section, the flags page's cache storage section, the sizing
-and readiness pages describe the per-process key and what a volume keeps.
+the same as before. The cache section of the trust model, the cache storage
+section of the flags page, and the sizing and readiness pages describe the
+per-process key and what a volume keeps.

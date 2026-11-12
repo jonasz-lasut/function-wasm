@@ -144,7 +144,7 @@ A refusal states the module. The common ones:
 - `run returned an error: <message> (gRPC status <code>)`: the function
   answered the call with an error.
 - `run failed: module exceeded its execution deadline (30s)`: the step's
-  `limits.timeout`, or the runtime's `--module-timeout`, bounds the run,
+  `limits.timeout` or the runtime's `--module-timeout` bounds the run,
   boot included.
 - `run failed: the guest did not connect before the deadline: the VM booted
   but its init never reached the host`: the process never started; the

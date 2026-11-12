@@ -48,7 +48,7 @@ A guest is a component targeting the WIT world `guestfn:function@1.0.0`:
 - It exports `run: async func(list<u8>) -> result<list<u8>, string>`.
   Protobuf `RunFunctionRequest` bytes go in and `RunFunctionResponse` bytes
   come out, the same wire format ABI v1 used. The world isn't a typed WIT
-  mirror of the messages: WIT has no recursive types, so it can't express
+  mirror of the messages. WIT has no recursive types, so it can't express
   `Struct` or `Value`, and payload evolution stays Protobuf's job. The
   canonical ABI moves the memory, so a guest has no allocator export.
 - It imports a typed `log`, and WASI 0.3 and 0.2 under the sandbox. Egress
@@ -108,7 +108,7 @@ deliberate re-record.
   beyond wording.
 - `wasi:http` budgets. Budgets that counted whole responses count bytes on
   the stream (`crates/engine-wasm/src/wasihttp.rs`).
-- Specification and toolchain youth. Churn did land: ABI v1 was removed
+- Specification and toolchain youth. Churn did land. ABI v1 was removed
   rather than served indefinitely, because Go reached v2 through
   `guestfn build`'s embed and wrap (#114), and the `rust` scaffold still
   pins a beta toolchain, which holds back the world's publication (#106).

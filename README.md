@@ -24,7 +24,7 @@ A module follows the contract of a native function,
 language and toolchain. The step references the module by digest, or the
 composite resource field that does, so one installed function serves any
 number of modules and a new module version is a new reference. It fits when
-a pipeline step's logic should change without a new Function package, or
+the logic of a pipeline step should change without a new Function package, or
 when the people who maintain that logic aren't the people who maintain the
 Composition.
 

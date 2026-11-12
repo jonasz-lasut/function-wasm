@@ -271,8 +271,8 @@ without it. These checks never read the composite resource.
   `spendCredential` permit it in both Cedar layers.
 - **`requires` is hard.** An unmet entry refuses the run. An `optional: true`
   per rule can be added later without breaking anything.
-- **`config.schema` is enforced by the runtime**, not only by `guestfn`. A
-  guest already fails on a bad config, only later and with a worse message;
+- **`config.schema` is enforced by the runtime**, not by `guestfn` alone. A
+  guest already fails on a bad config, but later and with a worse message, while
   the runtime's refusal identifies the field.
 - **The module author is the one request author for every source kind.** A
   manifest by reference keeps one author and one schema
@@ -294,9 +294,9 @@ without it. These checks never read the composite resource.
   so a module would have two possible request authors and two schemas to keep
   aligned.
 - **A sidecar `guestfn.yaml` discovered beside a `Path` module.** Rejected for
-  an explicit `manifestPath`: a source states what it loads, nothing is picked
-  up implicitly, and one field pattern (`manifestURL`, `manifestPath`) covers
-  both kinds.
+  an explicit `manifestPath`: a source states what it loads and nothing is
+  picked up implicitly, with one field pattern (`manifestURL`, `manifestPath`)
+  covering both kinds.
 - **The manifest as a `wasmfn.manifest` custom section of the module.**
   Reading it needed a walker over WebAssembly sections beside Wasmtime, which
   the admission-tooling design had ruled out (a second reader of a module).
