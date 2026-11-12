@@ -83,6 +83,11 @@ required-features = ["cluster"]
 name = "oci_default"
 required-features = ["cluster"]
 
+# The oci default profile again, for what the process may do in the VM.
+[[test]]
+name = "oci_privileges"
+required-features = ["cluster"]
+
 [[test]]
 name = "oci_snapshots"
 required-features = ["cluster"]

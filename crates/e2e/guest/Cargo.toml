@@ -23,7 +23,7 @@ path = "src/main.rs"
 required-features = ["process"]
 
 [features]
-process = ["dep:clap", "dep:function-sdk-rust", "dep:pollster", "dep:tokio", "dep:tonic"]
+process = ["dep:clap", "dep:function-sdk-rust", "dep:libc", "dep:pollster", "dep:tokio", "dep:tonic"]
 
 [dependencies]
 prost = "0.14"
@@ -34,6 +34,8 @@ pollster = { version = "1", optional = true }
 # The module as a process is an ordinary function on the SDK.
 clap = { version = "4", optional = true, features = ["derive", "env"] }
 function-sdk-rust = { version = "0.4.0", optional = true }
+# The privileges probe's system calls.
+libc = { version = "0.2", optional = true }
 tokio = { version = "1", optional = true, features = ["rt-multi-thread", "macros"] }
 tonic = { version = "0.14", optional = true }
 

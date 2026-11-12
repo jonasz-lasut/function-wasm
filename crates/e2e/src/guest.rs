@@ -169,6 +169,9 @@ pub const OCI_ROOT_IMAGE_REPOSITORY: &str = "e2e/oci-image-root";
 /// The test image's repository and the process's path inside it.
 pub const OCI_IMAGE_REPOSITORY: &str = "e2e/oci-image";
 pub const OCI_PROCESS_PATH: &str = "e2e-guest";
+/// The setuid-root copy of the process's binary in the image, which the
+/// module's privileges probe runs (crates/e2e/guest/src/privileges.rs).
+pub const OCI_SETUID_PATH: &str = "e2e-guest-setuid";
 
 impl Variant {
     /// The manifest layer: the YAML validated the way guestfn build does,

@@ -44,6 +44,13 @@ impl FunctionRunnerService for Guest {
 
 #[tokio::main]
 async fn main() {
+    // The setuid-root copy of this binary in the test image, run by the
+    // privileges probe: who the kernel made it.
+    if std::env::args().nth(1).as_deref() == Some(e2e_guest::privileges::EUID_ARGUMENT) {
+        // SAFETY: the call takes no argument and always succeeds.
+        println!("{}", unsafe { libc::geteuid() });
+        return;
+    }
     if let Err(e) = serve(Guest, &Args::parse()).await {
         eprintln!("cannot serve: {e}");
         std::process::exit(1);

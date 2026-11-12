@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(target_arch = "wasm32")]
 pub mod bindings;
+pub mod privileges;
 
 /// The crossplane `RunFunction` messages.
 pub mod fnv1 {
@@ -86,6 +87,9 @@ pub struct Spec {
     /// Grow linear memory by this many MiB, reporting where the limit refused it.
     #[serde(rename = "growMiB")]
     pub grow_mib: u32,
+    /// Try what a Linux capability would allow and report how the kernel
+    /// answered (the module as a process; a component reports nothing).
+    pub privileges: bool,
 }
 
 fn one() -> u32 {
@@ -124,6 +128,35 @@ pub struct Status {
     /// The `data` of the EnvironmentConfig Crossplane resolved, once it has.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub privileges: Option<PrivilegesStatus>,
+}
+
+/// What the kernel lets the process do (src/privileges.rs).
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PrivilegesStatus {
+    pub uid: u32,
+    /// The capability sets and NoNewPrivs, as /proc/self/status prints them.
+    pub capabilities: BTreeMap<String, String>,
+    /// Each privileged operation tried, named by the capability that would
+    /// allow it: `denied`, `allowed`, or how it failed otherwise.
+    pub attempts: BTreeMap<String, String>,
+    pub setuid: SetuidStatus,
+}
+
+/// The setuid-root copy of the binary in the image: its owner, whether the
+/// bit is set, and the effective user it ran as.
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SetuidStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<u32>,
+    pub bit: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub euid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -224,6 +257,9 @@ where
     }
     if spec.private_tmp {
         status.tmp = Some(probe_tmp());
+    }
+    if spec.privileges {
+        status.privileges = privileges::probe();
     }
 
     let mut requirements = None;
@@ -728,12 +764,12 @@ mod tests {
         let spec: Spec = serde_json::from_value(serde_json::json!({
             "nopResources": 2, "readyAfterSeconds": 3, "egress": {"url": "u"}, "env": ["A"],
             "credentials": ["c"], "privateTmp": true, "requirements": {"environmentConfig": "e"},
-            "fatal": "f", "spin": true, "growMiB": 64,
+            "fatal": "f", "spin": true, "growMiB": 64, "privileges": true,
         }))
         .unwrap();
         assert_eq!(spec.grow_mib, 64);
         assert_eq!(spec.ready_after_seconds, 3);
-        assert!(spec.private_tmp && spec.spin);
+        assert!(spec.private_tmp && spec.spin && spec.privileges);
         assert_eq!(Spec::default().nop_resources, 0);
         assert_eq!(
             serde_json::from_value::<Spec>(serde_json::json!({}))

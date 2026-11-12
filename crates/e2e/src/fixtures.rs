@@ -31,6 +31,18 @@ pub const ENVIRONMENT_CONFIG_KIND: &str = "EnvironmentConfig";
 /// writes: Crossplane applies the status against the CRD's schema and
 /// refuses a field it does not declare, keeping only `spec` open.
 pub fn xrd() -> Value {
+    // Apart from the rest: json! recurses once per nesting level.
+    let privileges = json!({"type": "object", "properties": {
+        "uid": {"type": "integer"},
+        "capabilities": {"type": "object", "additionalProperties": {"type": "string"}},
+        "attempts": {"type": "object", "additionalProperties": {"type": "string"}},
+        "setuid": {"type": "object", "properties": {
+            "owner": {"type": "integer"},
+            "bit": {"type": "boolean"},
+            "euid": {"type": "integer"},
+            "error": {"type": "string"},
+        }},
+    }});
     json!({
         "apiVersion": "apiextensions.crossplane.io/v2",
         "kind": "CompositeResourceDefinition",
@@ -61,6 +73,7 @@ pub fn xrd() -> Value {
                                 "error": {"type": "string"},
                             }},
                             "environmentConfig": {"type": "object", "x-kubernetes-preserve-unknown-fields": true},
+                            "privileges": privileges,
                         }},
                     },
                 }},
@@ -224,6 +237,27 @@ pub struct Status {
     pub credentials: Option<BTreeMap<String, Vec<String>>>,
     pub tmp: Option<TmpStatus>,
     pub environment_config: Option<Value>,
+    pub privileges: Option<PrivilegesStatus>,
+}
+
+/// What the kernel let the module's process do
+/// (crates/e2e/guest/src/privileges.rs).
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PrivilegesStatus {
+    pub uid: u32,
+    pub capabilities: BTreeMap<String, String>,
+    pub attempts: BTreeMap<String, String>,
+    pub setuid: SetuidStatus,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SetuidStatus {
+    pub owner: Option<u32>,
+    pub bit: bool,
+    pub euid: Option<u32>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq)]

@@ -89,24 +89,6 @@ async fn an_unsigned_image_module_is_refused() -> Result<()> {
     .await
 }
 
-/// An image that sets no user would run its process as root: refused at
-/// load from the image config, before a VM boots.
-#[tokio::test]
-async fn an_image_that_runs_as_root_is_refused() -> Result<()> {
-    with_temp_ns("oci-root", |ns| async move {
-        ns.ensure_profile(Profile::OciDefault).await?;
-        let step = Step::oci(&ns.state.oci_variant("oci-root").reference());
-        let guest = ns.guest("probe", &step, json!({})).await?;
-        let message = guest.wait_fatal(WAIT).await?;
-        ensure!(
-            message.contains("image runs as root (its config sets no user)"),
-            "{message}"
-        );
-        Ok(())
-    })
-    .await
-}
-
 /// A WebAssembly artifact pointed at function-oci: refused by name, with
 /// the package that serves it, before anything is pulled.
 #[tokio::test]

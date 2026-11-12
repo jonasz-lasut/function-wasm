@@ -652,11 +652,11 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             cache under --debug with the trusted root fetched over TUF from the
                             public-good instance, no root file mounted; oci default is function-oci
                             under the wasm default's policy with the device requested from the
-                            plugin), tests/<runtime>_<p>.rs one target per profile, and
+                            plugin), tests/<runtime>_<p>.rs one target per profile (plus oci_privileges, a second suite on the oci default profile: the root refusal, the empty capability sets, the denied operations, the setuid copy in the test image), and
                             guest/ the committed test module: a Rust ABI v2 guest on its own wit/ and guestfn.lock and the rust scaffold's proto (read in place), its own
                             workspace root, fn.wasm checked in (make e2e.guest rebuilds it), whose
                             Guest XR's spec says which feature to exercise (nopResources,
-                            egress.url, env, credentials, privateTmp, requirements, fatal, spin,
+                            egress.url, env, credentials, privateTmp, privileges (the process build's probe of what the kernel denies it, src/privileges.rs), requirements, fatal, spin,
                             growMiB) and which composes provider-nop NopResources and
                             writes what it observed into the XR's status. The engine's
                             tests/committed_guest.rs drives the same fn.wasm with a fake

@@ -104,6 +104,7 @@ before its first test and waits for the rollout. Each binary uses one profile.
 | `wasm/strict` | the refusals of a narrow operator layer, the read fence's ceiling among them |
 | `wasm/lifecycle` | warm-up, the caches across a restart and the trusted root over TUF |
 | `oci/default` | the `function-oci` package ([the OCI runtime](../oci/install.md)) beside `function-wasm`, running the test module as a process in a Firecracker VM, and the published `function-oci-go` example. Its runtime config mounts the `wasm/default` policy |
+| `oci/privileges` | not a profile of its own: a second suite on the `oci/default` runtime config. Its tests cover the refusal of an image that runs as root, the process's empty capability sets, fifteen privileged operations the kernel denies, and a `setuid` copy of the binary that runs as the image's user |
 | `oci/snapshots` | the `oci/default` profile with `--enable-vm-snapshots` and the published `function-oci-go` warmed. Its tests cover the snapshot the warm-up takes, runs restored from a snapshot, eight Guests restoring it at once, and an env binding in a restored process |
 
 The `default` profile runs the runtime with `--cosign-key` (the suite's key)
@@ -145,6 +146,7 @@ The Guest XR is the composite resource the suite creates for each test, and its
 | `env`, `credentials` | writes those variables and the keys of those step credentials to status |
 | `privateTmp` | writes and reads back a file under `/tmp`, reporting the outcome |
 | `requirements.environmentConfig` | asks Crossplane for that EnvironmentConfig and echoes its data once resolved; the read fence's cluster cases permit and refuse that ask by kind |
+| `privileges` | as a process, tries what a Linux capability would allow and runs the `setuid` copy of its binary, reporting each outcome |
 | `fatal`, `spin`, `growMiB` | a fatal result with the message, a spin past the deadline, a memory growth refused at the limit |
 
 A variant is the same `fn.wasm` published under one manifest. The suite has

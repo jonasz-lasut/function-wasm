@@ -185,7 +185,12 @@ async fn main() -> Result<()> {
         );
         let binary = std::fs::read(&path)
             .with_context(|| format!("reading E2E_OCI_GUEST {}", path.to_string_lossy()))?;
-        let image = registry::image(&binary, guest::OCI_PROCESS_PATH, guest::OCI_USER);
+        let image = registry::image(
+            &binary,
+            guest::OCI_PROCESS_PATH,
+            guest::OCI_SETUID_PATH,
+            guest::OCI_USER,
+        );
         let digest = pusher
             .push(guest::OCI_IMAGE_REPOSITORY, guest::TAG, &image)
             .await
@@ -197,7 +202,8 @@ async fn main() -> Result<()> {
         println!("    {:<18} {oci_image}", "image");
         // The same binary in an image that sets no user, as a Dockerfile
         // with no USER line builds it.
-        let root_image = registry::image(&binary, guest::OCI_PROCESS_PATH, "");
+        let root_image =
+            registry::image(&binary, guest::OCI_PROCESS_PATH, guest::OCI_SETUID_PATH, "");
         let digest = pusher
             .push(guest::OCI_ROOT_IMAGE_REPOSITORY, guest::TAG, &root_image)
             .await

@@ -69,8 +69,10 @@ include build/makelib/local.xpkg.mk
 #                     cargo test --test wasm_<p>, which switches function-wasm
 #                     to that profile's runtime config first
 # make e2e.oci-profile.<p>
-#                     one oci profile's suite (default): cargo test --test
-#                     oci_<p>, which switches function-oci the same way
+#                     one oci suite (default, privileges, snapshots): cargo
+#                     test --test oci_<p>, which switches function-oci the
+#                     same way; privileges runs on the default profile's
+#                     runtime config
 # make e2e.test.wasm  the wasm profiles in turn; e2e.test.oci the oci ones;
 #                     e2e.test every profile of the runtimes the cluster has
 # make e2e.down       delete the cluster
@@ -103,7 +105,7 @@ E2E_DIR := $(OUTPUT_DIR)/e2e
 # The profiles, one test target each: crates/e2e/tests/<runtime>_<profile>.rs
 # over crates/e2e/profiles/<runtime>/<profile>/.
 E2E_WASM_PROFILES := default strict lifecycle
-E2E_OCI_PROFILES := default snapshots
+E2E_OCI_PROFILES := default privileges snapshots
 E2E_CARGO := cargo run -q -p guestfn-e2e --features cluster
 E2E_GUEST_DIR := crates/e2e/guest
 FUNCTION_PKG_EXAMPLES := examples/function-wasm-go/example
