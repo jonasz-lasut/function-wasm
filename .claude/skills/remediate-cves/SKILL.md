@@ -211,6 +211,9 @@ Load the `writing-style` skill and draft the notes from
 CVE or GHSA, what it affected and whether a reader was exposed. Say so if any
 finding was skipped under the wasm exception, because the next weekly scan
 reports it against this release again and that must not read as a regression.
+Under the descriptions goes the full list of pull requests merged into the
+release branch since `$TAG`, as `/cut-release` step 4 describes, generated
+with `-f target_commitish="$BRANCH"` and copied whole.
 Write the draft to a file outside the repository (`$NOTES`), show the user all
 of it, and **stop until the user approves its text**. `$NOTES` doesn't change
 after approval without asking again. Nothing is pushed before that.
