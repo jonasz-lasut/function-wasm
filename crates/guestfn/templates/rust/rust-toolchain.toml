@@ -1,9 +1,9 @@
-# wasm32-wasip3 reaches stable with Rust 1.100.0. Until that release this
-# guest builds on its beta, pinned by date (1.100.0-beta.4); rustup installs
-# it, with the target and the components, the first time cargo runs here.
-# Delete this file once Rust 1.100.0 is out.
+# wasm32-wasip3 is a stable target since Rust 1.100.0. This file names the
+# stable toolchain with the target and the components this guest needs:
+# rustup adds them the first time cargo runs here. A stable toolchain older
+# than 1.100.0 needs `rustup update stable` first.
 [toolchain]
-channel = "beta-2026-10-05"
+channel = "stable"
 targets = ["wasm32-wasip3"]
 components = ["rustfmt", "clippy"]
 profile = "minimal"

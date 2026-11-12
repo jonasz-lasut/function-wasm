@@ -211,9 +211,8 @@ jobs:
           cache-on-failure: true
 
       # What the scaffolds download on a first build: Go modules and the Go
-      # build cache, npm's and pip's package caches, and the rust scaffold's
-      # pinned toolchain, which rustup installs on first use. The templates'
-      # pins key it.
+      # build cache, and npm's and pip's package caches. The templates' pins
+      # key it.
       - name: Cache the Scaffolds' Dependencies
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -222,7 +221,6 @@ jobs:
             ~/.cache/go-build
             ~/.npm
             ~/.cache/pip
-            ~/.rustup/toolchains/beta-*
           key: e2e-guests-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/guestfn/templates/go/go.mod.tmpl', 'crates/guestfn/templates/ts/package.json.tmpl', 'crates/guestfn/templates/python/requirements.txt', 'crates/guestfn/templates/rust/rust-toolchain.toml', 'crates/guestfn/templates/rust/Cargo.toml.tmpl') }}
           restore-keys: |
             e2e-guests-${{ runner.os }}-${{ runner.arch }}-

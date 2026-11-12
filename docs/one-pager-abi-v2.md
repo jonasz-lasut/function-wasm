@@ -110,8 +110,8 @@ deliberate re-record.
   the stream (`crates/engine-wasm/src/wasihttp.rs`).
 - Specification and toolchain youth. Churn did land. ABI v1 was removed
   rather than served indefinitely, because Go reached v2 through
-  `guestfn build`'s embed and wrap (#114), and the `rust` scaffold still
-  pins a beta toolchain, which holds back the world's publication (#106).
+  `guestfn build`'s embed and wrap (#114). The `rust` scaffold pinned a
+  beta toolchain until Rust 1.100.0 made `wasm32-wasip3` a stable target.
 - The static musl binary on a `FROM scratch` image, once expected from
   dropping CGo, didn't happen: the image stays on the Chainguard
   `glibc-dynamic` base.
