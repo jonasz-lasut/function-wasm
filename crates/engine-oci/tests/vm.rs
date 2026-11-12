@@ -139,7 +139,7 @@ fn the_process_runs_as_the_image_says() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "cwd"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -148,7 +148,7 @@ fn the_process_runs_as_the_image_says() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "env"],
-            "",
+            "app",
             &["FROM_IMAGE=yes"],
         ))
         .unwrap();
@@ -163,7 +163,7 @@ fn the_process_runs_as_the_image_says() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "hostname"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -178,11 +178,34 @@ fn the_guest_has_the_hosts_randomness() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "rng"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
     assert_eq!(ask(&e, &m, "", opts()).unwrap().trim(), "virtio_rng.0");
+}
+
+/// The init leaves the process no capability in any set and no way to gain
+/// one through a setuid binary or a file capability.
+#[test]
+fn the_process_holds_no_privilege() {
+    let Some(t) = tools() else { return };
+    let e = engine(&t, Config::default());
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "privileges"],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    let none = "0000000000000000";
+    assert_eq!(
+        ask(&e, &m, "", opts()).unwrap().trim(),
+        format!(
+            "CapInh={none} CapPrm={none} CapEff={none} CapBnd={none} CapAmb={none} NoNewPrivs=1"
+        )
+    );
 }
 
 #[test]
@@ -193,7 +216,7 @@ fn the_root_filesystem_is_writable_and_discarded() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "tmp"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -211,7 +234,7 @@ fn a_non_zero_exit_names_the_status_and_the_last_line() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "exit", "3"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -223,7 +246,7 @@ fn a_non_zero_exit_names_the_status_and_the_last_line() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "stderr"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -232,7 +255,7 @@ fn a_non_zero_exit_names_the_status_and_the_last_line() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "silent"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -241,7 +264,7 @@ fn a_non_zero_exit_names_the_status_and_the_last_line() {
         "process exited with status 0 before answering the call"
     );
     let m = e
-        .compile(&fixture_image(&t.fixture, &["/nowhere"], "", &[]))
+        .compile(&fixture_image(&t.fixture, &["/nowhere"], "app", &[]))
         .unwrap();
     let err = ask(&e, &m, "", opts()).unwrap_err();
     assert!(
@@ -259,7 +282,7 @@ fn a_function_s_error_is_the_run_s() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "refuse"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -276,7 +299,7 @@ fn the_manifest_s_args_start_the_function() {
     let Some(t) = tools() else { return };
     let e = engine(&t, Config::default());
     let m = e
-        .compile(&fixture_image(&t.fixture, &["/fixture"], "", &[]))
+        .compile(&fixture_image(&t.fixture, &["/fixture"], "app", &[]))
         .unwrap();
     let mut o = opts();
     o.args = vec!["--insecure".to_string(), "echo".to_string()];
@@ -297,7 +320,7 @@ fn the_deadline_stops_a_spinning_process() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "spin"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -319,7 +342,7 @@ fn the_memory_limit_kills_a_growing_process() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "grow", "200"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -378,7 +401,7 @@ fn a_restored_clone_runs_like_a_boot() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "exit", "3"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -396,7 +419,7 @@ fn restored_clones_share_nothing() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "random"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -413,7 +436,7 @@ fn restored_clones_share_nothing() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "clock"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();
@@ -434,7 +457,7 @@ fn restored_clones_share_nothing() {
         .compile(&fixture_image(
             &t.fixture,
             &["/fixture", "--insecure", "leftover"],
-            "",
+            "app",
             &[],
         ))
         .unwrap();

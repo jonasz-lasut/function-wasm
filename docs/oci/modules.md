@@ -40,8 +40,11 @@ into an empty image under a numeric user. Its `Makefile` has a `push`
 target that runs the two commands of [Build and publish](#build-and-publish)
 against a local registry.
 
-The process sees `/tmp` writable and empty, and the rest of its root
-filesystem writable through an overlay the VM discards on exit. It sees
+The process runs as the image's user, which can't be root, with no Linux
+capability in any set and `no_new_privs` set, so a `setuid` binary or a file
+capability in the image grants it nothing. It sees `/tmp` writable and
+empty, and the rest of its root filesystem through an overlay the VM
+discards on exit, writable where its user may write. It sees
 its own kernel, a loopback interface and no other, the host's clock and randomness, and
 the environment variables its manifest's `requires.env` bindings bound.
 The step credentials its manifest's `requires.credentials` names travel in
@@ -116,7 +119,10 @@ Images must use gzip or uncompressed layers (every builder's default) and
 target the node's platform. A multi-platform index resolves to the node's.
 The image's `User` resolves against the image's `/etc/passwd` and
 `/etc/group`, as in a container runtime. A name missing from them is a
-refusal.
+refusal. The runtime also refuses an image that runs as root: one that
+doesn't set `User`, or whose user is UID 0, by number or through its
+`/etc/passwd`. Set a numeric `USER` in the `Dockerfile`, as the example
+does.
 
 ## Refusals
 
@@ -128,6 +134,7 @@ A refusal states the module. The common ones:
   loop uses a local one ([Install function-oci](install.md)).
 - `image has neither an entrypoint nor a command`: set `ENTRYPOINT` or
   `CMD` in the `Dockerfile`.
+- `image runs as root`: set a non-root `USER` in the `Dockerfile`.
 - `image is built for linux/arm64, and this runtime runs on linux/amd64`:
   build for the node's platform, or push a multi-platform index.
 - `process exited with status 1 before answering the call: <line>`: the

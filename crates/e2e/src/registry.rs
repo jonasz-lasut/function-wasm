@@ -127,23 +127,30 @@ pub fn module_artifact(wasm: &[u8], module_manifest: &[u8]) -> Artifact {
 pub const IMAGE_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.image.config.v1+json";
 pub const LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar";
 
-/// A tar layer holding one regular file.
-fn tar_layer(path: &str, content: &[u8], mode: u32) -> Vec<u8> {
+/// A tar layer holding regular files owned by root: (path, mode) each,
+/// with the one content.
+fn tar_layer(files: &[(&str, u32)], content: &[u8]) -> Vec<u8> {
     let mut tar = tar::Builder::new(Vec::new());
-    let mut header = tar::Header::new_gnu();
-    header.set_entry_type(tar::EntryType::Regular);
-    header.set_mode(mode);
-    header.set_mtime(0);
-    header.set_size(content.len() as u64);
-    header.set_cksum();
-    tar.append_data(&mut header, path, content).expect("tar");
+    for (path, mode) in files {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mode(*mode);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(0);
+        header.set_size(content.len() as u64);
+        header.set_cksum();
+        tar.append_data(&mut header, path, content).expect("tar");
+    }
     tar.into_inner().expect("tar")
 }
 
 /// A one-layer image for this host's platform around one static binary at
-/// `/<path>`, run as `user` (the oci profile's test image).
-pub fn image(binary: &[u8], path: &str, user: &str) -> Artifact {
-    let layer = tar_layer(path, binary, 0o755);
+/// `/<path>`, run as `user` (the oci profile's test image), with a
+/// setuid-root copy of the binary at `/<setuid_path>` for the privileges
+/// suite to run.
+pub fn image(binary: &[u8], path: &str, setuid_path: &str, user: &str) -> Artifact {
+    let layer = tar_layer(&[(path, 0o755), (setuid_path, 0o4755)], binary);
     let arch = match std::env::consts::ARCH {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
@@ -178,9 +185,11 @@ pub fn image(binary: &[u8], path: &str, user: &str) -> Artifact {
 /// the result lives in a repository of its own here.
 pub fn module_image(image: &Artifact, module_manifest: &[u8]) -> Artifact {
     let layer = tar_layer(
-        guestfn_runtime::oci::MANIFEST_LAYER_PATH.trim_start_matches('/'),
+        &[(
+            guestfn_runtime::oci::MANIFEST_LAYER_PATH.trim_start_matches('/'),
+            0o444,
+        )],
         module_manifest,
-        0o444,
     );
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&image.manifest).expect("image manifest");

@@ -243,8 +243,15 @@ root filesystem read-only, a vsock device, memory sized to the step's
 `limits.memory` plus the kernel's share, one vCPU (`--vm-vcpus`) and
 the deadline. The init mounts the root filesystem with a tmpfs overlay,
 brings up loopback and reads the run's description over vsock (env, user,
-cwd, entrypoint and the proxy settings). It starts the process and streams
-its output to the host as it arrives. Once the function's port accepts a
+cwd, entrypoint and the proxy settings). It starts the process as the
+image's user, never root, and streams its output to the host as it arrives.
+The runtime refuses an image that runs as root at load, from the config
+alone when the config doesn't set a user or sets the number 0, before it
+unpacks a layer.
+Before the exec the init empties the capability bounding set, clears the
+ambient, permitted, effective and inheritable sets and sets `no_new_privs`.
+The guest's only root is then the init. Dropping capabilities alone isn't
+enough, because UID 0 can still write the cgroup file that caps the run's memory. Once the function's port accepts a
 connection the init bridges it to a second vsock connection, and the host
 calls `RunFunction` over that, bounded by the run's deadline and a limit on
 the response's size. After the answer the init stops the process and reports
@@ -596,6 +603,15 @@ The owner decided this the same day:
 9. **The development loop without KVM.** Firecracker has no macOS port,
    and a machine without KVM has no loop. 0.1 has no container fallback
    and runs on KVM only.
+
+The owner decided this on 2026-11-12:
+
+17. **An unprivileged process.** The runtime refuses an image that runs as
+    root, and the init drops every capability and sets `no_new_privs`
+    before it starts the process. The process then can't read or change what
+    belongs to the init, which the egress proxy
+    ([#280](https://github.com/jonasz-lasut/guestfn/issues/280)) depends
+    on.
 
 ## Phases
 

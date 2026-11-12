@@ -196,6 +196,7 @@ impl Oci {
         let start = std::time::Instant::now();
         let layout = layout::parse(bytes)?;
         let mut config = ImageConfig::parse(&layout.config)?;
+        config.check().map_err(Error)?;
         let mut tree = rootfs::Tree::new();
         let mut size = 0u64;
         for (i, layer) in layout.layers.iter().enumerate() {
@@ -216,7 +217,7 @@ impl Oci {
                 tree.text("etc/group").as_deref(),
             )
             .map_err(Error)?;
-        config.check().map_err(Error)?;
+        config.check_user().map_err(Error)?;
         let config_json = serde_json::to_vec(&config).map_err(|e| Error(e.to_string()))?;
         let mut file = tempfile::Builder::new()
             .prefix("rootfs-")
@@ -250,8 +251,9 @@ impl Engine for Oci {
         let mut config = ImageConfig::parse(&layout.config)?;
         config.layers = layout.layers.len();
         config.size = layout.layers.iter().map(|l| l.bytes.len() as u64).sum();
-        // The user is resolved from the layers at compile; inspect reads
-        // the config alone and reports the verdict the contract gives it.
+        // A user given by name is resolved from the layers at compile;
+        // inspect reads the config alone and reports the verdict the
+        // contract gives it.
         Ok(Inspection {
             abi_error: config.check().err(),
             details: config.details(),
@@ -385,7 +387,7 @@ mod tests {
         let e = engine(fake);
         let store = Arc::new(RecordingStore::default());
         e.keep_in(Arc::clone(&store) as Arc<dyn crate::ArtifactStore>);
-        let image = fixture_image(b"#!/bin/sh\n", &["/app/run"], "", &[]);
+        let image = fixture_image(b"#!/bin/sh\n", &["/app/run"], "app", &[]);
         let compiled = e.compile(&image).unwrap();
         let scratch = compiled.rootfs.path().to_path_buf();
         e.run(&compiled, b"one", RunOptions::default()).unwrap();
@@ -418,7 +420,7 @@ mod tests {
         let prepared = fake.prepared();
         let e = engine(fake);
         let m = e
-            .compile(&fixture_image(b"#!/bin/sh\n", &["/app/run"], "", &[]))
+            .compile(&fixture_image(b"#!/bin/sh\n", &["/app/run"], "app", &[]))
             .unwrap();
         e.warm(&m).unwrap();
         let default_mib = Config::default().memory_limit >> 20;
@@ -548,7 +550,9 @@ mod tests {
                 },
             );
             let e = engine(fake);
-            let m = e.compile(&fixture_image(b"x", &["/x"], "", &[])).unwrap();
+            let m = e
+                .compile(&fixture_image(b"x", &["/x"], "app", &[]))
+                .unwrap();
             let err = e.run(&m, b"r", RunOptions::default()).unwrap_err();
             assert_eq!(err.0, want);
         }
@@ -560,7 +564,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(Vec::new())),
             |_: &VmSpec<'_>| unreachable!(),
         ));
-        let no_cmd = fixture_image(b"x", &[], "", &[]);
+        let no_cmd = fixture_image(b"x", &[], "app", &[]);
         assert!(
             e.inspect(&no_cmd)
                 .unwrap()
@@ -578,6 +582,23 @@ mod tests {
         assert_eq!(
             e.compile(&nobody).unwrap_err().0,
             "image user \"nobody\" is not in the image's /etc/passwd"
+        );
+        for (user, how) in [
+            ("", "its config sets no user"),
+            ("0", "its config sets user \"0\""),
+        ] {
+            let image = fixture_image(b"x", &["/x"], user, &[]);
+            let want = format!(
+                "image runs as root ({how}): the OCI runtime runs a process as a non-root user only (docs/oci/modules.md)"
+            );
+            assert_eq!(e.inspect(&image).unwrap().abi_error, Some(want.clone()));
+            assert_eq!(e.compile(&image).unwrap_err().0, want);
+        }
+        let root = fixture_image(b"x", &["/x"], "root", &[]);
+        assert_eq!(e.inspect(&root).unwrap().abi_error, None);
+        assert_eq!(
+            e.compile(&root).unwrap_err().0,
+            "image runs as root (user \"root\" is uid 0 in the image's /etc/passwd): the OCI runtime runs a process as a non-root user only (docs/oci/modules.md)"
         );
         assert!(e.compile(b"garbage").is_err());
     }

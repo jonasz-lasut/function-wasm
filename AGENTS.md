@@ -601,7 +601,7 @@ crates/engine-oci/          the OCI engine of the function-oci runtime (package 
                             image config with the user resolved inside it at
                             /.guestfn/config.json) that is the compiled store's artifact and
                             the VM's read-only block device; image.rs is the config, the
-                            contract check (a command, this platform) and the run's
+                            contract check (a command, this platform, a user that is not root - as written before a layer is unpacked, as resolved after) and the run's
                             Description; initrd.rs the cpio around the init; run.rs the
                             slot, the whole-VM memory reservation, the stderr lines logged
                             (JSON level/msg typed) and the fatal wording (`run returned an error`, `process exited
@@ -615,7 +615,7 @@ crates/oci-init/            the guest init (package and binary guestfn-init, on 
                             Linux alone (elsewhere the binary says so and exits, so the
                             workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
                             on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
-                            host, loopback up, chroot, the process as the described user, its
+                            host, loopback up, chroot, the process as the described user (never root, every capability set emptied and no_new_privs set before the exec), its
                             server once serving bridged to the host over a second vsock port, stdout/stderr relayed as frames, the exit with an OOM
                             check of /dev/kmsg, then power off. Static (musl), depends on
                             nothing in the image
@@ -652,17 +652,17 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             cache under --debug with the trusted root fetched over TUF from the
                             public-good instance, no root file mounted; oci default is function-oci
                             under the wasm default's policy with the device requested from the
-                            plugin), tests/<runtime>_<p>.rs one target per profile, and
+                            plugin), tests/<runtime>_<p>.rs one target per profile (plus oci_privileges, a second suite on the oci default profile: the root refusal, the empty capability sets, the denied operations, the setuid copy in the test image), and
                             guest/ the committed test module: a Rust ABI v2 guest on its own wit/ and guestfn.lock and the rust scaffold's proto (read in place), its own
                             workspace root, fn.wasm checked in (make e2e.guest rebuilds it), whose
                             Guest XR's spec says which feature to exercise (nopResources,
-                            egress.url, env, credentials, privateTmp, requirements, fatal, spin,
+                            egress.url, env, credentials, privateTmp, privileges (the process build's probe of what the kernel denies it, src/privileges.rs), requirements, fatal, spin,
                             growMiB) and which composes provider-nop NopResources and
                             writes what it observed into the XR's status. The engine's
                             tests/committed_guest.rs drives the same fn.wasm with a fake
                             requester on every push (#150). The same module is also built as a
                             process on function-sdk-rust (e2e-guest-oci, feature process, make
-                            e2e.oci.guest) and pushed under the six manifests of manifests/oci
+                            e2e.oci.guest) and pushed as seven variants over the manifests of manifests/oci, one of them (oci-root) on an image that sets no user, which the runtime refuses at load
 examples/render.sh          the development loop of an example (docs/wasm/render-locally.md):
                             cargo-build the runtime, function validate every example/xr*.yaml,
                             serve the example dir (example/policy.cedar as the operator policy,

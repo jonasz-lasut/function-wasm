@@ -318,6 +318,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "function-sdk-rust",
+ "libc",
  "pollster",
  "prost",
  "prost-build",

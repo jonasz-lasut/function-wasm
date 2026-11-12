@@ -150,23 +150,17 @@ fn spawn(d: &Description, sock: &Arc<Mutex<UnixStream>>) -> Result<Exit, String>
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    let (uid, gid, groups) = (d.uid, d.gid, d.groups.clone());
-    // SAFETY: the closure makes the three identity syscalls and nothing
-    // else between fork and exec.
+    // The engine refuses an image that runs as root at load; the init is
+    // where the rule is enforced, whatever described the run.
+    if d.uid == 0 {
+        return Err("the run describes a root process, which the init does not start".to_string());
+    }
+    let (uid, gid) = (d.uid, d.gid);
+    let groups: Vec<libc::gid_t> = d.groups.iter().map(|g| *g as libc::gid_t).collect();
+    // SAFETY: the closure makes the identity and capability syscalls and
+    // nothing else between fork and exec.
     unsafe {
-        cmd.pre_exec(move || {
-            let groups: Vec<libc::gid_t> = groups.iter().map(|g| *g as libc::gid_t).collect();
-            if libc::setgroups(groups.len(), groups.as_ptr()) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::setgid(gid) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::setuid(uid) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
+        cmd.pre_exec(move || drop_privileges(uid, gid, &groups));
     }
     let mut child = cmd
         .spawn()
@@ -410,6 +404,95 @@ fn set_hostname(name: &str) {
 /// the VM boots, and the retries cover the vsock driver coming up.
 fn connect_host() -> Result<UnixStream, String> {
     connect_vsock(PORT, 200, Duration::from_millis(25))
+}
+
+/// The capability header and one of its two data words, as capset(2)
+/// takes them at version 3 (64 capability bits).
+#[repr(C)]
+struct CapHeader {
+    version: u32,
+    pid: libc::c_int,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CapData {
+    effective: u32,
+    permitted: u32,
+    inheritable: u32,
+}
+
+const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+
+/// Makes the calling process the described user with no privilege and no
+/// way back to one, between fork and exec: the bounding set emptied while
+/// the init's capabilities still allow it, the identity, then the ambient,
+/// permitted, effective and inheritable sets cleared and no_new_privs set,
+/// so neither a setuid binary nor a file capability in the image raises
+/// what the process may do. The guest's root is then the init alone, which
+/// is what lets the init hold what the process must not reach.
+fn drop_privileges(
+    uid: libc::uid_t,
+    gid: libc::gid_t,
+    groups: &[libc::gid_t],
+) -> std::io::Result<()> {
+    let failed = std::io::Error::last_os_error;
+    let zero: libc::c_ulong = 0;
+    // The kernel answers EINVAL for the first number past its last
+    // capability; 64 is what the capability sets can hold.
+    for capability in 0..64 as libc::c_ulong {
+        // SAFETY: prctl reads its integer arguments and nothing else.
+        if unsafe { libc::prctl(libc::PR_CAPBSET_DROP, capability, zero, zero, zero) } != 0 {
+            let error = failed();
+            if error.raw_os_error() == Some(libc::EINVAL) {
+                break;
+            }
+            return Err(error);
+        }
+    }
+    // SAFETY: the slice is as long as stated, and the calls read their
+    // arguments alone.
+    unsafe {
+        if libc::setgroups(groups.len(), groups.as_ptr()) != 0 {
+            return Err(failed());
+        }
+        if libc::setgid(gid) != 0 {
+            return Err(failed());
+        }
+        if libc::setuid(uid) != 0 {
+            return Err(failed());
+        }
+        if libc::prctl(
+            libc::PR_CAP_AMBIENT,
+            libc::PR_CAP_AMBIENT_CLEAR_ALL as libc::c_ulong,
+            zero,
+            zero,
+            zero,
+        ) != 0
+        {
+            return Err(failed());
+        }
+    }
+    let header = CapHeader {
+        version: CAPABILITY_VERSION_3,
+        pid: 0,
+    };
+    let none = [CapData {
+        effective: 0,
+        permitted: 0,
+        inheritable: 0,
+    }; 2];
+    // SAFETY: the header and the two data words are the layout version 3
+    // of the call reads, alive for the call.
+    if unsafe { libc::syscall(libc::SYS_capset, &header, none.as_ptr()) } != 0 {
+        return Err(failed());
+    }
+    let one: libc::c_ulong = 1;
+    // SAFETY: prctl reads its integer arguments and nothing else.
+    if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, one, zero, zero, zero) } != 0 {
+        return Err(failed());
+    }
+    Ok(())
 }
 
 /// Brings up the loopback interface, which the kernel leaves down: the
