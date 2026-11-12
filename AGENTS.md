@@ -662,7 +662,7 @@ crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project
                             tests/committed_guest.rs drives the same fn.wasm with a fake
                             requester on every push (#150). The same module is also built as a
                             process on function-sdk-rust (e2e-guest-oci, feature process, make
-                            e2e.oci.guest) and pushed under the six manifests of manifests/oci
+                            e2e.oci.guest) and pushed as seven variants over the manifests of manifests/oci, one of them (oci-root) on an image that sets no user, which the runtime refuses at load
 examples/render.sh          the development loop of an example (docs/wasm/render-locally.md):
                             cargo-build the runtime, function validate every example/xr*.yaml,
                             serve the example dir (example/policy.cedar as the operator policy,

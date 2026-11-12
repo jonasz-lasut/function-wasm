@@ -151,7 +151,8 @@ A variant is the same `fn.wasm` published under one manifest. The suite has
 nine, one for each of the six manifests in `crates/e2e/guest/manifests/wasm`,
 plus three signature variants derived from the plain one; the `oci` profile's
 variants are the same declarations under `manifests/oci`, around the module
-as a process. Each has its own digest,
+as a process. One of them, `oci-root`, is built on an image that doesn't
+set a user, which the runtime refuses at load. Each has its own digest,
 because the runtime caches a signature verdict per digest and two variants
 sharing one would share a verdict. The same `fn.wasm` is the engine's `wasi:http` fixture
 (`crates/engine-wasm/tests/committed_guest.rs`).

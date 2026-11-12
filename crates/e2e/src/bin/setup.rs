@@ -185,7 +185,7 @@ async fn main() -> Result<()> {
         );
         let binary = std::fs::read(&path)
             .with_context(|| format!("reading E2E_OCI_GUEST {}", path.to_string_lossy()))?;
-        let image = registry::image(&binary, guest::OCI_PROCESS_PATH, "65532:65532");
+        let image = registry::image(&binary, guest::OCI_PROCESS_PATH, guest::OCI_USER);
         let digest = pusher
             .push(guest::OCI_IMAGE_REPOSITORY, guest::TAG, &image)
             .await
@@ -195,9 +195,25 @@ async fn main() -> Result<()> {
             guest::OCI_IMAGE_REPOSITORY
         );
         println!("    {:<18} {oci_image}", "image");
+        // The same binary in an image that sets no user, as a Dockerfile
+        // with no USER line builds it.
+        let root_image = registry::image(&binary, guest::OCI_PROCESS_PATH, "");
+        let digest = pusher
+            .push(guest::OCI_ROOT_IMAGE_REPOSITORY, guest::TAG, &root_image)
+            .await
+            .context("pushing the root test image")?;
+        let oci_root_image = format!(
+            "{registry_address}/{}@{digest}",
+            guest::OCI_ROOT_IMAGE_REPOSITORY
+        );
+        println!("    {:<18} {oci_root_image}", "root image");
         for variant in OCI_VARIANTS {
-            let artifact =
-                registry::module_image(&image, &variant.manifest_json_for(Some(&oci_image))?);
+            let (base, origin) = if variant.image_user().is_empty() {
+                (&root_image, &oci_root_image)
+            } else {
+                (&image, &oci_image)
+            };
+            let artifact = registry::module_image(base, &variant.manifest_json_for(Some(origin))?);
             let digest = pusher
                 .push(&variant.repository(), guest::TAG, &artifact)
                 .await

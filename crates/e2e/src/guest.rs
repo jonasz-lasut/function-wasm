@@ -150,7 +150,21 @@ pub const OCI_VARIANTS: &[Variant] = &[
         version_suffix: Some("unsigned"),
         signature: Signature::None,
     },
+    // Refused at load: built on the image that sets no user, signed so
+    // that the user is what the runtime refuses it for.
+    Variant {
+        name: OCI_ROOT_VARIANT,
+        manifest: include_str!("../guest/manifests/oci/plain.yaml"),
+        version_suffix: Some("root"),
+        signature: Signature::Key,
+    },
 ];
+
+/// The user the test image runs as, and the variant built on the same
+/// image with no user at all, which is root.
+pub const OCI_USER: &str = "65532:65532";
+pub const OCI_ROOT_VARIANT: &str = "oci-root";
+pub const OCI_ROOT_IMAGE_REPOSITORY: &str = "e2e/oci-image-root";
 
 /// The test image's repository and the process's path inside it.
 pub const OCI_IMAGE_REPOSITORY: &str = "e2e/oci-image";
@@ -179,6 +193,15 @@ impl Variant {
         manifest
             .json()
             .map_err(|e| anyhow::anyhow!("{}: {e}", self.name))
+    }
+
+    /// The user of the image an oci variant is built on.
+    pub fn image_user(&self) -> &'static str {
+        if self.name == OCI_ROOT_VARIANT {
+            ""
+        } else {
+            OCI_USER
+        }
     }
 
     pub fn repository(&self) -> String {
