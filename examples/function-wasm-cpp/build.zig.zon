@@ -8,8 +8,8 @@
         // (PB_ENABLE_MALLOC) over the structs nanopb_generator writes from the
         // vendored proto (src/fnv1).
         .nanopb = .{
-            .url = "https://github.com/nanopb/nanopb/archive/refs/tags/0.4.9.2.tar.gz",
-            .hash = "N-V-__8AAC4aKQDfYc_SoLQzYD5EUMZ2mN6f8qXQy--vmpFN",
+            .url = "https://github.com/nanopb/nanopb/archive/refs/tags/0.4.9.3.tar.gz",
+            .hash = "N-V-__8AAN6KKQB9rGQUAHNvQUF3wvivjsjVtFg_Rr2xXCRY",
         },
         // The TLS library the guest reads and writes certificates with,
         // configured by src/cert_rotator_mbedtls_config.h: X.509, ECDSA over
