@@ -80,6 +80,11 @@
   // examples rules switch it off for every package file - the workspace's
   // Cargo.lock included - and back on for the four example lockfiles.
   lockFileMaintenance: { enabled: true },
+  // The two zig datasources below read one URL in the same run, and the
+  // hosted run failed the x86_64 lookup with no-result while the aarch64 one
+  // succeeded, which a local run does not reproduce: one request at a time
+  // to the host, in case it throttles the second.
+  hostRules: [{ matchHost: 'ziglang.org', concurrentRequestLimit: 1, maxRequestsPerSecond: 1 }],
   // The zig the e2e workflow installs, per runner architecture: each env line
   // is <version>@<sha256 of the tarball>, and these datasources read both from
   // ziglang.org's download index (every key but master is a release; the
