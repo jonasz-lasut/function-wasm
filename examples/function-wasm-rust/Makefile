@@ -1,7 +1,6 @@
 # The function-wasm-rust guest, an ABI v2 component: needs Rust 1.100 or
-# newer with the wasm32-wasip3 target - rust-toolchain.toml pins 1.100's beta
-# until that release, and rustup installs it on first use - and protoc for
-# prost-build. Render needs the crossplane CLI and Docker.
+# newer with the wasm32-wasip3 target - rust-toolchain.toml names stable with
+# the target, which rustup adds on first use - and protoc for prost-build. Render needs the crossplane CLI and Docker.
 .PHONY: build lint test render clean wit-deps
 
 ROOT := $(abspath ../..)

@@ -49,9 +49,9 @@ package of its own, and no network beyond the one request it declares:
 ## Run it
 
 The toolchain is **Rust 1.100 or newer** with the `wasm32-wasip3` target,
-plus `protoc` for prost-build. Until Rust 1.100.0 is released,
-`rust-toolchain.toml` pins its beta, which rustup installs with the target
-the first time cargo runs here; delete the file once 1.100.0 is out.
+plus `protoc` for prost-build. `rust-toolchain.toml` names the stable
+toolchain with that target, which rustup adds the first time cargo runs
+here. Run `rustup update stable` first if your stable is older than 1.100.
 
 ```shell
 cargo test            # the function's unit tests, natively
