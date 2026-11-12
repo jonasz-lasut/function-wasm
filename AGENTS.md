@@ -601,7 +601,7 @@ crates/engine-oci/          the OCI engine of the function-oci runtime (package 
                             image config with the user resolved inside it at
                             /.guestfn/config.json) that is the compiled store's artifact and
                             the VM's read-only block device; image.rs is the config, the
-                            contract check (a command, this platform) and the run's
+                            contract check (a command, this platform, a user that is not root - as written before a layer is unpacked, as resolved after) and the run's
                             Description; initrd.rs the cpio around the init; run.rs the
                             slot, the whole-VM memory reservation, the stderr lines logged
                             (JSON level/msg typed) and the fatal wording (`run returned an error`, `process exited
@@ -615,7 +615,7 @@ crates/oci-init/            the guest init (package and binary guestfn-init, on 
                             Linux alone (elsewhere the binary says so and exits, so the
                             workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
                             on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
-                            host, loopback up, chroot, the process as the described user, its
+                            host, loopback up, chroot, the process as the described user (never root, every capability set emptied and no_new_privs set before the exec), its
                             server once serving bridged to the host over a second vsock port, stdout/stderr relayed as frames, the exit with an OOM
                             check of /dev/kmsg, then power off. Static (musl), depends on
                             nothing in the image

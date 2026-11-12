@@ -74,6 +74,7 @@ Egress is explained on the [HTTP egress](http-egress.md) page.
 ## `function-oci` modules
 
 - **`cannot load module …: image has neither an entrypoint nor a command: the contract runs the image's configured command (docs/one-pager-oci-runtime.md)`**: the image specifies no command. Set `ENTRYPOINT` or `CMD` in the `Dockerfile`.
+- **`cannot load module …: image runs as root (its config sets no user): the OCI runtime runs a process as a non-root user only (docs/oci/modules.md)`**: the image's process would run as UID 0. Either the image doesn't set a user, or its user is UID 0 by number or through its `/etc/passwd`. Set a non-root `USER` in the `Dockerfile`.
 - **`cannot load module …: image is built for linux/arm64, and this runtime runs on linux/amd64`**: build for the node's platform, or push a multi-platform index.
 - **`cannot load module …: layer is compressed with zstd, which the OCI runtime does not unpack yet; build the image with gzip layers (the default)`**: rebuild the image with gzip layers.
 - **`module … requires egress (requires.egress.http), which function-oci does not serve yet: the VM has no network device (docs/one-pager-oci-runtime.md)`**: function-oci 0.1 has no egress. Remove `requires.egress` from the manifest.

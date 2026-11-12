@@ -126,7 +126,7 @@ impl FunctionRunnerService for Fixture {
             "tmp" => {
                 std::fs::write("/tmp/probe", b"scratch").expect("write /tmp/probe");
                 let back = std::fs::read("/tmp/probe").expect("read /tmp/probe");
-                let root = std::fs::write("/probe", b"overlay")
+                let root = std::fs::write("probe", b"overlay")
                     .map(|_| "writable")
                     .unwrap_or("read-only");
                 answer(format!(
@@ -144,10 +144,22 @@ impl FunctionRunnerService for Fixture {
                         "absent"
                     }
                 };
-                let report = format!("tmp={} root={}", seen("/tmp/probe"), seen("/probe"));
+                let report = format!("tmp={} root={}", seen("/tmp/probe"), seen("probe"));
                 std::fs::write("/tmp/probe", b"scratch").expect("write /tmp/probe");
-                std::fs::write("/probe", b"overlay").expect("write /probe");
+                std::fs::write("probe", b"overlay").expect("write probe");
                 answer(report)
+            }
+            // What the kernel says the process may do: the capability sets
+            // and the no-new-privileges bit, as /proc prints them.
+            "privileges" => {
+                let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+                let fields: Vec<String> = status
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .filter(|(key, _)| key.starts_with("Cap") || *key == "NoNewPrivs")
+                    .map(|(key, value)| format!("{key}={}", value.trim()))
+                    .collect();
+                answer(fields.join(" "))
             }
             "rng" => answer(
                 std::fs::read_to_string("/sys/class/misc/hw_random/rng_current")

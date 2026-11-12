@@ -82,10 +82,13 @@ impl ImageConfig {
         })
     }
 
-    /// The contract's preconditions: a command to run, and a
-    /// platform this host boots. None is a load-time refusal, so a
-    /// Composition fails at `function validate --resolve` and at the first
-    /// request alike, before a VM boots.
+    /// The contract's preconditions that the config alone decides: a
+    /// command to run, a platform this host boots, and a user that is not
+    /// root as written (none, or the number 0). None is a load-time
+    /// refusal, before a layer is unpacked, so a Composition fails at
+    /// `function validate --resolve` and at the first request alike, before
+    /// a VM boots. A user given by name is held to the same rule by
+    /// `check_user`, once the layers have said who it is.
     pub fn check(&self) -> Result<(), String> {
         if self.entrypoint.is_empty() && self.cmd.is_empty() {
             return Err(
@@ -110,6 +113,28 @@ impl ImageConfig {
                 },
                 self.architecture
             ));
+        }
+        let user = self.user.split(':').next().unwrap_or_default();
+        if user.is_empty() {
+            return Err(root_refusal("its config sets no user"));
+        }
+        if user.parse::<u32>() == Ok(0) {
+            return Err(root_refusal(&format!(
+                "its config sets user {:?}",
+                self.user
+            )));
+        }
+        Ok(())
+    }
+
+    /// The same rule over the resolved user: a name the image's
+    /// /etc/passwd gives uid 0 is root under another spelling.
+    pub fn check_user(&self) -> Result<(), String> {
+        if self.uid == 0 {
+            return Err(root_refusal(&format!(
+                "user {:?} is uid 0 in the image's /etc/passwd",
+                self.user
+            )));
         }
         Ok(())
     }
@@ -287,6 +312,16 @@ impl ImageConfig {
     }
 }
 
+/// The refusal of an image whose process would run as root: uid 0 owns
+/// the guest's root-owned files whatever capabilities it holds (the cgroup
+/// that caps the run's memory among them), so the init runs no such
+/// process.
+fn root_refusal(how: &str) -> String {
+    format!(
+        "image runs as root ({how}): the OCI runtime runs a process as a non-root user only (docs/oci/modules.md)"
+    )
+}
+
 /// (name, uid, gid) of the first passwd line the predicate accepts.
 fn passwd_entry(text: &str, pred: impl Fn(&[&str]) -> bool) -> Option<(String, u32, u32)> {
     for line in text.lines() {
@@ -393,12 +428,56 @@ mod tests {
                 .unwrap_err()
                 .starts_with("image has neither an entrypoint nor a command")
         );
-        let windows = ImageConfig::parse(br#"{"os":"windows","config":{"Cmd":["x"]}}"#).unwrap();
+        let windows =
+            ImageConfig::parse(br#"{"os":"windows","config":{"Cmd":["x"],"User":"app"}}"#).unwrap();
         assert!(windows.check().unwrap_err().contains("linux images only"));
         let other =
             ImageConfig::parse(br#"{"os":"linux","architecture":"s390x","config":{"Cmd":["x"]}}"#)
                 .unwrap();
         assert!(other.check().unwrap_err().contains("built for linux/s390x"));
+    }
+
+    #[test]
+    fn a_root_user_is_refused_as_written_and_as_resolved() {
+        let image = |user: &str| ImageConfig {
+            cmd: vec!["/x".to_string()],
+            user: user.to_string(),
+            ..Default::default()
+        };
+        let cases = [
+            ("", "image runs as root (its config sets no user)"),
+            (":1000", "image runs as root (its config sets no user)"),
+            ("0", "image runs as root (its config sets user \"0\")"),
+            (
+                "0:1000",
+                "image runs as root (its config sets user \"0:1000\")",
+            ),
+        ];
+        for (user, want) in cases {
+            let err = image(user).check().unwrap_err();
+            assert_eq!(
+                err,
+                format!(
+                    "{want}: the OCI runtime runs a process as a non-root user only (docs/oci/modules.md)"
+                )
+            );
+        }
+        // A name passes the config's check and is judged once resolved.
+        for (user, uid) in [("root", 0), ("app", 1000), ("1000:0", 1000)] {
+            let mut c = image(user);
+            c.check().unwrap();
+            c.resolve_user(Some(PASSWD), Some(GROUP)).unwrap();
+            assert_eq!(c.uid, uid);
+            assert_eq!(c.check_user().is_err(), uid == 0, "{user}");
+        }
+        let mut alias = image("admin");
+        alias
+            .resolve_user(Some("admin:x:0:0::/root:/bin/sh\n"), None)
+            .unwrap();
+        assert_eq!(
+            alias.check_user().unwrap_err(),
+            "image runs as root (user \"admin\" is uid 0 in the image's /etc/passwd): the OCI runtime runs a process as a non-root user only (docs/oci/modules.md)"
+        );
     }
 
     #[test]
