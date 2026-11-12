@@ -84,7 +84,7 @@ What each function's latest release passed on the [release matrix](https://jonas
 <!-- tested-versions:function-wasm:start -->
 | Release | Crossplane |
 |---|---|
-| v0.6.0 | not recorded |
+| v1.0.0 | 2.4 (v2.4.3), 2.3 (v2.3.7), 2.2 (v2.2.7) |
 <!-- tested-versions:function-wasm:end -->
 
 ### function-oci
