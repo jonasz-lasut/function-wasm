@@ -144,7 +144,9 @@ idle buckets. The operator sets the rate, and a Composition can't change it.
 
 The [sizing page](wasm/sizing.md) has the measurements. The terms are:
 
-- **Memory** is the resident compiled modules plus `--max-concurrent-compiles` times the peak of compiling the largest module plus concurrent runs times the per-run figure. `--max-concurrent-runs`, when set, caps the last factor (at
+- **Memory** is the resident compiled modules plus `--max-concurrent-compiles`
+  times the peak of compiling the largest module plus concurrent runs times the
+  per-run figure. `--max-concurrent-runs`, when set, caps the last factor (at
   `--module-memory-limit` per run in the worst case), and `--max-total-run-memory`
   caps the sum of what runs claim.
 - **CPU** is requests per second times the per-request cost, plus the compiles,

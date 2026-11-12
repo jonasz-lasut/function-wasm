@@ -361,15 +361,16 @@ The `v1beta1` deprecation goes with the old group.
   `cli.rs` is the entry point the two binaries call. `manifest.rs` gains the
   `Contract` enum and `oci.image`. `oci.rs` reads the wrapping artifact, and
   `resolver.rs` fetches an image through it into a layout.
-- `crates/engine`: the `Engine` trait and what the engines share. The writer for the image layout is here so `resolver.rs` can use it.
+- `crates/engine`: the `Engine` trait and what the engines share. The writer for
+  the image layout is here so `resolver.rs` can use it.
 - `crates/engine-wasm`: the Wasmtime engine.
 - `crates/engine-oci`: the `Sandbox` trait with Firecracker
-  behind it (`firecracker.rs`: the machine config, the devices and the lifecycle), `rootfs.rs` unpacking the layers into the squashfs root
+  behind it (`firecracker.rs`: the machine config, the devices and the
+  lifecycle), `rootfs.rs` unpacking the layers into the squashfs root
   filesystem, `layout.rs` reading the image layout the runtime hands over,
-  `image.rs` holding the image config and the run description,
-  `initrd.rs` packing the initramfs around the init, `run.rs` applying the
-  bounds and wording the fatals, with the egress bridge onto
-  `HttpRequester` to come.
+  `image.rs` holding the image config and the run description, `initrd.rs`
+  packing the initramfs around the init, `run.rs` applying the bounds and
+  wording the fatals, with the egress bridge onto `HttpRequester` to come.
 - `crates/oci-init`, the guest init (`guestfn-init`, static for musl): it
   mounts, overlays, starts the process and relays the streams. The proxy
   with its authority comes with the egress phase. `crates/oci-fixture` is
@@ -401,7 +402,9 @@ The `v1beta1` deprecation goes with the old group.
   package mismatch sentence.
 - The example: `examples/function-oci-go` tests its function natively,
   and the `build-oci-go` job runs those tests.
-- End-to-end tests run an `oci` profile with the `function-oci` package on kind with `/dev/kvm` mounted, on a KVM-capable runner, exercising a committed test image through the same Guest XR.
+- End-to-end tests run an `oci` profile with the `function-oci` package on kind
+  with `/dev/kvm` mounted, on a KVM-capable runner, exercising a committed test
+  image through the same Guest XR.
 
 ## Documentation
 
@@ -492,11 +495,12 @@ package starts alpha, on its own tags and releases (decision 15).
   oci --lang go|python|rust|ts` would write a project with a `Dockerfile`,
   a `main` that reads stdin and writes stdout around the language's
   function SDK, unit tests that run natively and a `guestfn.yaml` with
-  `contract: oci@0.1`. `guestfn build` would run `docker build` and then a contract check, which is one run of the image under the sandbox with an empty request and a verdict on whether stdout decoded as a response. The
-  guest suite would run each scaffold through the whole host on a KVM
-  runner. Dropped (Jonasz, 2026-11-09): scaffolding and building the image
-  are the author's, and `guestfn push --image` wraps the result with the
-  manifest layer.
+  `contract: oci@0.1`. `guestfn build` would run `docker build` and then a
+  contract check, which is one run of the image under the sandbox with an empty
+  request and a verdict on whether stdout decoded as a response. The guest suite
+  would run each scaffold through the whole host on a KVM runner. Dropped
+  (Jonasz, 2026-11-09): scaffolding and building the image are the author's, and
+  `guestfn push --image` wraps the result with the manifest layer.
 - **A separate repository.** The policy, proxy and tooling code is most of
   the product and changes together. Rejected.
 
@@ -567,10 +571,11 @@ The owner decided these the same day:
     --resolve` read what it published. The OCI scaffolds and the image
     build in `guestfn` are under Alternatives.
 13. **Snapshots.** A snapshot belongs to one image and has the image
-    and the VM size as its key. Restores go through the API of the release binary. 0.1 includes snapshots as an alpha feature behind
+    and the VM size as its key. Restores go through the API of the release
+    binary. 0.1 includes snapshots as an alpha feature behind
     `--enable-vm-snapshots`.
-    [Per-image microVM snapshots](one-pager-vm-snapshots.md) has the
-    design and the image-independent snapshot it rejected.
+    [Per-image microVM snapshots](one-pager-vm-snapshots.md) has the design and
+    the image-independent snapshot it rejected.
 14. **The egress design.** The proxy gets a design of its own first, in
     [#280](https://github.com/jonasz-lasut/guestfn/issues/280), before
     phase 5. Decision 3 remains its direction, and the design enforces the
@@ -579,7 +584,8 @@ The owner decided these the same day:
 15. **Tags and releases.** Each component has its own: git tags and GitHub
     releases named `function-wasm-vX.Y.Z`, `function-oci-vX.Y.Z`,
     `guestfn-vX.Y.Z` and `wit-vX.Y.Z`, and release branches named
-    `release-<component>-X.Y`. The tag of an OCI artifact drops the prefix and keeps the version.
+    `release-<component>-X.Y`. The tag of an OCI artifact drops the prefix and
+    keeps the version.
 16. **Compatibility at 0.x.** Until function-oci's 1.0.0 a release may
     break anything the package has, and it announces a rename or a
     removal by refusing the old name by name. The wording of a fatal
@@ -610,7 +616,10 @@ The owner decided this on 2026-11-12:
 [#281](https://github.com/jonasz-lasut/guestfn/issues/281) has the
 order from these phases to 0.1, the package's first release.
 
-1. Done (#247). The `Engine` trait started in its own crate. On 2026-11-06 it moved back into `crates/engine` at the owner's ask, and each engine has had a crate of its own since 2026-11-09. `crates/function` is generic over it, with Wasmtime behind it and the behaviour and the goldens unchanged.
+1. Done (#247). The `Engine` trait started in its own crate. On 2026-11-06 it
+   moved back into `crates/engine` at the owner's ask, and each engine has had a
+   crate of its own since 2026-11-09. `crates/function` is generic over it, with
+   Wasmtime behind it and the behaviour and the goldens unchanged.
 2. Done. #244 renamed the manifest file and the media type. #246
    moved the Input group and generated the CRD. #247 added the manifest's
    `type` with its per-type contract, with `type: oci` refused by name.

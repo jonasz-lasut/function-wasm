@@ -135,12 +135,18 @@ pulled from `ghcr.io` with its real signature.
   fatal, logs. A scaffold has no lockfile. The suite resolves dependencies
   the way a user's first build does, which caught the Go 1.27 break in
   [#117](https://github.com/jonasz-lasut/guestfn/issues/117).
-- **Examples share only the plumbing with their scaffold** - the vendored ABI glue, the generated codecs, the proto and the WIT - which `examples_share_the_scaffold_plumbing` holds byte-identical for the four pairs, Go, Rust,
+- **Examples share only the plumbing with their scaffold** - the vendored ABI
+  glue, the generated codecs, the proto and the WIT - which
+  `examples_share_the_scaffold_plumbing` holds byte-identical for the four
+  pairs, Go, Rust,
   TypeScript and Python. The function, its manifest and its example manifests
   are the example's own. An example with no scaffold has the plumbing in its
-  own tree, and the drift check of its build job compares the generated code with the pinned generators.
+  own tree, and the drift check of its build job compares the generated code
+  with the pinned generators.
 - **Each example has unit tests in its language**, covering each fatal path.
-- **Each example has a `build-<lang>` job** in the `/e2e` workflow (`e2e.yml`) covering its toolchain, the build, test and lint targets, and a drift check of its
+- **Each example has a `build-<lang>` job** in the `/e2e` workflow (`e2e.yml`)
+  covering its toolchain, the build, test and lint targets, and a drift check of
+  its
   generated codec and bindings.
 - **Nothing in CI asserts what an example composes.** The Kubernetes-native
   end-to-end suite (`crates/e2e`, [testing](project/testing.md), #185) drives a
@@ -163,10 +169,13 @@ published as CNCF Wasm OCI artifacts, with their module manifests:
   world at `guestfn/function`. A namespace per kind of artifact is the
   convention across OCI-distributed WebAssembly plugins (Kubewarden's
   `policies/`, wasmCloud's `components/`).
-- **Versions:** each example's semver comes from its `guestfn.yaml` and is tagged `v<version>`, independent of the runtime's. A version already published is
-  never pushed again (the same registry probe as `publish-wit`). Each run publishes only the examples whose version moved, and a published tag remains
+- **Versions:** each example's semver comes from its `guestfn.yaml` and is
+  tagged `v<version>`, independent of the runtime's. A version already published
+  is never pushed again (the same registry probe as `publish-wit`). Each run
+  publishes only the examples whose version moved, and a published tag remains
   immutable.
-- **When:** a maintainer runs the workflow from `main` after the version of an example moved. The examples have a lifecycle of their own. A
+- **When:** a maintainer runs the workflow from `main` after the version of an
+  example moved. The examples have a lifecycle of their own. A
   release neither builds nor carries them, and a failed example build stays
   out of the package's publish run.
 - **Signing:** keyless cosign plus SLSA provenance from the publish workflow,

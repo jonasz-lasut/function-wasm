@@ -68,8 +68,9 @@ that must stay a string. `function validate` reads a Composition file the
 same way.
 
 - `config.schema`: a JSON Schema (draft 2020-12) for the Input's `config`.
-  It must be self-contained: the runtime refuses a `$ref` to a URL or a file at load. `pattern` takes the `regex` crate's syntax, which has no look-around
-  and no back-references. Non-secret configuration belongs in `config`, not in env.
+  It must be self-contained: the runtime refuses a `$ref` to a URL or a file at
+  load. `pattern` takes the `regex` crate's syntax, which has no look-around and
+  no back-references. Non-secret configuration belongs in `config`, not in env.
 - `composes`: what the module writes, advisory
   ([below](#the-composes-declaration)).
 - `requires.resources`: what the module asks Crossplane for, advisory

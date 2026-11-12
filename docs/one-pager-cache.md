@@ -146,7 +146,8 @@ RunFunction (crates/function/src/runner.rs)
   and shared with the page cache instead of copied onto the heap. Restarts and
   rolling upgrades cost that map instead of a compile; a Wasmtime upgrade costs
   one compile per module and, a day later, drops the old directory.
-- **Fetched modules on disk.** Written after every successful fetch, read before any download. With it, an HTTP server outage doesn't stop reconciling for
+- **Fetched modules on disk.** Written after every successful fetch, read before
+  any download. With it, an HTTP server outage doesn't stop reconciling for
   modules seen before, and a rescheduled pod with a volume never re-pulls. An
   OCI module whose artifact is gone costs one manifest read (a few KB, to
   learn the layer digest) and no download. Served files (`module.path`) aren't

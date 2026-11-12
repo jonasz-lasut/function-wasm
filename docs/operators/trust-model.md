@@ -91,9 +91,11 @@ verified against their digest on every read. Compiled artifacts, native
 code that Wasmtime loads without a check of its own, carry an HMAC under a
 key the process draws at startup and never writes anywhere, so an artifact
 this process didn't write, planted or left by an earlier process, is refused
-and the module is compiled again ([the design record for the cache key](../one-pager-cache-key.md)). Back the directory with an `emptyDir`,
-or with a volume for this pod alone to keep the fetched modules across
-restarts ([cache storage](runtime-flags.md#cache-storage)).
+and the module is compiled again
+([the design record for the cache key](../one-pager-cache-key.md)). Back the
+directory with an `emptyDir`, or with a volume for this pod alone to keep the
+fetched modules across restarts
+([cache storage](runtime-flags.md#cache-storage)).
 
 ## Egress
 

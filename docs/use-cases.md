@@ -72,8 +72,11 @@ inspect <ref>` prints the digest-pinned reference for a Composition.
   at reconcile time through the host's egress - a capability its manifest
   requests and both policy layers must grant.
 - [`examples/function-wasm-ts`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-ts) (TypeScript): the
-  organisation's policy as the last pipeline step. The module asks Crossplane for the environment's EnvironmentConfig through `requirements`. It adds its mandatory tags to every composed resource without overwriting the team's and refuses a region or instance class the environment doesn't allow -
-  one digest-pinned module the platform team rolls out on its own.
+  organisation's policy as the last pipeline step. The module asks Crossplane
+  for the environment's EnvironmentConfig through `requirements`. It adds its
+  mandatory tags to every composed resource without overwriting the team's and
+  refuses a region or instance class the environment doesn't allow - one
+  digest-pinned module the platform team rolls out on its own.
 - [`examples/function-wasm-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-go) (Go): a customization hook at
   the end of a pipeline. A `WebApp` Composition reserves its last step for
   the add-on each `WebApp` names in `spec.addOn` (`module.from`, skipped while
@@ -99,11 +102,12 @@ inspect <ref>` prints the digest-pinned reference for a Composition.
   ask or kind is refused.
 - [`examples/function-wasm-csharp`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-csharp) (C#): dashboards
   as code, delivered as a bundle. A composite resource pins a team's zip of
-  Grafana dashboards by sha256; the module fetches it through the host's egress and refuses any other content, then unpacks it into its private `/tmp` and
+  Grafana dashboards by sha256; the module fetches it through the host's egress
+  and refuses any other content, then unpacks it into its private `/tmp` and
   composes one ConfigMap per dashboard for Grafana's sidecar - the two
   capabilities its manifest requests.
 - [`examples/function-oci-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go) (Go, an OCI
-  module): the hello function as an image that the OCI runtime `function-oci` boots in a microVM once per request. `main.go` starts
-  function-sdk-go's server around an ordinary function, and `guestfn push
-  --image` appends the manifest to the image
-  ([OCI modules](oci/modules.md)).
+  module): the hello function as an image that the OCI runtime `function-oci`
+  boots in a microVM once per request. `main.go` starts function-sdk-go's server
+  around an ordinary function, and `guestfn push --image` appends the manifest
+  to the image ([OCI modules](oci/modules.md)).

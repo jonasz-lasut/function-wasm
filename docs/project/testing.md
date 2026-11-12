@@ -199,7 +199,8 @@ For `function-oci`:
   its image, pushing nothing
 - a build job that compiles `function-oci`,
   the init and the test module as a process (musl), fetches the pinned
-  Firecracker and kernel (`make oci.tools`) and then runs the suite of the OCI engine in real VMs under the runner's KVM over those files
+  Firecracker and kernel (`make oci.tools`) and then runs the suite of the OCI
+  engine in real VMs under the runner's KVM over those files
   (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of skipping)
 - the `oci` cluster job, which installs `function-oci` alone
   (`E2E_WASM=0 E2E_OCI=1`) and runs the `oci` profiles
@@ -213,14 +214,15 @@ workflow sets `cache-mode: write` because a comment-started run gets a
 read-only cache token.
 
 GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs and
-the legs of the release matrix install, and the kind node inherits it. The node's device is `root:kvm 0660`
-whatever the rule says, and the pod's user is the package's. The suite's
-setup installs the device plugin
-(`crates/e2e/cluster/kvm-device-plugin.yaml`), reads the node's `kvm`
-gid and puts it into the `oci` runtime config as the supplemental group of the pod: the recipe on the operator page for a hosted cluster. The same page says
-why a `hostPath` mount of the device isn't enough. A comment-started run reads
-`e2e.yml` from `main`, so a new job there is proved only after it merges.
-A failed cluster job prints the description and logs of every function pod into
+the legs of the release matrix install, and the kind node inherits it. The
+node's device is `root:kvm 0660` whatever the rule says, and the pod's user is
+the package's. The suite's setup installs the device plugin
+(`crates/e2e/cluster/kvm-device-plugin.yaml`), reads the node's `kvm` gid and
+puts it into the `oci` runtime config as the supplemental group of the pod: the
+recipe on the operator page for a hosted cluster. The same page says why a
+`hostPath` mount of the device isn't enough. A comment-started run reads
+`e2e.yml` from `main`, so a new job there is proved only after it merges. A
+failed cluster job prints the description and logs of every function pod into
 the job log (`make e2e.dump` does that before the dump itself).
 
 ### The release matrix

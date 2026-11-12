@@ -147,9 +147,10 @@ API server's bound on the composite resource bounds the value's size.
 Secrets don't belong in configuration. The guests' page repeats this for
 tenant-authored configuration, and points at step credentials.
 
-`compositionPolicy` and `limits` remain read from the Input only, as required by the record titled [Module source schema](one-pager-module-source-schema.md).
-`config` joins `module.from` as the second thing the composite resource
-may author.
+`compositionPolicy` and `limits` remain read from the Input only, as required by
+the record titled [Module source schema](one-pager-module-source-schema.md).
+`config` joins `module.from` as the second thing the composite resource may
+author.
 
 ## Checks offline
 
@@ -205,7 +206,8 @@ write.
 4. The use-case examples (`function-wasm-python`'s `cmdbUrl`, the hello guests'
    greeting) moved to their composite resources and definitions.
 5. The OCI runtime, after its code merges: the same `config` object,
-   delivered through the same wire-level edit in the request the runtime passes to its gRPC server.
+   delivered through the same wire-level edit in the request the runtime passes
+   to its gRPC server.
 
 ## Alternatives
 
@@ -220,8 +222,8 @@ write.
   leaves room for `allowEmpty` and the next field.
 - **Configuration inside the `module.from` object.** `spec.addOn: {ref: …,
   config: {…}}`, the choice and the settings together. Rejected: the
-  `from` objects are the source types, which decode without extra keys. A fixed module with tenant-tunable settings has no `module.from` to put
-  them in.
+  `from` objects are the source types, which decode without extra keys. A fixed
+  module with tenant-tunable settings has no `module.from` to put them in.
 - **Resolution in the guest glue.** `GetConfig` follows the reference
   itself. Rejected: nine glues and every hand-written guest would have to
   agree, and the runtime couldn't check what it never read.

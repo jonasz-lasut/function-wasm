@@ -62,7 +62,8 @@ with one.
 [componentize-py](https://github.com/bytecodealliance/componentize-py) is the
 toolchain, and `guestfn build` makes the venv from `requirements.txt` when the
 project has none. The guest bundles the pure-Python `protobuf` runtime, and
-`run` is sync-lifted. Fetches go over `wasi:http@0.2` on the poll loop of componentize-py, through the same egress policy.
+`run` is sync-lifted. Fetches go over `wasi:http@0.2` on the poll loop of
+componentize-py, through the same egress policy.
 
 ### How build chooses a toolchain
 

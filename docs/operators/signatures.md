@@ -119,9 +119,9 @@ module is signed when one of its bundles verifies.
 The trusted root lists the validity window of each key and authority, and a
 bundle verifies against the material valid at its signing time. A file that
 predates a rotation can't verify bundles signed with the new material, so the
-root has to be refreshed. `--cosign-trusted-root` is the air-gapped mode. The runtime reads
-the file and nothing else, so you refresh it yourself, such as through a
-mounted ConfigMap that `cosign initialize` rewrites.
+root has to be refreshed. `--cosign-trusted-root` is the air-gapped mode. The
+runtime reads the file and nothing else, so you refresh it yourself, such as
+through a mounted ConfigMap that `cosign initialize` rewrites.
 
 `--cosign-trust-instance public-good` (`COSIGN_TRUST_INSTANCE`; also
 `staging` and `github`) fetches the root instead and refreshes it while
