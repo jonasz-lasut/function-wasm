@@ -10,7 +10,7 @@ kind: Function
 metadata:
   name: function-wasm
 spec:
-  package: ghcr.io/jonasz-lasut/function-wasm:v0.6.0
+  package: ghcr.io/jonasz-lasut/function-wasm:v1.0.0
 ```
 
 The same package is published to `xpkg.upbound.io/jonasz-lasut/function-wasm`, for clusters that pull from `xpkg.upbound.io`.
