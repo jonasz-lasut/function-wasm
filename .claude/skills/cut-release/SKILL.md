@@ -150,11 +150,35 @@ pushing over it.
 
 Load the `writing-style` skill and draft the notes from
 `release-notes-template.md` beside this file, for a reader deciding whether to
-upgrade and what it will take. Work from what the pull requests merged since
+upgrade and what it will take. The notes have two parts.
+
+The descriptions come first. Work from what the pull requests merged since
 `$TAG` changed (`git log --oneline "$TAG"..main`), not from their titles.
-Delete any section with nothing to say, and leave out what changes nothing for
-that reader: dependency bumps with no change in behaviour, refactors, CI and
-test-only work. Write the draft to a file outside the repository (`$NOTES`).
+Every change a reader would notice gets a `###` heading of its own and a
+paragraph under it: what the component does now and what it did before, why
+it changed, and what the reader does about it, with the exact flag, field or
+refusal quoted and a link to the docs page and the pull request. A one-line
+bullet per change isn't enough. Delete any section with nothing to say, and
+describe nothing that changes nothing for that reader: dependency bumps with
+no change in behaviour, refactors, CI and test-only work.
+
+The full list of merged pull requests comes under the descriptions, and
+leaves nothing out, whatever the descriptions skipped. GitHub writes it:
+
+```bash
+gh api "repos/{owner}/{repo}/releases/generate-notes" \
+  -f tag_name="$NEW_TAG" -f target_commitish=main \
+  ${TAG:+-f previous_tag_name="$TAG"} --jq .body
+```
+
+Copy its `* <title> by @<author> in <URL>` lines under `## Merged pull
+requests` as they are, every one, and its compare link as the last line. The
+range is the repository's, so the list includes pull requests that touched
+another component alone: keep them, the list is what merged between the two
+tags. On a component's first release `$TAG` is empty and the list is
+everything GitHub finds before the tag.
+
+Write the draft to a file outside the repository (`$NOTES`).
 
 Show the user `NEW_TAG`, `NEW_BRANCH` and the whole draft, then **stop until
 the user approves the text of the notes**. Agreeing to the release isn't
@@ -360,6 +384,8 @@ release branch where it is: the repository keeps its full release history.
   versions: the versioning policy in `docs/abi-v2.md` promises them.
 - Using this skill for a patch bump (`vX.Y.Z+1`) — that path belongs to
   `remediate-cves`, which reuses an existing branch instead of cutting one.
+- Release notes that describe a change in one line, or whose `Merged pull
+  requests` list is trimmed, reworded or missing.
 - Publishing release notes the user hasn't approved, or editing them after
   approval without asking again.
 - Deleting a release branch, of any version or any component, superseded or
