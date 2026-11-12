@@ -56,7 +56,7 @@ Each example under
 [`examples/`](https://github.com/jonasz-lasut/guestfn/tree/main/examples)
 is a guest in one language that solves one of these cases. Every `/e2e` run
 builds, tests and lints them, but nothing in CI asserts what an example
-composes. The [use-case examples design record](one-pager-use-case-examples.md)
+composes. The [design record for the use-case examples](one-pager-use-case-examples.md)
 explains why these were chosen and how they're published.
 
 `Publish Examples` publishes `function-wasm-rust`, `function-wasm-ts`,
@@ -72,10 +72,7 @@ inspect <ref>` prints the digest-pinned reference for a Composition.
   at reconcile time through the host's egress - a capability its manifest
   requests and both policy layers must grant.
 - [`examples/function-wasm-ts`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-ts) (TypeScript): the
-  organisation's policy as the last pipeline step. The module asks Crossplane
-  for the environment's EnvironmentConfig through `requirements`, adds its
-  mandatory tags to every composed resource without overwriting the team's,
-  and refuses a region or instance class the environment doesn't allow -
+  organisation's policy as the last pipeline step. The module asks Crossplane for the environment's EnvironmentConfig through `requirements`. It adds its mandatory tags to every composed resource without overwriting the team's and refuses a region or instance class the environment doesn't allow -
   one digest-pinned module the platform team rolls out on its own.
 - [`examples/function-wasm-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-go) (Go): a customization hook at
   the end of a pipeline. A `WebApp` Composition reserves its last step for
@@ -86,7 +83,7 @@ inspect <ref>` prints the digest-pinned reference for a Composition.
 - [`examples/function-wasm-python`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-python) (Python): a team's owner and
   cost center come from the CMDB, never from the composite resource. After
   function-go-templating composes an S3 bucket, the module reads the record
-  of the team the composite resource's namespace belongs to, with that
+  of the team the namespace of the composite resource belongs to, with that
   team's token from a step credential holding every team's, and stamps
   `team`, `owner` and `cost-center` tags on every composed managed
   resource. The module receives that credential only where its manifest
@@ -102,13 +99,11 @@ inspect <ref>` prints the digest-pinned reference for a Composition.
   ask or kind is refused.
 - [`examples/function-wasm-csharp`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-csharp) (C#): dashboards
   as code, delivered as a bundle. A composite resource pins a team's zip of
-  Grafana dashboards by sha256; the module fetches it through the host's
-  egress, refuses any other content, unpacks it into its private `/tmp` and
+  Grafana dashboards by sha256; the module fetches it through the host's egress and refuses any other content, then unpacks it into its private `/tmp` and
   composes one ConfigMap per dashboard for Grafana's sidecar - the two
   capabilities its manifest requests.
 - [`examples/function-oci-go`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-oci-go) (Go, an OCI
-  module): the hello function as an image that `function-oci`, the OCI
-  runtime, boots in a microVM once per request. `main.go` starts
+  module): the hello function as an image that the OCI runtime `function-oci` boots in a microVM once per request. `main.go` starts
   function-sdk-go's server around an ordinary function, and `guestfn push
   --image` appends the manifest to the image
   ([OCI modules](oci/modules.md)).

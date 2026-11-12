@@ -16,7 +16,7 @@ configure it, short of a module reading its own fields out of the composite
 resource, which the runtime neither checks nor documents. This record
 replaces the value with a reference: `config` becomes an object that says
 where in the composite resource the module's configuration is, and the
-runtime reads it, checks it against the chosen module's schema and hands the
+runtime reads it, checks it against the schema of the chosen module and hands the
 module the result. Static configuration goes. The record targets the
 WebAssembly runtime on `main`; the OCI runtime (the [OCI
 runtime](one-pager-oci-runtime.md) record, its code in
@@ -39,7 +39,7 @@ serves can't change it, and in the `module.from` case the author wrote it
 against a schema they haven't seen.
 
 Kubernetes already has the two places this information belongs. A
-structure goes in the composite resource definition's OpenAPI schema, which
+structure goes in the OpenAPI schema of the composite resource definition, which
 the API server enforces at admission, and defaults go there too, where the
 API server applies them. The module manifest's `config.schema` is a JSON
 Schema and transplants into that definition unchanged. What the Composition
@@ -147,8 +147,7 @@ API server's bound on the composite resource bounds the value's size.
 Secrets don't belong in configuration. The guests' page repeats this for
 tenant-authored configuration, and points at step credentials.
 
-`compositionPolicy` and `limits` remain read from the Input only, as the
-[Module source schema](one-pager-module-source-schema.md) record requires.
+`compositionPolicy` and `limits` remain read from the Input only, as required by the record titled [Module source schema](one-pager-module-source-schema.md).
 `config` joins `module.from` as the second thing the composite resource
 may author.
 
@@ -206,8 +205,7 @@ write.
 4. The use-case examples (`function-wasm-python`'s `cmdbUrl`, the hello guests'
    greeting) moved to their composite resources and definitions.
 5. The OCI runtime, after its code merges: the same `config` object,
-   delivered in the request the runtime passes to its gRPC server, the
-   same wire-level edit.
+   delivered through the same wire-level edit in the request the runtime passes to its gRPC server.
 
 ## Alternatives
 
@@ -222,15 +220,14 @@ write.
   leaves room for `allowEmpty` and the next field.
 - **Configuration inside the `module.from` object.** `spec.addOn: {ref: …,
   config: {…}}`, the choice and the settings together. Rejected: the
-  `from` objects are the source types, decoded without extra keys, and a
-  fixed module with tenant-tunable settings has no `module.from` to put
+  `from` objects are the source types, which decode without extra keys. A fixed module with tenant-tunable settings has no `module.from` to put
   them in.
 - **Resolution in the guest glue.** `GetConfig` follows the reference
   itself. Rejected: nine glues and every hand-written guest would have to
   agree, and the runtime couldn't check what it never read.
 - **Default-lenient, `config.errorOnEmpty: true` to make an unset field
   fatal.** The same switch the other way. Rejected for symmetry with
-  `module.allowEmpty`: one word, one default, across the two fields the
+  `module.allowEmpty`: one word and one default across the two fields the
   composite resource may author.
 
 ## Open questions

@@ -196,7 +196,7 @@ Jonasz settled these on 2026-11-09, with these measurements:
 - Snapshots are in 0.1 as an alpha feature, and the flag is
   `--enable-vm-snapshots`. It's off by default in alpha and on by default
   in beta and later.
-- Alpha accepts the 4 s or more a snapshot's memory file takes on a GitHub
+- Alpha accepts the 4 s or more the memory file of a snapshot takes on a GitHub
   runner: warm-up pays it before the pod reports ready, and a restored run
   saves 210 to 230 ms there.
 - A snapshot belongs to one image. Its key is the image and the VM size,
@@ -235,6 +235,6 @@ Jonasz settled these on 2026-11-09, with these measurements:
   runtime's fate. The release binary's API answers a load about 3 ms after
   the process starts.
 - **A `userfaultfd` handler.** Firecracker can hand a clone's page faults
-  to a handler, which could load the recorded working set at once. The
-  measured gain doesn't need it: on a GitHub runner a restored run took 87
-  and 122 ms, against 297 and 350 ms for a boot.
+  to a handler that could load the recorded working set at once, although
+  the measured gain doesn't need it. A restored run on a GitHub runner took
+  87 and 122 ms against 297 and 350 ms for a boot.

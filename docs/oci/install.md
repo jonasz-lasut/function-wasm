@@ -33,7 +33,7 @@ artifacts, under the same key and the same LRU sweep. The module cache's
 
 The pod needs `/dev/kvm`. An unprivileged container opens only the
 devices its container runtime admitted into its device cgroup, and a
-`hostPath` mount of the device node admits nothing: the node appears in
+`hostPath` mount of the device node doesn't admit the device: the node appears in
 the container and every `open` of it fails with `Operation not permitted`.
 Kubernetes admits a device through a [device
 plugin](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/):

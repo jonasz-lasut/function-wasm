@@ -81,7 +81,7 @@ run then ends as a timeout, so the guest can't handle that error.
 The default block list refuses these ranges:
 
 - loopback
-- link-local, which includes a cloud provider's metadata endpoint
+- link-local, which includes the metadata endpoint of a cloud provider
 - RFC 1918
 - carrier-grade NAT (`100.64.0.0/10`)
 - IPv6 unique-local

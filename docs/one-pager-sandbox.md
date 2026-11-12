@@ -91,7 +91,7 @@ every request that hit them.
 `privateTmp` is a per-run directory under the host's temp dir (`$TMPDIR`),
 named `function-wasm-private-tmp-*` and created before the store
 (`crates/engine-wasm/src/sandbox.rs`). It's pre-opened read/write at `/tmp`,
-and removed when the run's value drops, on every path out (success, trap,
+and removed when the value of the run drops, on every path out (success, trap,
 exit, deadline, host error); a removal failure is logged, never a result. It's
 the only directory a guest is ever given, so a module can't read an
 operator-declared host path. The ABI is unchanged:

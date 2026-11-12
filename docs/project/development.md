@@ -15,7 +15,7 @@ cargo deny check advisories bans licenses sources   # cargo install cargo-deny -
 
 The tests include the conformance goldens and the scaffold goldens. The
 `cargo deny` run checks `Cargo.lock` against `deny.toml`: every crate is
-free of published advisories, under an allowed license and from crates.io. A pull request that touches the documentation (`docs/`, `README.md`, `SECURITY.md` or `book.toml`) also runs Vale, after a check that the design records index and `docs/SUMMARY.md` restate each one-pager's status line:
+free of published advisories, under an allowed license and from crates.io. A pull request that touches the documentation (`docs/`, `README.md`, `SECURITY.md` or `book.toml`) also runs Vale, after a check that the design records index and `docs/SUMMARY.md` restate the status line of each one-pager:
 
 ```shell
 make vale
@@ -33,7 +33,7 @@ make e2e
 
 The first line tests the Go example and its vendored `internal/wasmfn` glue. The second is the [development loop](../wasm/render-locally.md). The third runs the end-to-end suite in a kind cluster. [Testing](testing.md) explains the two tiers and the `/e2e` comment that runs them on a pull request.
 
-`(cd examples/function-oci-go && go test ./...)` tests the OCI example natively. `make oci.test` runs the OCI engine's suite in real VMs and needs `/dev/kvm`.
+`(cd examples/function-oci-go && go test ./...)` tests the OCI example natively. `make oci.test` runs the suite of the OCI engine in real VMs and needs `/dev/kvm`.
 
 ## Guest toolchains
 

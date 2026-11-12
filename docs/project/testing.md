@@ -145,7 +145,7 @@ The Guest XR is the composite resource the suite creates for each test, and its
 | `egress.url` | sends a GET request to the URL through `wasi:http` and writes the status and body, or the host's refusal, to `status.egress` |
 | `env`, `credentials` | writes those variables and the keys of those step credentials to status |
 | `privateTmp` | writes and reads back a file under `/tmp`, reporting the outcome |
-| `requirements.environmentConfig` | asks Crossplane for that EnvironmentConfig and echoes its data once resolved; the read fence's cluster cases permit and refuse that ask by kind |
+| `requirements.environmentConfig` | asks Crossplane for that EnvironmentConfig and echoes its data once resolved; the cluster cases of the read fence permit and refuse that ask by kind |
 | `privileges` | as a process, tries what a Linux capability would allow and runs the `setuid` copy of its binary, reporting each outcome |
 | `fatal`, `spin`, `growMiB` | a fatal result with the message, a spin past the deadline, a memory growth refused at the limit |
 
@@ -199,13 +199,12 @@ For `function-oci`:
   its image, pushing nothing
 - a build job that compiles `function-oci`,
   the init and the test module as a process (musl), fetches the pinned
-  Firecracker and kernel (`make oci.tools`) and then runs the OCI engine's
-  suite in real VMs under the runner's KVM over those files
+  Firecracker and kernel (`make oci.tools`) and then runs the suite of the OCI engine in real VMs under the runner's KVM over those files
   (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of skipping)
 - the `oci` cluster job, which installs `function-oci` alone
   (`E2E_WASM=0 E2E_OCI=1`) and runs the `oci` profiles
 
-The run posts three commit statuses on the pull request's head: `e2e/wasm`
+The run posts three commit statuses on the head of the pull request: `e2e/wasm`
 and `e2e/oci`, each naming the jobs of its runtime that didn't pass, and
 `e2e`, the whole run's verdict, which branch protection names.
 
@@ -214,15 +213,14 @@ workflow sets `cache-mode: write` because a comment-started run gets a
 read-only cache token.
 
 GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs and
-the release matrix's legs install, and the kind node inherits it. The node's device is `root:kvm 0660`
+the legs of the release matrix install, and the kind node inherits it. The node's device is `root:kvm 0660`
 whatever the rule says, and the pod's user is the package's. The suite's
 setup installs the device plugin
 (`crates/e2e/cluster/kvm-device-plugin.yaml`), reads the node's `kvm`
-gid and puts it into the `oci` runtime config as the pod's supplemental
-group: the operator page's recipe for a hosted cluster. The same page says
+gid and puts it into the `oci` runtime config as the supplemental group of the pod: the recipe on the operator page for a hosted cluster. The same page says
 why a `hostPath` mount of the device isn't enough. A comment-started run reads
 `e2e.yml` from `main`, so a new job there is proved only after it merges.
-A failed cluster job prints every function pod's description and logs into
+A failed cluster job prints the description and logs of every function pod into
 the job log (`make e2e.dump` does that before the dump itself).
 
 ### The release matrix

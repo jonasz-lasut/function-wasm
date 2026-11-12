@@ -17,7 +17,7 @@ same in both, and a layer can only narrow what the layer before it allows. The
 
 ## A minimal policy
 
-This operator policy lets modules in the `team-a` namespace use a private `/tmp`
+With this operator policy, modules in the `team-a` namespace can use a private `/tmp`
 and send GET requests to `example.com` and its subdomains:
 
 ```cedar
@@ -78,7 +78,7 @@ hierarchy. `in` is reflexive: an entity is `in` itself.
 
 - `Repository` is a module's location without its tag or digest. An OCI
   reference is `registry/repository`, normalized as go-containerregistry does
-  (`docker.io/x` is `index.docker.io/x`). An HTTP URL is `scheme://host/path`
+  (`docker.io/x` is `index.docker.io/x`). For an HTTP URL, it's `scheme://host/path`
   with a lowercase host and without its query. Every path-boundary prefix is an
   ancestor, with and without its trailing slash: `ghcr.io/team` is an ancestor
   of `ghcr.io/team/mod`, and `ghcr.io/team-other` and `ghcr.io/teamsuffix`

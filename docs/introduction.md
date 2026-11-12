@@ -20,7 +20,7 @@ function in Go (with
 TypeScript or Python, compile it to WebAssembly, publish the module
 and point a Composition step at it.
 
-It fits when a pipeline step's logic should change without a new Function
+It fits when the logic of a pipeline step should change without a new Function
 package, or when the people who maintain that logic aren't the people who
 maintain the Composition. One installed function-wasm serves any number of
 modules, so a new module version is a new reference in the Input.

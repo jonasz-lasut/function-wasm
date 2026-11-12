@@ -226,18 +226,14 @@ permits from it.
 
 ## Tests
 
-- `authz.rs`: the hierarchy over `Kind` and `Group` for the new action, the
-  three context attributes with and without `has`, a `forbid` alone, and
-  the operator layer scoping only when a rule spells the action.
-- `require.rs`: both maps in key order, the core group, a selector with no
-  kind and a response with no requirements.
+- `authz.rs`: the hierarchy over `Kind` and `Group` for the new action and the three context attributes with and without `has`. It also covers a `forbid` by itself and the operator layer scoping only when a rule spells the action.
+- `require.rs`: both maps in key order and the core group. It also covers a selector with no kind and a response with no requirements.
 - `admission.rs`: the layer stated in each sentence, and an unscoped layer
   narrowing nothing.
 - `manifest.rs`: `requires.resources` parsed, validated and refused for a
   bad kind, a bad `by` and an unknown field, and shown in the summary.
 - `runner.rs`: a `fixed_component` guest returning a response with
-  selectors, admitted under one policy and refused under another, the
-  fatal-result case judged, and the `refused` outcome counted.
+  selectors that one policy admits and another refuses, with the fatal-result case judged and the `refused` outcome counted.
 - Conformance: a `require.yaml` fixture beside `compose.yaml` whose first
   step scopes the action, with `require-ceiling.cedar` and the
   `RequireResource`, `RequireResource-json` and
@@ -248,8 +244,7 @@ permits from it.
   reads, and `inspect` showing them.
 - End to end, default profile: the guest's `requirements` knob under a
   `compositionPolicy` that forbids the EnvironmentConfig kind, expecting the
-  fatal sentence and no `status.environmentConfig`, beside the existing
-  round-trip test, which gains a `permit` to prove the admitted path. Strict
+  fatal sentence and no `status.environmentConfig`. The existing round-trip test beside it gains a `permit` to prove the admitted path. Strict
   profile: the operator policy scopes the action to the tenant's namespace
   and refuses the same ask with its own sentence.
 
@@ -292,8 +287,7 @@ reads on upgrade, which is what its author wrote.
   declares what the module composes expects to declare what it requires
   beside it.
 - A top-level `reads` field for the declaration. Rejected (Jonasz,
-  2026-11-05) for `requires.resources`: what a module asks Crossplane for is
-  something it requires, named as the proto names it, and the author's
+  2026-11-05) for `requires.resources`: what a module asks Crossplane for is something it requires, named as the proto names it. The author's
   `requires` block is the one place that lists what the module needs.
 - Fencing `requirements.schemas`. Non-goal (Jonasz, 2026-11-05). A schema
   is public metadata, and the runtime relays a schema request as before.

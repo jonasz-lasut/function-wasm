@@ -11,7 +11,7 @@ and point a Composition step at it. It's one of the two functions of the
 [guestfn](../../README.md) project, and shares the Input, the manifest, the
 policy layers and the CLI with [function-oci](../oci/README.md).
 
-It fits when a pipeline step's logic should change without a new Function
+It fits when the logic of a pipeline step should change without a new Function
 package, or when the people who maintain that logic aren't the people who
 maintain the Composition. One installed function-wasm serves any number of
 modules, so a new module version is a new reference in the Input.

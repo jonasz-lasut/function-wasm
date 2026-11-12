@@ -75,7 +75,7 @@ The SDK's flags `--insecure`, `--debug`, `--tls-certs-dir`, `--address` and `--m
 
 ## Logging
 
-`--debug` turns on the runtime's own debug lines in a human-readable format: guest log records sent at debug level, the credentials withheld from a module and trap details. Everything else logs at `info`, so a compile under `--debug` doesn't print the compiler's per-pass lines. A set `RUST_LOG` replaces the flag's filter in full.
+`--debug` turns on the runtime's own debug lines in a human-readable format: guest log records sent at debug level, the credentials withheld from a module and trap details. Everything else logs at `info`, so a compile under `--debug` doesn't print per-pass lines from the compiler. A set `RUST_LOG` replaces the flag's filter in full.
 
 ## Cache storage
 

@@ -57,7 +57,7 @@ The runtime verifies a keyless bundle against a Sigstore trusted root, which
 lists the Fulcio authorities, the Rekor and certificate-transparency keys and
 the timestamp authorities, each with a validity window. Pass it as
 `--cosign-trusted-root trusted_root.json` (`COSIGN_TRUSTED_ROOT`).
-`cosign initialize` fetches the public-good instance's root over TUF:
+`cosign initialize` fetches the root of the public-good instance over TUF:
 
 ```shell
 cosign initialize
@@ -116,7 +116,7 @@ module is signed when one of its bundles verifies.
 
 ### Fetching the trusted root over TUF
 
-The trusted root lists each key's and authority's validity window, and a
+The trusted root lists the validity window of each key and authority, and a
 bundle verifies against the material valid at its signing time. A file that
 predates a rotation can't verify bundles signed with the new material, so the
 root has to be refreshed. `--cosign-trusted-root` is the air-gapped mode. The runtime reads
