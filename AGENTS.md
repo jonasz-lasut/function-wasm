@@ -242,8 +242,11 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               stale-version reaping; guestfn-engine's ArtifactStore over the
                               compiled store (begin, seal, sealed, used: a file written in
                               place, signed and verified by a streamed MAC - the OCI engine's
-                              VM snapshots), an entry sized by what the disk allocated for it
-                              (a sparse memory file), remove_unfinished at startup
+                              VM snapshots; hold, release: an entry the sweep leaves while an
+                              engine holds it - the root filesystem of an image the OCI
+                              engine has loaded, which every run's VM opens by its path), an
+                              entry sized by what the disk allocated for it (a sparse memory
+                              file), remove_unfinished at startup
   src/egress.rs               HTTP egress through the host: SSRF block list judged per resolved
                               address (operator dialAddress rules punch holes), redirects re-checked
                               per hop, fixed budgets, the process-wide rate limit, one audit line
@@ -282,7 +285,8 @@ crates/engine/              what the engines share (package guestfn-engine), wit
                               run, the OCI engine's VM snapshot - keep_in - the compiled store for what it derives from a stored module, a no-op but for the OCI engine - run, version, config; KIND the module type the
                               engine serves, CONTRACT the manifest contract it implements),
                               ArtifactStore (where an engine keeps files it derives from a
-                              module at run time, implemented by the runtime's compiled store),
+                              module at run time and holds the stored file it runs from
+                              against the sweep, implemented by the runtime's compiled store),
                               Config (the ceilings), RunOptions (one run's narrowing and
                               grants), Inspection (with details, an image's config lines) and
                               Extern, Error
@@ -603,7 +607,8 @@ crates/engine-oci/          the OCI engine of the function-oci runtime (package 
                             Firecracker, the kernel and the init (docs/one-pager-vm-snapshots.md),
                             the memo of made snapshots on the loaded Image (sandbox.rs
                             SnapshotMemo), a missing or refused one made again, a failed one
-                            costing the run a boot, one taken at warm-up for the default
+                            costing the run a boot and leaving no file behind, one kept
+                            under the scratch directory removed with its image, one taken at warm-up for the default
                             machine (Sandbox::prepare), and a run that finds one in the
                             making booting instead of waiting). A module
                             is an OCI image layout tar (layout.rs: index, platform manifest,
@@ -636,14 +641,15 @@ crates/oci-init/            the guest init (package and binary guestfn-init, on 
                             alone): src/main.rs is the entry point and src/linux.rs the init,
                             Linux alone (elsewhere the binary says so and exits, so the
                             workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
-                            on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
+                            on /dev/vda under a tmpfs overlay, a fresh /tmp (all of them
+                            mounted nosuid and nodev), vsock to the
                             host, loopback up, chroot, the process as the described user (never root, every capability set emptied and no_new_privs set before the exec), its
                             server once serving bridged to the host over a second vsock port, stdout/stderr relayed as frames, the exit with an OOM
                             check of /dev/kmsg, then power off. Static (musl), depends on
                             nothing in the image
 crates/oci-fixture/         the function the VM tests run (package and binary guestfn-guest-fixture, on
                             function-sdk-rust): echo, refuse, exit, stderr, flood, flood-exit, spin,
-                            grow, env, cwd, id, tmp, hostname, rng, silent
+                            grow, env, cwd, id, tmp, mounts, hostname, rng, silent
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package guestfn-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library
@@ -783,7 +789,7 @@ A guest's returned error becomes a fatal result on a fresh response, a panic in 
 
 ### Caches
 
-Three on-disk stores under `/tmp/guestfn-cache` (fixed; `store.rs`): `modules/<digest>` — every fetched blob, verified on read, never held in memory; `compiled/<engine::version()>/<digest>` — wasmtime artifacts, each with a `<digest>.mac` sidecar, the HMAC-SHA256 of the artifact under 32 bytes the process draws at startup (`main.rs`, `store.rs::with_key`): `path()` refuses and removes an entry whose sidecar is missing or another key's (a stale miss), so a planted artifact never loads and a restart compiles everything again, the volume keeping the fetched modules only (`version()` = the wasmtime crate version from Cargo.lock + OS/arch, the `rust-` prefix keeping it apart from any other runtime's directory; other version dirs reaped at startup once a day old); under `--enable-vm-snapshots` the OCI engine keeps a stored image's VM snapshot there too, a state file and a sparse memory file beside the root filesystem, signed and verified by the same key through the engine's `ArtifactStore` and counted by what the disk allocated (`docs/one-pager-vm-snapshots.md`); `manifests/<manifest digest>` — raw module manifests under their own digest (the layer's for OCI, `manifestDigest` for HTTP), verified on read, with the pinning-digest memo in memory (`resolver.rs`); beside them `tuf/<instance>/`, the verified TUF metadata and trusted root of `--cosign-trust-instance` (`trustroot.rs`), outside the sweep. In memory: compiled modules only, idle TTL 10 min, LRU-bounded by `--max-cached-modules`, single-flight loads with `--max-concurrent-compiles` slots, or nothing with `--enable-memory-cache=false`. Keys are digests stated in the Input; `--max-cache-size` LRU-sweeps the disk stores to nine tenths at startup and every ten minutes. Full design: `docs/one-pager-cache.md`.
+Three on-disk stores under `/tmp/guestfn-cache` (fixed; `store.rs`): `modules/<digest>` — every fetched blob, verified on read, never held in memory; `compiled/<engine::version()>/<digest>` — wasmtime artifacts, each with a `<digest>.mac` sidecar, the HMAC-SHA256 of the artifact under 32 bytes the process draws at startup (`main.rs`, `store.rs::with_key`): `path()` refuses and removes an entry whose sidecar is missing or another key's (a stale miss), so a planted artifact never loads and a restart compiles everything again, the volume keeping the fetched modules only (`version()` = the wasmtime crate version from Cargo.lock + OS/arch, the `rust-` prefix keeping it apart from any other runtime's directory; other version dirs reaped at startup once a day old); under `--enable-vm-snapshots` the OCI engine keeps a stored image's VM snapshot there too, a state file and a sparse memory file beside the root filesystem, signed and verified by the same key through the engine's `ArtifactStore` and counted by what the disk allocated (`docs/one-pager-vm-snapshots.md`); `manifests/<manifest digest>` — raw module manifests under their own digest (the layer's for OCI, `manifestDigest` for HTTP), verified on read, with the pinning-digest memo in memory (`resolver.rs`); beside them `tuf/<instance>/`, the verified TUF metadata and trusted root of `--cosign-trust-instance` (`trustroot.rs`), outside the sweep. In memory: compiled modules only, idle TTL 10 min, LRU-bounded by `--max-cached-modules`, single-flight loads with `--max-concurrent-compiles` slots, or nothing with `--enable-memory-cache=false`. Keys are digests stated in the Input; `--max-cache-size` LRU-sweeps the disk stores to nine tenths at startup and every ten minutes, leaving an entry an engine holds (the root filesystem of an image the OCI engine has in memory). Full design: `docs/one-pager-cache.md`.
 
 ### Readiness, warm-up and the run bound
 

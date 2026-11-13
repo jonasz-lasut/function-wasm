@@ -34,6 +34,10 @@ const ROOTFS_DEVICE: &str = "/dev/vda";
 const LOWER: &str = "/lower";
 const RW: &str = "/rw";
 const MERGED: &str = "/merged";
+/// The flags of every mount whose content the image or the process
+/// supplies: a device node there opens no device, and a setuid bit or a
+/// file capability changes nothing at an exec.
+const UNTRUSTED: libc::c_ulong = libc::MS_NODEV | libc::MS_NOSUID;
 /// The cgroup the process runs in, under the merged root's cgroup mount.
 const CGROUP: &str = "/sys/fs/cgroup/run";
 
@@ -289,8 +293,21 @@ fn mount_base() -> Result<(), String> {
     mount("devtmpfs", "/dev", "devtmpfs", 0, "")?;
     mount("proc", "/proc", "proc", 0, "")?;
     mount("sysfs", "/sys", "sysfs", 0, "")?;
-    mount(ROOTFS_DEVICE, LOWER, "squashfs", libc::MS_RDONLY, "")?;
-    mount("tmpfs", RW, "tmpfs", 0, "")?;
+    // Whatever comes from the image or from the process is mounted nodev
+    // and nosuid: the lower layer, the overlay's writable side, the
+    // overlay itself and /tmp below. The process has no capability and
+    // no_new_privs already, and the engine leaves device nodes out of the
+    // root filesystem it writes; the flags hold the same line in the
+    // kernel, whatever a root filesystem carries. The guest's devices are
+    // the kernel's own, in the devtmpfs bound at /dev.
+    mount(
+        ROOTFS_DEVICE,
+        LOWER,
+        "squashfs",
+        libc::MS_RDONLY | UNTRUSTED,
+        "",
+    )?;
+    mount("tmpfs", RW, "tmpfs", UNTRUSTED, "")?;
     for dir in ["/rw/upper", "/rw/work"] {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {dir}: {e}"))?;
     }
@@ -298,7 +315,7 @@ fn mount_base() -> Result<(), String> {
         "overlay",
         MERGED,
         "overlay",
-        0,
+        UNTRUSTED,
         &format!("lowerdir={LOWER},upperdir={RW}/upper,workdir={RW}/work"),
     )?;
     for dir in ["proc", "sys", "dev", "tmp"] {
@@ -316,7 +333,13 @@ fn mount_base() -> Result<(), String> {
     )?;
     // A fresh, writable /tmp whatever the image put there: the private
     // scratch space the contract promises.
-    mount("tmpfs", &format!("{MERGED}/tmp"), "tmpfs", 0, "mode=1777")?;
+    mount(
+        "tmpfs",
+        &format!("{MERGED}/tmp"),
+        "tmpfs",
+        UNTRUSTED,
+        "mode=1777",
+    )?;
     // The cgroup tree, for the process's memory cap.
     let cgroup = format!("{MERGED}/sys/fs/cgroup");
     std::fs::create_dir_all(&cgroup).map_err(|e| format!("cannot create {cgroup}: {e}"))?;

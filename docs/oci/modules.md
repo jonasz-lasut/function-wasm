@@ -50,7 +50,10 @@ The process runs as the image's user, which can't be root, with no Linux
 capability in any set and `no_new_privs` set, so a `setuid` binary or a file
 capability in the image grants it nothing. It sees `/tmp` writable and
 empty, and the rest of its root filesystem through an overlay the VM
-discards on exit, writable where its user may write. It sees
+discards on exit, writable where its user may write. The init mounts both
+`nosuid` and `nodev`: the kernel ignores a `setuid` bit and a file capability
+there, and a device node in the root filesystem or under `/tmp` doesn't
+open a device. The devices the process can open are the ones under `/dev`. It sees
 its own kernel, a loopback interface and no other, the host's clock and randomness, and
 the environment variables its manifest's `requires.env` bindings bound.
 The step credentials its manifest's `requires.credentials` names travel in

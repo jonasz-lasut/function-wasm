@@ -363,7 +363,11 @@ impl Firecracker {
         if let (Some(store), Some((state, mem))) = (spec.store, &names) {
             // Both or neither: a lone file is written over below.
             if let (Some(state), Some(mem)) = (store.sealed(state), store.sealed(mem)) {
-                let snapshot = Arc::new(Snapshot { state, mem });
+                let snapshot = Arc::new(Snapshot {
+                    state,
+                    mem,
+                    scratch: None,
+                });
                 *slot = Some(Arc::clone(&snapshot));
                 count(metrics::EVENT_HIT);
                 return Ok(Some(snapshot));
@@ -371,8 +375,8 @@ impl Firecracker {
         }
         count(metrics::EVENT_MISS);
         let started = Instant::now();
-        let (state_path, mem_path) = match (spec.store, &names) {
-            (Some(store), Some((state, mem))) => (store.begin(state)?, store.begin(mem)?),
+        let (state_path, mem_path, keep) = match (spec.store, &names) {
+            (Some(store), Some((state, mem))) => (store.begin(state)?, store.begin(mem)?, None),
             _ => {
                 let n = snapshots
                     .next
@@ -380,8 +384,13 @@ impl Firecracker {
                 let keep = spec.scratch.join(format!("snapshot-{n}"));
                 std::fs::create_dir_all(&keep)
                     .map_err(|e| format!("cannot create {}: {e}", keep.display()))?;
-                (keep.join("state"), keep.join("mem"))
+                (keep.join("state"), keep.join("mem"), Some(keep))
             }
+        };
+        let mut unfinished = Unfinished {
+            files: [state_path.clone(), mem_path.clone(), sparse_path(&mem_path)],
+            dir: keep.clone(),
+            finished: false,
         };
         let (dir, uds, ports) = Self::workdir(spec).map_err(|e| e.0)?;
         let listener = ports.control;
@@ -463,12 +472,15 @@ impl Firecracker {
             (Some(store), Some((state, mem))) => Snapshot {
                 state: store.seal(state)?,
                 mem: store.seal(mem)?,
+                scratch: None,
             },
             _ => Snapshot {
                 state: state_path,
                 mem: mem_path,
+                scratch: keep,
             },
         });
+        unfinished.finished = true;
         metrics::SNAPSHOT_DURATION.observe(started.elapsed().as_secs_f64());
         tracing::debug!(
             rootfs = %spec.rootfs.display(),
@@ -551,6 +563,41 @@ impl Firecracker {
     }
 }
 
+/// What a snapshot in the making has on disk, removed unless the snapshot
+/// was finished: the state and memory files where the VMM writes them and
+/// the memory file's sparse copy, and the scratch directory made for them
+/// when no store keeps them. A snapshot fails where the disk is full more
+/// than anywhere else, and a store's files under the marker of an
+/// unfinished write are no entries: no sweep sees them and nothing else
+/// removes them before the next start, while a dense memory file is as
+/// large as the VM's memory.
+struct Unfinished {
+    files: [PathBuf; 3],
+    dir: Option<PathBuf>,
+    finished: bool,
+}
+
+impl Drop for Unfinished {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        for file in &self.files {
+            let _ = std::fs::remove_file(file);
+        }
+        if let Some(dir) = &self.dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+/// Where `sparsify` writes a memory file's sparse copy before it takes the
+/// file's place. Appended, not swapped for the extension: in the store the
+/// path has the marker of an unfinished write, which the name has to keep.
+fn sparse_path(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.sparse", path.display()))
+}
+
 /// Rewrites a memory file sparse, in place: Firecracker writes every page
 /// of the VM's memory, and most of a just-booted guest's are zero. A hole
 /// reads as zeros, so the restore maps the same content from a file that
@@ -561,9 +608,7 @@ fn sparsify(path: &Path) -> std::io::Result<(u64, u64)> {
     const BLOCK: usize = 64 << 10;
     let mut source = std::fs::File::open(path)?;
     let len = source.metadata()?.len();
-    // Appended, not swapped for the extension: in the store the path has
-    // the marker of an unfinished write, which the name has to keep.
-    let sparse_path = PathBuf::from(format!("{}.sparse", path.display()));
+    let sparse_path = sparse_path(path);
     let mut sparse = std::fs::File::create(&sparse_path)?;
     let mut block = vec![0u8; BLOCK];
     let mut offset = 0u64;
@@ -1009,7 +1054,11 @@ mod tests {
         std::fs::write(&mem, b"").expect("mem");
         let memo = crate::sandbox::SnapshotMemo::default();
         let slot = memo.slot(64, 1);
-        *slot.write().expect("poisoned") = Some(Arc::new(Snapshot { state, mem }));
+        *slot.write().expect("poisoned") = Some(Arc::new(Snapshot {
+            state,
+            mem,
+            scratch: None,
+        }));
         let description = Description::default();
         let spec = VmSpec {
             kernel: dir.path(),
@@ -1036,6 +1085,136 @@ mod tests {
         let found = firecracker.snapshot(&snapshots, &spec, false);
         assert!(found.expect("a lookup").is_none());
         drop(making);
+    }
+
+    /// A store whose `begin` leaves a file where the VMM would write, as a
+    /// snapshot that failed partway has.
+    struct PartialStore(PathBuf);
+
+    impl crate::ArtifactStore for PartialStore {
+        fn begin(&self, name: &str) -> Result<PathBuf, String> {
+            let path = self.0.join(format!("{name}.put-keep"));
+            std::fs::write(&path, b"partly written").map_err(|e| e.to_string())?;
+            Ok(path)
+        }
+        fn seal(&self, name: &str) -> Result<PathBuf, String> {
+            Err(format!("{name} is never finished in this test"))
+        }
+        fn sealed(&self, _: &str) -> Option<PathBuf> {
+            None
+        }
+        fn used(&self, _: &Path) {}
+        fn hold(&self, _: &Path) {}
+        fn release(&self, _: &Path) {}
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("read_dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A snapshot that cannot be made leaves nothing behind: not the files
+    /// the VMM was writing in the store, which are no entries and which no
+    /// sweep would ever remove, nor the scratch directory made for them
+    /// where there is no store. The VMM here exits at once, so the guest
+    /// never connects.
+    #[test]
+    fn a_failed_snapshot_leaves_no_file_behind() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let scratch = dir.path().join("scratch");
+        let kept = dir.path().join("store");
+        for d in [&scratch, &kept] {
+            std::fs::create_dir(d).expect("mkdir");
+        }
+        let rootfs = kept.join("sha256-image");
+        std::fs::write(&rootfs, b"").expect("rootfs");
+        let store = PartialStore(kept.clone());
+        let description = Description::default();
+        let firecracker = Firecracker::with_snapshots("sleep".into());
+        let snapshots = Snapshots::default();
+        // Set here: the stand-in VMM is a name on PATH, not a file to hash.
+        snapshots
+            .fingerprint
+            .set("0011223344ff".to_string())
+            .expect("unset");
+        for store in [Some(&store as &dyn crate::ArtifactStore), None] {
+            let memo = crate::sandbox::SnapshotMemo::default();
+            let spec = VmSpec {
+                kernel: &rootfs,
+                initrd: &rootfs,
+                rootfs: &rootfs,
+                memory_mib: 64,
+                vcpus: 1,
+                description: &description,
+                request: b"",
+                deadline: Instant::now() + Duration::from_millis(50),
+                scratch: &scratch,
+                snapshots: &memo,
+                store,
+            };
+            let err = firecracker
+                .snapshot(&snapshots, &spec, true)
+                .expect_err("no VM, no snapshot");
+            assert_eq!(err, GUEST_NEVER_CONNECTED);
+            assert_eq!(names_in(&kept), ["sha256-image"]);
+            assert_eq!(names_in(&scratch), [] as [&str; 0]);
+        }
+    }
+
+    /// What the guard removes and what it leaves: every file of a snapshot
+    /// in the making, the sparse copy among them, and nothing once the
+    /// snapshot is finished.
+    #[test]
+    fn unfinished_snapshot_files_go_unless_finished() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let files = |finished: bool| {
+            let mem = dir.path().join("image.mem.put-keep");
+            let files = [dir.path().join("image.state.put-keep"), mem.clone(), {
+                sparse_path(&mem)
+            }];
+            for file in &files {
+                std::fs::write(file, b"partial").expect("write");
+            }
+            drop(Unfinished {
+                files,
+                dir: None,
+                finished,
+            });
+            names_in(dir.path()).len()
+        };
+        assert_eq!(files(true), 3);
+        assert_eq!(files(false), 0);
+    }
+
+    /// A snapshot kept under the engine's scratch directory goes with the
+    /// loaded image that remembers it; one in a store is the store's.
+    #[test]
+    fn a_scratch_snapshot_goes_with_its_image() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let keep = dir.path().join("snapshot-0");
+        std::fs::create_dir(&keep).expect("mkdir");
+        let (state, mem) = (keep.join("state"), keep.join("mem"));
+        let stored = dir.path().join("stored.state");
+        for file in [&state, &mem, &stored] {
+            std::fs::write(file, b"").expect("write");
+        }
+        let memo = crate::sandbox::SnapshotMemo::default();
+        *memo.slot(64, 1).write().expect("poisoned") = Some(Arc::new(Snapshot {
+            state,
+            mem,
+            scratch: Some(keep),
+        }));
+        *memo.slot(128, 1).write().expect("poisoned") = Some(Arc::new(Snapshot {
+            state: stored.clone(),
+            mem: stored,
+            scratch: None,
+        }));
+        drop(memo);
+        assert_eq!(names_in(dir.path()), ["stored.state"]);
     }
 
     /// The API client reads a success from the status line and puts the

@@ -50,7 +50,7 @@
 - [Design records](project/design-records.md)
   - [ABI v2 and the Rust host (Implemented, revision 0.9)](one-pager-abi-v2.md)
   - [Compiled-artifact cache key (Implemented, revision 1.0)](one-pager-cache-key.md)
-  - [Module and compiled artifacts cache (Implemented, revision 2.7)](one-pager-cache.md)
+  - [Module and compiled artifacts cache (Implemented, revision 2.8)](one-pager-cache.md)
   - [Module manifest (Implemented, revision 1.8)](one-pager-module-manifest.md)
   - [Module source schema (Implemented, revision 2.4)](one-pager-module-source-schema.md)
   - [Module configuration from the composite resource](one-pager-module-config.md)

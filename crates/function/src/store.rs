@@ -5,7 +5,9 @@
 //! verifying store recomputes the digest of what it reads and drops entries
 //! that do not match.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::SystemTime;
 
 use hmac::{KeyInit as _, Mac as _};
@@ -43,6 +45,11 @@ pub struct Store {
     /// compiled store's entries are native code wasmtime loads without a
     /// check of its own, so whatever this process didn't write is refused.
     key: Option<[u8; 32]>,
+    /// The entries an engine holds, by path, with how many holds each has:
+    /// the sweep leaves them. The lock is kept across the sweep's removal
+    /// of an entry, so a hold either precedes the removal and prevents it
+    /// or follows it and finds no file.
+    held: Mutex<HashMap<PathBuf, usize>>,
 }
 
 /// What a keyed lookup found.
@@ -70,6 +77,7 @@ impl Store {
             dir,
             verify,
             key: None,
+            held: Mutex::default(),
         })
     }
 
@@ -160,6 +168,17 @@ impl Store {
 
     fn entry_path(&self, digest: &str) -> PathBuf {
         self.dir.join(file_name(digest))
+    }
+
+    /// Removes the entry at path, with its sidecar, unless an engine holds
+    /// it. Reports whether the entry went.
+    fn remove_unless_held(&self, path: &Path) -> bool {
+        let held = self.held.lock().expect("poisoned");
+        if held.contains_key(path) || std::fs::remove_file(path).is_err() {
+            return false;
+        }
+        let _ = std::fs::remove_file(mac_path(path));
+        true
     }
 }
 
@@ -281,6 +300,25 @@ impl guestfn_engine::ArtifactStore for Store {
     fn used(&self, path: &Path) {
         touch(path);
     }
+
+    fn hold(&self, path: &Path) {
+        *self
+            .held
+            .lock()
+            .expect("poisoned")
+            .entry(path.to_path_buf())
+            .or_default() += 1;
+    }
+
+    fn release(&self, path: &Path) {
+        let mut held = self.held.lock().expect("poisoned");
+        if let Some(holds) = held.get_mut(path) {
+            *holds -= 1;
+            if *holds == 0 {
+                held.remove(path);
+            }
+        }
+    }
 }
 
 /// Where an entry is written before it is one.
@@ -313,26 +351,32 @@ pub fn bytes(store: &Store) -> u64 {
 /// max_bytes together - down to nine tenths of it, so consecutive sweeps do
 /// not each remove one entry. Entries are immutable and reproducible, so
 /// removal is always safe: the next request fetches or compiles again.
+/// The exception is an entry an engine holds (the root filesystem of an
+/// image in memory, which every run opens by its path): it counts toward
+/// the total and stays, so the stores end above the bound while held
+/// entries alone exceed it.
 /// Reports the bytes freed; max_bytes 0 sweeps nothing.
 pub fn sweep(stores: &[&Store], max_bytes: u64) -> u64 {
     if max_bytes == 0 {
         return 0;
     }
-    let mut all: Vec<Entry> = stores.iter().flat_map(|s| s.entries()).collect();
-    let total: u64 = all.iter().map(|e| e.size).sum();
+    let mut all: Vec<(&Store, Entry)> = stores
+        .iter()
+        .flat_map(|s| s.entries().into_iter().map(move |e| (*s, e)))
+        .collect();
+    let total: u64 = all.iter().map(|(_, e)| e.size).sum();
     if total <= max_bytes {
         return 0;
     }
     let target = max_bytes / 10 * 9;
-    all.sort_by_key(|e| e.last_used);
+    all.sort_by_key(|(_, e)| e.last_used);
     let mut remaining = total;
     let mut freed = 0;
-    for e in all {
+    for (store, e) in all {
         if remaining <= target {
             break;
         }
-        if std::fs::remove_file(&e.path).is_ok() {
-            let _ = std::fs::remove_file(mac_path(&e.path));
+        if store.remove_unless_held(&e.path) {
             remaining -= e.size;
             freed += e.size;
         }
@@ -575,6 +619,56 @@ mod tests {
         assert_eq!(freed, 400, "the least recently used entry goes");
         assert!(a.get("sha256:old").is_none());
         assert!(b.get("sha256:new").is_some());
+    }
+
+    /// An entry an engine holds stays whatever its age: the OCI engine
+    /// opens a loaded image's root filesystem by its path at every run.
+    /// The sweep takes the next entries in its place, and the held one
+    /// once every hold on it is released.
+    #[test]
+    fn the_sweep_leaves_a_held_entry() {
+        use guestfn_engine::ArtifactStore as _;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = Store::open_dir(dir.path(), false)
+            .expect("open")
+            .with_key([7; 32]);
+        let age = |path: &Path, secs: u64| {
+            let past = SystemTime::now() - std::time::Duration::from_secs(secs);
+            let times = std::fs::FileTimes::new()
+                .set_accessed(past)
+                .set_modified(past);
+            std::fs::File::options()
+                .append(true)
+                .open(path)
+                .expect("open")
+                .set_times(times)
+                .expect("times");
+        };
+        let oldest = s.put("sha256:oldest", &[0u8; 400]).expect("put");
+        let older = s.put("sha256:older", &[0u8; 400]).expect("put");
+        let newest = s.put("sha256:newest", &[0u8; 400]).expect("put");
+        age(&oldest, 7200);
+        age(&older, 3600);
+
+        // Held twice, as an entry two loads share.
+        s.hold(&oldest);
+        s.hold(&oldest);
+        assert_eq!(sweep(&[&s], 1000), 400, "the next least recently used");
+        assert!(oldest.exists() && mac_path(&oldest).exists());
+        assert!(!older.exists() && newest.exists());
+
+        // Held entries alone above the bound: everything else goes, and
+        // the held entry still counts.
+        assert_eq!(sweep(&[&s], 300), 400);
+        assert!(oldest.exists() && !newest.exists());
+        assert_eq!(sweep(&[&s], 300), 0);
+        assert_eq!(bytes(&s), 400);
+
+        s.release(&oldest);
+        assert_eq!(sweep(&[&s], 300), 0, "one hold is left");
+        s.release(&oldest);
+        assert_eq!(sweep(&[&s], 300), 400);
+        assert!(!oldest.exists() && !mac_path(&oldest).exists());
     }
 
     #[test]

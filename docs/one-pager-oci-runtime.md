@@ -254,6 +254,7 @@ release may include the published kernel is open
 root filesystem read-only, a vsock device, memory sized to the step's
 `limits.memory` plus the kernel's share, one vCPU (`--vm-vcpus`) and
 the deadline. The init mounts the root filesystem with a tmpfs overlay,
+both `nosuid` and `nodev` like the fresh `/tmp`,
 brings up loopback and reads the run's description over vsock (env, user,
 cwd, entrypoint and the proxy settings). It starts the process as the
 image's user, never root, and streams its output to the host as it arrives.

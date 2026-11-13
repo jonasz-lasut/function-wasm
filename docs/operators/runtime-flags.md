@@ -38,7 +38,7 @@ Compiled modules are cached in memory, and fetched modules and compiled artifact
 |---|---|---|---|---|
 | `--enable-memory-cache` | `ENABLE_MEMORY_CACHE` | `true` | no | keep compiled modules in memory between requests; the flag takes a value, and with `--enable-memory-cache=false` each request maps the compiled artifact from disk and releases it afterward |
 | `--max-cached-modules` | `MAX_CACHED_MODULES` | `0` (unbounded) | no | most compiled modules resident at once; past it the least recently used is dropped, freed once its last run ends |
-| `--max-cache-size` | `MAX_CACHE_SIZE` | `0` (unbounded) | no | MB the two on-disk caches may hold together; past it the runtime removes the least recently used entries, at startup and every ten minutes. Size the volume, or set this below its size |
+| `--max-cache-size` | `MAX_CACHE_SIZE` | `0` (unbounded) | no | MB the two on-disk caches may hold together; past it the runtime removes the least recently used entries, at startup and every ten minutes. function-oci keeps the root filesystem of an image for as long as the image is in memory, whatever the bound. Size the volume, or set this below its size |
 | `--warm-modules` | `WARM_MODULES` | unset | no | modules loaded before readiness; see [Readiness and warm-up](readiness.md) |
 
 ## Signing
