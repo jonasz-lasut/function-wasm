@@ -81,7 +81,7 @@ The principal comes from `--xr`. Without it, the zero principal matches no per-t
 
 `composeResource` isn't a capability. It's a ceiling on what any module may compose, judged over the response after the run. It applies only where a rule scopes it. Otherwise every module's output is applied unchanged.
 
-A `forbid` alone scopes the action and permits nothing. A ceiling needs a `permit` beside it. This policy refuses RBAC resources and Secrets and permits everything else:
+A `forbid` that specifies the action scopes it and permits nothing. A ceiling written that way needs a `permit` beside it. A `forbid` with an unconstrained action, `forbid (principal, action, resource) when { … };`, needs none: the layer refuses what it matches and permits the rest ([Cedar policy reference](cedar-policy.md)). This policy refuses RBAC resources and Secrets and permits everything else:
 
 ```cedar
 forbid (principal, action == Action::"composeResource", resource)

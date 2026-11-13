@@ -1079,6 +1079,35 @@ mod tests {
             "composed platform.example.org/WebApp (composite, modify), which the compositionPolicy does not permit (composeResource)"
         );
 
+        // A forbid of any action is a ceiling with no permit beside it, in
+        // either layer.
+        let no_secrets =
+            r#"forbid (principal, action, resource) when { resource == Kind::"core/Secret" };"#;
+        let comp = compile_composition_policy(no_secrets)
+            .expect("policy")
+            .expect("a policy");
+        assert!(compose_fenced(None, Some(&comp)));
+        assert!(
+            admit_compose(
+                &[pdb.clone(), deployment.clone()],
+                None,
+                Some(&comp),
+                &principal
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            admit_compose(std::slice::from_ref(&secret), None, Some(&comp), &principal)
+                .unwrap_err(),
+            r#"composed core/Secret "db-password" (add), which the compositionPolicy does not permit (composeResource)"#
+        );
+        let any = OperatorPolicy::new("test", no_secrets).expect("policy");
+        assert!(compose_fenced(Some(&any), None));
+        assert_eq!(
+            admit_compose(std::slice::from_ref(&secret), Some(&any), None, &principal).unwrap_err(),
+            r#"composed core/Secret "db-password" (add), which the operator policy (--sandbox-policy-file) does not permit (composeResource)"#
+        );
+
         // The operator's ceiling alone.
         assert!(compose_fenced(Some(&ceiling), None));
         assert!(

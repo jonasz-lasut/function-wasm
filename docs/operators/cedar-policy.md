@@ -229,9 +229,20 @@ The sandbox actions are scoped default-permit. The layer narrows `usePrivateTmp`
 that action with `action == Action::"setEnv"` or
 `action in [Action::"setEnv", ...]`. Until then the manifest and the operator
 decide that action alone. Once scoped, a matching `permit` and no matching
-`forbid` allow it. A rule with an unconstrained action
-(`permit (principal, action, resource);`) scopes nothing. A `forbid` alone scopes
-an action and permits nothing. A ceiling needs a `permit` beside it.
+`forbid` allow it. A `forbid` that specifies the action scopes it and permits
+nothing. A ceiling written that way needs a `permit` beside it.
+
+A rule with an unconstrained action behaves differently for each effect. A
+`permit (principal, action, resource);` scopes nothing. A `forbid` with an
+unconstrained action applies to every one of these actions and scopes none of
+them: where no other rule specifies the action, the layer refuses what the
+`forbid` matches and permits the rest. With this rule alone a module can
+neither compose a Secret nor ask Crossplane for one:
+
+```cedar
+forbid (principal, action, resource)
+when { resource == Kind::"core/Secret" };
+```
 
 `composeResource` and `requireResource` follow the same rule in both layers.
 They're the two actions where the operator layer isn't default-deny.
