@@ -46,7 +46,7 @@ The fields are:
 | `module.type` | string | Required. `OCI`, `HTTP` or `Path`. Exactly one of the object it names (`oci`, `http`, `path`) or `module.from` is set, and no object of another type may be present. Under `function-oci` only `OCI`: an OCI module is an image pulled from a registry, never a file or a URL |
 | `module.oci.ref` | string | OCI artifact reference pinned to its manifest digest, `registry/repo@sha256:…`, as `guestfn push` prints it. See [OCI references](#oci-references) |
 | `module.oci.credentials` | string | name of the pipeline-step credential used to pull. See [Pull credentials](#pull-credentials) |
-| `module.http.url` | string | the HTTP or HTTPS URL the module is downloaded from |
+| `module.http.url` | string | the HTTP or HTTPS URL the module is downloaded from. See [HTTP redirects](#http-redirects) |
 | `module.http.digest` | string | Required. `sha256:<hex>` of the module, which the runtime verifies the download against. A digest the runtime already caches is served without a download |
 | `module.http.manifestURL` | string | Optional. A `guestfn.yaml` served beside the module. Set with `module.http.manifestDigest`. Without it an HTTP source has no manifest and gets only the default sandbox. For a `module.from` `http` source, `compositionPolicy` `pullModule` fences it like the module URL |
 | `module.http.manifestDigest` | string | `sha256:<hex>` of the manifest, verified against it. Required with `module.http.manifestURL`, refused without it |
@@ -61,6 +61,17 @@ The fields are:
 | `config` | object | Optional. Where the module's configuration comes from. See [Configuration from the XR](#configuration-from-the-xr) |
 | `config.from` | string | Required within `config`. A field of the observed composite resource, under `spec.` or `status.`, that holds the configuration as an object |
 | `config.allowEmpty` | boolean | Optional, with `config.from`. An unset field (absent or `null`) runs the module unconfigured instead of a fatal result |
+
+## HTTP redirects
+
+A download of `module.http.url` or `module.http.manifestURL` follows up to ten
+redirects. A redirect within the origin of the URL, which is its scheme, host
+and port, is followed unchanged. A redirect to another host is followed only
+when that host resolves to an address outside the
+[default block list](http-egress.md#block-list-and-cidr-rules), and the runtime
+connects to it directly, without a proxy. A release asset that redirects to a
+public download host works. For a module behind a redirect to an address
+inside the cluster, specify the final URL in the Input instead.
 
 ## OCI references
 
