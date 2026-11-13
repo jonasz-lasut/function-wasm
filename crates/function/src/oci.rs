@@ -151,6 +151,27 @@ pub struct RegistryClient {
     token: std::sync::Mutex<Option<String>>,
 }
 
+/// The most a registry may answer a manifest request with: what the OCI
+/// distribution specification asks a registry to accept, and far above any
+/// manifest a module or an image has.
+pub const MAX_MANIFEST_SIZE: usize = 4 << 20;
+
+/// The most a token endpoint may answer with.
+const MAX_TOKEN_SIZE: usize = 1 << 20;
+
+/// Reads a response body of at most limit bytes; a longer one is refused,
+/// naming what was fetched, without being read to its end.
+fn read_bounded(body: impl Read, limit: usize, what: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    body.take((limit as u64).saturating_add(1))
+        .read_to_end(&mut out)
+        .map_err(|e| e.to_string())?;
+    if out.len() > limit {
+        return Err(format!("{what} exceeds the size limit of {limit} bytes"));
+    }
+    Ok(out)
+}
+
 impl RegistryClient {
     pub fn new(reference: &OciReference, auth: Option<Auth>) -> RegistryClient {
         // Docker Hub's API host differs from its policy-location name, and a
@@ -175,7 +196,7 @@ impl RegistryClient {
     /// pinned digest - the root of the trust chain. An image index is
     /// refused: the reference must name the manifest holding the module.
     pub fn manifest(&self, reference: &OciReference) -> Result<OciManifest, String> {
-        let m = self.manifest_by_digest(&reference.digest, usize::MAX)?;
+        let m = self.manifest_by_digest(&reference.digest, MAX_MANIFEST_SIZE)?;
         if m.media_type.contains("index")
             || m.media_type.contains("manifest.list")
             || !m.manifests.is_empty()
@@ -313,13 +334,7 @@ impl RegistryClient {
         if !rsp.status().is_success() {
             return Err(rsp.status().to_string());
         }
-        let mut out = Vec::new();
-        let mut limited = rsp.take((limit as u64).saturating_add(1));
-        limited.read_to_end(&mut out).map_err(|e| e.to_string())?;
-        if out.len() > limit {
-            return Err(format!("{what} exceeds the size limit of {limit} bytes"));
-        }
-        Ok(out)
+        read_bounded(rsp, limit, what)
     }
 
     /// Fetches a manifest by tag or digest and returns its raw bytes and
@@ -328,7 +343,7 @@ impl RegistryClient {
         let url = format!("{}/v2/{}/manifests/{reference}", self.base, self.repository);
         let accept = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json";
         let raw = self
-            .get(&url, Some(accept), usize::MAX)
+            .get_as(&url, Some(accept), MAX_MANIFEST_SIZE, "manifest")
             .map_err(|e| format!("cannot fetch manifest {reference}: {e}"))?;
         let digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(&raw)));
         Ok((raw, digest))
@@ -468,8 +483,9 @@ impl RegistryClient {
             #[serde(default)]
             access_token: String,
         }
-        let t: Token = rsp
-            .json()
+        let raw = read_bounded(rsp, MAX_TOKEN_SIZE, "the token response")
+            .map_err(|e| format!("cannot fetch registry token: {e}"))?;
+        let t: Token = serde_json::from_slice(&raw)
             .map_err(|e| format!("cannot parse registry token: {e}"))?;
         let token = if t.token.is_empty() {
             t.access_token
@@ -1066,6 +1082,45 @@ mod tests {
 
     fn reference(addr: &str, digest: &str) -> OciReference {
         parse_oci_reference(&format!("{addr}/example/greeter@{digest}")).expect("reference")
+    }
+
+    #[test]
+    fn a_response_over_its_limit_is_refused_unread() {
+        // An endless body: the read stops one byte past the limit.
+        let got = read_bounded(std::io::repeat(b'x'), 16, "manifest");
+        assert_eq!(
+            got,
+            Err("manifest exceeds the size limit of 16 bytes".to_string())
+        );
+        assert_eq!(
+            read_bounded(&b"0123456789abcdef"[..], 16, "manifest"),
+            Ok(b"0123456789abcdef".to_vec())
+        );
+    }
+
+    #[test]
+    fn a_manifest_over_the_limit_is_refused() {
+        let mut registry = crate::testing::registry::Registry::new();
+        let big = format!(
+            r#"{{"schemaVersion":2,"annotations":{{"pad":"{}"}}}}"#,
+            "x".repeat(MAX_MANIFEST_SIZE)
+        );
+        let digest = registry.manifest(big.as_bytes());
+        let addr = registry.serve();
+        let r = reference(&addr, &digest);
+        let client = RegistryClient::new(&r, None);
+        assert_eq!(
+            client.manifest(&r).err(),
+            Some(format!(
+                "cannot fetch manifest {digest}: manifest exceeds the size limit of 4194304 bytes"
+            ))
+        );
+        assert_eq!(
+            client.raw_manifest(&digest).err(),
+            Some(format!(
+                "cannot fetch manifest {digest}: manifest exceeds the size limit of 4194304 bytes"
+            ))
+        );
     }
 
     #[test]

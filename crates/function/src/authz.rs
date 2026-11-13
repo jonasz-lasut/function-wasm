@@ -60,6 +60,20 @@ const COMPOSITION_ACTIONS: &[&str] = &[
     ACTION_REQUIRE_RESOURCE,
 ];
 
+/// The composition layer's scoped default-permit actions: the ones it
+/// narrows only where a rule scopes them, and the ones a forbid with an
+/// unconstrained action applies to without a permit beside it. pullModule
+/// is not among them: it is default-deny, as spendCredential is for a
+/// composite-chosen source.
+const COMPOSITION_NARROWED: &[&str] = &[
+    ACTION_SPEND_CREDENTIAL,
+    ACTION_GRANT_EGRESS,
+    ACTION_USE_PRIVATE_TMP,
+    ACTION_SET_ENV,
+    ACTION_COMPOSE_RESOURCE,
+    ACTION_REQUIRE_RESOURCE,
+];
+
 /// The two actions judged over a module's response, which the operator
 /// layer decides scoped default-permit like the composition layer does.
 const OUTPUT_FENCE_ACTIONS: &[&str] = &[ACTION_COMPOSE_RESOURCE, ACTION_REQUIRE_RESOURCE];
@@ -188,6 +202,10 @@ pub struct CompositionPolicy {
     // scoped-default-permit reads: an author who wrote any rule for an
     // action has opted into narrowing it.
     scoped: HashMap<&'static str, bool>,
+    // The policies with everything permitted, present when a forbid leaves
+    // its action unconstrained: what an action no rule names is judged
+    // under, so that such a forbid applies to it.
+    open: Option<PolicySet>,
 }
 
 type CompositionCacheEntry = Result<Option<Arc<CompositionPolicy>>, String>;
@@ -227,19 +245,40 @@ impl CompositionPolicy {
             let hit = policy.policies().any(|p| policy_scopes_action(p, action));
             scoped.insert(*action, hit);
         }
-        Ok(CompositionPolicy { policy, scoped })
+        let open = open_under_forbids(&policy)?;
+        Ok(CompositionPolicy {
+            policy,
+            scoped,
+            open,
+        })
     }
 
-    /// Whether any of the policy's rules scope action - the composition
-    /// layer's opt-in signal: an action no rule scopes is not narrowed by
-    /// this layer.
+    /// Whether the layer judges action at all - its opt-in signal: a rule
+    /// names the action, or, for an action the layer narrows, a forbid
+    /// leaves its action unconstrained. An action neither holds for is not
+    /// narrowed by this layer.
     pub fn scopes_action(&self, action: &str) -> bool {
+        self.names_action(action) || (self.open.is_some() && COMPOSITION_NARROWED.contains(&action))
+    }
+
+    fn names_action(&self, action: &str) -> bool {
         self.scoped.get(action).copied().unwrap_or_default()
+    }
+
+    /// The policies a narrowed action is judged under: the layer's own
+    /// where a rule names the action (a permit must match), and otherwise
+    /// the layer with everything permitted, so that only its forbids with
+    /// an unconstrained action decide.
+    fn narrowing(&self, action: &str) -> &PolicySet {
+        match &self.open {
+            Some(open) if !self.names_action(action) => open,
+            _ => &self.policy,
+        }
     }
 
     pub fn permits_private_tmp(&self, principal: &Principal) -> bool {
         decide(
-            &self.policy,
+            self.narrowing(ACTION_USE_PRIVATE_TMP),
             principal,
             ACTION_USE_PRIVATE_TMP,
             uid_json("Capability", "privateTmp"),
@@ -250,7 +289,7 @@ impl CompositionPolicy {
 
     pub fn permits_env(&self, principal: &Principal, keys: &[String]) -> bool {
         decide(
-            &self.policy,
+            self.narrowing(ACTION_SET_ENV),
             principal,
             ACTION_SET_ENV,
             uid_json("Capability", "env"),
@@ -262,7 +301,7 @@ impl CompositionPolicy {
     pub fn permits_egress(&self, principal: &Principal, g: &EgressGrant) -> bool {
         let (resource, entities) = host_entities(g);
         decide(
-            &self.policy,
+            self.narrowing(ACTION_GRANT_EGRESS),
             principal,
             ACTION_GRANT_EGRESS,
             resource,
@@ -308,8 +347,16 @@ impl CompositionPolicy {
                 json!({ "__entity": { "type": "Repository", "id": location } }),
             );
         }
+        // With no repository in play the credential is a sandbox grant,
+        // which the layer narrows; for a composite-chosen source it is
+        // fenced default-deny, under the layer's own policies alone.
+        let policies = if location.is_empty() {
+            self.narrowing(ACTION_SPEND_CREDENTIAL)
+        } else {
+            &self.policy
+        };
         decide(
-            &self.policy,
+            policies,
             principal,
             ACTION_SPEND_CREDENTIAL,
             resource,
@@ -324,7 +371,7 @@ impl CompositionPolicy {
     pub fn permits_compose(&self, principal: &Principal, change: &Change) -> bool {
         let (resource, entities) = kind_entities(&change.group, &change.kind);
         decide(
-            &self.policy,
+            self.narrowing(ACTION_COMPOSE_RESOURCE),
             principal,
             ACTION_COMPOSE_RESOURCE,
             resource,
@@ -340,7 +387,7 @@ impl CompositionPolicy {
     pub fn permits_require(&self, principal: &Principal, r: &Requirement) -> bool {
         let (resource, entities) = kind_entities(&r.group, &r.kind);
         decide(
-            &self.policy,
+            self.narrowing(ACTION_REQUIRE_RESOURCE),
             principal,
             ACTION_REQUIRE_RESOURCE,
             resource,
@@ -360,6 +407,10 @@ pub struct OperatorPolicy {
     // Which of the output-fence actions any rule scopes: the operator layer
     // narrows a module's output, and its reads, only where it says so.
     scoped: HashMap<&'static str, bool>,
+    // The policies with everything permitted, present when a forbid leaves
+    // its action unconstrained: what an action no rule names is judged
+    // under, so that such a forbid applies to it.
+    open: Option<PolicySet>,
 }
 
 impl crate::cosign::SignerPolicy for OperatorPolicy {
@@ -390,17 +441,37 @@ impl OperatorPolicy {
             let hit = policy.policies().any(|p| policy_scopes_action(p, action));
             scoped.insert(*action, hit);
         }
-        Ok(OperatorPolicy { policy, scoped })
+        let open = open_under_forbids(&policy)
+            .map_err(|e| format!("cannot compile the operator policy {name}: {e}"))?;
+        Ok(OperatorPolicy {
+            policy,
+            scoped,
+            open,
+        })
     }
 
     /// Whether any rule scopes one of the output-fence actions - the
     /// operator layer's opt-in to judging a module's response. Unscoped, the
     /// layer does not narrow a module's output or its reads: unlike a
     /// capability, which no policy file means no grant for, neither was
-    /// gated before its fence existed. False for every other action, which
-    /// the layer decides default-deny.
+    /// gated before its fence existed. A forbid that leaves its action
+    /// unconstrained opts the layer in too, and is then all that decides.
+    /// False for every other action, which the layer decides default-deny.
     pub fn scopes_action(&self, action: &str) -> bool {
+        self.names_action(action) || (self.open.is_some() && OUTPUT_FENCE_ACTIONS.contains(&action))
+    }
+
+    fn names_action(&self, action: &str) -> bool {
         self.scoped.get(action).copied().unwrap_or_default()
+    }
+
+    /// As the composition layer's: the layer's own policies where a rule
+    /// names the fence action, otherwise its forbids alone.
+    fn narrowing(&self, action: &str) -> &PolicySet {
+        match &self.open {
+            Some(open) if !self.names_action(action) => open,
+            _ => &self.policy,
+        }
     }
 
     /// Whether any rule scopes composeResource.
@@ -418,7 +489,7 @@ impl OperatorPolicy {
     pub fn permits_require(&self, principal: &Principal, r: &Requirement) -> bool {
         let (resource, entities) = kind_entities(&r.group, &r.kind);
         decide(
-            &self.policy,
+            self.narrowing(ACTION_REQUIRE_RESOURCE),
             principal,
             ACTION_REQUIRE_RESOURCE,
             resource,
@@ -432,7 +503,7 @@ impl OperatorPolicy {
     pub fn permits_compose(&self, principal: &Principal, change: &Change) -> bool {
         let (resource, entities) = kind_entities(&change.group, &change.kind);
         decide(
-            &self.policy,
+            self.narrowing(ACTION_COMPOSE_RESOURCE),
             principal,
             ACTION_COMPOSE_RESOURCE,
             resource,
@@ -743,6 +814,31 @@ fn collect_repository_names(node: &Value, names: &mut std::collections::BTreeSet
         }
         _ => {}
     }
+}
+
+/// The policy set with one more rule, a permit of everything, when a forbid
+/// in it leaves its action unconstrained, and None otherwise. Judged under
+/// it, an action no rule names is refused exactly where such a forbid
+/// matches: the forbid applies without turning the layer default-deny for
+/// that action, which naming the action does.
+fn open_under_forbids(policy: &PolicySet) -> Result<Option<PolicySet>, String> {
+    let unconstrained = policy.policies().any(|p| {
+        p.effect() == cedar_policy::Effect::Forbid
+            && p.to_json().is_ok_and(|v| v["action"]["op"] == "All")
+    });
+    if !unconstrained {
+        return Ok(None);
+    }
+    let permit = Policy::parse(
+        Some(cedar_policy::PolicyId::new(
+            "guestfn.permit-what-no-forbid-matches",
+        )),
+        "permit (principal, action, resource);",
+    )
+    .map_err(|e| e.to_string())?;
+    let mut open = policy.clone();
+    open.add(permit).map_err(|e| e.to_string())?;
+    Ok(Some(open))
 }
 
 /// Whether a policy's action scope names id, in either the
@@ -1238,6 +1334,84 @@ mod tests {
             &principal,
             &change("apps", "Deployment", ChangeKind::Add, "d")
         ));
+    }
+
+    #[test]
+    fn a_forbid_of_any_action_applies_to_what_no_rule_names() {
+        let doc =
+            r#"forbid (principal, action, resource) when { resource == Kind::"core/Secret" };"#;
+        let principal = Principal::default();
+        let secret = change("core", "Secret", ChangeKind::Add, "s");
+        let deployment = change("apps", "Deployment", ChangeKind::Add, "d");
+        let wants_secret = requirement("core", "Secret", labels(&[("a", "b")]));
+        let wants_config = requirement("core", "ConfigMap", labels(&[("a", "b")]));
+
+        // The layer judges both fences, permits what the forbid does not
+        // match and stays default-permit for the rest.
+        let comp = composition(doc);
+        assert!(comp.scopes_action(ACTION_COMPOSE_RESOURCE));
+        assert!(comp.scopes_action(ACTION_REQUIRE_RESOURCE));
+        assert!(!comp.scopes_action(ACTION_PULL_MODULE));
+        assert!(!comp.permits_compose(&principal, &secret));
+        assert!(comp.permits_compose(&principal, &deployment));
+        assert!(!comp.permits_require(&principal, &wants_secret));
+        assert!(comp.permits_require(&principal, &wants_config));
+        assert!(comp.permits_private_tmp(&principal));
+        assert!(comp.permits_env(&principal, &["TOKEN".to_string()]));
+        // The fences of a composite-chosen source stay default-deny.
+        assert!(!comp.permits_pull_module(&principal, "ghcr.io/acme/x"));
+        assert!(!comp.permits_spend_credential(&principal, "pull", "ghcr.io/acme/x"));
+
+        let operator = OperatorPolicy::new("test", doc).expect("policy");
+        assert!(operator.scopes_compose_resource());
+        assert!(operator.scopes_require_resource());
+        assert!(!operator.permits_compose(&principal, &secret));
+        assert!(operator.permits_compose(&principal, &deployment));
+        assert!(!operator.permits_require(&principal, &wants_secret));
+        assert!(operator.permits_require(&principal, &wants_config));
+        // A capability is still granted by a permit alone.
+        assert!(!operator.permits_private_tmp(&principal));
+    }
+
+    #[test]
+    fn a_forbid_of_any_action_narrows_the_sandbox_actions() {
+        let comp = composition(
+            r#"forbid (principal, action, resource) when { resource == Credential::"cmdb" };"#,
+        );
+        let principal = Principal::default();
+        assert!(comp.scopes_action(ACTION_SPEND_CREDENTIAL));
+        assert!(!comp.permits_spend_credential(&principal, "cmdb", ""));
+        assert!(comp.permits_spend_credential(&principal, "other", ""));
+    }
+
+    #[test]
+    fn a_rule_naming_the_action_decides_beside_a_forbid_of_any() {
+        // Named, the action needs a permit; the forbid of any action still
+        // wins over it.
+        let comp = composition(
+            r#"forbid (principal, action, resource) when { resource == Kind::"core/Secret" };
+               permit (principal, action == Action::"composeResource", resource in Group::"core");"#,
+        );
+        let principal = Principal::default();
+        assert!(!comp.permits_compose(&principal, &change("core", "Secret", ChangeKind::Add, "s")));
+        assert!(comp.permits_compose(
+            &principal,
+            &change("core", "ConfigMap", ChangeKind::Add, "c")
+        ));
+        assert!(!comp.permits_compose(
+            &principal,
+            &change("apps", "Deployment", ChangeKind::Add, "d")
+        ));
+    }
+
+    #[test]
+    fn a_permit_of_any_action_scopes_nothing() {
+        let comp = composition("permit (principal, action, resource);");
+        assert!(!comp.scopes_action(ACTION_COMPOSE_RESOURCE));
+        assert!(!comp.scopes_action(ACTION_SET_ENV));
+        let operator =
+            OperatorPolicy::new("test", "permit (principal, action, resource);").expect("policy");
+        assert!(!operator.scopes_compose_resource());
     }
 
     #[test]
