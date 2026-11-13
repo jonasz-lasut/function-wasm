@@ -1114,7 +1114,6 @@ jobs:
   # is installed by hand here. On failure the cluster's state and the
   # suite's own logs are uploaded.
   e2e:
-    name: ${{ format('e2e ({0}{1})', matrix.profile, matrix.crossplane && format(', crossplane {0}', matrix.crossplane) || '') }}
     runs-on: ubuntu-26.04
     needs:
       - build-tools
