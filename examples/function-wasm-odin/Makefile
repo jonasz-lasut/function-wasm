@@ -1,4 +1,4 @@
-# The hello guest in Odin on ABI v2: needs odin (dev-2026-10) and zig (0.16)
+# The hello guest in Odin on ABI v2: needs odin (dev-2026-11) and zig (0.16)
 # on PATH - odin compiles the guest to a wasm32 object, zig cc compiles the C
 # half (build.zig fetches nanopb) and links the core module - and guestfn,
 # which comes from this repository (cargo run) and wraps that core module into

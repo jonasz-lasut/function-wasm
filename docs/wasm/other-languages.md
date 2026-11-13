@@ -118,7 +118,7 @@ WIT and the glue), so copy the example to start from it.
   in the .NET SDK container on macOS, which has no NativeAOT-LLVM compiler.
 - **Odin**:
   [`examples/function-wasm-odin`](https://github.com/jonasz-lasut/guestfn/tree/main/examples/function-wasm-odin),
-  ~71 KB, built with Odin dev-2026-10 and Zig 0.16 by `make build`. It reuses
+  ~71 KB, built with Odin dev-2026-11 and Zig 0.16 by `make build`. It reuses
   the C example's bindings, nanopb codec, WIT and proto. Odin compiles the
   guest to an object, `zig cc` links it with the C half, and `guestfn build`
   treats the project as a `c` one and wraps it without an adapter. `make test`

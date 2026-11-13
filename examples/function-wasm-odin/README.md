@@ -53,7 +53,7 @@ wasi-sdk, no wasm-tools, no adapter download. There is no `guestfn init
   C half compiled for the host (`zig build test`): the function with a fake
   host, and one request through nanopb's decode, run and encode.
 
-Toolchain: Odin `dev-2026-10` (`brew install odin`, or the
+Toolchain: Odin `dev-2026-11` (`brew install odin`, or the
 [release](https://github.com/odin-lang/Odin/releases) for your platform on
 PATH) and Zig 0.16. The Odin compile takes 0.2 s; a cold `guestfn build`
 (the C half, the link, the wrap) about 7 s, a warm one 0.2 s; the runtime
