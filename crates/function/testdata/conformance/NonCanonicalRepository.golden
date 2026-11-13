@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+function validate: operator policy testdata/validate/noncanonical-repository.cedar: Repository::"GHCR.IO/secure" is not the canonical name of that repository; write Repository::"ghcr.io/secure"

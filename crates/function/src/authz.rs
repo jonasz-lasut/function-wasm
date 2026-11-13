@@ -221,6 +221,7 @@ impl CompositionPolicy {
         let policy: PolicySet = doc
             .parse()
             .map_err(|e| format!("cannot compile the compositionPolicy as Cedar: {e}"))?;
+        check_repository_names(&policy)?;
         let mut scoped = HashMap::new();
         for action in COMPOSITION_ACTIONS {
             let hit = policy.policies().any(|p| policy_scopes_action(p, action));
@@ -383,6 +384,7 @@ impl OperatorPolicy {
         let policy: PolicySet = doc
             .parse()
             .map_err(|e| format!("cannot compile the operator policy {name}: {e}"))?;
+        check_repository_names(&policy).map_err(|e| format!("operator policy {name}: {e}"))?;
         let mut scoped = HashMap::new();
         for action in OUTPUT_FENCE_ACTIONS {
             let hit = policy.policies().any(|p| policy_scopes_action(p, action));
@@ -664,6 +666,71 @@ impl IpPrefix {
         .masked()
         .addr
             == self.addr
+    }
+}
+
+/// Refuses a policy naming a Repository in a spelling no module's location
+/// ever has: the runtime reads every reference's registry into its
+/// canonical form (location.rs), so a rule over another spelling would
+/// match nothing - loudly for a permit, silently for a requireSignature or
+/// a forbid. The names are the entity literals of the policies' stable
+/// JSON (EST) form, in the scope and in the conditions alike; Cedar has no
+/// way to build an entity from a string, so a literal is the only way a
+/// policy names one. The first offender in name order, so the refusal does
+/// not depend on the order of the rules.
+fn check_repository_names(policy: &PolicySet) -> Result<(), String> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut read = |est: Result<Value, String>| -> Result<(), String> {
+        collect_repository_names(&est?, &mut names);
+        Ok(())
+    };
+    for p in policy.policies() {
+        read(p.to_json().map_err(|e| format!("cannot read policy: {e}")))?;
+    }
+    for t in policy.templates() {
+        read(t.to_json().map_err(|e| format!("cannot read policy: {e}")))?;
+    }
+    for name in names {
+        match crate::location::canonical_repository_name(&name) {
+            Ok(canonical) if canonical == name => {}
+            Ok(canonical) => {
+                return Err(format!(
+                    r#"Repository::{name:?} is not the canonical name of that repository; write Repository::{canonical:?}"#
+                ));
+            }
+            Err(registry) => {
+                return Err(format!(
+                    r#"Repository::{name:?} does not name a repository: registry {registry:?} is not a valid registry host (a host name or an IP address with an optional port, no user information)"#
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Collects the id of every Repository entity reference under an EST node:
+/// {"type": "Repository", "id": "..."}, the shape of an entity in a scope
+/// ("entity", "entities") and of a literal in an expression ("__entity").
+fn collect_repository_names(node: &Value, names: &mut std::collections::BTreeSet<String>) {
+    match node {
+        Value::Object(fields) => {
+            if fields.len() == 2
+                && fields.get("type").and_then(Value::as_str) == Some("Repository")
+                && let Some(id) = fields.get("id").and_then(Value::as_str)
+            {
+                names.insert(id.to_string());
+                return;
+            }
+            for child in fields.values() {
+                collect_repository_names(child, names);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                collect_repository_names(child, names);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1396,6 +1463,97 @@ mod tests {
         assert!(!p.permits_spend_credential(&principal, "other", "ghcr.io/example/greeter"));
         // An env binding spends with no repository: the condition cannot match.
         assert!(!p.permits_spend_credential(&principal, "regcred", ""));
+    }
+
+    #[test]
+    fn a_policy_names_a_repository_canonically_or_is_refused() {
+        fn refusal(written: &str, canonical: &str) -> Option<String> {
+            Some(format!(
+                r#"Repository::"{written}" is not the canonical name of that repository; write Repository::"{canonical}""#
+            ))
+        }
+        let cases: Vec<(&str, Option<String>)> = vec![
+            ("ghcr.io/acme/prod", None),
+            ("ghcr.io/acme/", None),
+            ("ghcr.io", None),
+            ("index.docker.io/library", None),
+            ("registry-1.docker.io/acme", None),
+            // An explicit port other than the default is part of the name.
+            ("registry.e2e.svc:5000/e2e", None),
+            ("ghcr.io:8443/acme", None),
+            ("localhost:5000", None),
+            ("127.0.0.1:5000/example", None),
+            // An HTTP location is not a registry reference: untouched.
+            ("https://example.com/modules", None),
+            ("https://Example.COM:443/modules", None),
+            ("http://localhost:8080/", None),
+            // No registry part to read: untouched.
+            ("acme/prod", None),
+            ("GHCR.IO/acme/prod", refusal("GHCR.IO/acme/prod", "ghcr.io/acme/prod")),
+            ("ghcr.io:443/acme/prod", refusal("ghcr.io:443/acme/prod", "ghcr.io/acme/prod")),
+            ("ghcr.io./acme/prod", refusal("ghcr.io./acme/prod", "ghcr.io/acme/prod")),
+            ("Ghcr.Io.:443/acme/", refusal("Ghcr.Io.:443/acme/", "ghcr.io/acme/")),
+            ("GHCR.IO", refusal("GHCR.IO", "ghcr.io")),
+            ("ghcr.io:443", refusal("ghcr.io:443", "ghcr.io")),
+            ("localhost:80/example", refusal("localhost:80/example", "localhost/example")),
+            ("[0:0:0:0:0:0:0:1]:5000/x", refusal("[0:0:0:0:0:0:0:1]:5000/x", "[::1]:5000/x")),
+            ("docker.io/library", refusal("docker.io/library", "index.docker.io/library")),
+            ("docker.io", refusal("docker.io", "index.docker.io")),
+            (
+                "user@ghcr.io/acme",
+                Some(
+                    r#"Repository::"user@ghcr.io/acme" does not name a repository: registry "user@ghcr.io" is not a valid registry host (a host name or an IP address with an optional port, no user information)"#
+                        .to_string(),
+                ),
+            ),
+        ];
+        // Where a policy can name a repository: the resource scope (== and
+        // in), a when and an unless condition, a set, and
+        // spendCredential's context.
+        let shapes = [
+            r#"permit (principal, action == Action::"pullModule", resource in Repository::"NAME");"#,
+            r#"forbid (principal, action == Action::"pullModule", resource == Repository::"NAME");"#,
+            r#"permit (principal, action == Action::"pullModule", resource) when { resource in Repository::"NAME" };"#,
+            r#"permit (principal, action == Action::"pullModule", resource) unless { resource in [Repository::"ghcr.io/other", Repository::"NAME"] };"#,
+            r#"permit (principal, action == Action::"spendCredential", resource) when { context has repository && context.repository in Repository::"NAME" };"#,
+        ];
+        let operator_shapes = [
+            r#"permit (principal, action == Action::"requireSignature", resource) when { resource in Repository::"NAME" };"#,
+            r#"permit (principal, action == Action::"requireSignature", resource in Repository::"NAME");"#,
+            r#"permit (principal, action == Action::"trustSigner", resource in Repository::"NAME") when { context.issuer == "https://issuer.example" };"#,
+            r#"forbid (principal, action == Action::"spendCredential", resource) when { context has repository && context.repository == Repository::"NAME" };"#,
+        ];
+        for (name, want) in &cases {
+            for shape in shapes {
+                let doc = shape.replace("NAME", name);
+                assert_eq!(CompositionPolicy::new(&doc).err(), want.clone(), "{doc}");
+            }
+            for shape in operator_shapes {
+                let doc = shape.replace("NAME", name);
+                assert_eq!(
+                    OperatorPolicy::new("policy.cedar", &doc).err(),
+                    want.as_ref()
+                        .map(|e| format!("operator policy policy.cedar: {e}")),
+                    "{doc}"
+                );
+            }
+        }
+        // A policy naming no repository, or another entity type by the
+        // same text, is not this check's.
+        assert!(
+            OperatorPolicy::new(
+                "policy.cedar",
+                r#"permit (principal, action == Action::"grantEgress", resource in HostPattern::"GHCR.IO");"#
+            )
+            .is_ok()
+        );
+        // The first offender in name order, whatever the order of the rules.
+        let two = r#"permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io:443/b");
+                     permit (principal, action == Action::"pullModule", resource in Repository::"GHCR.IO/a");"#;
+        assert_eq!(
+            CompositionPolicy::new(two).err(),
+            refusal("GHCR.IO/a", "ghcr.io/a")
+        );
     }
 
     #[test]

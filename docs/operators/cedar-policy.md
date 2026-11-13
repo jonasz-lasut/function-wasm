@@ -108,8 +108,8 @@ it. The runtime reads the registry part of every OCI reference into its canonica
 form before it builds the `Repository` entity, so a rule over
 `Repository::"ghcr.io/acme/prod"` covers `GHCR.IO/acme/prod/m`,
 `ghcr.io:443/acme/prod/m` and `ghcr.io./acme/prod/m` alike. Write the
-canonical form in a rule. A rule written with another spelling doesn't match
-any module.
+canonical form in a rule. A rule written with another spelling wouldn't match
+any module. The runtime refuses a policy that has one.
 
 - The host is lowercase.
 - The host has no trailing dot.
@@ -132,6 +132,32 @@ an optional port. It refuses user information (`user@ghcr.io`), a character
 a host can't contain, an empty label, and a shorthand IP address such as
 `127.1`. The refusals, the logs and `function validate` print a module's
 canonical reference.
+
+The runtime checks every `Repository` a policy names when it loads the
+policy, in the scope and in the conditions, and refuses a name whose registry
+part isn't canonical:
+
+```text
+Repository::"GHCR.IO/acme/prod" is not the canonical name of that repository; write Repository::"ghcr.io/acme/prod"
+```
+
+The check reads the registry part alone, so a prefix such as
+`Repository::"ghcr.io"` or `Repository::"ghcr.io/acme/"` passes, and
+`Repository::"docker.io/library"` is refused in favor of
+`Repository::"index.docker.io/library"`. A registry part that isn't a host
+is refused too:
+
+```text
+Repository::"user@ghcr.io/acme" does not name a repository: registry "user@ghcr.io" is not a valid registry host (a host name or an IP address with an optional port, no user information)
+```
+
+An operator policy with such a name stops the runtime at startup, and
+`function validate` exits with status 2, both with `operator policy <file>:`
+before the sentence. A `compositionPolicy` with one is a fatal result on
+every request of its step and a refusal in `function validate`, both with
+`compositionPolicy is invalid:` before it. The check doesn't read the
+location of an HTTP source (`scheme://host/path`), and it doesn't read a
+name whose first component has no dot or port and isn't `localhost`.
 
 ## Actions
 

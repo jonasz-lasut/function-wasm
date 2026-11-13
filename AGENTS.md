@@ -174,7 +174,11 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               both (#208: the same Kind-in-Group entities, context
                               name/labels/namespace present only where the selector sets them,
                               scoped default-permit in both layers - scopes_require_resource);
-                              refusal strings stay in the callers
+                              a policy naming a Repository whose registry part is not
+                              canonical (location::canonical_repository_name over the EST's
+                              entity literals, scope and conditions) is refused when compiled,
+                              in both layers, so a cached compositionPolicy already passed;
+                              the other refusal strings stay in the callers
   src/require.rs              the read fence's selectors: every ResourceSelector of a
                               response's requirements (resources, then the deprecated
                               extra_resources, each in key order) as a Requirement - kind in

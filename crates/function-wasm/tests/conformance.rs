@@ -52,6 +52,17 @@ fn cases() -> Vec<Case> {
             ],
             stdin: "",
         },
+        // A policy naming a repository in a spelling no module location
+        // has is refused at load, as a malformed one is.
+        Case {
+            name: "NonCanonicalRepository",
+            args: &[
+                "testdata/validate/ok.yaml",
+                "--sandbox-policy-file",
+                "testdata/validate/noncanonical-repository.cedar",
+            ],
+            stdin: "",
+        },
         Case {
             name: "FromWithoutXR",
             args: &["testdata/validate/from.yaml"],

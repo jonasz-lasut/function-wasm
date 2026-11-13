@@ -239,6 +239,32 @@ pub fn canonical_registry(registry: &str) -> Option<String> {
     })
 }
 
+/// The canonical spelling of a repository name as a policy writes one: a
+/// location or a path-boundary prefix of one, down to the registry alone.
+/// Only the registry part is read, through canonical_registry - the one
+/// definition the reference parser uses - so a policy names a repository
+/// the way the runtime names a module's. Err carries a registry part that
+/// is no host. Left as written: an HTTP location (scheme://host/path),
+/// whose host is not a registry, and a name whose first component does
+/// not read as a registry, which no rule here can complete.
+pub fn canonical_repository_name(name: &str) -> Result<String, String> {
+    if name.contains("://") {
+        return Ok(name.to_string());
+    }
+    let (first, rest) = match name.split_once('/') {
+        Some((first, rest)) => (first, Some(rest)),
+        None => (name, None),
+    };
+    if !reads_as_registry(first) {
+        return Ok(name.to_string());
+    }
+    let registry = canonical_registry(first).ok_or_else(|| first.to_string())?;
+    Ok(match rest {
+        Some(rest) => format!("{registry}/{rest}"),
+        None => registry,
+    })
+}
+
 /// Splits host[:port], the host of an IPv6 address kept in its brackets.
 fn split_port(registry: &str) -> (&str, Option<&str>) {
     if registry.starts_with('[') {
@@ -661,6 +687,41 @@ mod tests {
                 parse_any_reference(&r).map(|reference| reference.registry),
                 Err(format!("cannot parse reference {r:?}")),
                 "{r}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_repository_name_is_canonical_in_its_registry_part_alone() {
+        let cases = [
+            ("ghcr.io", Ok("ghcr.io")),
+            ("ghcr.io/acme", Ok("ghcr.io/acme")),
+            ("ghcr.io/acme/", Ok("ghcr.io/acme/")),
+            ("GHCR.IO", Ok("ghcr.io")),
+            ("GHCR.IO/acme/prod", Ok("ghcr.io/acme/prod")),
+            ("ghcr.io:443/acme/", Ok("ghcr.io/acme/")),
+            ("ghcr.io./acme", Ok("ghcr.io/acme")),
+            ("ghcr.io:8443/acme", Ok("ghcr.io:8443/acme")),
+            ("docker.io/library", Ok("index.docker.io/library")),
+            ("index.docker.io/library", Ok("index.docker.io/library")),
+            ("registry-1.docker.io/acme", Ok("registry-1.docker.io/acme")),
+            // The repository path is the policy author's: not read.
+            ("ghcr.io/Acme/../x", Ok("ghcr.io/Acme/../x")),
+            // Not a registry reference: left as written.
+            (
+                "https://Example.COM:443/modules",
+                Ok("https://Example.COM:443/modules"),
+            ),
+            ("acme/prod", Ok("acme/prod")),
+            ("", Ok("")),
+            ("user@ghcr.io/acme", Err("user@ghcr.io")),
+            ("ghcr.io:port", Err("ghcr.io:port")),
+        ];
+        for (name, want) in cases {
+            assert_eq!(
+                canonical_repository_name(name),
+                want.map(str::to_string).map_err(str::to_string),
+                "{name}"
             );
         }
     }
