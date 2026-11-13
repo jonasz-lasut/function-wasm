@@ -88,9 +88,8 @@ env:
   MIRROR_IMAGE: xpkg.upbound.io/jonasz-lasut/${{ inputs.function }}
 
   # up, by version and by the sha256 of its linux_amd64 binary: the install
-  # step refuses another file. Renovate moves the version
-  # alone, so its pull request needs the new checksum added by hand.
-  # renovate: datasource=github-releases depName=upbound/up
+  # step refuses another file. The repository is private to Renovate, so
+  # the version and its checksum are moved by hand.
   UP_VERSION: v0.51.1
   UP_SHA256: c8057ab5dd7e0012ee3f42e9d975c5ca84b7c2645db038bd5471d3a6a6d9ed68
 
