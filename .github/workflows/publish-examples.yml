@@ -34,6 +34,15 @@ jobs:
   build-guestfn:
     runs-on: ubuntu-26.04
     steps:
+      # A published version is never published again, so one built from
+      # another branch would stay: the examples are main's.
+      - name: Refuse Another Ref
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::run this from main, not ${GITHUB_REF}"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

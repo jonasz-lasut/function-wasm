@@ -20,9 +20,8 @@ name: Publish WIT
 # wit-v<world version> tag of the commit whose world is to be published:
 # the world version moves independently of the runtimes', and a
 # pre-release version is never published. Its OCI tag is the bare package
-# version, the form wkg writes. Nothing here
-# checks the registry first, so look before running on a world version that
-# is already there.
+# version, the form wkg writes. A run from another ref, or for a world
+# version the registry already has, is refused.
 
 on:
   workflow_dispatch:
@@ -66,6 +65,25 @@ jobs:
               echo "publish=true" >> "$GITHUB_OUTPUT"
               ;;
           esac
+
+      # function-wasm 1.0.0 depends on the published package, and every
+      # guest's guestfn.lock pins its digest: a version is published once,
+      # from its own tag.
+      - name: Refuse Another Ref or a Published Version
+        if: steps.world.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORLD_VERSION: ${{ steps.world.outputs.version }}
+        run: |
+          if [ "${GITHUB_REF}" != "refs/tags/wit-v${WORLD_VERSION}" ]; then
+            echo "::error::run this from the tag wit-v${WORLD_VERSION}, not ${GITHUB_REF}"
+            exit 1
+          fi
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_REPOSITORY_OWNER}" --password-stdin
+          if docker manifest inspect "ghcr.io/${WIT_REPOSITORY}:${WORLD_VERSION}" > /dev/null 2>&1; then
+            echo "::error::ghcr.io/${WIT_REPOSITORY}:${WORLD_VERSION} is published already; a world version is not published twice"
+            exit 1
+          fi
 
       - name: Install wkg
         if: steps.world.outputs.publish == 'true'

@@ -41,7 +41,15 @@ env:
   EXTENSIONS_ROOT: extensions/${{ inputs.function }}
   MIRROR_IMAGE: xpkg.upbound.io/jonasz-lasut/${{ inputs.function }}
 
+  # up, by version and by the sha256 of its linux_amd64 binary:
+  # hack/fetch-verified.sh refuses another file.
   UP_VERSION: v0.51.1
+  UP_SHA256: c8057ab5dd7e0012ee3f42e9d975c5ca84b7c2645db038bd5471d3a6a6d9ed68
+
+  # The inputs, read by the steps as variables and never written into a
+  # script.
+  FUNCTION: ${{ inputs.function }}
+  VERSION: ${{ inputs.version }}
 
 permissions:
   contents: read
@@ -82,18 +90,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Sign GHCR Image
-        run: cosign sign --yes ${{ env.GHCR_IMAGE }}:${{ github.event.inputs.version }}
+        run: cosign sign --yes "${GHCR_IMAGE}:${VERSION}"
 
       - name: Generate GHCR SBOM
-        run: ${{ steps.syft-install.outputs.cmd }} ${{ env.GHCR_IMAGE }}:${{ github.event.inputs.version }} -o spdx-json=ghcr-sbom.spdx.json
+        run: ${{ steps.syft-install.outputs.cmd }} "${GHCR_IMAGE}:${VERSION}" -o spdx-json=ghcr-sbom.spdx.json
 
       - name: Attest SBOM to GHCR Image
-        run: cosign attest --yes --predicate ghcr-sbom.spdx.json --type spdxjson ${{ env.GHCR_IMAGE }}:${{ github.event.inputs.version }}
+        run: cosign attest --yes --predicate ghcr-sbom.spdx.json --type spdxjson "${GHCR_IMAGE}:${VERSION}"
 
       - name: Resolve GHCR Image Digest
         id: ghcr-digest
         run: |
-          DIGEST=$(docker buildx imagetools inspect ${{ env.GHCR_IMAGE }}:${{ github.event.inputs.version }} | awk '/^Digest:/{print $2}')
+          DIGEST=$(docker buildx imagetools inspect "${GHCR_IMAGE}:${VERSION}" | awk '/^Digest:/{print $2}')
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Attest SLSA Provenance to GHCR Image
@@ -116,18 +124,17 @@ jobs:
         env:
           UP_TOKEN: ${{ secrets.UP_TOKEN }}
         run: |
-          curl -fsSLo /tmp/up --create-dirs 'https://cli.upbound.io/stable/${{ env.UP_VERSION }}/bin/linux_amd64/up' && \
-          chmod +x /tmp/up && \
+          hack/fetch-verified.sh "https://cli.upbound.io/stable/${UP_VERSION}/bin/linux_amd64/up" "${UP_SHA256}" /tmp/up
           /tmp/up login
 
       - name: Generate Upbound Mirror SBOM
-        run: ${{ steps.syft-install.outputs.cmd }} ${{ env.MIRROR_IMAGE }}:${{ github.event.inputs.version }} -o spdx-json=mirror-sbom.spdx.json
+        run: ${{ steps.syft-install.outputs.cmd }} "${MIRROR_IMAGE}:${VERSION}" -o spdx-json=mirror-sbom.spdx.json
 
       - name: Generate release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RELEASE_BODY=$(gh release view ${{ inputs.function }}-${{ inputs.version }} --repo jonasz-lasut/guestfn --json body -q .body 2>/dev/null || true)
+          RELEASE_BODY=$(gh release view "${FUNCTION}-${VERSION}" --repo jonasz-lasut/guestfn --json body -q .body 2>/dev/null || true)
           if [ -n "$RELEASE_BODY" ]; then
             echo "$RELEASE_BODY" >> "release_notes.md"
           fi
@@ -147,18 +154,18 @@ jobs:
             cp ./release_notes.md $extensions_dir/release-notes/
           fi
 
-          /tmp/up alpha xpkg append ${{ env.MIRROR_IMAGE }}:${{ inputs.version }} --extensions-root $extensions_dir
+          /tmp/up alpha xpkg append "${MIRROR_IMAGE}:${VERSION}" --extensions-root $extensions_dir
 
       - name: Sign Upbound Mirror Image
-        run: cosign sign --yes ${{ env.MIRROR_IMAGE }}:${{ github.event.inputs.version }}
+        run: cosign sign --yes "${MIRROR_IMAGE}:${VERSION}"
 
       - name: Attest SBOM to Upbound Mirror Image
-        run: cosign attest --yes --predicate mirror-sbom.spdx.json --type spdxjson ${{ env.MIRROR_IMAGE }}:${{ github.event.inputs.version }}
+        run: cosign attest --yes --predicate mirror-sbom.spdx.json --type spdxjson "${MIRROR_IMAGE}:${VERSION}"
 
       - name: Resolve Upbound Mirror Image Digest
         id: mirror-digest
         run: |
-          DIGEST=$(docker buildx imagetools inspect ${{ env.MIRROR_IMAGE }}:${{ github.event.inputs.version }} | awk '/^Digest:/{print $2}')
+          DIGEST=$(docker buildx imagetools inspect "${MIRROR_IMAGE}:${VERSION}" | awk '/^Digest:/{print $2}')
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Attest SLSA Provenance to Upbound Mirror Image

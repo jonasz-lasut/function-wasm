@@ -27,12 +27,23 @@ on:
       version:
         description: "Version string to use while publishing the package (e.g. v1.0.0-alpha.1)"
         required: true
+      without-matrix:
+        description: "Publish though no Release Matrix E2E run passed on this commit"
+        type: boolean
+        default: false
+      overwrite:
+        description: "Publish though the registry already has this version"
+        type: boolean
+        default: false
 
 env:
-  # These environment variables are important to the Crossplane CLI install.sh
-  # script. They determine what version it installs.
+  # The Crossplane CLI, by version and by the sha256 of its linux_amd64
+  # binary (cli.crossplane.io/<channel>/<version>/bin/linux_amd64/crossplane):
+  # hack/fetch-verified.sh refuses another file. Renovate moves the version
+  # alone, so its pull request needs the new checksum added by hand.
   XP_CHANNEL: stable
   XP_VERSION: 'v2.5.0'
+  XP_SHA256: 065dd6b40c9ea5fc71e49900d5c924cc0bec7f58375922ddbde6b402f292347e
 
   GHCR_IMAGE: ghcr.io/jonasz-lasut/${{ inputs.function }}
   MIRROR_IMAGE: xpkg.upbound.io/jonasz-lasut/${{ inputs.function }}
@@ -51,8 +62,60 @@ permissions:
   attestations: write
 
 jobs:
+  # What must hold before anything is built: the run was started from the
+  # release's own tag, the version is not in the registry yet, and the
+  # release matrix passed on this commit. The two inputs lift the last two,
+  # each for a release its owner decided to publish anyway, and the run
+  # records that they were set.
+  guard:
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FUNCTION: ${{ inputs.function }}
+      VERSION: ${{ inputs.version }}
+      WITHOUT_MATRIX: ${{ inputs.without-matrix }}
+      OVERWRITE: ${{ inputs.overwrite }}
+    steps:
+      - name: Refuse Another Ref
+        run: |
+          if [ "${GITHUB_REF}" != "refs/tags/${FUNCTION}-${VERSION}" ]; then
+            echo "::error::run this from the tag ${FUNCTION}-${VERSION}, not ${GITHUB_REF}"
+            exit 1
+          fi
+
+      - name: Refuse a Published Version
+        run: |
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_REPOSITORY_OWNER}" --password-stdin
+          if docker manifest inspect "${GHCR_IMAGE}:${VERSION}" > /dev/null 2>&1; then
+            if [ "${OVERWRITE}" = true ]; then
+              echo "::warning::${GHCR_IMAGE}:${VERSION} exists and is published again (overwrite)"
+            else
+              echo "::error::${GHCR_IMAGE}:${VERSION} is published already; a release is not published twice"
+              exit 1
+            fi
+          fi
+
+      - name: Require the Release Matrix
+        run: |
+          passed=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release-matrix-e2e.yml/runs?head_sha=${GITHUB_SHA}&status=success&per_page=1" --jq .total_count)
+          if [ "${passed}" -gt 0 ]; then
+            echo "Release Matrix E2E passed on ${GITHUB_SHA}"
+          elif [ "${WITHOUT_MATRIX}" = true ]; then
+            echo "::warning::no Release Matrix E2E run passed on ${GITHUB_SHA}; publishing without it (without-matrix)"
+          else
+            echo "::error::no Release Matrix E2E run passed on ${GITHUB_SHA}: push the release branch and wait for it"
+            exit 1
+          fi
+
   build:
     runs-on: ubuntu-26.04
+    needs: guard
+    permissions:
+      contents: read
     strategy:
       fail-fast: true
       matrix:
@@ -90,7 +153,7 @@ jobs:
           outputs: type=docker,dest=runtime-${{ matrix.arch }}.tar
 
       - name: Setup the Crossplane CLI
-        run: "curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh"
+        run: hack/fetch-verified.sh "https://cli.crossplane.io/${XP_CHANNEL}/${XP_VERSION}/bin/linux_amd64/crossplane" "${XP_SHA256}" ./crossplane
 
       - name: Build Package
         # --examples-root must point at a directory of Crossplane example objects
@@ -144,7 +207,7 @@ jobs:
           pattern: "!*.dockerbuild" # This gets uploaded by docker/build-push-action but must be skipped: https://github.com/actions/toolkit/pull/1874
 
       - name: Setup the Crossplane CLI
-        run: "curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh"
+        run: hack/fetch-verified.sh "https://cli.crossplane.io/${XP_CHANNEL}/${XP_VERSION}/bin/linux_amd64/crossplane" "${XP_SHA256}" ./crossplane
 
       - name: Login to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
