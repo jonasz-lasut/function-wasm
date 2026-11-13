@@ -286,7 +286,10 @@ jobs:
       id-token: write
       packages: write
       attestations: write
-    uses: jonasz-lasut/guestfn/.github/workflows/supplychain.yml@0e358dd14606e43891b1803d92b5f7e7b937d868 # main
+    # Never pinned to a commit: the reference is part of the signer's
+    # identity, and a commit here would also freeze the signing logic
+    # (Renovate is told to leave it, .github/renovate.json5).
+    uses: jonasz-lasut/guestfn/.github/workflows/supplychain.yml@main
     with:
       function: ${{ inputs.function }}
       version: ${{ inputs.version }}

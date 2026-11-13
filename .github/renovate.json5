@@ -609,6 +609,17 @@
       matchUpdateTypes: ['major'],
       enabled: false,
     },
+    // publish-function.yml calls this repository's own signing workflow at
+    // main, and that reference must stay a branch: it is the keyless signer
+    // identity users pin (supplychain.yml@refs/heads/main), and main's
+    // signing logic is what every release line is meant to run. A commit in
+    // its place would change both, so the reference is never pinned or
+    // updated.
+    {
+      matchManagers: ['github-actions'],
+      matchPackageNames: ['jonasz-lasut/guestfn'],
+      enabled: false,
+    },
     // Auto-merge, last so that nothing above overrides it. Every pull
     // request here runs the whole end-to-end suite (the e2e:all label) and
     // merges only once the checks the ruleset on main requires have passed.
