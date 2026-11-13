@@ -324,7 +324,8 @@ impl Resolver {
     fn fetch_image(&self, reference: &OciReference, auth: Option<Auth>) -> Result<Vec<u8>, String> {
         use guestfn_engine::layout;
         let image_client = RegistryClient::new(reference, auth);
-        let top = image_client.manifest_by_digest(&reference.digest, usize::MAX)?;
+        let top =
+            image_client.manifest_by_digest(&reference.digest, crate::oci::MAX_MANIFEST_SIZE)?;
         if !(top.is_image() || top.is_index()) {
             return Err(
                 "is a WebAssembly artifact, which function-oci does not serve; function-wasm serves it"
