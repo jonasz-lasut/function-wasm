@@ -256,10 +256,14 @@ files, so a change to them is exercised before it merges. A pull request
 from a fork gets a read-only token without secrets, which is all the jobs
 use.
 
-A pull request's run restores caches and saves none, as in `ci.yml`. A push
-to `main` runs the builds alone, with no cluster, and saves them: both
-`build-tools` jobs, every example's build job, and `build-suite`, which
-compiles the end-to-end crate under the key every profile job restores.
+A pull request's run restores caches and saves none, as in `ci.yml`. A
+second workflow, `e2e-caches.yml`, saves them on every push to `main` and
+never runs on a pull request. It
+calls the same two reusable workflows without a profile, which runs both
+`build-tools` jobs and every example's build job without a cluster, and its
+`seed-suite-cache` job compiles the end-to-end crate under the key every
+profile job restores. Because the jobs that save a cache are the jobs that
+restore it, the keys can't drift apart.
 
 GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs and
 the legs of the release matrix install, and the kind node inherits it. The

@@ -13,7 +13,8 @@
 # limitations under the License.
 
 # function-wasm's end-to-end scenarios, called by e2e.yml (a pull request's
-# labels select them, a push to main runs the builds alone) and by
+# labels select them), by e2e-caches.yml (a push to main runs the builds
+# alone and saves their caches) and by
 # release-matrix-e2e.yml (every profile on each Crossplane version a
 # function-wasm release supports). The runtime and guestfn are built once;
 # every selected profile of the Kubernetes-native suite (crates/e2e,
@@ -1155,8 +1156,8 @@ jobs:
 
       # The end-to-end crate's own build (the setup binary and the profile's
       # tests), under the one key every profile job of both runtimes
-      # restores and e2e.yml's build-suite job saves on main. A profile job
-      # saves nothing: a dozen of them would race for one key.
+      # restores and e2e-caches.yml's seed-suite-cache job saves on main. A
+      # profile job saves nothing: a dozen of them would race for one key.
       - name: Restore the Rust Build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:

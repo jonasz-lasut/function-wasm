@@ -1,0 +1,85 @@
+# Copyright 2026 The guestfn Authors.
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The caches a pull request's end-to-end run restores (e2e.yml), saved on
+# every push to main: a pull request's run saves none, so without this
+# workflow each one would build the runtimes cold. It runs the builds alone,
+# no cluster: the two workflows a pull request's labels select from, called
+# with no profile, the examples' build jobs and save-caches, plus the
+# end-to-end crate's own compile. Calling the same workflows is what keeps
+# the keys identical: the job that saves a cache here is the job that
+# restores it there. It is a workflow of its own so that a pull request
+# shows nothing of it, not even a skipped job.
+#
+# By hand, on any ref (a run on another branch saves in that branch's cache
+# scope, which no pull request reads):
+#   gh workflow run "E2E Caches" --ref main
+name: E2E Caches
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # function-wasm's builds: the runtime and guestfn, and every WebAssembly
+  # example with its dependencies.
+  wasm:
+    uses: ./.github/workflows/e2e-wasm.yml
+    with:
+      profiles: '[]'
+      examples: true
+      save-caches: true
+
+  # function-oci's builds: the OCI tools, and the process guest with its
+  # dependencies.
+  oci:
+    uses: ./.github/workflows/e2e-oci.yml
+    with:
+      profiles: '[]'
+      examples: true
+      save-caches: true
+
+  # The end-to-end crate (the setup binary and every profile's tests),
+  # compiled for its cache alone: every profile job of both workflows
+  # restores this key and saves nothing. The steps before the cache are a
+  # profile job's, since the key reads the toolchain and the environment.
+  seed-suite-cache:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: e2e-suite
+
+      # As the Makefile builds them: cargo run for the setup, cargo test
+      # for a profile.
+      - name: Build the End-to-End Crate
+        run: |
+          cargo build -p guestfn-e2e --features cluster --bins
+          cargo test -p guestfn-e2e --features cluster --no-run

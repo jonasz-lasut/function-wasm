@@ -33,25 +33,19 @@
 # are the report. The last job, e2e-gate, is the one a ruleset requires: it
 # passes when nothing was selected or everything selected passed.
 #
-# A push to main runs the builds alone - the runtimes, guestfn, the OCI
-# tools, the end-to-end crate and the examples, no cluster - to save the
-# caches a pull request's run restores.
-#
 # A pull_request run uses the pull request's own copy of this file and of
 # the two it calls, so a change to them is exercised before it merges. For
 # a pull request from a fork the token is read-only and no secret is
-# passed; the jobs need neither. A pull request's run restores caches and
-# saves none (ci.yml says what the saves cost), so the code of a pull
-# request never writes a cache another run reads: the caches are main's,
-# under keys the comment-triggered workflow before this one never wrote.
+# passed; the jobs need neither. A run here restores caches and saves none
+# (ci.yml says what the saves cost), so the code of a pull request never
+# writes a cache another run reads: the caches are main's, saved by
+# e2e-caches.yml on every push there, under keys the comment-triggered
+# workflow before this one never wrote.
 name: E2E
 
 on:
   pull_request:
     types: [opened, reopened, synchronize, labeled]
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -60,13 +54,12 @@ permissions:
 # it. Any label fires `labeled`, and one that is not an e2e: label selects
 # nothing new: its run takes a group of its own (the run's id), so it never
 # cancels a run in progress, and e2e-gate repeats the verdict the commit
-# already has. A push to main is a group per commit, never cancelled, since
-# a cancelled run saves no cache.
+# already has.
 concurrency:
   group: >-
-    e2e-${{ github.event.pull_request.number || github.sha }}-${{
+    e2e-${{ github.event.pull_request.number }}-${{
     (github.event.action != 'labeled' || startsWith(github.event.label.name, 'e2e:')) && 'run' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   # The labels, read into what the two workflows below take. A profile is
@@ -106,17 +99,12 @@ jobs:
               any(.[]; . == "e2e:all" or . == "e2e:" + $runtime + ":all" or . == "e2e:" + $runtime + ":examples")' <<< "$LABELS"
           }
           relevant=true
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            # main: the builds alone, the examples' among them.
-            wasm_profiles='[]' oci_profiles='[]' wasm_examples=true oci_examples=true
-          else
-            case "${ACTION}:${LABEL}" in
-              labeled:e2e:*) ;;
-              labeled:*) relevant=false ;;
-            esac
-            wasm_profiles=$(profiles wasm) oci_profiles=$(profiles oci)
-            wasm_examples=$(examples wasm) oci_examples=$(examples oci)
-          fi
+          case "${ACTION}:${LABEL}" in
+            labeled:e2e:*) ;;
+            labeled:*) relevant=false ;;
+          esac
+          wasm_profiles=$(profiles wasm) oci_profiles=$(profiles oci)
+          wasm_examples=$(examples wasm) oci_examples=$(examples oci)
           # A profile's name reaches a make target.
           for names in "$wasm_profiles" "$oci_profiles"; do
             if [ "$names" != all ] && ! jq -e 'all(.[]; test("^[a-z0-9-]+$"))' <<< "$names" > /dev/null; then
@@ -153,7 +141,6 @@ jobs:
     with:
       profiles: ${{ needs.select.outputs.wasm-profiles }}
       examples: ${{ needs.select.outputs.wasm-examples == 'true' }}
-      save-caches: ${{ github.event_name == 'push' }}
 
   oci:
     needs: select
@@ -162,38 +149,6 @@ jobs:
     with:
       profiles: ${{ needs.select.outputs.oci-profiles }}
       examples: ${{ needs.select.outputs.oci-examples == 'true' }}
-      save-caches: ${{ github.event_name == 'push' }}
-
-  # The end-to-end crate (the setup binary and every profile's tests),
-  # compiled on main for its cache alone: every profile job of both
-  # workflows restores this key and saves nothing. The steps before the
-  # cache are a profile job's, since the key reads the toolchain and the
-  # environment.
-  build-suite:
-    runs-on: ubuntu-26.04
-    if: github.event_name == 'push'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: stable
-
-      - name: Cache the Rust Build
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: e2e-suite
-
-      # As the Makefile builds them: cargo run for the setup, cargo test
-      # for a profile.
-      - name: Build the End-to-End Crate
-        run: |
-          cargo build -p guestfn-e2e --features cluster --bins
-          cargo test -p guestfn-e2e --features cluster --no-run
 
   # The one check a ruleset requires. It passes when nothing was selected
   # or everything selected passed, and fails when a selected scenario, or a
@@ -214,20 +169,18 @@ jobs:
       - select
       - wasm
       - oci
-      - build-suite
     if: always()
     permissions:
       checks: read
     env:
       GH_TOKEN: ${{ github.token }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       SELECT: ${{ needs.select.result }}
       RELEVANT: ${{ needs.select.outputs.relevant }}
       WASM_SELECTED: ${{ needs.select.outputs.wasm }}
       WASM: ${{ needs.wasm.result }}
       OCI_SELECTED: ${{ needs.select.outputs.oci }}
       OCI: ${{ needs.oci.result }}
-      BUILD_SUITE: ${{ needs.build-suite.result }}
     steps:
       - name: Decide
         run: |
@@ -252,9 +205,6 @@ jobs:
             }
             judge wasm "$WASM_SELECTED" "$WASM"
             judge oci "$OCI_SELECTED" "$OCI"
-            suite=false
-            if [ "$GITHUB_EVENT_NAME" = push ]; then suite=true; fi
-            judge build-suite "$suite" "$BUILD_SUITE"
             exit "$failed"
           fi
           # A check cut short by a cancellation is no verdict; this job's
