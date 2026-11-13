@@ -1,0 +1,5 @@
+# The workflows decide what a check on a pull request means, and a pull
+# request runs its own copy of them: a change here is read by the owner
+# before it merges, whatever its checks say.
+/.github/workflows/ @jonasz-lasut
+/.github/CODEOWNERS @jonasz-lasut
