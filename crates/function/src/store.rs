@@ -93,9 +93,8 @@ impl Store {
         self
     }
 
-    /// Returns the artifact stored under digest. (The blob and manifest
-    /// stores' read path, consumed once the OCI/HTTP sources land.)
-    #[allow(dead_code)]
+    /// Returns the entry stored under digest, verified against it where
+    /// the store verifies: the blob and manifest stores' read path.
     pub fn get(&self, digest: &str) -> Option<Vec<u8>> {
         let path = self.entry_path(digest);
         let b = std::fs::read(&path).ok()?;
@@ -412,7 +411,7 @@ pub fn remove_stale_versions(compiled_dir: &Path, current: &str) {
     }
 }
 
-/// A read is a use: the (future) sweep drops least recently used entries.
+/// A read is a use: the sweep drops least recently used entries.
 /// Best effort - a read-only volume still serves.
 fn touch(path: &Path) {
     let now = std::fs::FileTimes::new()

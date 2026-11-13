@@ -22,7 +22,10 @@ const DECIMAL: &[(&str, u64)] = &[
 
 /// Parses a quantity into bytes, rounding a fractional value up like
 /// Quantity.Value does. Negative values parse (to be refused as non-positive
-/// by the caller, with the message the conformance goldens pin).
+/// by the caller, with the message the conformance goldens pin). A value
+/// the arithmetic cannot hold, a fraction of some thirty digits under a
+/// large suffix included, is an error like any other: a limit that wrapped
+/// would be a wrong limit.
 pub fn parse(s: &str) -> Result<i128, String> {
     let err = || format!("cannot parse quantity {s:?}");
     let (negative, rest) = match s.strip_prefix('-') {
@@ -62,9 +65,8 @@ pub fn parse(s: &str) -> Result<i128, String> {
     if !fraction.is_empty() {
         let f: u128 = fraction.parse().map_err(|_| err())?;
         let denom = 10u128.checked_pow(fraction.len() as u32).ok_or_else(err)?;
-        value = value
-            .checked_add((f * scale).div_ceil(denom))
-            .ok_or_else(err)?;
+        let scaled = f.checked_mul(scale).ok_or_else(err)?;
+        value = value.checked_add(scaled.div_ceil(denom)).ok_or_else(err)?;
     }
     let value = i128::try_from(value).map_err(|_| err())?;
     Ok(if negative { -value } else { value })
@@ -102,6 +104,28 @@ mod tests {
         for bad in ["", "Mi", "1Zi", "x"] {
             assert!(parse(bad).is_err(), "parse({bad:?}) should fail");
         }
+    }
+
+    /// A fraction too long to scale is refused in the words of every other
+    /// unparsable quantity, where it used to wrap into a few bytes.
+    #[test]
+    fn a_fraction_too_long_to_scale_is_an_error() {
+        let cases = [
+            format!("0.{}Ei", "9".repeat(38)),
+            format!("1.{}Ei", "5".repeat(30)),
+            format!("0.{}E", "9".repeat(25)),
+            format!("0.{}", "1".repeat(39)),
+        ];
+        for s in cases {
+            assert_eq!(
+                parse(&s),
+                Err(format!("cannot parse quantity {s:?}")),
+                "parse({s:?})"
+            );
+        }
+        // What fits still parses, rounded up.
+        assert_eq!(parse(&format!("0.{}Ki", "5".repeat(30))), Ok(569));
+        assert_eq!(parse(&format!("1.5{}Gi", "0".repeat(8))), Ok(3 << 29));
     }
 
     #[test]
