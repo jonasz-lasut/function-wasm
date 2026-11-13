@@ -38,10 +38,10 @@ line can still take a patch.
 - Asked to cut/ship a new minor or major release, "release vX.Y.0", "bump to
   vX.0.0", or ship a batch of merged features as a new version.
 - **Not** for patch releases remediating CVEs/security findings on an
-  already-released version — that reuses an *existing* release branch cut
+  already-released version - that reuses an *existing* release branch cut
   from a tag (see `remediate-cves`).
 - **Not** for ad hoc patch-level bumps (`vX.Y.Z+1`) with no security finding
-  behind them — this skill only computes minor or major bumps.
+  behind them - this skill only computes minor or major bumps.
 - The component and the bump type (minor or major) must come from explicit
   user input. Never infer them from the diff: ask if they aren't stated.
 
@@ -81,16 +81,20 @@ NEW_BRANCH="release-$COMPONENT-$(echo "$NEW_VERSION" | sed -E 's/^v([0-9]+)\.([0
 ```bash
 git fetch origin
 git checkout main && git pull
-gh run list --branch main --limit 1     # confirm the latest CI run on main is green
+gh run list --workflow CI --branch main --limit 1     # confirm the latest CI run on main is green
 ```
 
-There is no remediation step here — whatever is merged to `main` is what
+There is no remediation step here - whatever is merged to `main` is what
 ships, and unlike CVE remediation there is no fix step or completeness gate
 downstream to catch a bad `main` later. If the latest run's conclusion isn't
-`success`, **stop and report** — do not cut the branch until `main` is green.
-CI on `main` already covers lint (cargo fmt + clippy), the workspace tests
-(conformance and scaffold goldens included) and the render jobs, so a green run is a
-legitimate signal.
+`success`, **stop and report** - do not cut the branch until `main` is green.
+CI on `main` covers lint (cargo fmt + clippy), the workspace tests
+(conformance and scaffold goldens included), `cargo deny`, the guest suite
+and the OCI engine's VM suite, so a green run is a legitimate signal. Name
+the workflow: the latest run on `main` of any workflow can be `E2E Caches`
+or the docs deploy. The cluster profiles and the example build jobs don't
+run on `main`: they ran on the pull requests labelled `e2e:`, and the
+profiles run again in step 5b.
 
 **For a function, bump the runtime-version references in docs to
 `$NEW_VERSION` before cutting** (there is no automated step for this): the
@@ -122,7 +126,10 @@ protobuf; the protobuf runtime refuses a codec from a newer protoc, so its
 `7.X.Y` must not fall behind the root `Makefile`'s `PROTOC_VERSION` `X.Y`).
 The zig, c, cpp and odin examples' `build.zig.zon` (`zig fetch --save <url>`
 writes url and hash), which no Renovate manager reads either, move in the
-same pass (the zig and c templates retired in #264).
+same pass (the zig and c templates retired in #264), and so does the
+MoonBit toolchain `e2e-wasm.yml` pins (`MOON_VERSION` with the checksums of
+its two tarballs, and `moonbitlang/protobuf` in the example's `moon.mod`),
+which has no datasource for Renovate to read.
 Mirror each change into its example (`render_matches_the_examples` fails on
 drift), run `UPDATE_GOLDENS=1 cargo test -p guestfn`, and merge the PR to
 `main` once CI and the end-to-end run are green: label the PR `e2e:all`,
@@ -138,13 +145,13 @@ else
 fi
 ```
 
-If the branch already exists, **stop and report** rather than continuing —
+If the branch already exists, **stop and report** rather than continuing -
 do not fall through to checkout/push.
 
 This is the mirror image of the CVE flow: a security patch reuses an
 *existing* release branch cut from a tag; a new minor/major line is always a
 **brand-new** branch cut from `main` HEAD. If `origin/$NEW_BRANCH` already
-exists, this version line was already released — stop and report instead of
+exists, this version line was already released - stop and report instead of
 pushing over it.
 
 ### 4. Draft the release notes and confirm before anything externally visible
@@ -187,7 +194,7 @@ approving its notes, and `$NOTES` doesn't change after approval without asking
 again. Release notes are what a user reads to decide whether to upgrade, so
 they get the same review as the code. From here on every step is
 externally visible (pushed branch, public tag, GitHub release, published
-package) and isn't something you can quietly undo — get explicit
+package) and isn't something you can quietly undo - get explicit
 confirmation before continuing.
 
 ### 5. Push
@@ -196,7 +203,7 @@ confirmation before continuing.
 git push -u origin "$NEW_BRANCH"
 ```
 
-### 5b. Wait for the release matrix — `Release Matrix E2E`, on the new branch
+### 5b. Wait for the release matrix - `Release Matrix E2E`, on the new branch
 
 For a function only: `guestfn` and `wit` have no matrix, so go to step 6. The
 push starts it (`.github/workflows/release-matrix-e2e.yml` runs on every
@@ -326,7 +333,7 @@ rather than whatever was frozen on the release branch at cut time.
 
 ### 10. Sequencing and verification
 
-Each of steps 6–9 must finish successfully before the next starts — step 8
+Each of steps 6-9 must finish successfully before the next starts - step 8
 needs the tag from step 6 to exist, step 9 needs the image step 8 published.
 Find each workflow's run with `gh run list --workflow="<name>" --limit 1` and wait on it
 (`gh run watch <run-id> --exit-status`); if using the Monitor tool, its
@@ -370,7 +377,7 @@ release branch where it is: the repository keeps its full release history.
 
 ## Common mistakes
 
-- Cutting the release branch from an existing tag instead of `main` HEAD —
+- Cutting the release branch from an existing tag instead of `main` HEAD -
   that's the CVE-patch pattern; a new minor/major line must include
   everything merged to `main`.
 - Inferring the component, or minor vs major, from the diff instead of the
@@ -379,23 +386,23 @@ release branch where it is: the repository keeps its full release history.
   release of any component.
 - Passing the prefixed tag as `version` to `Publish Function` or the supply
   chain workflow: the image is tagged with the version alone, `vX.Y.Z`.
-- Not checking whether `NEW_BRANCH` already exists — each release line
+- Not checking whether `NEW_BRANCH` already exists - each release line
   is cut exactly once; if it exists, this version was already released.
-- Cutting from a red `main` — unlike CVE remediation there's no fix step or
+- Cutting from a red `main` - unlike CVE remediation there's no fix step or
   completeness gate to catch this, so a broken `main` ships broken as-is.
 - Cutting the tag before the release matrix is green on the branch, or
   skipping it: a pull request's end-to-end run covered the current
   Crossplane only; the two older minors are tested nowhere else.
 - Running `Publish Function` against the branch instead of the new
-  tag — builds a moving target if the branch gets more commits later.
-- Running `Supply Chain and Xpkg Extensions` from the tag instead of `main`
-  — it still works, but forfeits any signing/attestation fixes landed on
+  tag - builds a moving target if the branch gets more commits later.
+- Running `Supply Chain and Xpkg Extensions` from the tag instead of `main`:
+  it still works, but forfeits any signing/attestation fixes landed on
   `main` since the release branch was cut.
-- Triggering step 8 or 9 before the prior workflow run has actually finished
-  — the tag or image it depends on won't exist yet.
+- Triggering step 8 or 9 before the prior workflow run has actually finished:
+  the tag or image it depends on won't exist yet.
 - Release notes that do not state the served world, wasmtime and WASI
   versions: the versioning policy in `docs/abi-v2.md` promises them.
-- Using this skill for a patch bump (`vX.Y.Z+1`) — that path belongs to
+- Using this skill for a patch bump (`vX.Y.Z+1`) - that path belongs to
   `remediate-cves`, which reuses an existing branch instead of cutting one.
 - Release notes that describe a change in one line, or whose `Merged pull
   requests` list is trimmed, reworded or missing.
