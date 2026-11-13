@@ -199,7 +199,12 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               testregistry (feature "testutil") serves and accepts artifacts and
                               referrers in tests
   src/location.rs             go-containerregistry-compatible reference normalization: pinned refs
-                              (the runtime), any refs with tag/digest (guestfn), http locations
+                              (the runtime), any refs with tag/digest (guestfn), http locations;
+                              canonical_registry gives a registry one spelling (lowercase, no
+                              trailing dot, no default port, docker.io as index.docker.io, the one alias; user
+                              information or a non-host refused by name), which the Repository
+                              entities, the signature memo, the registry client and the module
+                              description all read; cleartext is the loopback-only HTTP rule
   src/cosign.rs               cosign 3 Sigstore bundle verification (bundles found among the
                               manifest's referrers over the runtime's own registry client): key-based
                               with sigstore-crypto keys (DSSE + in-toto parsed here, the keys the

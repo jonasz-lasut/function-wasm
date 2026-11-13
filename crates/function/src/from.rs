@@ -403,6 +403,91 @@ mod tests {
         );
     }
 
+    fn oci_src(name: &str) -> ModuleSource {
+        ModuleSource {
+            r#type: "OCI".to_string(),
+            oci: Some(crate::input::OciSource {
+                r#ref: format!("{name}@sha256:{}", "3f2a".repeat(16)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_signature_requirement_covers_every_spelling_of_the_registry() {
+        let policy = crate::authz::OperatorPolicy::new(
+            "test",
+            r#"permit (principal, action == Action::"requireSignature", resource)
+               when { resource in Repository::"ghcr.io/acme/prod" };"#,
+        )
+        .expect("compile");
+        let required = |name: &str| signature_required(Some(&policy), false, &oci_src(name));
+        let cases = [
+            ("ghcr.io/acme/prod/m", true),
+            ("GHCR.IO/acme/prod/m", true),
+            ("ghcr.io:443/acme/prod/m", true),
+            ("ghcr.io./acme/prod/m", true),
+            ("Ghcr.Io.:443/acme/prod/m:v1", true),
+            // Another port is another registry, another path another
+            // repository.
+            ("ghcr.io:8443/acme/prod/m", false),
+            ("ghcr.io/acme/production/m", false),
+        ];
+        for (name, want) in cases {
+            assert_eq!(required(name), want, "{name}");
+        }
+        // Docker Hub under each of its names.
+        let hub = crate::authz::OperatorPolicy::new(
+            "test",
+            r#"permit (principal, action == Action::"requireSignature", resource)
+               when { resource in Repository::"index.docker.io/acme" };"#,
+        )
+        .expect("compile");
+        for name in [
+            "acme/m",
+            "docker.io/acme/m",
+            "index.docker.io/acme/m",
+            "DOCKER.IO:443/acme/m",
+        ] {
+            assert!(
+                signature_required(Some(&hub), false, &oci_src(name)),
+                "{name}"
+            );
+        }
+        // registry-1.docker.io is a host of its own to the policy.
+        assert!(!signature_required(
+            Some(&hub),
+            false,
+            &oci_src("registry-1.docker.io/acme/m")
+        ));
+    }
+
+    #[test]
+    fn a_pull_fence_covers_every_spelling_of_the_registry() {
+        let comp = compile_composition_policy(
+            r#"permit (principal, action == Action::"pullModule", resource);
+               forbid (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/example");"#,
+        )
+        .expect("compile")
+        .expect("some");
+        for registry in ["ghcr.io", "GHCR.IO", "ghcr.io:443", "ghcr.io."] {
+            let xr = serde_json::json!({
+                "status": { "module": {
+                    "ref": format!("{registry}/example/greeter@sha256:{}", "3f2a".repeat(16)),
+                } },
+            });
+            assert_eq!(
+                from_composite(&from_src("status.module"), Some(&comp), Some(&xr)).map(|_| ()),
+                Err(
+                    r#"module.from: status.module of the composite resource names ref "ghcr.io/example/greeter", which the compositionPolicy does not permit (pullModule)"#
+                        .to_string()
+                ),
+                "{registry}"
+            );
+        }
+    }
+
     #[test]
     fn refuses_a_from_source_with_no_policy() {
         let err = from_composite(&from_src("status.module"), None, Some(&xr())).expect_err("fence");

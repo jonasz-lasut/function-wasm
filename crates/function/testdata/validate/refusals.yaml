@@ -39,6 +39,36 @@ spec:
         type: OCI
         oci:
           ref: ghcr.io/example/greeter:v1
+  - step: registry-with-user-information
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: team:secret@ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+  - step: registry-not-a-host
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: 127.1:5000/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+  - step: repository-not-a-name
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/../greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
   - step: bad-composition-policy
     functionRef:
       name: function-wasm

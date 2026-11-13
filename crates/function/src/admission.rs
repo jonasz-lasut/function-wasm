@@ -619,12 +619,10 @@ pub(crate) fn validate_source(src: &ModuleSource) -> Result<(), String> {
         if oci.r#ref.is_empty() {
             return Err("module.oci.ref is required".to_string());
         }
-        if !oci_ref_is_pinned(&oci.r#ref) {
-            return Err(format!(
-                "module.oci.ref {:?} must be a reference pinned to its manifest digest (repository@sha256:...); tags are not supported",
-                oci.r#ref
-            ));
-        }
+        // The whole reference, not the pin alone: a registry or a
+        // repository the resolver would refuse is refused here, where
+        // function validate reads it without --resolve too.
+        crate::location::oci_location(&oci.r#ref)?;
     }
     if let Some(http) = &src.http {
         if http.url.is_empty() {
@@ -657,13 +655,6 @@ fn from_field_is_valid(from: &str) -> bool {
         .strip_prefix("spec.")
         .or_else(|| from.strip_prefix("status."));
     rest.is_some_and(|r| !r.is_empty())
-}
-
-fn oci_ref_is_pinned(r: &str) -> bool {
-    let Some((repo, digest)) = r.rsplit_once('@') else {
-        return false;
-    };
-    !repo.is_empty() && !repo.contains(char::is_whitespace) && digest_is_valid(digest)
 }
 
 #[cfg(test)]
