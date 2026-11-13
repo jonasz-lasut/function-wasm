@@ -697,8 +697,8 @@ jobs:
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
       # The Odin release the example builds with (its README names it).
       # renovate: release-asset depName=odin-lang/Odin versioning=regex:^dev-(?<major>\d{4})-(?<minor>\d{2})$
-      ODIN_VERSION: dev-2026-10
-      ODIN_SHA256: c3c8b095621fd0c75f7f73e3a0829f1b4d45324225f20ba11ed8dc4da310a8ab
+      ODIN_VERSION: dev-2026-11
+      ODIN_SHA256: 65c9f6e97d6f8a30930e151f270ce5aeaa98fe8b2ba49fe067394e2af04f7618
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
