@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Rewrites the release row of one function's tested-versions table in README.md from
-# the record the release matrix writes (its tested-versions artifact). The
+# the record the release matrix writes (its tested-versions artifact): the
+# function, the Crossplane versions and, for function-oci, the VM pairs. The
 # release skills run it once a function's release is out.
 #   hack/tested-versions.sh <function-wasm|function-oci> <vX.Y.Z> <tested-versions.json>
 set -euo pipefail
@@ -9,6 +10,14 @@ function=${1:?the function: function-wasm or function-oci}
 version=${2:?the released version: vX.Y.Z}
 record=${3:?the release matrix record: tested-versions.json}
 readme="$(cd "$(dirname "$0")/.." && pwd)/README.md"
+
+# The matrix runs for one function, the one its release branch names, and
+# the record says which.
+recorded=$(jq -r '.function // empty' "$record")
+if [ -n "$recorded" ] && [ "$recorded" != "$function" ]; then
+  echo "the record is $recorded's, not $function's" >&2
+  exit 1
+fi
 
 crossplane=$(jq -r '[.crossplane[] | (split(".")[0:2] | join(".")) + " (v" + . + ")"] | join(", ")' "$record")
 case "$function" in
