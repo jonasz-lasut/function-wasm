@@ -12,6 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Signs and attests a published function package in both registries and
+# appends the Marketplace extensions to the mirror. It runs two ways.
+#
+# Called by publish-function.yml, as its last job, with the digest that
+# run pushed: the release's own run then signs what it built. The call
+# names this file at main
+# (jonasz-lasut/guestfn/.github/workflows/supplychain.yml@main), never the
+# tag's copy, so the signing logic is main's for every release line and the
+# keyless signer identity users pin stays
+#   https://github.com/jonasz-lasut/guestfn/.github/workflows/supplychain.yml@refs/heads/main
+# (inside a reusable workflow the certificate names the called workflow).
+# With a digest every step works on <image>@<digest>: the job first checks
+# that the version's tag still resolves to it in GHCR and that the mirror
+# holds the same platform manifests, and fails otherwise.
+#
+# By hand (workflow_dispatch, from main), with no digest, to sign again a
+# release that is published already: it then resolves the version's tag,
+# as it always did.
+#
+# The checkout is the caller's commit: the package readme and the icon come
+# from the release's tree, and nothing else is read from it.
 name: Supply Chain and Xpkg Extensions
 
 on:
@@ -27,6 +48,31 @@ on:
       version:
         description: "Version string to use while attesting and signing the package (e.g. v1.0.0-alpha.1)"
         required: true
+  workflow_call:
+    inputs:
+      function:
+        description: "The function whose package to sign and attest: function-wasm or function-oci"
+        type: string
+        required: true
+      version:
+        description: "The package's version, its tag in both registries (e.g. v1.0.0)"
+        type: string
+        required: true
+      digest:
+        description: >-
+          The digest of the package index the caller pushed to GHCR
+          (sha256:...). With it nothing is signed by tag. The mirror's index
+          has a digest of its own once the extensions are appended, so it is
+          held to this one by its platform manifests.
+        type: string
+        default: ''
+    secrets:
+      XPKG_ACCESS_ID:
+        required: true
+      XPKG_TOKEN:
+        required: true
+      UP_TOKEN:
+        required: true
 
 env:
   # These environment variables are important to the Crossplane CLI install.sh
@@ -41,8 +87,8 @@ env:
   EXTENSIONS_ROOT: extensions/${{ inputs.function }}
   MIRROR_IMAGE: xpkg.upbound.io/jonasz-lasut/${{ inputs.function }}
 
-  # up, by version and by the sha256 of its linux_amd64 binary:
-  # hack/fetch-verified.sh refuses another file. Renovate moves the version
+  # up, by version and by the sha256 of its linux_amd64 binary: the install
+  # step refuses another file. Renovate moves the version
   # alone, so its pull request needs the new checksum added by hand.
   # renovate: datasource=github-releases depName=upbound/up
   UP_VERSION: v0.51.1
@@ -52,7 +98,11 @@ env:
   # script.
   FUNCTION: ${{ inputs.function }}
   VERSION: ${{ inputs.version }}
+  DIGEST: ${{ inputs.digest }}
 
+# What a caller's job must grant, since a called workflow gets no more than
+# its caller: the OIDC token for the keyless signatures, the registry and
+# the attestation store to write to.
 permissions:
   contents: read
   id-token: write
@@ -61,13 +111,27 @@ permissions:
 
 jobs:
   sign-artifacts:
-    runs-on: ubuntu-latest      
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # A called workflow's inputs are free text, where the dispatch form
+      # offers a choice.
+      - name: Check the Inputs
+        run: |
+          case "${FUNCTION}" in
+            function-wasm|function-oci) ;;
+            *) echo "::error::function is ${FUNCTION}: function-wasm or function-oci"; exit 1 ;;
+          esac
+          if [ -n "${DIGEST}" ] && ! [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::digest is ${DIGEST}: sha256:<64 hex digits>"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: false
+          persist-credentials: false
 
       - name: Setup QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -84,7 +148,6 @@ jobs:
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         id: syft-install
 
-    # Image signing and attestation for ghcr
       - name: Login to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -92,20 +155,80 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Login to Upbound Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: xpkg.upbound.io
+          username: ${{ secrets.XPKG_ACCESS_ID }}
+          password: ${{ secrets.XPKG_TOKEN }}
+
+      # The index-checking helper of the steps below. The mirror's index is
+      # GHCR's with one more manifest once the extensions are appended (the
+      # one annotated io.crossplane.xpkg), so its digest differs and it is
+      # held to the pushed package by content: every platform manifest of
+      # GHCR's index, and beside them extension manifests alone.
+      - name: Write the Index Check
+        run: |
+          cat > "${RUNNER_TEMP}/same-package.sh" <<'EOF'
+          #!/usr/bin/env bash
+          # same-package.sh <ghcr ref> <mirror ref>: succeeds when the
+          # mirror's index holds the package the GHCR index is.
+          set -euo pipefail
+          published=$(docker buildx imagetools inspect --raw "$1" | jq -r '.manifests[].digest' | sort)
+          docker buildx imagetools inspect --raw "$2" > "${RUNNER_TEMP}/mirror-index.json"
+          mirrored=$(jq -r '.manifests[] | select((.annotations // {}) | has("io.crossplane.xpkg") | not) | .digest' "${RUNNER_TEMP}/mirror-index.json" | sort)
+          if [ -z "$published" ] || [ "$published" != "$mirrored" ]; then
+            echo "::error::$2 does not hold the package $1 is: its manifests are [$(echo $mirrored)], and the package's are [$(echo $published)]"
+            exit 1
+          fi
+          EOF
+          chmod +x "${RUNNER_TEMP}/same-package.sh"
+
+      # With a digest: the version's tag must still be the package the
+      # caller pushed, in both registries, and from here on nothing reads
+      # the GHCR tag again. Without one, the tag is the reference, as a run
+      # by hand always had it.
+      - name: Select What to Sign
+        run: |
+          resolve() { docker buildx imagetools inspect "$1" | awk '/^Digest:/{print $2}'; }
+          if [ -z "${DIGEST}" ]; then
+            {
+              echo "GHCR_REF=${GHCR_IMAGE}:${VERSION}"
+              echo "MIRROR_REF=${MIRROR_IMAGE}:${VERSION}"
+            } >> "$GITHUB_ENV"
+            echo "no digest given: signing what ${VERSION} resolves to"
+            exit 0
+          fi
+          current=$(resolve "${GHCR_IMAGE}:${VERSION}")
+          if [ "${current}" != "${DIGEST}" ]; then
+            echo "::error::${GHCR_IMAGE}:${VERSION} resolves to ${current}, not to ${DIGEST}, the digest this run was given: the tag moved after the push, and nothing is signed"
+            exit 1
+          fi
+          mirror=$(resolve "${MIRROR_IMAGE}:${VERSION}")
+          "${RUNNER_TEMP}/same-package.sh" "${GHCR_IMAGE}@${DIGEST}" "${MIRROR_IMAGE}@${mirror}"
+          {
+            echo "GHCR_REF=${GHCR_IMAGE}@${DIGEST}"
+            echo "MIRROR_REF=${MIRROR_IMAGE}@${mirror}"
+          } >> "$GITHUB_ENV"
+
+    # Image signing and attestation for ghcr
       - name: Sign GHCR Image
-        run: cosign sign --yes "${GHCR_IMAGE}:${VERSION}"
+        run: cosign sign --yes "${GHCR_REF}"
 
       - name: Generate GHCR SBOM
-        run: ${{ steps.syft-install.outputs.cmd }} "${GHCR_IMAGE}:${VERSION}" -o spdx-json=ghcr-sbom.spdx.json
+        run: ${{ steps.syft-install.outputs.cmd }} "${GHCR_REF}" -o spdx-json=ghcr-sbom.spdx.json
 
       - name: Attest SBOM to GHCR Image
-        run: cosign attest --yes --predicate ghcr-sbom.spdx.json --type spdxjson "${GHCR_IMAGE}:${VERSION}"
+        run: cosign attest --yes --predicate ghcr-sbom.spdx.json --type spdxjson "${GHCR_REF}"
 
       - name: Resolve GHCR Image Digest
         id: ghcr-digest
         run: |
-          DIGEST=$(docker buildx imagetools inspect "${GHCR_IMAGE}:${VERSION}" | awk '/^Digest:/{print $2}')
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          if [ -n "${DIGEST}" ]; then
+            echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          else
+            echo "digest=$(docker buildx imagetools inspect "${GHCR_REF}" | awk '/^Digest:/{print $2}')" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Attest SLSA Provenance to GHCR Image
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -116,22 +239,19 @@ jobs:
           create-storage-record: false
 
     # Image signing and attestation for xpkg.upbound.io
-      - name: Login to Upbound Registry
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: xpkg.upbound.io
-          username: ${{ secrets.XPKG_ACCESS_ID }}
-          password: ${{ secrets.XPKG_TOKEN }}
-
+      # Fetched and checked here, not through hack/fetch-verified.sh: the
+      # checkout is the caller's tree, and this file is main's.
       - name: Up Login
         env:
           UP_TOKEN: ${{ secrets.UP_TOKEN }}
         run: |
-          hack/fetch-verified.sh "https://cli.upbound.io/stable/${UP_VERSION}/bin/linux_amd64/up" "${UP_SHA256}" /tmp/up
+          curl -fsSL --retry 3 -o /tmp/up "https://cli.upbound.io/stable/${UP_VERSION}/bin/linux_amd64/up"
+          echo "${UP_SHA256}  /tmp/up" | sha256sum -c -
+          chmod +x /tmp/up
           /tmp/up login
 
       - name: Generate Upbound Mirror SBOM
-        run: ${{ steps.syft-install.outputs.cmd }} "${MIRROR_IMAGE}:${VERSION}" -o spdx-json=mirror-sbom.spdx.json
+        run: ${{ steps.syft-install.outputs.cmd }} "${MIRROR_REF}" -o spdx-json=mirror-sbom.spdx.json
 
       - name: Generate release notes
         env:
@@ -142,34 +262,43 @@ jobs:
             echo "$RELEASE_BODY" >> "release_notes.md"
           fi
 
+      # up appends to the tag and writes a new index under it, so the tag is
+      # what it is given.
       - name: Append package assets for Marketplace
         run: |
-          extensions_dir=${{ github.workspace }}/${{ env.EXTENSIONS_ROOT }}
+          extensions_dir="${GITHUB_WORKSPACE}/${EXTENSIONS_ROOT}"
 
-          mkdir -p $extensions_dir/sbom
-          cp ./mirror-sbom.spdx.json $extensions_dir/sbom/sbom.spdx.json
+          mkdir -p "$extensions_dir/sbom"
+          cp ./mirror-sbom.spdx.json "$extensions_dir/sbom/sbom.spdx.json"
 
-          mkdir -p $extensions_dir/readme
-          cp ./${{ env.PACKAGE_README }} $extensions_dir/readme/readme.md
-          
-          mkdir -p $extensions_dir/release-notes
+          mkdir -p "$extensions_dir/readme"
+          cp "./${PACKAGE_README}" "$extensions_dir/readme/readme.md"
+
+          mkdir -p "$extensions_dir/release-notes"
           if [ -f ./release_notes.md ]; then
-            cp ./release_notes.md $extensions_dir/release-notes/
+            cp ./release_notes.md "$extensions_dir/release-notes/"
           fi
 
-          /tmp/up alpha xpkg append "${MIRROR_IMAGE}:${VERSION}" --extensions-root $extensions_dir
+          /tmp/up alpha xpkg append "${MIRROR_IMAGE}:${VERSION}" --extensions-root "$extensions_dir"
 
-      - name: Sign Upbound Mirror Image
-        run: cosign sign --yes "${MIRROR_IMAGE}:${VERSION}"
-
-      - name: Attest SBOM to Upbound Mirror Image
-        run: cosign attest --yes --predicate mirror-sbom.spdx.json --type spdxjson "${MIRROR_IMAGE}:${VERSION}"
-
+      # The index the append wrote is the one the mirror's signatures are
+      # for. Its digest is read once and, with a digest given, the index is
+      # held to the pushed package again before anything is signed.
       - name: Resolve Upbound Mirror Image Digest
         id: mirror-digest
         run: |
-          DIGEST=$(docker buildx imagetools inspect "${MIRROR_IMAGE}:${VERSION}" | awk '/^Digest:/{print $2}')
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          appended=$(docker buildx imagetools inspect "${MIRROR_IMAGE}:${VERSION}" | awk '/^Digest:/{print $2}')
+          if [ -n "${DIGEST}" ]; then
+            "${RUNNER_TEMP}/same-package.sh" "${GHCR_IMAGE}@${DIGEST}" "${MIRROR_IMAGE}@${appended}"
+            echo "MIRROR_REF=${MIRROR_IMAGE}@${appended}" >> "$GITHUB_ENV"
+          fi
+          echo "digest=${appended}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign Upbound Mirror Image
+        run: cosign sign --yes "${MIRROR_REF}"
+
+      - name: Attest SBOM to Upbound Mirror Image
+        run: cosign attest --yes --predicate mirror-sbom.spdx.json --type spdxjson "${MIRROR_REF}"
 
       - name: Attest SLSA Provenance to Upbound Mirror Image
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -178,3 +307,11 @@ jobs:
           subject-digest: ${{ steps.mirror-digest.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
+
+      - name: Summarise
+        run: |
+          {
+            echo "Signed and attested ${FUNCTION} ${VERSION}:"
+            echo "- \`${GHCR_REF}\`"
+            echo "- \`${MIRROR_REF}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
