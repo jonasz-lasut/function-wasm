@@ -33,6 +33,7 @@ permissions:
 jobs:
   detect-noop:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: read
@@ -74,6 +75,7 @@ jobs:
   # advisories check weekly against main).
   deny:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     needs: detect-noop
     if: needs.detect-noop.outputs.noop != 'true'
     steps:
@@ -89,6 +91,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     needs: detect-noop
     if: needs.detect-noop.outputs.noop != 'true'
     steps:
@@ -137,6 +140,7 @@ jobs:
   # pull request's labels select).
   unit-test:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     needs: detect-noop
     if: needs.detect-noop.outputs.noop != 'true'
     steps:
@@ -179,6 +183,7 @@ jobs:
   # shrink the suite and stay green.
   guest-suite:
     runs-on: ubuntu-26.04-arm
+    timeout-minutes: 30
     needs: detect-noop
     if: needs.detect-noop.outputs.noop != 'true'
     steps:
@@ -255,6 +260,7 @@ jobs:
   # output), since most of its time is building the init and the fixture.
   vm-suite:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     needs: detect-noop
     if: needs.detect-noop.outputs.noop != 'true' && needs.detect-noop.outputs.oci == 'true'
     steps:

@@ -69,6 +69,7 @@ jobs:
   # nothing here; a label naming no profile fails at its make target.
   select:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     permissions:
       pull-requests: read
     outputs:
@@ -202,6 +203,7 @@ jobs:
   # this one fails until that run's gate replaces it.
   e2e-verdict:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     needs:
       - select
       - wasm

@@ -69,6 +69,7 @@ jobs:
   # records that they were set.
   guard:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: read
@@ -113,6 +114,7 @@ jobs:
 
   build:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     needs: guard
     permissions:
       contents: read
@@ -176,6 +178,7 @@ jobs:
 
   push:
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     needs:
       - build
     steps:

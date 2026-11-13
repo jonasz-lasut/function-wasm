@@ -38,6 +38,7 @@ jobs:
   build:
     name: build (${{ matrix.os }}-${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     strategy:
       matrix:
         include:
@@ -92,6 +93,7 @@ jobs:
 
   publish:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     needs: build
     permissions:
       contents: write

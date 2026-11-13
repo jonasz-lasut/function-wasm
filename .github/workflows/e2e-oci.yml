@@ -66,6 +66,7 @@ jobs:
   # in real VMs is ci.yml's vm-suite job.
   build-tools:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,6 +136,7 @@ jobs:
   # and the suite's own logs are uploaded.
   e2e:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     needs:
       - build-tools
     # An empty matrix is an error, so no selected profile skips the job.
@@ -228,6 +230,7 @@ jobs:
   build-oci-go:
     name: build (oci-go)
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     if: inputs.examples
     steps:
       - name: Checkout

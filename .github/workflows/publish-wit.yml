@@ -35,6 +35,7 @@ permissions:
 jobs:
   publish-wit:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     env:
       WIT_REPOSITORY: jonasz-lasut/guestfn/function
       # Installed from the release binary and checked against its digest

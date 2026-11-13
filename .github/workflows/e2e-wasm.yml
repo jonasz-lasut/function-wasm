@@ -82,6 +82,7 @@ jobs:
   # whatever the job is called.
   build-tools:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,6 +127,7 @@ jobs:
   build-go:
     name: build (go)
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     if: inputs.examples
     needs:
       - build-tools
@@ -222,6 +224,7 @@ jobs:
   build-rust:
     name: build (rust)
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     if: inputs.examples
     needs:
       - build-tools
@@ -286,6 +289,7 @@ jobs:
   build-zig:
     name: build (zig)
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     if: inputs.examples
     needs:
       - build-tools
@@ -402,6 +406,7 @@ jobs:
   build-c:
     name: build (c)
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     if: inputs.examples
     needs:
       - build-tools
@@ -533,6 +538,7 @@ jobs:
   build-cpp:
     name: build (cpp)
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     if: inputs.examples
     needs:
       - build-tools
@@ -667,6 +673,7 @@ jobs:
   build-odin:
     name: build (odin)
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     if: inputs.examples
     needs:
       - build-tools
@@ -818,6 +825,7 @@ jobs:
   build-moonbit:
     name: build (moonbit)
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     if: inputs.examples
     needs:
       - build-tools
@@ -934,6 +942,7 @@ jobs:
   build-ts:
     name: build (ts)
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     if: inputs.examples
     needs:
       - build-tools
@@ -993,6 +1002,7 @@ jobs:
   build-python:
     name: build (python)
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     if: inputs.examples
     needs:
       - build-tools
@@ -1047,6 +1057,7 @@ jobs:
   build-dotnet:
     name: build (dotnet)
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     if: inputs.examples
     needs:
       - build-tools
@@ -1115,6 +1126,7 @@ jobs:
   # suite's own logs are uploaded.
   e2e:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     needs:
       - build-tools
     # An empty matrix is an error, so no selected profile skips the job.

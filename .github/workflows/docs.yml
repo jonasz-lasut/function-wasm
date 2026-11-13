@@ -55,6 +55,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     env:
       # mdBook, installed from the release tarball and checked against its
       # digest (a cargo install would compile it on every run); the version
@@ -115,6 +116,7 @@ jobs:
   # includes.
   prose:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -129,6 +131,7 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     permissions:
       pages: write
       id-token: write

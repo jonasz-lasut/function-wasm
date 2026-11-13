@@ -96,6 +96,7 @@ jobs:
   # so the pins above reach it as this job's output.
   plan:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     outputs:
       runtime: ${{ steps.plan.outputs.runtime }}
       crossplane: ${{ steps.plan.outputs.crossplane }}
@@ -151,6 +152,7 @@ jobs:
   vm-suite:
     name: vm suite (firecracker ${{ matrix.firecracker }}, kernel ${{ matrix.kernel }})
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     needs: plan
     if: needs.plan.outputs.runtime == 'oci'
     continue-on-error: ${{ matrix.firecracker != 'current' || matrix.kernel != 'current' }}
@@ -244,6 +246,7 @@ jobs:
   tested-versions:
     name: record the tested versions
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     needs:
       - plan
       - wasm
