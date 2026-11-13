@@ -81,6 +81,8 @@ p256 = { version = "0.14", features = ["ecdsa", "pem"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"] }
 x509-cert = "0.3"
 tempfile = "3"
+# A paused clock, for the listeners' read timeout.
+tokio = { version = "1", features = ["test-util"] }
 wat = "1"
 time = { version = "0.3", features = ["formatting"] }
 

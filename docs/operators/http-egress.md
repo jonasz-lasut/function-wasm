@@ -90,8 +90,11 @@ The default block list refuses these ranges:
 - RFC 1918
 - carrier-grade NAT (`100.64.0.0/10`)
 - IPv6 unique-local
-- the NAT64 and IPv4-compatible prefixes
-- the unspecified, multicast and reserved ranges
+- the prefixes that embed an IPv4 address in an IPv6 one, which are the
+  IPv4-compatible prefix, NAT64 (`64:ff9b::/96` and `64:ff9b:1::/48`), 6to4
+  (`2002::/16`) and Teredo (`2001::/32`)
+- the unspecified, multicast, benchmarking (`198.18.0.0/15`) and reserved
+  ranges, `192.0.0.0/24` among them
 
 It applies to every address a name resolves to. A zoned IPv6 literal such as
 `[::1%25lo]` is never dialled. The runtime dials the address it checked, so a
