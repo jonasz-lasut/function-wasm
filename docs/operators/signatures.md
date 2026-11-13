@@ -6,10 +6,11 @@ the Sigstore trusted root and per-repository requirements. It assumes
 cosign 3 and OCI modules; how to sign in CI is out of scope beyond the
 cosign commands shown.
 
-Without a `--sandbox-policy-file`, `--cosign-key` makes every module need a
-signature. With one, its `requireSignature` rules select the repositories
-that must be signed and the rest run unsigned. `--cosign-key` then only
-supplies keys (see [per repository](#requiring-signatures-per-repository)).
+Without a `--sandbox-policy-file`, a verifier makes every module need a
+signature: `--cosign-key`, `--cosign-trusted-root` or
+`--cosign-trust-instance`. With a policy file, its `requireSignature` rules
+select the repositories that must be signed and the rest run unsigned.
+`--cosign-key` then only supplies keys (see [per repository](#requiring-signatures-per-repository)).
 Only OCI artifacts have a cosign signature, so a source of another type is
 refused wherever a signature is required. With `--cosign-key` alone, that's
 every `Path` and `HTTP` source. Under a policy it's an `HTTP` source whose URL a
