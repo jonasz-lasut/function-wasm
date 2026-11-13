@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use function_sdk_rust::proto::v1::{Result as FnResult, RunFunctionResponse, Severity, Target};
 use guestfn_engine::Engine as _;
-use guestfn_engine::{Config, RunOptions};
+use guestfn_engine::{Config, RunFailure, RunOptions};
 use guestfn_engine_wasm::testing::{
     COMPONENT_CORE_PRELUDE, component_importing, component_with_run, fixed_component, grow_guest,
     lift_run, ok_result, sleeping_guest, spinning_guest, wat_bytes,
@@ -178,6 +178,7 @@ fn run_deadline() {
         err.to_string(),
         "run failed: module exceeded its execution deadline (50ms)"
     );
+    assert_eq!(err.kind(), RunFailure::Deadline);
 }
 
 /// A guest asleep in the host executes nothing, so the epoch deadline has
@@ -197,6 +198,7 @@ fn the_deadline_stops_a_sleeping_guest() {
         err.to_string(),
         "run failed: module exceeded its execution deadline (100ms)"
     );
+    assert_eq!(err.kind(), RunFailure::Deadline);
     assert!(
         started.elapsed() < Duration::from_secs(5),
         "{:?}",
@@ -250,6 +252,27 @@ fn run_exit_status() {
         .run(&m, b"", RunOptions::default())
         .expect_err("should exit");
     assert_eq!(err.to_string(), "run failed: module exited with status 1");
+    assert_eq!(err.kind(), RunFailure::Stopped);
+}
+
+/// A component whose run returns this error string.
+fn failing_guest(message: &str) -> String {
+    format!(
+        r#"(component
+  (core module $m
+    {COMPONENT_CORE_PRELUDE}
+    (func (export "run") (param i32 i32) (result i32)
+      (i32.store8 (i32.const 64) (i32.const 1))
+      (i32.store (i32.const 68) (i32.const 1024))
+      (i32.store (i32.const 72) (i32.const {len}))
+      (i32.const 64))
+    (data (i32.const 1024) "{message}"))
+  (core instance $i (instantiate $m))
+  {lift}
+)"#,
+        len = message.len(),
+        lift = lift_run("i", "i"),
+    )
 }
 
 /// The guest's Err(string) becomes a run error naming the export - the
@@ -257,26 +280,29 @@ fn run_exit_status() {
 #[test]
 fn guest_error_string() {
     let e = engine();
-    let wat = format!(
-        r#"(component
-  (core module $m
-    {COMPONENT_CORE_PRELUDE}
-    (func (export "run") (param i32 i32) (result i32)
-      (i32.store8 (i32.const 64) (i32.const 1))
-      (i32.store (i32.const 68) (i32.const 1024))
-      (i32.store (i32.const 72) (i32.const 4))
-      (i32.const 64))
-    (data (i32.const 1024) "boom"))
-  (core instance $i (instantiate $m))
-  {lift}
-)"#,
-        lift = lift_run("i", "i"),
-    );
-    let m = compile(&e, &wat);
+    let m = compile(&e, &failing_guest("boom"));
     let err = e
         .run(&m, b"", RunOptions::default())
         .expect_err("guest error");
     assert_eq!(err.to_string(), "run returned an error: boom");
+    assert_eq!(err.kind(), RunFailure::Returned);
+}
+
+/// What a guest writes into its own error never makes the run a timeout:
+/// the outcome follows how the run ended, not the words.
+#[test]
+fn a_guest_error_that_names_the_deadline_is_no_timeout() {
+    let e = engine();
+    let said = "module exceeded its execution deadline (1s)";
+    let m = compile(&e, &failing_guest(said));
+    let result = e.run(&m, b"", RunOptions::default());
+    assert_eq!(
+        guestfn_engine::metrics::run_outcome(&result),
+        guestfn_engine::metrics::OUTCOME_ERROR
+    );
+    let err = result.expect_err("guest error");
+    assert_eq!(err.to_string(), format!("run returned an error: {said}"));
+    assert_eq!(err.kind(), RunFailure::Returned);
 }
 
 /// The per-run memory ceiling denies growth: the guest sees memory.grow

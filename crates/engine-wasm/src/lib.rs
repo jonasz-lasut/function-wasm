@@ -18,5 +18,6 @@ pub use wasm::{ABI_V2_WORLD, CORE_MODULE_REFUSAL, Module, Wasmtime, version};
 pub(crate) use wasm::{ARGV0, CallState, EPOCH_TICK, HostTimer, PoolHold, RunLimiter, first_line};
 
 pub(crate) use guestfn_engine::{
-    Config, Engine, Error, Extern, Inspection, RunOptions, concurrency, duration, metrics, wire,
+    Config, Engine, Error, Extern, Inspection, RunError, RunFailure, RunOptions, concurrency,
+    metrics, wire,
 };

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::concurrency::{MemPool, format_bytes};
-use crate::{Error, RunOptions, duration, metrics};
+use crate::{Error, RunError, RunFailure, RunOptions, metrics};
 
 use crate::sandbox::{Ended, OUTPUT_CAP, VmSpec};
 use crate::{Image, Oci, Rootfs};
@@ -50,16 +50,14 @@ pub(crate) fn run(
     image: &Image,
     request: &[u8],
     opts: RunOptions,
-) -> Result<Vec<u8>, Error> {
-    let limits = engine.effective(&opts);
-    let mut wait_deadline = Instant::now() + limits.timeout;
-    if let Some(d) = opts.deadline
-        && d < wait_deadline
-    {
-        wait_deadline = d;
-    }
+) -> Result<Vec<u8>, RunError> {
+    let limits = engine.config.narrowed_by(&opts);
+    let wait_deadline = opts.deadline_within(limits.timeout);
     let _slot = match &engine.scheduler {
-        Some(s) => Some(s.acquire(&opts.digest, wait_deadline).map_err(Error)?),
+        Some(s) => Some(
+            s.acquire(&opts.digest, wait_deadline)
+                .map_err(RunError::waiting)?,
+        ),
         None => None,
     };
     // A VM's memory is reserved whole before it boots: the guest kernel
@@ -69,7 +67,7 @@ pub(crate) fn run(
     let _reservation = match &engine.mem {
         Some(pool) => {
             pool.reserve(memory_mib << 20, wait_deadline)
-                .map_err(Error)?;
+                .map_err(RunError::waiting)?;
             Some(Reservation {
                 pool: Arc::clone(pool),
                 n: memory_mib << 20,
@@ -90,11 +88,7 @@ pub(crate) fn run(
     );
     metrics::RUNS_IN_FLIGHT.dec();
     metrics::RUN_DURATION
-        .with_label_values(&[match &result {
-            Ok(_) => metrics::OUTCOME_OK,
-            Err(e) if e.0.contains("exceeded its execution deadline") => metrics::OUTCOME_TIMEOUT,
-            Err(_) => metrics::OUTCOME_ERROR,
-        }])
+        .with_label_values(&[metrics::run_outcome(&result)])
         .observe(start.elapsed().as_secs_f64());
     result
 }
@@ -120,7 +114,7 @@ fn store_of<'a>(engine: &'a Oci, image: &Image) -> Option<&'a dyn crate::Artifac
 /// memory as a run's does.
 pub(crate) fn prepare(engine: &Oci, image: &Image) -> Result<(), Error> {
     let opts = RunOptions::default();
-    let limits = engine.effective(&opts);
+    let limits = engine.config.narrowed_by(&opts);
     let deadline = Instant::now() + limits.timeout;
     let process_mib = limits.memory_limit.div_ceil(1 << 20).max(MIN_PROCESS_MIB);
     let memory_mib = process_mib + VM_OVERHEAD_MIB;
@@ -158,15 +152,10 @@ fn boot_and_run(
     budget: Duration,
     memory_mib: u64,
     process_mib: u64,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, RunError> {
     // The budget covers the boot: a VM that takes the whole budget to boot
     // never ran, and the deadline says so.
-    let mut deadline = Instant::now() + budget;
-    if let Some(d) = opts.deadline
-        && d < deadline
-    {
-        deadline = d;
-    }
+    let deadline = opts.deadline_within(budget);
     let mut description = image.config.describe(opts);
     description.memory_max = process_mib << 20;
     let outcome = engine.sandbox.run(VmSpec {
@@ -197,37 +186,45 @@ fn boot_and_run(
     }
     let last_line = last_line(&output);
     match outcome.end {
-        Ended::Deadline => Err(Error(format!(
-            "run failed: module exceeded its execution deadline ({})",
-            duration::format(budget)
-        ))),
-        Ended::Lost(why) => Err(Error(format!("run failed: {why}"))),
+        Ended::Deadline => Err(RunError::deadline("run failed", budget)),
+        Ended::Lost(why) => Err(RunError::new(
+            RunFailure::Host,
+            format!("run failed: {why}"),
+        )),
         Ended::Answered(response) => Ok(response),
-        Ended::Refused { code, message } => Err(Error(format!(
-            "run returned an error: {message} (gRPC status {code})"
-        ))),
+        Ended::Refused { code, message } => Err(RunError::new(
+            RunFailure::Returned,
+            format!("run returned an error: {message} (gRPC status {code})"),
+        )),
         Ended::Exit(exit) => {
             if !exit.error.is_empty() {
-                return Err(Error(format!("cannot start the process: {}", exit.error)));
+                return Err(RunError::new(
+                    RunFailure::Host,
+                    format!("cannot start the process: {}", exit.error),
+                ));
             }
             if exit.oom {
-                return Err(Error(format!(
-                    "process was killed: the run's memory limit of {} was exceeded",
-                    format_bytes(process_mib << 20)
-                )));
+                return Err(RunError::new(
+                    RunFailure::MemoryLimit,
+                    format!(
+                        "process was killed: the run's memory limit of {} was exceeded",
+                        format_bytes(process_mib << 20)
+                    ),
+                ));
             }
+            let stopped = |message: String| RunError::new(RunFailure::Stopped, message);
             if let Some(signal) = exit.signal {
-                return Err(Error(with_last(
+                return Err(stopped(with_last(
                     format!("process was killed by signal {signal}"),
                     &last_line,
                 )));
             }
             match exit.status {
-                Some(n) => Err(Error(with_last(
+                Some(n) => Err(stopped(with_last(
                     format!("process exited with status {n} before answering the call"),
                     &last_line,
                 ))),
-                None => Err(Error("process ended without an exit status".to_string())),
+                None => Err(stopped("process ended without an exit status".to_string())),
             }
         }
     }

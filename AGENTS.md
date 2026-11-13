@@ -317,9 +317,15 @@ crates/engine/              what the engines share (package guestfn-engine), wit
                               ArtifactStore (where an engine keeps files it derives from a
                               module at run time and holds the stored file it runs from
                               against the sweep, implemented by the runtime's compiled store),
-                              Config (the ceilings), RunOptions (one run's narrowing and
-                              grants), Inspection (with details, an image's config lines) and
-                              Extern, Error
+                              Config (the ceilings, with what both engines derive from
+                              them: a run's narrowed budget, the pool check, the slots
+                              and the pool), RunOptions (one run's narrowing and grants,
+                              and the deadline a wait under a budget ends at), Inspection
+                              (with details, an image's config lines) and Extern, Error
+                              (a load's failure, the message alone) and RunError (a
+                              run's: the pinned message plus a RunFailure kind - waiting,
+                              deadline, memory limit, returned, stopped, host - which the
+                              run metric's outcome is read from, never the words)
   src/wire.rs,                the egress seam (HttpRequester, one send's request and response),
   concurrency.rs,             the fair run slots, the memory pool and the per-digest step slots,
   duration.rs, metrics.rs     Go-style durations, the Prometheus series (names, labels and
@@ -340,7 +346,7 @@ crates/engine-wasm/         the Wasmtime engine (package guestfn-engine-wasm): t
                               the compiled cache (build.rs reads wasmtime's version from Cargo.lock)
   src/run.rs                  the bounds around one run: the run slot and the memory reservation
                               (waits capped by the deadline), run_duration by outcome, wasmtime
-                              failures named by their kind (trap, exit status, deadline), wording pinned
+                              failures typed and named by their kind (trap, exit status, deadline), wording pinned
   src/component.rs            the host of the guestfn:function world: the bindgen, the store data
                               (WASI 0.3+0.2, the memory limiter, the hostcall timer), the typed log
                               import, the linker, the world typecheck (the ABI check) and one run:

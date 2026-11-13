@@ -41,6 +41,17 @@ pub const OUTCOME_OK: &str = "ok";
 pub const OUTCOME_ERROR: &str = "error";
 pub const OUTCOME_TIMEOUT: &str = "timeout";
 
+/// The outcome a run is counted under: a run its deadline ended is a
+/// timeout, by the failure's kind and never by its words, which a guest
+/// can write into an error of its own.
+pub fn run_outcome<T>(result: &Result<T, crate::RunError>) -> &'static str {
+    match result {
+        Ok(_) => OUTCOME_OK,
+        Err(e) if e.kind() == crate::RunFailure::Deadline => OUTCOME_TIMEOUT,
+        Err(_) => OUTCOME_ERROR,
+    }
+}
+
 /// The registry every series lives in - prometheus-client has no default
 /// registry, so the runtime's is this one.
 static REGISTRY: LazyLock<RwLock<Registry>> = LazyLock::new(|| RwLock::new(Registry::default()));
