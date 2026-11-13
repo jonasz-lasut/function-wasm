@@ -607,7 +607,8 @@ crates/engine-oci/          the OCI engine of the function-oci runtime (package 
                             Firecracker, the kernel and the init (docs/one-pager-vm-snapshots.md),
                             the memo of made snapshots on the loaded Image (sandbox.rs
                             SnapshotMemo), a missing or refused one made again, a failed one
-                            costing the run a boot, one taken at warm-up for the default
+                            costing the run a boot and leaving no file behind, one kept
+                            under the scratch directory removed with its image, one taken at warm-up for the default
                             machine (Sandbox::prepare), and a run that finds one in the
                             making booting instead of waiting). A module
                             is an OCI image layout tar (layout.rs: index, platform manifest,

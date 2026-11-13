@@ -17,6 +17,19 @@ use crate::{ArtifactStore, Error};
 pub struct Snapshot {
     pub state: PathBuf,
     pub mem: PathBuf,
+    /// The directory of both files when the sandbox keeps them under the
+    /// engine's scratch directory, which no sweep bounds: it goes with the
+    /// snapshot, so with the loaded image that remembers it. None for a
+    /// snapshot in a store, whose files are the store's to remove.
+    pub scratch: Option<PathBuf>,
+}
+
+impl Drop for Snapshot {
+    fn drop(&mut self) {
+        if let Some(dir) = &self.scratch {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
 }
 
 /// One machine shape's snapshot once made. The write side is held while

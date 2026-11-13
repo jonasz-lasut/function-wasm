@@ -118,8 +118,9 @@ Firecracker writes both files in place, since a VM's memory is too large to
 hand over as bytes. The store signs a file under its per-process key once
 the file is complete
 ([Compiled-artifact cache key](one-pager-cache-key.md)). An unfinished file
-is no entry, and the runtime removes what an interrupted write left when it
-starts. The sweep bounds the snapshots with the store's other entries, and
+is no entry. The engine removes the files of a snapshot it couldn't finish,
+and the runtime removes what an interrupted write left when it starts. The
+sweep bounds the snapshots with the store's other entries, and
 the `cache_bytes` gauge counts them. Both count a sparse file by what the
 disk allocated for it.
 
@@ -139,7 +140,8 @@ mounted and a stored file keeps its path. The engine pins the stored
 root filesystem of a loaded image, and the sweep skips a pinned file. Each run marks the root
 filesystem and the snapshot it restores as used, which keeps the snapshot
 of a busy image out of the sweep. An image the runtime didn't store keeps its
-snapshots in the engine's scratch directory for the life of the process.
+snapshots in the engine's scratch directory while it stays in memory, and
+the engine removes them when the image leaves.
 
 ### The protocol
 
