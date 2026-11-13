@@ -70,9 +70,14 @@ Each run has fixed budgets: `timeout` 10 seconds, `maxRequests` 16,
 tunable, through `--egress-rate-limit-per-minute` and
 `--egress-rate-limit-burst`.
 
+A request's body is at most 4 MiB as well. The host reads the body before
+it asks the policy, and refuses a longer one with `sandbox.egress: the
+request body exceeds 4194304 bytes (maxRequestBytes)`.
+
 The run's remaining deadline also bounds each request. The deadline is
 `limits.timeout` or `--module-timeout`, and the time a guest waits for the
-host's HTTP answer is credited back to that compute budget. A request is cut
+host's HTTP answer is credited back to that budget, once for requests that
+overlap. The time the guest takes to send a body isn't. A request is cut
 short at the remaining deadline when that comes before the 10 seconds, and the
 run then ends as a timeout, so the guest can't handle that error.
 

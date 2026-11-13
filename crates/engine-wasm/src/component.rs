@@ -5,7 +5,6 @@
 //! enforced, whose verdict inspect reports.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use wasmtime::component::Accessor;
@@ -151,8 +150,9 @@ pub(crate) fn execute(
     // Time blocked in wasi:http is written here by the hooks and read by
     // the deadline callback - shared because wasmtime-wasi-http borrows the
     // hooks separately from the rest of the store data.
-    let http_host = Arc::new(AtomicU64::new(0));
-    let deadline = Instant::now() + budget;
+    let http_host = Arc::new(crate::wasihttp::HttpWait::default());
+    let started = Instant::now();
+    let deadline = started + budget;
     let ctx = Ctx {
         wasi: wasi.build(),
         table: ResourceTable::new(),
@@ -192,8 +192,7 @@ pub(crate) fn execute(
         {
             return Ok(wasmtime::UpdateDeadline::Interrupt);
         }
-        let credit = std::time::Duration::from_nanos(credit_source.load(Ordering::Relaxed))
-            .saturating_sub(credited);
+        let credit = credit_source.credited().saturating_sub(credited);
         let mut extend = (credit.as_nanos() / EPOCH_TICK.as_nanos()) as u64;
         if extend == 0 {
             return Ok(wasmtime::UpdateDeadline::Interrupt);
@@ -224,30 +223,66 @@ pub(crate) fn execute(
         // the export that produced it.
         GuestError(String),
         Failed(&'static str, wasmtime::Error),
+        // The wall clock passed the run's budget while the guest was not
+        // executing: the epoch deadline interrupts guest code alone.
+        Deadline,
     }
 
     let pre = m.pre.clone();
     let req = request.to_vec();
+    // The wall clock's share of the deadline. A guest suspended in a host
+    // call (a WASI clock or poll, a stream) executes nothing, so the epoch
+    // deadline never interrupts it; this ends the run instead, by dropping
+    // it. The limit is the budget plus the time credited for wasi:http,
+    // never past the request's own deadline, and is read again whenever it
+    // is reached, since a send in flight moves it.
+    let wait = Arc::clone(&http_host);
+    let wall = async move {
+        loop {
+            let mut limit = started + budget + wait.credited();
+            if let Some(h) = hard {
+                limit = limit.min(h);
+            }
+            if Instant::now() >= limit {
+                return;
+            }
+            tokio::time::sleep_until(limit.into()).await;
+        }
+    };
     let (store, outcome) = wasmtime_wasi::runtime::in_tokio(async move {
-        let instance = match pre.instantiate_async(&mut store).await {
-            Ok(i) => i,
-            Err(e) => return (store, Outcome::Failed("cannot instantiate module", e)),
+        let drive = async move {
+            let instance = match pre.instantiate_async(&mut store).await {
+                Ok(i) => i,
+                Err(e) => return (store, Outcome::Failed("cannot instantiate module", e)),
+            };
+            let out = store
+                .run_concurrent(async |accessor: &Accessor<Ctx>| {
+                    instance.call_run(accessor, req).await
+                })
+                .await;
+            let outcome = match out {
+                Ok(Ok(Ok(response))) => Outcome::Response(response),
+                Ok(Ok(Err(msg))) => Outcome::GuestError(msg),
+                Ok(Err(e)) | Err(e) => Outcome::Failed("run failed", e),
+            };
+            (store, outcome)
         };
-        let out = store
-            .run_concurrent(async |accessor: &Accessor<Ctx>| instance.call_run(accessor, req).await)
-            .await;
-        let outcome = match out {
-            Ok(Ok(Ok(response))) => Outcome::Response(response),
-            Ok(Ok(Err(msg))) => Outcome::GuestError(msg),
-            Ok(Err(e)) | Err(e) => Outcome::Failed("run failed", e),
-        };
-        (store, outcome)
+        tokio::select! {
+            biased;
+            (store, outcome) = drive => (Some(store), outcome),
+            () = wall => (None, Outcome::Deadline),
+        }
     });
 
-    crate::metrics::HOSTCALL_DURATION.observe(store.data().call.timer.host_total().as_secs_f64());
+    // A run ended by the wall clock took its store with it.
+    if let Some(store) = &store {
+        crate::metrics::HOSTCALL_DURATION
+            .observe(store.data().call.timer.host_total().as_secs_f64());
+    }
     match outcome {
         Outcome::Response(response) => Ok(response),
         Outcome::GuestError(msg) => Err(Error(format!("run returned an error: {msg}"))),
         Outcome::Failed(what, e) => Err(crate::run::guest_error(what, e, budget)),
+        Outcome::Deadline => Err(crate::run::deadline_error("run failed", budget)),
     }
 }

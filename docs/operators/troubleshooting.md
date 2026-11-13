@@ -70,6 +70,7 @@ Egress is explained on the [HTTP egress](http-egress.md) page.
 - **`sandbox.egress: <host> resolves to an address the egress policy blocks`**: the host refuses private, loopback, link-local and cluster ranges by default. Add the range to the policy's `allowedCIDRs` to permit an in-cluster service.
 - **`sandbox.egress: HTTP egress is not granted to this module: its manifest requires no egress (requires.egress.http)`**: the module made an HTTP request but its manifest doesn't require egress. Add `requires.egress.http` to the manifest. A Go guest sees the message prefixed with `wasmfn: `.
 - **`sandbox.egress: the module's request rate exceeds the egress policy's rateLimit`**: raise `--egress-rate-limit-per-minute` and `--egress-rate-limit-burst`, or reduce the module's request frequency.
+- **`sandbox.egress: the request body exceeds 4194304 bytes (maxRequestBytes)`**: the module sent a request body over 4 MiB, which the host refuses before it asks the policy. Send less in one request.
 
 ## `function-oci` modules
 
