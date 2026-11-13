@@ -181,6 +181,12 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               a forbid with an unconstrained action applies to every
                               scoped default-permit action without scoping it (the layer
                               judged with everything else permitted, open_under_forbids);
+                              every decision is remembered (Decisions, one memo for the
+                              process): the key is the policy set's number, drawn once per
+                              compiled set and never reused, and the JSON of everything else
+                              Cedar is handed (principal and attributes, action, resource,
+                              entities, context), written out whole; two generations of 8192
+                              bound it, a key past 1 KiB is answered and not kept;
                               the other refusal strings stay in the callers
   src/require.rs              the read fence's selectors: every ResourceSelector of a
                               response's requirements (resources, then the deprecated
