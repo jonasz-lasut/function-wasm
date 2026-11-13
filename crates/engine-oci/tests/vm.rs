@@ -368,10 +368,37 @@ fn the_manifest_s_args_start_the_function() {
     );
 }
 
+/// The budget covers the boot, and a guest that has not connected when it
+/// runs out is lost, not late (the sandbox's sentence, not the module's
+/// deadline). So the limit is sized from a boot measured here: three times
+/// what an answering function took from the call to its answer, on this
+/// host, beside whatever else the suite is running, and never under three
+/// seconds. The run must end with the deadline's sentence, soon after the
+/// limit.
 #[test]
 fn the_deadline_stops_a_spinning_process() {
     let Some(t) = tools() else { return };
-    let e = engine(&t, Config::default());
+    // A ceiling no measured limit reaches: the limit is the step's own.
+    let e = engine(
+        &t,
+        Config {
+            timeout: Duration::from_secs(600),
+            ..Config::default()
+        },
+    );
+    let echo = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "echo"],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    let started = std::time::Instant::now();
+    ask(&e, &echo, "boot", opts()).unwrap();
+    let boot = started.elapsed();
+    let limit = Duration::from_secs((boot * 3).as_secs_f64().ceil().max(3.0) as u64);
+    eprintln!("a boot and an answer took {boot:?}: the limit is {limit:?}");
     let m = e
         .compile(&fixture_image(
             &t.fixture,
@@ -381,13 +408,21 @@ fn the_deadline_stops_a_spinning_process() {
         ))
         .unwrap();
     let mut o = opts();
-    o.timeout = Some(Duration::from_secs(3));
+    o.timeout = Some(limit);
     let started = std::time::Instant::now();
     assert_eq!(
         ask(&e, &m, "", o).unwrap_err(),
-        "run failed: module exceeded its execution deadline (3s)"
+        format!(
+            "run failed: module exceeded its execution deadline ({})",
+            guestfn_engine::duration::format(limit)
+        )
     );
-    assert!(started.elapsed() < Duration::from_secs(10));
+    let took = started.elapsed();
+    assert!(took >= limit, "ended after {took:?}, before the limit");
+    assert!(
+        took < limit + Duration::from_secs(7),
+        "ended after {took:?}"
+    );
 }
 
 #[test]

@@ -211,16 +211,21 @@ async fn a_fatal_result_names_the_exit_status_and_the_message() -> Result<()> {
     .await
 }
 
+/// The limit covers the VM's boot, and a guest that has not connected when
+/// it runs out is lost, not late: the sandbox's sentence, not the module's
+/// deadline. The limit here leaves a boot room on a busy node, where the
+/// suite's other VMs boot beside this one: 20s of the 30s the runtime
+/// allows, well inside the two minutes Crossplane gives a reconcile.
 #[tokio::test]
 async fn the_deadline_stops_a_spinning_process() -> Result<()> {
     with_temp_ns("oci-spin", |ns| async move {
         ns.ensure_profile(Profile::OciDefault).await?;
         let step = Step::oci(&ns.state.oci_variant("oci-plain").reference())
-            .with_limits(json!({"timeout": "5s"}));
+            .with_limits(json!({"timeout": "20s"}));
         let guest = ns.guest("probe", &step, json!({"spin": true})).await?;
         let message = guest.wait_fatal(WAIT).await?;
         ensure!(
-            message.contains("module exceeded its execution deadline (5s)"),
+            message.contains("module exceeded its execution deadline (20s)"),
             "{message}"
         );
         Ok(())
