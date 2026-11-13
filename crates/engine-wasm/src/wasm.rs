@@ -226,6 +226,17 @@ pub struct Wasmtime {
 impl Wasmtime {
     /// Creates an Wasmtime; dropping it stops its epoch ticker.
     pub fn new(config: Config) -> Result<Self, Error> {
+        Self::build(config, None)
+    }
+
+    /// The engine over wasmtime's pooling allocator with this many
+    /// instance slots, for tests/pooling_bench.rs alone.
+    #[doc(hidden)]
+    pub fn pooled_for_bench(config: Config, slots: u32) -> Result<Self, Error> {
+        Self::build(config, Some(slots))
+    }
+
+    fn build(config: Config, pooled_slots: Option<u32>) -> Result<Self, Error> {
         // A pool smaller than the per-run ceiling could never admit a
         // full-limit run - caught at startup rather than as a fleet of
         // timing-out requests.
@@ -272,6 +283,22 @@ impl Wasmtime {
         } else {
             wasmtime::WasmBacktraceDetails::Disable
         });
+        if let Some(slots) = pooled_slots {
+            let mut p = wasmtime::PoolingAllocationConfig::default();
+            p.total_component_instances(slots);
+            p.total_core_instances(slots * 64);
+            p.total_memories(slots * 4);
+            p.total_tables(slots * 16);
+            p.total_stacks(slots);
+            p.max_memory_size(config.memory_limit as usize);
+            p.table_elements(200_000);
+            p.max_core_instance_size(16 << 20);
+            p.max_component_instance_size(16 << 20);
+            p.max_core_instances_per_component(64);
+            p.max_memories_per_component(4);
+            p.max_tables_per_component(16);
+            wc.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(p));
+        }
         let inner =
             wasmtime::Engine::new(&wc).map_err(|e| Error(format!("cannot create engine: {e}")))?;
         let linker = crate::component::linker(&inner)?;
