@@ -505,13 +505,16 @@ impl Resolver {
                     return Ok(m);
                 }
                 let client = RegistryClient::new(reference, auth.clone());
-                let m = client.manifest(reference)?;
-                // An image index pins one manifest per platform; the
-                // manifest layer is in this host's.
-                let m = if m.is_index() {
+                // An image may be pinned by an index, which pins one
+                // manifest per platform: the manifest layer is in this
+                // host's, read as the fetch reads it, so a process that
+                // lost the memo while it kept the compiled image answers
+                // as one that just fetched. A WebAssembly artifact is one
+                // manifest, and an index in its place is refused.
+                let m = if self.serves == crate::manifest::TYPE_OCI {
                     self.platform_manifest(&client, &reference.digest)?.0
                 } else {
-                    m
+                    client.manifest(reference)?
                 };
                 let Some(layer) = crate::oci::manifest_layer(&m) else {
                     self.remember(&reference.digest, &[]);
@@ -927,6 +930,75 @@ mod tests {
             r.fetch(&resolved).unwrap_err(),
             "is a WebAssembly artifact, which function-oci does not serve; function-wasm serves it"
         );
+    }
+
+    /// A module pinned by an image index, what a multi-platform push
+    /// publishes: the manifest is this platform's whether the fetch left
+    /// it in memory or a resolver that never fetched reads it, which is
+    /// where a process stands once the memory tier started over while the
+    /// compiled image stayed on disk.
+    #[test]
+    fn an_image_index_yields_its_manifest_warm_and_cold() {
+        use crate::testing::registry::Registry;
+        let module_manifest = br#"{"contract":"oci@0.1","name":"probe","version":"0.1.0"}"#;
+        let mut registry = Registry::new();
+        let module = registry.module_index(module_manifest, "module");
+        let plain = registry.plain_index("plain");
+        let addr = registry.serve();
+        let source = |digest: &str| ModuleSource {
+            r#type: "OCI".to_string(),
+            oci: Some(crate::input::OciSource {
+                r#ref: format!("{addr}/example/image@{digest}"),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cases: [(&str, &[u8]); 2] = [(&module, module_manifest), (&plain, b"")];
+        for (digest, want) in cases {
+            let warm = Resolver::new(None, 1 << 20, None).serving(crate::manifest::TYPE_OCI);
+            let resolved = warm.resolve(&source(digest), None).expect("resolve");
+            warm.fetch(&resolved).expect("the image as a layout");
+            assert_eq!(warm.cached_manifest(&resolved).as_deref(), Some(want));
+            assert_eq!(warm.manifest(&resolved).as_deref(), Ok(want));
+
+            let cold = Resolver::new(None, 1 << 20, None).serving(crate::manifest::TYPE_OCI);
+            assert_eq!(cold.cached_manifest(&resolved), None);
+            assert_eq!(cold.manifest(&resolved).as_deref(), Ok(want));
+            assert_eq!(
+                cold.cached_manifest(&resolved).as_deref(),
+                Some(want),
+                "the cold read is remembered as the fetch's is"
+            );
+        }
+    }
+
+    /// A WebAssembly artifact is one manifest: an index in its place is
+    /// refused by the fetch and by the manifest read alike.
+    #[test]
+    fn an_image_index_is_no_webassembly_module() {
+        use crate::testing::registry::Registry;
+        let mut registry = Registry::new();
+        let index = registry.plain_index("plain");
+        let addr = registry.serve();
+        let r = Resolver::new(None, 1 << 20, None);
+        let resolved = r
+            .resolve(
+                &ModuleSource {
+                    r#type: "OCI".to_string(),
+                    oci: Some(crate::input::OciSource {
+                        r#ref: format!("{addr}/example/image@{index}"),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                None,
+            )
+            .expect("resolve");
+        let want = format!(
+            "{addr}/example/image@{index} is an image index; reference the manifest holding the module"
+        );
+        assert_eq!(r.fetch(&resolved).unwrap_err(), want);
+        assert_eq!(r.manifest(&resolved).unwrap_err(), want);
     }
 
     #[test]
