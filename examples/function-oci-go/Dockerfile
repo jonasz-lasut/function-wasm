@@ -3,7 +3,7 @@
 # The contract needs the image's command and nothing else; the runtime
 # mounts a fresh /tmp itself. The Go toolchain is at least go.mod's: Renovate
 # moves this image with the monthly examples batch.
-FROM --platform=${BUILDPLATFORM} golang:1.27.3 AS build
+FROM --platform=${BUILDPLATFORM} golang:1.27.4 AS build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
