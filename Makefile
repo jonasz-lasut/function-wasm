@@ -418,7 +418,7 @@ PROTOC_VERSION := 36.2
 # renovate: datasource=pypi depName=nanopb versioning=pep440
 NANOPB_VERSION := 0.4.9.3
 # renovate: datasource=github-releases depName=bytecodealliance/wit-bindgen extractVersion=^v(?<version>.+)$
-WIT_BINDGEN_VERSION := 0.62.0
+WIT_BINDGEN_VERSION := 0.63.0
 
 PROTOC_OS := $(if $(filter Darwin,$(shell uname -s)),osx,linux)
 PROTOC_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),aarch_64,x86_64)

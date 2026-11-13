@@ -140,8 +140,8 @@ jobs:
       # release binary pinned by checksum. The checked-in bindings' header
       # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
-      WIT_BINDGEN_VERSION: v0.62.0
-      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+      WIT_BINDGEN_VERSION: v0.63.0
+      WIT_BINDGEN_SHA256: bf4efe883ab70d34a4740253911dda20caf895d58a003af58369506b04684cbe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -301,8 +301,8 @@ jobs:
       # release binary pinned by checksum. The checked-in bindings' header
       # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
-      WIT_BINDGEN_VERSION: v0.62.0
-      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+      WIT_BINDGEN_VERSION: v0.63.0
+      WIT_BINDGEN_SHA256: bf4efe883ab70d34a4740253911dda20caf895d58a003af58369506b04684cbe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -410,8 +410,8 @@ jobs:
       # release binary pinned by checksum. The checked-in bindings' header
       # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
-      WIT_BINDGEN_VERSION: v0.62.0
-      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+      WIT_BINDGEN_VERSION: v0.63.0
+      WIT_BINDGEN_SHA256: bf4efe883ab70d34a4740253911dda20caf895d58a003af58369506b04684cbe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -538,8 +538,8 @@ jobs:
       # release binary pinned by checksum. The checked-in bindings' header
       # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
-      WIT_BINDGEN_VERSION: v0.62.0
-      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+      WIT_BINDGEN_VERSION: v0.63.0
+      WIT_BINDGEN_SHA256: bf4efe883ab70d34a4740253911dda20caf895d58a003af58369506b04684cbe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -669,8 +669,8 @@ jobs:
       # release binary pinned by checksum. The checked-in bindings' header
       # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
-      WIT_BINDGEN_VERSION: v0.62.0
-      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+      WIT_BINDGEN_VERSION: v0.63.0
+      WIT_BINDGEN_SHA256: bf4efe883ab70d34a4740253911dda20caf895d58a003af58369506b04684cbe
       # The Odin release the example builds with (its README names it).
       # renovate: release-asset depName=odin-lang/Odin versioning=regex:^dev-(?<major>\d{4})-(?<minor>\d{2})$
       ODIN_VERSION: dev-2026-11
@@ -824,8 +824,8 @@ jobs:
       # release binary pinned by checksum. The checked-in bindings' header
       # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
-      WIT_BINDGEN_VERSION: v0.62.0
-      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+      WIT_BINDGEN_VERSION: v0.63.0
+      WIT_BINDGEN_SHA256: bf4efe883ab70d34a4740253911dda20caf895d58a003af58369506b04684cbe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
