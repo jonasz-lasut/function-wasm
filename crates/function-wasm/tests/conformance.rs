@@ -510,6 +510,53 @@ fn validate_resolve_size_limit_matches_the_golden() {
     }
 }
 
+/// A signature requirement over the sources that cannot carry one
+/// (testdata/validate/unsignable.yaml): with --cosign-key and no operator
+/// policy every Path and HTTP source is refused; under a policy the HTTP
+/// source its requireSignature rule names is refused by name and the Path
+/// module is read, with the key or without it.
+#[test]
+fn validate_resolve_unsignable_sources_match_the_goldens() {
+    use guestfn_runtime::testing::TestKey;
+
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
+    let cwd = crate_dir();
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
+    let key_path = dir.path().join("cosign.pub");
+    std::fs::write(&key_path, TestKey::from_seed(5).public_pem).expect("write key");
+    let key_path = key_path.display().to_string();
+    let module_dir = dir.path().display().to_string();
+
+    let key = ["--cosign-key", key_path.as_str()];
+    let policy = [
+        "--sandbox-policy-file",
+        "testdata/validate/unsignable-policy.cedar",
+    ];
+    let cases: &[(&str, Vec<&str>)] = &[
+        ("KeyAlone", key.to_vec()),
+        ("Policy", policy.to_vec()),
+        ("PolicyAndKey", [policy, key].concat()),
+    ];
+    let mut failures = Vec::new();
+    for (name, flags) in cases {
+        let mut args = vec![
+            "testdata/validate/unsignable.yaml",
+            "--resolve",
+            "--module-dir",
+            module_dir.as_str(),
+        ];
+        args.extend(flags);
+        let out = run_validate(rust, &args, "", &cwd);
+        let subs = [(module_dir.clone(), "<DIR>")];
+        if let Some(f) = assert_golden(&format!("Unsignable/{name}"), &out, &subs) {
+            failures.push(f);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}
+
 /// The manifest path of the three-layer decision over generated fixtures: a module
 /// whose guestfn.yaml requires a private /tmp, env bindings, or egress, with
 /// and without an operator grant policy. Egress that both layers permit is

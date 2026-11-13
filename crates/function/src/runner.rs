@@ -1541,6 +1541,82 @@ mod tests {
         }
     }
 
+    /// The results of a response, each as its severity and its message.
+    fn results(rsp: &RunFunctionResponse) -> Vec<(i32, &str)> {
+        rsp.results
+            .iter()
+            .map(|r| (r.severity, r.message.as_str()))
+            .collect()
+    }
+
+    /// Only an OCI artifact carries a cosign signature: where one is
+    /// required, a Path or HTTP source is refused before it is resolved or
+    /// fetched (the HTTP host here does not exist), and where none is, a
+    /// Path module runs as it would without the key.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_required_signature_refuses_a_source_that_cannot_carry_one() {
+        const KEY_ALONE: &str = "cannot resolve module: only cosign-signed oci modules are accepted (--cosign-key, --cosign-trusted-root or --cosign-trust-instance is set); http and path sources are refused";
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            guestfn_engine_wasm::testing::tiny_component(),
+        )
+        .expect("write");
+        let path = input(serde_json::json!({"type": "Path", "path": "fn.wasm"}));
+        let http = input(serde_json::json!({"type": "HTTP", "http": {
+            "url": "https://modules.invalid/secure/fn.wasm",
+            "digest": format!("sha256:{}", "3f2a".repeat(16)),
+        }}));
+        let with_key = || {
+            let mut f = function(Some(dir.path().to_owned()));
+            let key = crate::testing::TestKey::from_seed(5);
+            f.verifier = Some(Arc::new(
+                crate::cosign::Verifier::new(key.public_pem.as_bytes()).expect("verifier"),
+            ));
+            f
+        };
+        let refused = || {
+            guestfn_engine::metrics::sample(
+                "guestfn_module_requests_total",
+                &[("outcome", "refused")],
+            )
+            .unwrap_or(0.0)
+        };
+
+        // The key with no operator policy: every module needs a signature.
+        let f = with_key();
+        let before = refused();
+        assert_eq!(
+            results(&run(&f, path.clone()).await),
+            [(Severity::Fatal as i32, KEY_ALONE)]
+        );
+        assert_eq!(
+            results(&run(&f, http.clone()).await),
+            [(Severity::Fatal as i32, KEY_ALONE)]
+        );
+        assert!(refused() >= before + 2.0, "both are counted as refused");
+
+        // Under a policy its requireSignature rules say which: the HTTP
+        // source they name, and no Path source.
+        let mut f = with_key();
+        f.policy = Some(Arc::new(
+            crate::authz::OperatorPolicy::new(
+                "test",
+                r#"permit (principal, action == Action::"requireSignature", resource)
+                   when { resource in Repository::"https://modules.invalid/secure" };"#,
+            )
+            .expect("policy"),
+        ));
+        assert_eq!(
+            results(&run(&f, http).await),
+            [(
+                Severity::Fatal as i32,
+                r#"cannot resolve module: module.http "https://modules.invalid/secure/fn.wasm" requires a cosign signature (operator policy), but only OCI modules can be signature-verified"#
+            )]
+        );
+        assert_eq!(results(&run(&f, path).await), []);
+    }
+
     /// The output fence's stage: a module whose run returns `rsp` as given
     /// (an unknown field appended, so transparency on the fenced path is
     /// proven too), a request whose observed composite is a WebApp of
