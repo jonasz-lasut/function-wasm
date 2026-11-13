@@ -1,0 +1,19 @@
+name: Identity test signer
+on:
+  workflow_call: {}
+permissions: {}
+jobs:
+  sign:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Sign a blob and print the certificate
+        run: |
+          echo "identity test" > blob.txt
+          cosign sign-blob --yes --bundle bundle.json blob.txt
+          jq -r '.verificationMaterial.certificate.rawBytes' bundle.json | base64 -d > cert.der
+          openssl x509 -inform der -in cert.der -noout -text | grep -A1 -E 'Subject Alternative Name|1\.3\.6\.1\.4\.1\.57264\.1\.(9|18|11|14)' | sed 's/^ *//'

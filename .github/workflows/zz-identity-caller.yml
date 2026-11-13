@@ -1,0 +1,11 @@
+name: Identity test caller
+on:
+  pull_request:
+    paths: ['.github/workflows/zz-identity-*.yml']
+permissions: {}
+jobs:
+  call:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/zz-identity-signer.yml
