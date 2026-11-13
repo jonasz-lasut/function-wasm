@@ -1809,6 +1809,7 @@ dependencies = [
  "prost",
  "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
  "wasi-preview1-component-adapter-provider",
  "wasmparser 0.258.3",

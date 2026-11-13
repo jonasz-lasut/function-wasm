@@ -14,6 +14,9 @@ http = "1"
 http-body-util = "0.1"
 serde_json.workspace = true
 tempfile = "3"
+# The wall clock's share of a run's deadline: a timer raced against the
+# run, on the runtime wasmtime-wasi drives it on.
+tokio = { version = "1", features = ["macros", "time"] }
 tracing.workspace = true
 # wasmtime's default features less cache (the runtime keeps its own
 # compiled-artifact cache and never sets Config::cache, and the feature pulls

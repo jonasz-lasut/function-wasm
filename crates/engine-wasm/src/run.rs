@@ -67,6 +67,14 @@ pub(crate) fn deadline_ticks(timeout: Duration) -> (u64, Duration) {
     (ticks as u64, timeout)
 }
 
+/// A run that outlived its budget, whichever clock ended it.
+pub(crate) fn deadline_error(what: &str, budget: Duration) -> Error {
+    Error(format!(
+        "{what}: module exceeded its execution deadline ({})",
+        duration::format(budget)
+    ))
+}
+
 /// Turns wasmtime's failure into something an operator can act on from an XR
 /// condition: a deadline interrupt becomes the timeout message, a WASI exit
 /// reports its status and a trap is named by its code. wasmtime's backtrace
@@ -77,10 +85,7 @@ pub(crate) fn guest_error(what: &str, err: wasmtime::Error, budget: Duration) ->
     }
     if let Some(trap) = err.downcast_ref::<Trap>() {
         if *trap == Trap::Interrupt {
-            return Error(format!(
-                "{what}: module exceeded its execution deadline ({})",
-                duration::format(budget)
-            ));
+            return deadline_error(what, budget);
         }
         // The Debug format carries the wasm backtrace - file and line frames
         // when the engine's backtrace_details resolved the module's DWARF.

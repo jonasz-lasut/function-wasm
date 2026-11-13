@@ -11,14 +11,14 @@
 //! both the memory and the lowered function.
 
 use std::fmt::Write as _;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use function_sdk_rust::proto::v1::{Result as FnResult, RunFunctionResponse, Severity, Target};
 use guestfn_engine::Engine as _;
 use guestfn_engine::{Config, RunOptions};
 use guestfn_engine_wasm::testing::{
     COMPONENT_CORE_PRELUDE, component_importing, component_with_run, fixed_component, grow_guest,
-    lift_run, ok_result, spinning_guest, wat_bytes,
+    lift_run, ok_result, sleeping_guest, spinning_guest, wat_bytes,
 };
 use guestfn_engine_wasm::{CORE_MODULE_REFUSAL, Wasmtime};
 use prost::Message;
@@ -178,6 +178,56 @@ fn run_deadline() {
         err.to_string(),
         "run failed: module exceeded its execution deadline (50ms)"
     );
+}
+
+/// A guest asleep in the host executes nothing, so the epoch deadline has
+/// nothing to interrupt: the wall clock ends the run, with the same
+/// message, and well before the guest would have woken.
+#[test]
+fn the_deadline_stops_a_sleeping_guest() {
+    let e = engine();
+    let m = compile(&e, &sleeping_guest(10_000_000_000));
+    let opts = RunOptions {
+        timeout: Some(Duration::from_millis(100)),
+        ..Default::default()
+    };
+    let started = Instant::now();
+    let err = e.run(&m, b"", opts).expect_err("should time out");
+    assert_eq!(
+        err.to_string(),
+        "run failed: module exceeded its execution deadline (100ms)"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+
+    // The request's own deadline, when it is the nearer one.
+    let opts = RunOptions {
+        deadline: Some(Instant::now() + Duration::from_millis(150)),
+        ..Default::default()
+    };
+    let started = Instant::now();
+    let err = e.run(&m, b"", opts).expect_err("should time out");
+    assert!(
+        err.to_string()
+            .starts_with("run failed: module exceeded its execution deadline"),
+        "{err}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+
+    // A sleep inside the budget is no error.
+    let short = compile(&e, &sleeping_guest(20_000_000));
+    let opts = RunOptions {
+        timeout: Some(Duration::from_secs(5)),
+        ..Default::default()
+    };
+    e.run(&short, b"", opts).expect("a short sleep");
 }
 
 /// A guest that exits through WASI (`wasi:cli/exit`, what a language's
