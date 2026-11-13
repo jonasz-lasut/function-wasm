@@ -318,28 +318,71 @@ that failed part-way. `Publish guestfn` refuses any other ref and attaches the
 binaries to the GitHub release of step 7. `version` is the bare `vX.Y.Z`,
 which is the OCI tag and the version stamped into the binary.
 
+`Publish Function` also signs what it published, in the same run: its last
+job, `sign`, calls `supplychain.yml` as it is on `main` with the digest the
+`push` job pushed. It signs and attests that digest in both registries,
+never the tag, after checking that the tag still resolves to it, and appends
+the Marketplace extensions (SBOM, README, release notes) to the mirror. The
+signing logic is `main`'s whatever the tag carries, and the signer identity
+is `supplychain.yml@refs/heads/main` for every release. There is no separate
+signing step in a normal release: wait for the whole run, `sign / sign-artifacts`
+included.
+
+**The first release through this path only: verify what it signed, then
+delete this block from both release skills.** The signing job is new and
+two things about it were never observed before it merged: the signer
+identity when the workflow is called at `main` from a tag's run, and what
+the provenance names. Take the digest from the `push` job's summary and
+check both:
+
+```bash
+IMAGE=ghcr.io/jonasz-lasut/$COMPONENT
+cosign verify "$IMAGE@$DIGEST" \
+  --certificate-identity https://github.com/jonasz-lasut/guestfn/.github/workflows/supplychain.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify "oci://$IMAGE@$DIGEST" --repo jonasz-lasut/guestfn --format json \
+  | jq '.[].verificationResult | {identity: .signature.certificate.subjectAlternativeName,
+      caller: .signature.certificate.buildConfigURI, ref: .signature.certificate.sourceRepositoryRef,
+      commit: .signature.certificate.sourceRepositoryDigest, predicate: .statement.predicateType}'
+```
+
+`cosign verify` must pass with that identity exactly: it is the one users
+pin. If it fails, read the identity the certificate has
+(`--certificate-identity-regexp '.*'` shows it) and **stop and report to the
+owner** before anything else: the release is published, its signature isn't
+the one users expect, and the fix is the owner's decision (signing again by
+hand from `main`, as below, restores the pinned identity). Then read the
+provenance: the goal is `commit` equal to the tag's commit
+(`git rev-parse "$NEW_TAG^{commit}"`) and `ref` the tag. Report what it
+shows either way, since `docs/operators/verify-the-package.md` still
+describes the earlier releases and is updated from this observation. Once
+both checks have passed for one release, remove this block from
+`cut-release` and `remediate-cves` in a pull request.
+
 The use-case examples have a lifecycle of their own: `Publish Examples`
 (`publish-examples.yml`), run by hand from `main` when an example's
 `guestfn.yaml` `version` moved, and never part of a release.
 
-### 9. Sign & attest: `Supply Chain and Xpkg Extensions`, from `main`
+### 9. Sign again, only when needed: `Supply Chain and Xpkg Extensions`, from `main`
 
-For a function only (`Publish guestfn` and `Publish WIT` sign and attest what
-they publish):
+Not part of a normal release. `Publish guestfn` and `Publish WIT` sign and
+attest what they publish, and since `Publish Function` signs in its own run
+this step is for a function release whose `sign` job failed after the push,
+or one published before that job existed:
 
 ```bash
 gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f function="$COMPONENT" -f version="$NEW_VERSION"
 ```
 
-Runs from `main`, not the tag: it signs/attests the image already published
-to ghcr/xpkg.upbound.io by tag and appends Marketplace extensions (SBOM,
-README, release notes), so it should use the newest signing logic on `main`
-rather than whatever was frozen on the release branch at cut time.
+Run by hand it takes no digest and signs whatever the version's tag resolves
+to in each registry, so check first that the tag is the package the release
+pushed (the `push` job's summary has the digest).
 
 ### 10. Sequencing and verification
 
-Each of steps 6-9 must finish successfully before the next starts - step 8
-needs the tag from step 6 to exist, step 9 needs the image step 8 published.
+Each of steps 6-8 must finish successfully before the next starts: step 8
+needs the tag from step 6 to exist, and its `sign` job needs the GitHub
+release of step 7 for the release notes it appends.
 Find each workflow's run with `gh run list --workflow="<name>" --limit 1` and wait on it
 (`gh run watch <run-id> --exit-status`); if using the Monitor tool, its
 until-loop pattern is the sanctioned way to poll rather than a manual sleep
@@ -378,7 +421,7 @@ release branch where it is: the repository keeps its full release history.
 | `Publish Function` (functions) | the new tag | `function`, `version` (`vX.Y.Z`) |
 | `Publish guestfn` | the new tag | `version` (`vX.Y.Z`) |
 | `Publish WIT` | the new tag | none |
-| `Supply Chain and Xpkg Extensions` (functions) | `main` | `function`, `version` (`vX.Y.Z`) |
+| `Supply Chain and Xpkg Extensions` (only to sign again) | `main` | `function`, `version` (`vX.Y.Z`) |
 
 ## Common mistakes
 
@@ -400,11 +443,12 @@ release branch where it is: the repository keeps its full release history.
   Crossplane only; the two older minors are tested nowhere else.
 - Running `Publish Function` against the branch instead of the new
   tag - builds a moving target if the branch gets more commits later.
-- Running `Supply Chain and Xpkg Extensions` from the tag instead of `main`:
-  it still works, but forfeits any signing/attestation fixes landed on
-  `main` since the release branch was cut.
-- Triggering step 8 or 9 before the prior workflow run has actually finished:
-  the tag or image it depends on won't exist yet.
+- Starting `Supply Chain and Xpkg Extensions` after a `Publish Function`
+  run that signed already: the publish run's `sign` job did it, by digest.
+- Running `Supply Chain and Xpkg Extensions` from a tag or a branch instead
+  of `main`: the signer identity then names that ref, and users pin
+  `supplychain.yml@refs/heads/main`.
+- Triggering step 8 before the tag and the GitHub release exist.
 - Release notes that do not state the served world, wasmtime and WASI
   versions: the versioning policy in `docs/abi-v2.md` promises them.
 - Using this skill for a patch bump (`vX.Y.Z+1`) - that path belongs to

@@ -82,7 +82,10 @@ What differs falls into two groups, handled differently:
 
 - **The publishing path** (`publish-function.yml` and the
   `hack/fetch-verified.sh` it calls) is what guards the release itself: the
-  `guard` job, the CLI downloads held to a checksum, the job timeouts. If
+  `guard` job, the CLI downloads held to a checksum, the job timeouts, and
+  the `sign` job that signs the pushed digest by calling `main`'s
+  `supplychain.yml` (that file is never copied: the call names it at `main`,
+  which is what keeps the signer identity the same on every line). If
   the branch's copy differs, bring `main`'s onto the branch before the fix,
   as a commit of its own:
 
@@ -94,7 +97,11 @@ What differs falls into two groups, handled differently:
   The workflow reads the branch's tree only through the paths in its `env`
   (`crates/function-*/Dockerfile`, `package/wasm`, `package/oci`). If the
   branch doesn't have them, stop and report instead of adapting the file.
-  `Supply Chain and Xpkg Extensions` needs nothing: it runs from `main`.
+  The `sign` job reads two more paths from the branch, the package readme
+  (`package/wasm/README.md` or `package/oci/README.md`) and
+  `extensions/<function>/`, and nothing else: `supplychain.yml` itself runs
+  from `main`. A branch left with its older copy still publishes, unsigned,
+  and step 9 signs it by hand.
 - **CI and the release matrix** (`ci.yml`, `e2e*.yml`,
   `release-matrix-e2e.yml`) stay as the branch has them. They call the
   branch's Makefile targets and build its `crates/e2e`, so `main`'s copies
@@ -351,18 +358,61 @@ registry already has and a commit no `Release Matrix E2E` run passed on
 (`-f without-matrix=true` and `-f overwrite=true` lift the last two, on the
 owner's word alone).
 
-### 9. Sign & attest - `Supply Chain and Xpkg Extensions`, from `main`
+The same run signs what it published: its last job, `sign`, calls
+`supplychain.yml` as it is on `main` with the digest the `push` job pushed,
+signs and attests that digest in both registries after checking that the tag
+still resolves to it, and appends the Marketplace extensions (SBOM, README,
+release notes). The signing logic is `main`'s and the signer identity is
+`supplychain.yml@refs/heads/main`, whatever the release branch carries.
+This needs the branch to have `main`'s `publish-function.yml` (step 1b): a
+branch with an older copy publishes without signing, and step 9 is then how
+the release gets signed.
+
+**The first release through this path only: verify what it signed, then
+delete this block from both release skills.** The signing job is new and
+two things about it were never observed before it merged: the signer
+identity when the workflow is called at `main` from a tag's run, and what
+the provenance names. Take the digest from the `push` job's summary and
+check both:
+
+```bash
+IMAGE=ghcr.io/jonasz-lasut/$FUNCTION
+cosign verify "$IMAGE@$DIGEST" \
+  --certificate-identity https://github.com/jonasz-lasut/guestfn/.github/workflows/supplychain.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify "oci://$IMAGE@$DIGEST" --repo jonasz-lasut/guestfn --format json \
+  | jq '.[].verificationResult | {identity: .signature.certificate.subjectAlternativeName,
+      caller: .signature.certificate.buildConfigURI, ref: .signature.certificate.sourceRepositoryRef,
+      commit: .signature.certificate.sourceRepositoryDigest, predicate: .statement.predicateType}'
+```
+
+`cosign verify` must pass with that identity exactly: it is the one users
+pin. If it fails, read the identity the certificate has
+(`--certificate-identity-regexp '.*'` shows it) and **stop and report to the
+owner** before anything else: the release is published, its signature isn't
+the one users expect, and the fix is the owner's decision (signing again by
+hand from `main`, as below, restores the pinned identity). Then read the
+provenance: the goal is `commit` equal to the tag's commit
+(`git rev-parse "$NEW_TAG^{commit}"`) and `ref` the tag. Report what it
+shows either way, since `docs/operators/verify-the-package.md` still
+describes the earlier releases and is updated from this observation. Once
+both checks have passed for one release, remove this block from
+`cut-release` and `remediate-cves` in a pull request.
+
+### 9. Sign again, only when needed - `Supply Chain and Xpkg Extensions`, from `main`
+
+Not part of the normal sequence: for a release whose `sign` job failed after
+the push, or whose branch published with a workflow that has no `sign` job.
 
 ```bash
 gh workflow run "Supply Chain and Xpkg Extensions" --ref main -f function="$FUNCTION" -f version="$NEW_VERSION"
 ```
 
-Runs from `main`, not the tag - unlike step 8, this workflow doesn't build
-anything from the ref it runs on. It signs/attests the image already
-published to ghcr/xpkg.upbound.io by tag and appends Marketplace extensions
-(SBOM, README, release notes), so it should use the newest signing logic on
-`main` rather than whatever was frozen on the release branch at cut time.
-A function-oci package gets the same run with `-f function=function-oci`.
+Always from `main`: the signer identity names the ref it runs on, and users
+pin `supplychain.yml@refs/heads/main`. Run by hand it takes no digest and
+signs whatever the version's tag resolves to in each registry, so check
+first that the tag is the package the release pushed (the `push` job's
+summary has the digest).
 
 ### 9b. Record what was tested
 
@@ -383,12 +433,13 @@ gh pr create --title "docs: tested versions of $NEW_TAG" \
 
 ### 10. Sequencing, verification, and reporting
 
-Each of steps 6-9 must finish successfully before the next starts - step 8
-needs the tag from step 6 to exist, step 9 needs the image step 8 published.
+Each of steps 6-8 must finish successfully before the next starts: step 8
+needs the tag from step 6 to exist, and its `sign` job needs the GitHub
+release of step 7 for the release notes it appends.
 Find each run with `gh run list --workflow="<name>" --limit 1` and wait on it
 (`gh run watch <run-id> --exit-status`); if using the Monitor tool, its
 until-loop pattern is the sanctioned way to poll rather than a manual sleep
-loop. Once all three conclude, optionally trigger `Grype Vulnerability Scan`
+loop. Once they conclude, optionally trigger `Grype Vulnerability Scan`
 manually to confirm the new tag's image is clean (apart from any
 code-change-exception findings; for function-oci, Grype's view covers the base and
 nothing in Firecracker or the kernel), then report the CVE/GHSA IDs remediated, the new
@@ -402,7 +453,7 @@ its warning block.
 | Tag through the GitHub API | head of the release branch (`release-<function>-X.Y`) | `$NEW_TAG`, message |
 | (n/a) `gh release create` | n/a | `<function>-vX.Y.Z`, `--target` branch, `--latest` only for function-wasm |
 | `Publish Function` | the new tag (`<function>-vX.Y.Z+1`) | `function` (`function-wasm` or `function-oci`), `version` (`vX.Y.Z+1`) |
-| `Supply Chain and Xpkg Extensions` | `main` | `function` (`function-wasm` or `function-oci`), `version` |
+| `Supply Chain and Xpkg Extensions` (only to sign again) | `main` | `function` (`function-wasm` or `function-oci`), `version` |
 | `Grype Vulnerability Scan` | `main` (scans each function's latest release image) | - |
 
 ## Common mistakes
@@ -430,11 +481,14 @@ its warning block.
   unreleased changes into a security patch.
 - Running `Publish Function` against the branch instead of the new
   tag - builds a moving target if the branch gets more commits later.
-- Running `Supply Chain and Xpkg Extensions` from the tag instead of `main`:
-  it still works, but forfeits any signing/attestation fixes landed on
-  `main` since the release branch was cut.
-- Triggering step 8 or 9 before the prior workflow run has actually finished:
-  the tag or image it depends on won't exist yet.
+- Starting `Supply Chain and Xpkg Extensions` after a `Publish Function`
+  run that signed already: the publish run's `sign` job did it, by digest.
+- Running `Supply Chain and Xpkg Extensions` from a tag or a branch instead
+  of `main`: the signer identity then names that ref, and users pin
+  `supplychain.yml@refs/heads/main`.
+- Publishing from a branch that still has an older `publish-function.yml`
+  and taking the release for signed: that copy has no `sign` job (step 1b).
+- Triggering step 8 before the tag and the GitHub release exist.
 - Fetching `code-scanning/alerts` with no `ref` query parameter and filtering
   by `most_recent_instance.ref` afterward - this returns an empty list even
   when the tag has real open alerts, reading as "no CVEs found" instead of
