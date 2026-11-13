@@ -13,7 +13,7 @@ spec:
   package: ghcr.io/jonasz-lasut/function-wasm:v1.0.1
 ```
 
-The same package is published to `xpkg.upbound.io/jonasz-lasut/function-wasm`, for clusters that pull from `xpkg.upbound.io`.
+The same package is published to `xpkg.upbound.io/jonasz-lasut/function-wasm`, for clusters that pull from `xpkg.upbound.io`. Both copies are signed, and [Verifying a function package](../operators/verify-the-package.md) has the command and the signer's identity.
 
 One installed function serves any number of modules: a Composition step puts its module reference in the step's Input, so adding a module needs no further install.
 

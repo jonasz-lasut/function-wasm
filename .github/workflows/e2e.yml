@@ -40,8 +40,8 @@
 # passed; the jobs need neither. A run here restores caches and saves none
 # (ci.yml says what the saves cost), so the code of a pull request never
 # writes a cache another run reads: the caches are main's, saved by
-# e2e-caches.yml on every push there, under keys the comment-triggered
-# workflow before this one never wrote.
+# e2e-caches.yml (on a push that can have changed one, and once a day),
+# under keys the comment-triggered workflow before this one never wrote.
 name: E2E
 
 on:
@@ -69,6 +69,7 @@ jobs:
   # nothing here; a label naming no profile fails at its make target.
   select:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     permissions:
       pull-requests: read
     outputs:
@@ -202,6 +203,7 @@ jobs:
   # this one fails until that run's gate replaces it.
   e2e-verdict:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     needs:
       - select
       - wasm

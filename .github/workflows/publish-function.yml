@@ -53,8 +53,6 @@ env:
   DOCKERFILE: ${{ inputs.function == 'function-oci' && 'crates/function-oci/Dockerfile' || 'crates/function-wasm/Dockerfile' }}
   PACKAGE_ROOT: ${{ inputs.function == 'function-oci' && 'package/oci' || 'package/wasm' }}
 
-  UP_VERSION: v0.51.1
-
 permissions:
   contents: read
   id-token: write
@@ -69,6 +67,7 @@ jobs:
   # records that they were set.
   guard:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: read
@@ -113,6 +112,7 @@ jobs:
 
   build:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     needs: guard
     permissions:
       contents: read
@@ -176,8 +176,11 @@ jobs:
 
   push:
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     needs:
       - build
+    outputs:
+      digest: ${{ steps.digests.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -236,3 +239,59 @@ jobs:
         run: |
           packages=$(printf '%s,' *.xpkg)
           ./crossplane --verbose xpkg push --package-files "${packages%,}" "${MIRROR_IMAGE}:${VERSION}"
+
+      # What this job pushed, for the sign job: the digest of the package
+      # index in GHCR, read back at once. The mirror got the same files, and
+      # its index is checked here to hold the same manifests, so one digest
+      # names the package in both; the mirror's own digest changes when the
+      # sign job appends the Marketplace extensions.
+      - name: Read the Pushed Digest
+        id: digests
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          resolve() { docker buildx imagetools inspect "$1" | awk '/^Digest:/{print $2}'; }
+          manifests() { docker buildx imagetools inspect --raw "$1" | jq -r '.manifests[].digest' | sort; }
+          digest=$(resolve "${GHCR_IMAGE}:${VERSION}")
+          mirror=$(resolve "${MIRROR_IMAGE}:${VERSION}")
+          if ! [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ && "${mirror}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::the pushed package has no digest to read (GHCR: ${digest}, mirror: ${mirror})"
+            exit 1
+          fi
+          published=$(manifests "${GHCR_IMAGE}@${digest}")
+          if [ -z "${published}" ] || [ "${published}" != "$(manifests "${MIRROR_IMAGE}@${mirror}")" ]; then
+            echo "::error::${MIRROR_IMAGE}@${mirror} does not hold the manifests of ${GHCR_IMAGE}@${digest}"
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          {
+            echo "Pushed ${VERSION}:"
+            echo "- \`${GHCR_IMAGE}@${digest}\`"
+            echo "- \`${MIRROR_IMAGE}@${mirror}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Signs and attests what the push job pushed, by its digest, and appends
+  # the Marketplace extensions (supplychain.yml). The call names the
+  # workflow at main, not this ref's copy (`./`): the signing logic is then
+  # main's whatever release line this run publishes, and the keyless signer
+  # identity is supplychain.yml@refs/heads/main for every release, the one
+  # users pin. A called workflow gets no more than its caller grants, so
+  # these are the permissions its job declares, and the secrets it names
+  # are passed one by one.
+  sign:
+    needs:
+      - push
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+      attestations: write
+    uses: jonasz-lasut/guestfn/.github/workflows/supplychain.yml@main
+    with:
+      function: ${{ inputs.function }}
+      version: ${{ inputs.version }}
+      digest: ${{ needs.push.outputs.digest }}
+    secrets:
+      XPKG_ACCESS_ID: ${{ secrets.XPKG_ACCESS_ID }}
+      XPKG_TOKEN: ${{ secrets.XPKG_TOKEN }}
+      UP_TOKEN: ${{ secrets.UP_TOKEN }}

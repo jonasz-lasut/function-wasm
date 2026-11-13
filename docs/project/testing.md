@@ -262,13 +262,25 @@ from a fork gets a read-only token without secrets, which is all the jobs
 use.
 
 A pull request's run restores caches and saves none, as in `ci.yml`. A
-second workflow, `e2e-caches.yml`, saves them on every push to `main` and
+second workflow, `e2e-caches.yml`, saves them on `main` and
 never runs on a pull request. It
 calls the same two reusable workflows without a profile, which runs both
 `build-tools` jobs and every example's build job without a cluster, and its
 `seed-suite-cache` job compiles the end-to-end crate under the key every
 profile job restores. Because the jobs that save a cache are the jobs that
 restore it, the keys can't drift apart.
+
+A cache key reads the compiler, the runner and the dependency files, never
+the sources, so a push to `main` runs only the builds whose key it can have
+changed. The workflow's `changes` job lists the files the push touched. A
+manifest, a lockfile or a toolchain file among them selects the builds that
+read it: the Rust builds, the WebAssembly examples or the process guest. A
+push that touches none runs nothing.
+
+One run a day builds everything and saves the keys that are missing. It
+covers what no push changes: a new stable Rust or runner image, and a cache
+GitHub evicted after a week unread. The release matrix restores `main`'s
+caches and saves none.
 
 GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs and
 the legs of the release matrix install, and the kind node inherits it. The

@@ -6,7 +6,9 @@ an OCI image as a composition function step
 needs from a node, its flags, and what it refuses. The Input, the policy
 layers, the caches and the signatures work as they do for function-wasm:
 the pages under Operators describe both packages unless they say
-otherwise. The package is alpha, and
+otherwise. The release workflow signs the package, and
+[Verifying a function package](../operators/verify-the-package.md) has the
+command and the signer's identity. The package is alpha, and
 [Compatibility](../contract/compatibility.md#function-oci-at-0x) lists what
 may change between its releases.
 

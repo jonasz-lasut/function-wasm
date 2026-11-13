@@ -50,8 +50,8 @@ on:
         default: '[""]'
       save-caches:
         description: >-
-          Whether the jobs save their caches: true on a push to main or to a
-          release branch, never for a pull request.
+          Whether the jobs save their caches: true in e2e-caches.yml's runs
+          on main, never for a pull request or a release branch.
         type: boolean
         default: false
 
@@ -66,6 +66,7 @@ jobs:
   # in real VMs is ci.yml's vm-suite job.
   build-tools:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +85,8 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '35.1'
 
       - name: Cache the Rust Build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -135,6 +138,7 @@ jobs:
   # and the suite's own logs are uploaded.
   e2e:
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     needs:
       - build-tools
     # An empty matrix is an error, so no selected profile skips the job.
@@ -228,6 +232,7 @@ jobs:
   build-oci-go:
     name: build (oci-go)
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     if: inputs.examples
     steps:
       - name: Checkout
