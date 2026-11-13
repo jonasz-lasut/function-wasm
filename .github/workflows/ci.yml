@@ -22,9 +22,21 @@ on:
   pull_request: {}
   workflow_dispatch: {}
 
+# Read-only for every job: the jobs below run the code of the workspace's
+# dependencies (build scripts, and the scaffolds' dependencies, resolved
+# with no lockfile), and no checkout leaves the token behind for that code
+# to read. detect-noop, which runs none of it, reads the run history and
+# the pull request's file list.
+permissions:
+  contents: read
+
 jobs:
   detect-noop:
     runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
       noop: ${{ steps.noop.outputs.should_skip }}
       oci: ${{ steps.oci.outputs.changed }}
@@ -67,6 +79,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Check Advisories, Bans, Licenses and Sources
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
@@ -80,6 +94,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
@@ -126,6 +142,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
@@ -166,6 +184,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # The rust guest's rust-toolchain.toml names stable with its target,
       # which rustup adds on first use; stable builds the runtime under test.
@@ -241,6 +261,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           submodules: true
 
       - name: Setup Rust
