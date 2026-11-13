@@ -66,6 +66,58 @@ Before a function's first release there is nothing to patch: the fix lands on
 `main` like any change. A fix that patches both functions is one run of this
 procedure per function.
 
+### 1b. Check the workflows the branch carries
+
+A release branch runs its own workflow files, as they were at the cut: a
+push to it runs the branch's `ci.yml` and `release-matrix-e2e.yml`, and
+`Publish Function`, dispatched from the tag in step 8, runs the tag's
+`publish-function.yml`. Nothing merged to `main`'s workflows since the cut
+is on the branch.
+
+```bash
+git diff --stat origin/main "$BRANCH" -- .github/workflows hack
+```
+
+What differs falls into two groups, handled differently:
+
+- **The publishing path** (`publish-function.yml` and the
+  `hack/fetch-verified.sh` it calls) is what guards the release itself: the
+  `guard` job, the CLI downloads held to a checksum, the job timeouts. If
+  the branch's copy differs, bring `main`'s onto the branch before the fix,
+  as a commit of its own:
+
+  ```bash
+  git checkout origin/main -- .github/workflows/publish-function.yml hack/fetch-verified.sh
+  git commit --no-gpg-sign -m "ci: publish with main's workflow"
+  ```
+
+  The workflow reads the branch's tree only through the paths in its `env`
+  (`crates/function-*/Dockerfile`, `package/wasm`, `package/oci`). If the
+  branch doesn't have them, stop and report instead of adapting the file.
+  `Supply Chain and Xpkg Extensions` needs nothing: it runs from `main`.
+- **CI and the release matrix** (`ci.yml`, `e2e*.yml`,
+  `release-matrix-e2e.yml`) stay as the branch has them. They call the
+  branch's Makefile targets and build its `crates/e2e`, so `main`'s copies
+  don't run on an older tree, and the branch's own matrix is the right gate
+  for the branch's code. Starting the matrix by hand from `main`
+  (`workflow_dispatch`) is no substitute: it tests the ref it runs on.
+
+Know the shape of the matrix the push in step 5 starts. A line cut after
+#346 has the matrix of its own function alone (`wasm / e2e (<profile>,
+<version>)` or `oci / ...`, and the VM pairs for function-oci only). A line
+cut before it, which on 2026-11-13 is `release-function-wasm-1.0`,
+`release-function-oci-0.2` and everything older, has the earlier one: a
+single run builds both runtimes (`build-tools`, `build-oci`), runs both
+suites on each Crossplane version (`e2e (crossplane current|previous|oldest)`)
+and all nine `vm suite (...)` legs, whichever function the branch releases.
+It takes about fifteen minutes. Its jobs have no timeout, so a hung one
+holds the run for six hours: watch it, and cancel and rerun it
+(`gh run cancel`, `gh run rerun --failed`) instead of waiting. It also
+saves build caches in the branch's own scope, about 2.6 GiB of the
+repository's 10 GiB, which GitHub evicts a week after the last push. The
+`guard` job of step 8 finds either matrix by its name, and
+`hack/tested-versions.sh` reads either record.
+
 ### 2. Pull the CVE list from code scanning
 
 Pass `ref` as an actual **query parameter**, not a client-side filter. The
@@ -387,6 +439,11 @@ its warning block.
   by `most_recent_instance.ref` afterward - this returns an empty list even
   when the tag has real open alerts, reading as "no CVEs found" instead of
   a query bug. Always pass `ref=refs/tags/<tag>` in the request itself.
+- Replacing a release branch's CI or matrix workflows with `main`'s: they
+  call Makefile targets and tests the older tree doesn't have. Only the
+  publishing path is brought over (step 1b).
+- Reading a run of `Release Matrix E2E` started by hand on `main` as the
+  branch's matrix: it tested `main`.
 - Reading a clean function-oci scan as covering Firecracker or the guest
   kernel: Grype sees neither. Check Firecracker's security advisories and
   the pins in `crates/function-oci/Dockerfile`.

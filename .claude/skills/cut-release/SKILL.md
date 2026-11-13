@@ -154,6 +154,11 @@ This is the mirror image of the CVE flow: a security patch reuses an
 exists, this version line was already released - stop and report instead of
 pushing over it.
 
+The new branch carries the workflows of `main` as they are at the cut, and
+runs them from then on: a later change to the workflows on `main` doesn't
+reach the line. `remediate-cves` step 1b says what a patch release brings
+over and what it leaves.
+
 ### 4. Draft the release notes and confirm before anything externally visible
 
 Load the `writing-style` skill and draft the notes from
