@@ -9,4 +9,4 @@ metadata:
     #   cargo run -p function-wasm -- --insecure --debug --module-dir=<this directory>
     render.crossplane.io/runtime: Development
 spec:
-  package: ghcr.io/jonasz-lasut/function-wasm:v1.0.1
+  package: ghcr.io/jonasz-lasut/function-wasm:v1.0.2

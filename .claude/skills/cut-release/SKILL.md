@@ -328,37 +328,6 @@ is `supplychain.yml@refs/heads/main` for every release. There is no separate
 signing step in a normal release: wait for the whole run, `sign / sign-artifacts`
 included.
 
-**The first release through this path only: verify what it signed, then
-delete this block from both release skills.** The signing job is new and
-two things about it were never observed before it merged: the signer
-identity when the workflow is called at `main` from a tag's run, and what
-the provenance names. Take the digest from the `push` job's summary and
-check both:
-
-```bash
-IMAGE=ghcr.io/jonasz-lasut/$COMPONENT
-cosign verify "$IMAGE@$DIGEST" \
-  --certificate-identity https://github.com/jonasz-lasut/guestfn/.github/workflows/supplychain.yml@refs/heads/main \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-gh attestation verify "oci://$IMAGE@$DIGEST" --repo jonasz-lasut/guestfn --format json \
-  | jq '.[].verificationResult | {identity: .signature.certificate.subjectAlternativeName,
-      caller: .signature.certificate.buildConfigURI, ref: .signature.certificate.sourceRepositoryRef,
-      commit: .signature.certificate.sourceRepositoryDigest, predicate: .statement.predicateType}'
-```
-
-`cosign verify` must pass with that identity exactly: it is the one users
-pin. If it fails, read the identity the certificate has
-(`--certificate-identity-regexp '.*'` shows it) and **stop and report to the
-owner** before anything else: the release is published, its signature isn't
-the one users expect, and the fix is the owner's decision (signing again by
-hand from `main`, as below, restores the pinned identity). Then read the
-provenance: the goal is `commit` equal to the tag's commit
-(`git rev-parse "$NEW_TAG^{commit}"`) and `ref` the tag. Report what it
-shows either way, since `docs/operators/verify-the-package.md` still
-describes the earlier releases and is updated from this observation. Once
-both checks have passed for one release, remove this block from
-`cut-release` and `remediate-cves` in a pull request.
-
 The use-case examples have a lifecycle of their own: `Publish Examples`
 (`publish-examples.yml`), run by hand from `main` when an example's
 `guestfn.yaml` `version` moved, and never part of a release.

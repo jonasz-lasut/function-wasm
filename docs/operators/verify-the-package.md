@@ -9,7 +9,7 @@ A workflow in this repository signs every release of both packages with cosign, 
 Verify a package with the signer's identity and its issuer:
 
 ```shell
-cosign verify ghcr.io/jonasz-lasut/function-wasm:v1.0.1 \
+cosign verify ghcr.io/jonasz-lasut/function-wasm:v1.0.2 \
   --certificate-identity https://github.com/jonasz-lasut/guestfn/.github/workflows/supplychain.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -47,7 +47,9 @@ Crossplane's own documentation describes `ImageConfig` and the versions that sup
 Each package also has an SBOM attestation and a SLSA provenance attestation, which `gh attestation verify` reads:
 
 ```shell
-gh attestation verify oci://ghcr.io/jonasz-lasut/function-wasm:v1.0.1 --repo jonasz-lasut/guestfn
+gh attestation verify oci://ghcr.io/jonasz-lasut/function-wasm:v1.0.2 --repo jonasz-lasut/guestfn
 ```
 
-Read the provenance for what it states today. Through function-wasm v1.0.1 and function-oci v0.2.0 it records the signing run on `main`, with the signing workflow and the commit `main` had when that run started. That commit isn't the one the package's code comes from. The source of a release is its git tag, `function-wasm-vX.Y.Z` or `function-oci-vX.Y.Z`. The signature is the claim to rely on, and the provenance adds the record of the run that made it.
+From function-wasm v1.0.2 the provenance records the run that built the package: the `publish-function.yml` workflow at the release's tag, `refs/tags/function-wasm-vX.Y.Z`, and that tag's commit. The certificate's identity is the signing workflow on `main` all the same, as for the signature.
+
+Through function-wasm v1.0.1 and function-oci v0.2.0 the provenance records the signing run on `main` instead, with the signing workflow and the commit `main` had when that run started. That commit isn't the one the package's code comes from. For those releases the source is the git tag, `function-wasm-vX.Y.Z` or `function-oci-vX.Y.Z`.

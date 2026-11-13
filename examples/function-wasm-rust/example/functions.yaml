@@ -11,4 +11,4 @@ metadata:
     #     --module-dir=<this directory> --sandbox-policy-file=<this directory>/example/policy.cedar
     render.crossplane.io/runtime: Development
 spec:
-  package: ghcr.io/jonasz-lasut/function-wasm:v1.0.1
+  package: ghcr.io/jonasz-lasut/function-wasm:v1.0.2
