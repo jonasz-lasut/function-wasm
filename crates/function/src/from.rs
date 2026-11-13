@@ -312,14 +312,20 @@ pub fn signature_required(
         return verifier_configured;
     };
     let location = match src.r#type.as_str() {
-        "OCI" => src.oci.as_ref().and_then(|o| oci_location(&o.r#ref).ok()),
+        "OCI" => src.oci.as_ref().map(|o| oci_location(&o.r#ref)),
         "HTTP" => src
             .http
             .as_ref()
-            .and_then(|h| http_location("module.http.url", &h.url).ok()),
+            .map(|h| http_location("module.http.url", &h.url)),
         _ => None,
     };
-    location.is_some_and(|l| policy.requires_signature(&l))
+    match location {
+        Some(Ok(location)) => policy.requires_signature(&location),
+        // A location the rules cannot be asked about is held to them: the
+        // source is required wherever the policy requires anything.
+        Some(Err(_)) => policy.has_signature_rules(),
+        None => false,
+    }
 }
 
 /// Why a required non-OCI source cannot run: only OCI artifacts carry a
@@ -332,13 +338,21 @@ pub fn non_oci_signature_refusal(
         return "only cosign-signed oci modules are accepted (--cosign-key, --cosign-trusted-root or --cosign-trust-instance is set); http and path sources are refused".to_string();
     }
     let (field, location) = match src.r#type.as_str() {
-        "HTTP" => (
-            "http",
-            src.http
+        "HTTP" => {
+            let url = src
+                .http
                 .as_ref()
-                .and_then(|h| http_location("module.http.url", &h.url).ok())
-                .unwrap_or_default(),
-        ),
+                .map(|h| h.url.as_str())
+                .unwrap_or_default();
+            match http_location("module.http.url", url) {
+                Ok(location) => ("http", location),
+                Err(e) => {
+                    return format!(
+                        "{e}: the operator policy requires cosign signatures by location (requireSignature), and this one cannot be read"
+                    );
+                }
+            }
+        }
         _ => ("path", src.path.clone()),
     };
     format!(
@@ -412,6 +426,69 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    fn http_src(url: &str) -> ModuleSource {
+        ModuleSource {
+            r#type: "HTTP".to_string(),
+            http: Some(crate::input::HttpSource {
+                url: url.to_string(),
+                digest: format!("sha256:{}", "a".repeat(64)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_signature_requirement_holds_for_a_url_it_cannot_place() {
+        let policy = crate::authz::OperatorPolicy::new(
+            "test",
+            r#"permit (principal, action == Action::"requireSignature", resource)
+               when { resource in Repository::"https://modules.example.org/prod" };"#,
+        )
+        .expect("compile");
+        let cases = [
+            ("https://modules.example.org/prod/fn.wasm", true),
+            ("https://modules.example.org/dev/fn.wasm", false),
+            // No location can be read from these, so the rules cannot say
+            // they are outside what they require.
+            ("https://modules.example.org/dev/../prod/fn.wasm", true),
+            ("https://user@modules.example.org/prod/fn.wasm", true),
+            ("https://modules.example.org//prod/fn.wasm", true),
+        ];
+        for (url, want) in cases {
+            assert_eq!(
+                signature_required(Some(&policy), false, &http_src(url)),
+                want,
+                "{url}"
+            );
+        }
+        assert_eq!(
+            non_oci_signature_refusal(
+                Some(&policy),
+                &http_src("https://modules.example.org/dev/../prod/fn.wasm")
+            ),
+            r#"module.http.url "https://modules.example.org/dev/../prod/fn.wasm" must have a normalized path (no . or .. segments, no empty segments): the operator policy requires cosign signatures by location (requireSignature), and this one cannot be read"#
+        );
+        assert_eq!(
+            non_oci_signature_refusal(
+                Some(&policy),
+                &http_src("https://modules.example.org/prod/fn.wasm")
+            ),
+            r#"module.http "https://modules.example.org/prod/fn.wasm" requires a cosign signature (operator policy), but only OCI modules can be signature-verified"#
+        );
+        // A policy that requires no signature anywhere leaves them alone.
+        let none = crate::authz::OperatorPolicy::new(
+            "test",
+            r#"permit (principal, action == Action::"usePrivateTmp", resource);"#,
+        )
+        .expect("compile");
+        assert!(!signature_required(
+            Some(&none),
+            false,
+            &http_src("https://user@modules.example.org/prod/fn.wasm")
+        ));
     }
 
     #[test]
