@@ -35,6 +35,8 @@ pub const STALE_VERSION_AGE: std::time::Duration = std::time::Duration::from_sec
 const TMP_MARKER: &str = ".put-";
 /// The suffix of a keyed entry's sidecar, the HMAC of the entry's bytes.
 const MAC_SUFFIX: &str = ".mac";
+/// How much of an entry is in memory at once while its MAC is computed.
+const MAC_BUFFER: usize = 64 << 10;
 
 /// A content-addressed store of one kind of artifact.
 pub struct Store {
@@ -140,7 +142,9 @@ impl Store {
     /// callers that map the file instead of reading it. An unkeyed store
     /// trusts the entry by name (wasmtime validates what it loads); a keyed
     /// store recomputes the entry's MAC and refuses, removing both files,
-    /// an entry whose sidecar is missing or wrong.
+    /// an entry whose sidecar is missing or wrong. The entry is read in
+    /// pieces, never whole, and still read to its end: call it where
+    /// blocking is allowed.
     pub fn path(&self, digest: &str) -> Lookup {
         let path = self.entry_path(digest);
         let Ok(st) = std::fs::metadata(&path) else {
@@ -149,18 +153,12 @@ impl Store {
         if st.is_dir() {
             return Lookup::Miss;
         }
-        if let Some(key) = &self.key {
-            let verified = std::fs::read(&path).ok().is_some_and(|b| {
-                std::fs::read(mac_path(&path))
-                    .ok()
-                    .and_then(|tag| hex::decode(tag).ok())
-                    .is_some_and(|tag| verify_mac(key, &b, &tag))
-            });
-            if !verified {
-                let _ = std::fs::remove_file(&path);
-                let _ = std::fs::remove_file(mac_path(&path));
-                return Lookup::Stale;
-            }
+        if let Some(key) = &self.key
+            && !sidecar_verifies(key, &path)
+        {
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(mac_path(&path));
+            return Lookup::Stale;
         }
         touch(&path);
         Lookup::Hit(path)
@@ -280,18 +278,12 @@ impl guestfn_engine::ArtifactStore for Store {
         if !std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
             return None;
         }
-        if let Some(key) = &self.key {
-            let verified = std::fs::read(mac_path(&path))
-                .ok()
-                .and_then(|tag| hex::decode(tag).ok())
-                .is_some_and(|tag| {
-                    mac_of_file(key, &path).is_ok_and(|m| m.verify_slice(&tag).is_ok())
-                });
-            if !verified {
-                let _ = std::fs::remove_file(&path);
-                let _ = std::fs::remove_file(mac_path(&path));
-                return None;
-            }
+        if let Some(key) = &self.key
+            && !sidecar_verifies(key, &path)
+        {
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(mac_path(&path));
+            return None;
         }
         touch(&path);
         Some(path)
@@ -332,7 +324,7 @@ fn mac_of_file(key: &[u8; 32], path: &Path) -> std::io::Result<hmac::Hmac<Sha256
     use std::io::Read as _;
     let mut m = hmac::Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes any key length");
     let mut file = std::fs::File::open(path)?;
-    let mut buf = vec![0u8; 1 << 20];
+    let mut buf = vec![0u8; MAC_BUFFER];
     loop {
         let n = file.read(&mut buf)?;
         if n == 0 {
@@ -341,6 +333,15 @@ fn mac_of_file(key: &[u8; 32], path: &Path) -> std::io::Result<hmac::Hmac<Sha256
         m.update(&buf[..n]);
     }
     Ok(m)
+}
+
+/// Whether the entry at path carries a sidecar that is its MAC under key.
+/// A missing, unreadable or malformed sidecar verifies nothing.
+fn sidecar_verifies(key: &[u8; 32], path: &Path) -> bool {
+    std::fs::read(mac_path(path))
+        .ok()
+        .and_then(|tag| hex::decode(tag).ok())
+        .is_some_and(|tag| mac_of_file(key, path).is_ok_and(|m| m.verify_slice(&tag).is_ok()))
 }
 
 /// The bytes a store holds right now.
@@ -440,12 +441,6 @@ fn mac(key: &[u8; 32], b: &[u8]) -> Vec<u8> {
     let mut m = hmac::Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes any key length");
     m.update(b);
     m.finalize().into_bytes().to_vec()
-}
-
-fn verify_mac(key: &[u8; 32], b: &[u8], tag: &[u8]) -> bool {
-    let mut m = hmac::Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes any key length");
-    m.update(b);
-    m.verify_slice(tag).is_ok()
 }
 
 /// Writes b at target through a temporary file and a rename, so a crash
@@ -712,5 +707,23 @@ mod tests {
         std::fs::write(dir.path().join(file_name("sha256:y")), b"tampered").expect("write");
         assert_eq!(s.path("sha256:y"), Lookup::Stale);
         assert!(!dir.path().join("sha256-y.mac").exists());
+    }
+
+    /// An entry longer than the buffer its MAC is computed through is
+    /// verified to its last byte.
+    #[test]
+    fn a_keyed_lookup_verifies_an_entry_to_its_end() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = Store::open_dir(dir.path(), false)
+            .expect("open")
+            .with_key([7; 32]);
+        let mut artifact = vec![1u8; 3 * MAC_BUFFER + 17];
+        let path = s.put("sha256:long", &artifact).expect("put");
+        assert_eq!(s.path("sha256:long"), Lookup::Hit(path.clone()));
+
+        *artifact.last_mut().expect("non-empty") ^= 1;
+        std::fs::write(&path, &artifact).expect("tamper");
+        assert_eq!(s.path("sha256:long"), Lookup::Stale);
+        assert!(!path.exists() && !mac_path(&path).exists());
     }
 }
