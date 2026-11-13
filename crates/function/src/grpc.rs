@@ -109,7 +109,7 @@ where
             .get("grpc-timeout")
             .and_then(|v| v.to_str().ok())
             .and_then(crate::runner::parse_grpc_timeout)
-            .map(|t| std::time::Instant::now() + t);
+            .and_then(|t| std::time::Instant::now().checked_add(t));
         let function = Arc::clone(&self.function);
         let max_decoding = self.max_decoding_message_size;
         Box::pin(async move {
