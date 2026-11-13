@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.4 (the read fence, `requireResource`, beside the output fence; rewritten in the present tense over the Rust workspace; supersedes the request-delivered-secrets record)
+* Status: implemented, revision 1.5 (revision 1.5 applies a `forbid` with an unconstrained action to the scoped default-permit actions without scoping them; the read fence, `requireResource`, beside the output fence; rewritten in the present tense over the Rust workspace; supersedes the request-delivered-secrets record)
 
 ## Summary
 
@@ -74,6 +74,13 @@ The composition layer has two regimes, by capability:
 | present, no rule for the action | permit | deny | permit |
 | present, a `permit` for it | permit if matched, else deny | permit if matched, else deny | permit if matched, else deny |
 | present, a `forbid` for it | forbid wins | forbid wins | forbid wins |
+
+A `forbid` that leaves its action unconstrained, `forbid (principal, action,
+resource) when { … };`, applies to the scoped default-permit actions without
+scoping them: where no other rule specifies the action, the layer refuses what the
+`forbid` matches and permits the rest. That holds for the sandbox actions in
+the composition layer and for the two response fences in both layers. A
+`permit` with an unconstrained action scopes nothing.
 
 A malformed `compositionPolicy` is a fatal result at admission, and a
 malformed operator policy is a startup or `function validate` error. The

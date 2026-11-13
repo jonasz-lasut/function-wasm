@@ -200,8 +200,8 @@ is [readiness](operators/readiness.md).
 - Corrupt blob (digest mismatch on read): removed, treated as a miss.
 - Corrupt or foreign artifact (Wasmtime refuses it): treated as a miss and counted
   `stale`. The recompile overwrites it.
-- The signature check happens before any tier is consulted, once per manifest
-  digest per process, so an artifact that a keyless runtime left on a shared or
+- The signature check happens before any tier is consulted, once per
+  repository and manifest digest per process, so an artifact that a keyless runtime left on a shared or
   persisted volume is never served by a runtime that requires a key.
 - A digest stated in the Input (or by the manifest it pins) that differs from
   what the source delivers is a fatal result stating both digests, and nothing

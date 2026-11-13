@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 2.4 (the Input's group is `guestfn.crossplane.io`, the generic name both runtimes serve, with the CRD generated from `input.rs`, #242; rewritten in the present tense over the Rust workspace)
+* Status: implemented, revision 2.5 (revision 2.5 reads the registry of an OCI reference into one canonical form; the Input's group is `guestfn.crossplane.io`, the generic name both runtimes serve, with the CRD generated from `input.rs`, #242; rewritten in the present tense over the Rust workspace)
 
 The Input is what a Composition step hands the runtime. A discriminated
 `module` says what runs, and the fields the Composition author controls sit
@@ -40,9 +40,9 @@ config:                                   # opaque, forwarded to the module
 ```
 
 `module` is required; `compositionPolicy`, `limits` and `config` are
-optional. A `v1beta1` document with the same fields is accepted through 1.x
-and removed in 2.0.0 (`input::V1BETA1_DEPRECATION`, see
-[Compatibility](contract/compatibility.md)).
+optional. A document of the group of 0.6 and earlier,
+`wasm.fn.crossplane.io` in either of its versions, is refused by name
+(`input::renamed_group`, see [Compatibility](contract/compatibility.md)).
 
 Everything but `module` (and within it, the object `from` names) is read from
 the Input only, never through `module.from`: an XR author may choose the
@@ -142,6 +142,15 @@ The `Repository` hierarchy is boundary-correct: `Repository::"ghcr.io/example-or
 admits `ghcr.io/example-org/mod` but never the sibling namespace
 `ghcr.io/example-org-other/…`. A trailing slash is optional and doesn't
 change the boundary.
+
+The runtime reads the registry part of an OCI reference into one canonical
+form before the entities, the signature check, the registry client or a
+message see it. The host is lowercase, a trailing dot and the default port
+are dropped, and Docker Hub is `index.docker.io`. A registry part that isn't
+a host name or an IP address with an optional port is refused at admission.
+A policy whose `Repository` has another spelling is refused when it's
+compiled, since its rule would match no module
+([the canonical registry](operators/cedar-policy.md#the-canonical-registry)).
 
 A manifest-less source can reference its manifest instead: `module.http.manifestURL`
 together with `manifestDigest`, or `module.manifestPath` with `type: Path`
