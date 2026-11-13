@@ -92,7 +92,7 @@ What each function's latest release passed on the [release matrix](https://jonas
 <!-- tested-versions:function-oci:start -->
 | Release | Crossplane | Firecracker × guest kernel |
 |---|---|---|
-| v0.2.0 | 2.4 (v2.4.3), 2.3 (v2.3.7), 2.2 (v2.2.7) | 1.18.0 × 6.18.56, 1.18.0 × 6.1.188, 1.18.0 × 5.10.271, 1.17.0 × 6.18.56, 1.17.0 × 6.1.188, 1.17.0 × 5.10.271, 1.16.2 × 6.18.56, 1.16.2 × 6.1.188, 1.16.2 × 5.10.271 |
+| v0.3.0 | 2.4 (v2.4.3), 2.3 (v2.3.7), 2.2 (v2.2.7) | 1.18.0 × 6.18.56, 1.18.0 × 6.1.188, 1.18.0 × 5.10.271, 1.17.0 × 6.18.56, 1.17.0 × 6.1.188, 1.17.0 × 5.10.271, 1.16.2 × 6.18.56, 1.16.2 × 6.1.188, 1.16.2 × 5.10.271 |
 <!-- tested-versions:function-oci:end -->
 
 ## Documentation

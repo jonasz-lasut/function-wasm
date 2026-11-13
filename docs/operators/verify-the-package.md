@@ -50,6 +50,6 @@ Each package also has an SBOM attestation and a SLSA provenance attestation, whi
 gh attestation verify oci://ghcr.io/jonasz-lasut/function-wasm:v1.0.2 --repo jonasz-lasut/guestfn
 ```
 
-From function-wasm v1.0.2 the provenance records the run that built the package: the `publish-function.yml` workflow at the release's tag, `refs/tags/function-wasm-vX.Y.Z`, and that tag's commit. The certificate's identity is the signing workflow on `main` all the same, as for the signature.
+From function-wasm v1.0.2 and function-oci v0.3.0 the provenance records the run that built the package: the `publish-function.yml` workflow at the release's tag, `refs/tags/function-wasm-vX.Y.Z` or `refs/tags/function-oci-vX.Y.Z`, with that tag's commit. The certificate's identity is the signing workflow on `main` all the same, as for the signature.
 
 Through function-wasm v1.0.1 and function-oci v0.2.0 the provenance records the signing run on `main` instead, with the signing workflow and the commit `main` had when that run started. That commit isn't the one the package's code comes from. For those releases the source is the git tag, `function-wasm-vX.Y.Z` or `function-oci-vX.Y.Z`.
