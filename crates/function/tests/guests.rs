@@ -151,6 +151,30 @@ fn command(dir: &Path, name: &str, args: &[&str], envs: &[(&str, &str)]) -> bool
     }
 }
 
+/// The targets of the toolchain a directory's rust-toolchain.toml names.
+/// The first rustup call in such a directory installs what the file lists
+/// and the toolchain lacks, and two installs at once fail on each other's
+/// download: the tests that build Rust take turns here, after which their
+/// cargo runs find the toolchain complete.
+fn installed_targets(dir: &Path) -> Option<String> {
+    static RUSTUP: Mutex<()> = Mutex::new(());
+    let _one_at_a_time = RUSTUP.lock().unwrap_or_else(|e| e.into_inner());
+    // A proxied tool is what makes rustup install; the listing alone may
+    // only read.
+    let _ = std::process::Command::new("cargo")
+        .arg("--version")
+        .current_dir(dir)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .output();
+    let targets = std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .current_dir(dir)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&targets.stdout).into_owned())
+}
+
 /// Builds one guest with its toolchain; None skips the guest.
 /// Pulls what a scaffold's guestfn.lock pins into its wit/deps, as guestfn
 /// build does first for a user. The suite drives each toolchain itself, and
@@ -233,13 +257,7 @@ fn build_guest(guest: &str, out: &Path) -> Option<Vec<u8>> {
             // Asked in the guest's directory, so its rust-toolchain.toml
             // decides which toolchain's targets count (rustup installs a
             // pinned toolchain on first use).
-            let targets = std::process::Command::new("rustup")
-                .args(["target", "list", "--installed"])
-                .current_dir(&dir)
-                .env_remove("RUSTUP_TOOLCHAIN")
-                .output()
-                .ok()?;
-            if !String::from_utf8_lossy(&targets.stdout).contains("wasm32-wasip3") {
+            if !installed_targets(&dir)?.contains("wasm32-wasip3") {
                 return skip(guest, "wasm32-wasip3 target not installed");
             }
             if !fetch_wit(&dir) {
@@ -609,4 +627,56 @@ fn ts_guest() {
 #[test]
 fn python_guest() {
     run_guest("python");
+}
+
+/// The end-to-end suite's test module (crates/e2e/guest) is a Cargo
+/// workspace of its own, so neither `cargo test --workspace` nor the lint
+/// over the workspace reaches it. Its unit tests and clippy run here, native
+/// and on the toolchain its rust-toolchain.toml names, with the process
+/// build's code included.
+#[test]
+fn the_end_to_end_guest_passes_its_own_tests() {
+    if std::env::var_os("SKIP_GUEST_BUILDS").is_some() {
+        eprintln!("skipping: SKIP_GUEST_BUILDS is set");
+        return;
+    }
+    // Its build script runs prost-build, which shells out to protoc.
+    if !on_path("protoc") && std::env::var_os("PROTOC").is_none() {
+        skip("end-to-end", "protoc not on PATH");
+        return;
+    }
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../e2e/guest");
+    // Its rust-toolchain.toml lists a target and components rustup may
+    // have to install first, in turn with the rust scaffold's.
+    if !on_path("rustup") || installed_targets(&dir).is_none() {
+        skip("end-to-end", "rustup not on PATH");
+        return;
+    }
+    assert!(
+        command(
+            &dir,
+            "cargo",
+            &["test", "--locked", "--features", "process"],
+            &[]
+        ),
+        "the end-to-end guest's unit tests failed"
+    );
+    assert!(
+        command(
+            &dir,
+            "cargo",
+            &[
+                "clippy",
+                "--locked",
+                "--all-targets",
+                "--features",
+                "process",
+                "--",
+                "-D",
+                "warnings",
+            ],
+            &[],
+        ),
+        "clippy refused the end-to-end guest"
+    );
 }

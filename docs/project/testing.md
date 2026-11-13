@@ -191,7 +191,9 @@ Two more jobs run the `cargo test` targets that need tools of their own:
 - `guest-suite` runs the guest suite on every such change, with
   `GUESTFN_REQUIRE_TOOLCHAINS=1` so a missing toolchain fails instead of
   skipping. The scaffolds don't have lockfiles, and an upstream release that
-  breaks one fails this job on every pull request.
+  breaks one fails this job on every pull request. The suite also runs the
+  unit tests and `cargo clippy` of the end-to-end test module, a Cargo
+  workspace of its own that `cargo test --workspace` doesn't reach.
 - `vm-suite` builds the init and the fixture (musl), fetches the pinned
   Firecracker and kernel (`make oci.tools`) and runs the suite of the OCI
   engine in real VMs under the runner's KVM (`GUESTFN_REQUIRE_KVM=1`: a
