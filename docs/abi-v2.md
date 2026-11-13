@@ -45,7 +45,7 @@ The sandbox allows:
 - environment exactly as granted;
 - `argv` is `["function"]`.
 
-The [three-layer decision](operators/cedar-policy.md) grants these capabilities. `limits` and the deadlines apply to every run: `limits.timeout` meters guest compute, and the request's gRPC deadline is the hard cap. A component has no top-level memory export, and the host reserves nothing from `--max-total-run-memory` before the run. It charges the whole footprint as the guest claims its memories, and a growth the pool can't serve fails inside the run: `memory.grow` returns `-1`.
+The [three-layer decision](operators/cedar-policy.md) grants these capabilities. `limits` and the deadlines apply to every run. `limits.timeout` bounds the time of a run, not counting the time it waits for the host's HTTP answer. The request's gRPC deadline is the hard cap. Sleeping or blocking in another WASI call spends that budget too, and the run ends at the deadline whether the guest is executing or not. A component has no top-level memory export, and the host reserves nothing from `--max-total-run-memory` before the run. It charges the whole footprint as the guest claims its memories, and a growth the pool can't serve fails inside the run: `memory.grow` returns `-1`.
 
 ### HTTP egress
 

@@ -204,6 +204,40 @@ pub fn spinning_guest(nanos: u64) -> String {
     )
 }
 
+/// A guest that sleeps for the given nanoseconds in the host: it blocks on
+/// a `wasi:clocks/monotonic-clock` pollable and executes nothing meanwhile.
+pub fn sleeping_guest(nanos: u64) -> String {
+    format!(
+        r#"(component $C
+  (import "wasi:io/poll@0.2.0" (instance $poll
+    (export "pollable" (type $pollable (sub resource)))
+    (export "[method]pollable.block" (func (param "self" (borrow $pollable))))))
+  (alias export $poll "pollable" (type $pollable))
+  (import "wasi:clocks/monotonic-clock@0.2.0" (instance $clock
+    (alias outer $C $pollable (type $p))
+    (export "subscribe-duration" (func (param "when" u64) (result (own $p))))))
+  (core module $libc
+    {COMPONENT_CORE_PRELUDE})
+  (core instance $libc_inst (instantiate $libc))
+  (core func $sub (canon lower (func $clock "subscribe-duration")))
+  (core func $block (canon lower (func $poll "[method]pollable.block")))
+  (core module $m
+    (import "env" "memory" (memory 4))
+    (import "host" "sub" (func $sub (param i64) (result i32)))
+    (import "host" "block" (func $block (param i32)))
+    (func (export "run") (param i32 i32) (result i32)
+      (call $block (call $sub (i64.const {nanos})))
+      {ok}))
+  (core instance $m_inst (instantiate $m
+    (with "env" (instance (export "memory" (memory $libc_inst "memory"))))
+    (with "host" (instance (export "sub" (func $sub)) (export "block" (func $block))))))
+  {lift}
+)"#,
+        ok = ok_result("(i32.const 1024)", "(i32.const 0)"),
+        lift = lift_run("m_inst", "libc_inst"),
+    )
+}
+
 /// The smallest ABI v2 component, byte for byte what the conformance
 /// goldens were recorded with: a sync-lifted run returning an empty
 /// response over a one-page memory and a fixed realloc.
