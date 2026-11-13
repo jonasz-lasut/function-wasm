@@ -49,8 +49,9 @@ impl FunctionRunnerService for Fixture {
             .map(|meta| meta.tag)
             .unwrap_or_default();
         match self.mode.as_str() {
-            // The contract's happy path: the answer is what was asked.
-            "echo" => answer(tag),
+            // The contract's happy path: the answer is what was asked. A
+            // preloading fixture has done its reading before it served.
+            "echo" | "preload" => answer(tag),
             // A plain line and a JSON line, then the echo.
             "stderr" => {
                 eprintln!("a plain line from the guest");
@@ -221,6 +222,11 @@ fn flood(value: Option<&str>) {
     let _ = stderr.write_all(b"the flood is over\n");
 }
 
+/// Reads a file to its end, keeping none of it.
+fn preload(path: &str) -> std::io::Result<u64> {
+    std::io::copy(&mut std::fs::File::open(path)?, &mut std::io::sink())
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -236,6 +242,16 @@ async fn main() -> ExitCode {
         "flood-exit" => {
             flood(cli.value.as_deref());
             return ExitCode::from(3);
+        }
+        // Reads the file the value names before serving, as a larger
+        // program pages itself in at its start: the benchmark's stand-in
+        // for one (crates/engine-oci/tests/bench.rs).
+        "preload" => {
+            let path = cli.value.as_deref().unwrap_or_default();
+            if let Err(e) = preload(path) {
+                eprintln!("cannot preload {path}: {e}");
+                return ExitCode::FAILURE;
+            }
         }
         _ => {}
     }
