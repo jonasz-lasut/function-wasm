@@ -121,9 +121,8 @@ jobs:
   # and handed to every cluster job beside the wasm runtime: the runtime
   # with its oci engine, the init (static, musl), the end-to-end guest as
   # a process, and the pinned Firecracker and guest kernel. e2e.yml's
-  # build-oci is the model; the fixture and the engine's VM suite stay
-  # there, since the matrix proves the packages on each Crossplane, not
-  # the engine.
+  # build-oci is the model. The engine's VM suite has its own jobs below,
+  # and ci.yml runs it on a pull request.
   build-oci:
     runs-on: ubuntu-26.04
     steps:

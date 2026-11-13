@@ -180,12 +180,22 @@ the whole suite on another Crossplane, given as the chart version without a
 
 `ci.yml` runs lint with `--all-features` and `cargo test --workspace` on every
 push, and on a pull request unless it touches only Markdown, JSON or SVG files.
+Two more jobs run the `cargo test` targets that need tools of their own:
+
+- `guest-suite` runs the guest suite on every such change, with
+  `GUESTFN_REQUIRE_TOOLCHAINS=1` so a missing toolchain fails instead of
+  skipping. The scaffolds don't have lockfiles, and an upstream release that
+  breaks one fails this job on every pull request.
+- `vm-suite` builds the init and the fixture (musl), fetches the pinned
+  Firecracker and kernel (`make oci.tools`) and runs the suite of the OCI
+  engine in real VMs under the runner's KVM (`GUESTFN_REQUIRE_KVM=1`: a
+  missing tool fails instead of skipping). On a pull request it runs when the
+  change touches the OCI engine, the init, the protocol, the fixture,
+  `crates/engine`, the dependencies or the Firecracker and kernel pins.
 
 A `/e2e` comment on a pull request runs `e2e.yml`. Every job proves one of
 the two functions. For `function-wasm`:
 
-- the guest suite, with `GUESTFN_REQUIRE_TOOLCHAINS=1` so a missing
-  toolchain fails instead of skipping
 - one build job per example toolchain: build, unit tests, lint, and codec and
   bindings drift, each module wrapped by the `guestfn` the `build-tools` job
   compiled with the runtime
@@ -197,17 +207,16 @@ For `function-oci`:
 
 - the `oci-go` build job, which vets and tests the process guest and builds
   its image, pushing nothing
-- a build job that compiles `function-oci`,
-  the init and the test module as a process (musl), fetches the pinned
-  Firecracker and kernel (`make oci.tools`) and then runs the suite of the OCI
-  engine in real VMs under the runner's KVM over those files
-  (`GUESTFN_REQUIRE_KVM=1`: a missing tool fails instead of skipping)
+- a build job that compiles `function-oci`, the init and the test module as
+  a process (musl) and fetches the pinned Firecracker and kernel
+  (`make oci.tools`) for the `oci` cluster job
 - the `oci` cluster job, which installs `function-oci` alone
   (`E2E_WASM=0 E2E_OCI=1`) and runs the `oci` profiles
 
 The run posts three commit statuses on the head of the pull request: `e2e/wasm`
 and `e2e/oci`, each naming the jobs of its runtime that didn't pass, and
-`e2e`, the whole run's verdict, which branch protection names.
+`e2e`, the whole run's verdict. The ruleset on `main` doesn't require any of
+them.
 
 The jobs cache under `e2e-` keys that no trusted workflow restores, and the
 workflow sets `cache-mode: write` because a comment-started run gets a
