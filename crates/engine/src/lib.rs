@@ -174,6 +174,18 @@ pub trait ArtifactStore: Send + Sync + 'static {
     /// Marks an entry used, for a sweep that removes the least recently
     /// used first.
     fn used(&self, path: &std::path::Path);
+
+    /// Keeps the entry at path out of the sweep until `release`. An engine
+    /// that opens a stored file by its path at every run (the OCI engine's
+    /// root filesystem, which each VM mounts) holds it for as long as the
+    /// module is loaded: a module in memory whose file went would fail
+    /// every run until it left memory. Holds count, so an entry loaded
+    /// twice is released twice. A hold on a path that is no entry keeps
+    /// nothing: the caller checks the file after taking the hold.
+    fn hold(&self, path: &std::path::Path);
+
+    /// Gives back one `hold` on path.
+    fn release(&self, path: &std::path::Path);
 }
 
 pub trait Engine: Send + Sync + 'static {

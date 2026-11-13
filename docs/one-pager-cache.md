@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 2.7 (revision 2.7 keys the compiled tier per process, the cache key record's design. Revision 2.6 puts the manifests tier to use, perf-02 of the performance audit under the F-5 rule. Revision 2.5 states the cache posture of the 1.0 audit's F-5, and 2.4 the compiled tier's trust boundary. Revision 2.3 rewrote the record in the present tense over the Rust workspace, where warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
+* Status: implemented, revision 2.8 (revision 2.8 has the sweep skip the root filesystem of an image function-oci has in memory. Revision 2.7 keys the compiled tier per process, the cache key record's design. Revision 2.6 puts the manifests tier to use, perf-02 of the performance audit under the F-5 rule. Revision 2.5 states the cache posture of the 1.0 audit's F-5, and 2.4 the compiled tier's trust boundary. Revision 2.3 rewrote the record in the present tense over the Rust workspace, where warm-up loads its entries one after another and skips the signature check, which every request makes before it reads a cache)
 
 function-wasm keeps its caches on disk under one fixed directory, every entry
 addressed by a content digest, plus a bounded in-memory tier for compiled
@@ -229,6 +229,15 @@ bound is left, so consecutive sweeps don't each remove one entry. A removal is
 always safe, since every entry is reproducible; the next request fetches or
 compiles again. A mapped artifact whose file is swept keeps serving the
 resident module, because the open mapping doesn't depend on the file's name.
+
+function-oci has one exception. A run's VM opens the image's root
+filesystem by its path, and an image in memory whose file went would fail
+its runs until it left memory. The engine pins the stored root filesystem
+of a loaded image in the store, and the sweep skips a pinned entry. The
+entry still counts toward the total. While the images in memory alone
+exceed the bound, the stores stay over it. The image leaves memory by the
+idle TTL or `--max-cached-modules`, and from then on the sweep takes the
+file like any other.
 
 ## Alternatives
 

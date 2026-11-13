@@ -101,12 +101,12 @@ pub(crate) fn run(
 
 /// The store a stored image's files live in, with the root filesystem
 /// marked used: every run reads that file from the store, and each one is
-/// a use, or the sweep would take a busy image's file for the least
-/// recently used.
+/// a use. The loaded image holds the file against the sweep; the mark is
+/// what orders it among the others once the image has left memory.
 fn store_of<'a>(engine: &'a Oci, image: &Image) -> Option<&'a dyn crate::ArtifactStore> {
     match &image.rootfs {
-        Rootfs::Stored(path) => engine.store.get().map(|store| {
-            store.used(path);
+        Rootfs::Stored(file) => engine.store.get().map(|store| {
+            store.used(file.path());
             store.as_ref()
         }),
         Rootfs::Scratch(_) => None,

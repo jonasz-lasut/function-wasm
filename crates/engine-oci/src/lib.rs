@@ -66,15 +66,58 @@ pub struct Image {
 #[derive(Debug)]
 pub enum Rootfs {
     Scratch(tempfile::TempPath),
-    Stored(PathBuf),
+    Stored(StoredFile),
 }
 
 impl Rootfs {
     pub fn path(&self) -> &Path {
         match self {
             Rootfs::Scratch(p) => p,
-            Rootfs::Stored(p) => p,
+            Rootfs::Stored(file) => &file.path,
         }
+    }
+}
+
+/// A root filesystem in the runtime's compiled store, held there while
+/// the image is loaded. Every run's VM opens the file by this path, so the
+/// store's sweep must leave it for as long as a run may come: an image in
+/// memory whose file went would fail every run until it left memory. The
+/// hold goes with the last clone of the image, and the sweep takes the
+/// file like any other from then on.
+pub struct StoredFile {
+    path: PathBuf,
+    store: Option<Arc<dyn ArtifactStore>>,
+}
+
+impl StoredFile {
+    /// Takes the hold. The caller checks the file afterwards: a sweep that
+    /// removed it first leaves a hold on nothing.
+    fn hold(path: &Path, store: Option<&Arc<dyn ArtifactStore>>) -> StoredFile {
+        if let Some(store) = store {
+            store.hold(path);
+        }
+        StoredFile {
+            path: path.to_path_buf(),
+            store: store.cloned(),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for StoredFile {
+    fn drop(&mut self) {
+        if let Some(store) = &self.store {
+            store.release(&self.path);
+        }
+    }
+}
+
+impl std::fmt::Debug for StoredFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("StoredFile").field(&self.path).finish()
     }
 }
 
@@ -267,11 +310,14 @@ impl Engine for Oci {
     }
 
     fn deserialize_file(&self, path: &Path) -> Result<Module, Error> {
+        // Held before it is read: a sweep either took the file already,
+        // and the read fails as a miss does, or leaves it from here on.
+        let file = StoredFile::hold(path, self.store.get());
         let raw = rootfs::read_file(path, rootfs::CONFIG_PATH)?;
         let config: ImageConfig = serde_json::from_slice(&raw)
             .map_err(|e| Error(format!("cannot parse the stored image config: {e}")))?;
         Ok(Arc::new(Image {
-            rootfs: Rootfs::Stored(path.to_path_buf()),
+            rootfs: Rootfs::Stored(file),
             config,
             snapshots: Default::default(),
         }))
@@ -279,10 +325,16 @@ impl Engine for Oci {
 
     /// The image over the stored root filesystem: the scratch file goes
     /// with the compiled image, and a snapshot taken from here on mounts a
-    /// file that stays where it is for as long as the store keeps it.
+    /// file that stays where it is while the image is loaded. Where a
+    /// sweep took the stored file before the hold, the image stays on its
+    /// scratch file.
     fn stored(&self, m: Module, path: &Path) -> Module {
+        let file = StoredFile::hold(path, self.store.get());
+        if !path.is_file() {
+            return m;
+        }
         Arc::new(Image {
-            rootfs: Rootfs::Stored(path.to_path_buf()),
+            rootfs: Rootfs::Stored(file),
             config: m.config.clone(),
             snapshots: Default::default(),
         })
@@ -351,6 +403,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingStore {
         used: std::sync::Mutex<Vec<std::path::PathBuf>>,
+        held: std::sync::Mutex<Vec<std::path::PathBuf>>,
     }
 
     impl crate::ArtifactStore for RecordingStore {
@@ -366,6 +419,64 @@ mod tests {
         fn used(&self, path: &Path) {
             self.used.lock().unwrap().push(path.to_path_buf());
         }
+        fn hold(&self, path: &Path) {
+            self.held.lock().unwrap().push(path.to_path_buf());
+        }
+        fn release(&self, path: &Path) {
+            let mut held = self.held.lock().unwrap();
+            let at = held
+                .iter()
+                .position(|p| p == path)
+                .expect("a release follows its hold");
+            held.remove(at);
+        }
+    }
+
+    /// A stored root filesystem is held in the store for as long as its
+    /// image is loaded, however it was loaded and however many runs share
+    /// it: the VM of every run opens the file by its path, so the store's
+    /// sweep must not take it from under an image in memory.
+    #[test]
+    fn a_loaded_image_holds_its_stored_file() {
+        let e = engine(FakeSandbox::new(Default::default(), |spec: &VmSpec<'_>| {
+            Outcome {
+                log: Output::default(),
+                end: Ended::Answered(spec.request.to_vec()),
+                console: String::new(),
+            }
+        }));
+        let store = Arc::new(RecordingStore::default());
+        e.keep_in(Arc::clone(&store) as Arc<dyn crate::ArtifactStore>);
+        let held = || store.held.lock().unwrap().clone();
+        let image = fixture_image(b"#!/bin/sh\n", &["/app/run"], "app", &[]);
+        let compiled = e.compile(&image).unwrap();
+        assert!(held().is_empty(), "a scratch file is the engine's own");
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("sha256-digest");
+        std::fs::write(&entry, e.serialize(&compiled).unwrap()).unwrap();
+        let stored = e.stored(compiled, &entry);
+        assert_eq!(held(), vec![entry.clone()]);
+        // A clone a run holds is the same image: one hold.
+        let running = Arc::clone(&stored);
+        let loaded = e.deserialize_file(&entry).unwrap();
+        assert_eq!(held(), vec![entry.clone(), entry.clone()]);
+        drop(stored);
+        assert_eq!(held().len(), 2, "a run still has the image");
+        drop(running);
+        assert_eq!(held(), vec![entry.clone()]);
+        drop(loaded);
+        assert!(held().is_empty());
+
+        // A file that went before the hold: the load fails and the stored
+        // image stays on its scratch file, neither keeping a hold.
+        let gone = dir.path().join("sha256-gone");
+        assert!(e.deserialize_file(&gone).is_err());
+        let compiled = e.compile(&image).unwrap();
+        let scratch = compiled.rootfs.path().to_path_buf();
+        let kept = e.stored(compiled, &gone);
+        assert_eq!(kept.rootfs.path(), scratch);
+        assert!(held().is_empty());
     }
 
     /// The compiled image runs from its scratch file and keeps nothing in

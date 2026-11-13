@@ -135,9 +135,10 @@ until the runtime loads it again.
 A compiled image first runs from a scratch file. Once the runtime has
 stored the root filesystem, the engine continues from the stored file
 (`Engine::stored`), because a snapshot records the path of the drive it
-mounted and a stored file keeps its path. Each run marks the stored root
-filesystem and the snapshot it restores as used, which keeps the files of
-a busy image out of the sweep. An image the runtime didn't store keeps its
+mounted and a stored file keeps its path. The engine pins the stored
+root filesystem of a loaded image, and the sweep skips a pinned file. Each run marks the root
+filesystem and the snapshot it restores as used, which keeps the snapshot
+of a busy image out of the sweep. An image the runtime didn't store keeps its
 snapshots in the engine's scratch directory for the life of the process.
 
 ### The protocol

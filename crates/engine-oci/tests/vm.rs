@@ -551,6 +551,10 @@ impl ArtifactStore for DirStore {
     }
 
     fn used(&self, _: &std::path::Path) {}
+
+    fn hold(&self, _: &std::path::Path) {}
+
+    fn release(&self, _: &std::path::Path) {}
 }
 
 /// A stored image's snapshot is kept in the store beside it
