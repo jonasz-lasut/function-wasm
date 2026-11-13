@@ -267,6 +267,9 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
   src/ops.rs                  /livez + /readyz (warm-up gated) and /metrics on plain HTTP; warm()
   tests/guests.rs             the guest behavioural suite over every scaffold (see "Testing")
   tests/raw_client.rs         a raw-codec gRPC client proving byte transparency end to end
+  tests/request_bench.rs      the hand-run benchmark of a warm request (#[ignore], --release):
+                              handle_raw end to end and its stages on their own, with an empty
+                              guest and the committed e2e guest, over 0 to 1000 composed resources
   testdata/validate/          the validate fixture corpus (one file per refusal family, policies, XR)
   testdata/conformance/       the recorded goldens
 crates/function-wasm/       function-wasm's `main` (package and binary `function-wasm`, /function in
