@@ -161,14 +161,7 @@ impl RegistryClient {
         } else {
             &reference.registry
         };
-        let scheme = if host.starts_with("localhost")
-            || host.starts_with("127.0.0.1")
-            || host.starts_with("[::1]")
-        {
-            "http"
-        } else {
-            "https"
-        };
+        let scheme = scheme(host);
         RegistryClient {
             http: http_client(),
             base: format!("{scheme}://{host}"),
@@ -677,6 +670,17 @@ impl<R: Read> Read for CappedReader<R> {
     }
 }
 
+/// The scheme a registry (host[:port]) is spoken to with: plain HTTP for a
+/// loopback host - localhost or a loopback IP address, exactly - and HTTPS
+/// for every other, a name that merely starts like one included.
+fn scheme(registry: &str) -> &'static str {
+    if crate::location::cleartext(registry) {
+        "http"
+    } else {
+        "https"
+    }
+}
+
 /// The authenticator for a pipeline-step credential: a .dockerconfigjson
 /// key, or username and password keys - the port of module.AuthFor.
 pub fn auth_for(registry: &str, data: &HashMap<String, Vec<u8>>) -> Result<Auth, String> {
@@ -740,12 +744,27 @@ fn docker_config_auth(registry: &str, raw: &[u8]) -> Option<Auth> {
         format!("http://{registry}"),
         "https://index.docker.io/v1/".to_string(),
     ];
-    let entry = keys.iter().find_map(|k| {
-        if k == "https://index.docker.io/v1/" && registry != "index.docker.io" {
-            return None;
-        }
-        config.auths.get(k)
-    })?;
+    let entry = keys
+        .iter()
+        .find_map(|k| {
+            if k == "https://index.docker.io/v1/" && registry != "index.docker.io" {
+                return None;
+            }
+            config.auths.get(k)
+        })
+        .or_else(|| {
+            // The reference's registry is canonical (location.rs); a config
+            // written with another spelling of it - a default port, another
+            // case - names the same registry. The first such key in order,
+            // so the choice does not depend on the map's.
+            let mut spelled: Vec<_> = config
+                .auths
+                .iter()
+                .filter(|(k, _)| config_key_registry(k).as_deref() == Some(registry))
+                .collect();
+            spelled.sort_by_key(|(k, _)| k.as_str());
+            spelled.first().map(|(_, entry)| *entry)
+        })?;
     if !entry.auth.is_empty()
         && let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&entry.auth)
         && let Ok(text) = String::from_utf8(decoded)
@@ -763,6 +782,17 @@ fn docker_config_auth(registry: &str, raw: &[u8]) -> Option<Auth> {
         });
     }
     None
+}
+
+/// The canonical registry a Docker config key names: the key less its
+/// scheme and path.
+fn config_key_registry(key: &str) -> Option<String> {
+    let authority = key
+        .strip_prefix("https://")
+        .or_else(|| key.strip_prefix("http://"))
+        .unwrap_or(key);
+    let host = authority.split('/').next().unwrap_or_default();
+    crate::location::canonical_registry(host)
 }
 
 #[cfg(any(test, feature = "testutil"))]
@@ -1265,5 +1295,67 @@ mod tests {
         let auth = auth_for("ghcr.io", &data).expect("dockerconfig");
         assert_eq!((auth.username.as_str(), auth.password.as_str()), ("u", "p"));
         assert!(auth_for("other.io", &data).is_err());
+    }
+
+    #[test]
+    fn a_docker_config_key_matches_in_any_spelling_of_the_registry() {
+        for key in [
+            "ghcr.io",
+            "GHCR.IO",
+            "ghcr.io:443",
+            "https://ghcr.io:443",
+            "https://ghcr.io./v2/",
+        ] {
+            let mut data = HashMap::new();
+            data.insert(
+                ".dockerconfigjson".to_string(),
+                format!(r#"{{"auths":{{"{key}":{{"auth":"dTpw"}}}}}}"#).into_bytes(),
+            );
+            let auth = auth_for("ghcr.io", &data).expect(key);
+            assert_eq!(
+                (auth.username.as_str(), auth.password.as_str()),
+                ("u", "p"),
+                "{key}"
+            );
+            assert!(auth_for("ghcr.io:8443", &data).is_err(), "{key}");
+        }
+    }
+
+    #[test]
+    fn only_a_loopback_host_is_spoken_to_in_cleartext() {
+        let cases = [
+            ("localhost", "http"),
+            ("localhost:5000", "http"),
+            ("127.0.0.1:5000", "http"),
+            ("127.8.9.10", "http"),
+            ("[::1]:5000", "http"),
+            ("[::1]", "http"),
+            ("localhost.example.org", "https"),
+            ("localhost.example.org:5000", "https"),
+            ("127.0.0.1.nip.io", "https"),
+            ("127.0.0.1.nip.io:5000", "https"),
+            ("[::2]:5000", "https"),
+            ("10.0.0.1:5000", "https"),
+            ("registry.e2e.svc:5000", "https"),
+            ("ghcr.io", "https"),
+        ];
+        for (registry, want) in cases {
+            assert_eq!(scheme(registry), want, "{registry}");
+        }
+        let digest = format!("sha256:{}", "0".repeat(64));
+        let base = |r: &str| {
+            let reference = parse_oci_reference(&format!("{r}/team/fn@{digest}")).expect(r);
+            RegistryClient::new(&reference, None).base
+        };
+        assert_eq!(base("LOCALHOST.:5000"), "http://localhost:5000");
+        assert_eq!(
+            base("localhost.example.org"),
+            "https://localhost.example.org"
+        );
+        assert_eq!(base("docker.io"), "https://registry-1.docker.io");
+        assert_eq!(
+            base("registry-1.docker.io:443"),
+            "https://registry-1.docker.io"
+        );
     }
 }

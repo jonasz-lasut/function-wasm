@@ -266,7 +266,7 @@ impl<E: Engine> WasmFunction<E> {
         };
         // Signature verification gates serving, not fetching: it runs
         // before any cache is consulted (an artifact on disk may predate
-        // the key), once per digest per process.
+        // the key), once per repository and digest per process.
         if signature_required {
             let Some(verifier) = self.verifier.clone() else {
                 return Ok(raw_rsp(self.fatal(&req,

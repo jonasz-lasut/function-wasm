@@ -205,7 +205,7 @@ impl Resolver {
                 let auth = crate::oci::pull_auth(&reference.registry, auth);
                 Ok(Resolved {
                     digest: reference.digest.clone(),
-                    description: format!("oci {}", oci.r#ref),
+                    description: format!("oci {}", crate::location::canonical_oci_ref(&oci.r#ref)?),
                     source: Source::Oci {
                         reference: reference.clone(),
                         auth: auth.clone(),

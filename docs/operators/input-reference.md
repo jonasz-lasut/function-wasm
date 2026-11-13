@@ -69,6 +69,15 @@ the runtime doesn't resolve tags at request time. With
 `registry/repo:tag@sha256:…` only the digest is fetched. The manifest states
 its layer's digest, and the runtime verifies both on fetch.
 
+The runtime reads the registry part into one canonical form, and the
+policies, the signature check and every message use that form. The host is
+lowercase and has no trailing dot. The default port goes, so `ghcr.io:443` is
+`ghcr.io`, and any other port stays. Docker Hub is `index.docker.io`, also when
+the reference says `docker.io`. The runtime refuses a registry part with user
+information, or one that isn't a host name or an IP address with an optional
+port. [The canonical registry](cedar-policy.md#the-canonical-registry) has
+the rules.
+
 The runtime takes the first layer whose media type is `application/wasm`,
 `application/vnd.wasm.content.layer.v1+wasm` or
 `application/vnd.module.wasm.content.layer.v1+wasm`. Failing that, it takes

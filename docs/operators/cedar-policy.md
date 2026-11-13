@@ -78,7 +78,8 @@ hierarchy. `in` is reflexive: an entity is `in` itself.
 
 - `Repository` is a module's location without its tag or digest. An OCI
   reference is `registry/repository`, normalized as go-containerregistry does
-  (`docker.io/x` is `index.docker.io/x`). For an HTTP URL, it's `scheme://host/path`
+  (`docker.io/x` is `index.docker.io/x`), with the registry in its
+  [canonical form](#the-canonical-registry). For an HTTP URL, it's `scheme://host/path`
   with a lowercase host and without its query. Every path-boundary prefix is an
   ancestor, with and without its trailing slash: `ghcr.io/team` is an ancestor
   of `ghcr.io/team/mod`, and `ghcr.io/team-other` and `ghcr.io/teamsuffix`
@@ -99,6 +100,64 @@ hierarchy. `in` is reflexive: an entity is `in` itself.
 - `Group` is an API group (`apps`, `policy`, `core`) and the parent of every
   `Kind` in it: `resource in Group::"apps"` is every kind of the apps group and
   no other.
+
+### The canonical registry
+
+A registry has one spelling in a policy, whichever way a reference writes
+it. The runtime reads the registry part of every OCI reference into its canonical
+form before it builds the `Repository` entity, so a rule over
+`Repository::"ghcr.io/acme/prod"` covers `GHCR.IO/acme/prod/m`,
+`ghcr.io:443/acme/prod/m` and `ghcr.io./acme/prod/m` alike. Write the
+canonical form in a rule. A rule written with another spelling wouldn't match
+any module. The runtime refuses a policy that has one.
+
+- The host is lowercase.
+- The host has no trailing dot.
+- The port is absent when it's the default of the scheme the runtime uses:
+  `443`, or `80` for `localhost` and the loopback addresses, which the runtime
+  reaches over plain HTTP. Any other port is part of the name:
+  `registry.example.org:5000` and `registry.example.org` are two registries.
+- An IPv6 address is in its shortest form, in brackets: `[::1]:5000`.
+- Docker Hub is `index.docker.io`, whether the reference says `docker.io` or
+  `index.docker.io`, or leaves the registry out. `docker.io` is the one alias.
+  The runtime doesn't rewrite any other host: `registry-1.docker.io` stays
+  `registry-1.docker.io`, and a rule over `index.docker.io` doesn't cover it.
+
+A single-label host keeps the port or the dot that marks it as a registry:
+`registry:443/team/fn` stays `registry:443`, since `registry/team/fn` is a
+Docker Hub repository.
+
+The runtime refuses a registry that isn't a host name or an IP address with
+an optional port. It refuses user information (`user@ghcr.io`), a character
+a host can't contain, an empty label, and a shorthand IP address such as
+`127.1`. The refusals, the logs and `function validate` print a module's
+canonical reference.
+
+The runtime checks every `Repository` a policy names when it loads the
+policy, in the scope and in the conditions, and refuses a name whose registry
+part isn't canonical:
+
+```text
+Repository::"GHCR.IO/acme/prod" is not the canonical name of that repository; write Repository::"ghcr.io/acme/prod"
+```
+
+The check reads the registry part alone, so a prefix such as
+`Repository::"ghcr.io"` or `Repository::"ghcr.io/acme/"` passes, and
+`Repository::"docker.io/library"` is refused in favor of
+`Repository::"index.docker.io/library"`. A registry part that isn't a host
+is refused too:
+
+```text
+Repository::"user@ghcr.io/acme" does not name a repository: registry "user@ghcr.io" is not a valid registry host (a host name or an IP address with an optional port, no user information)
+```
+
+An operator policy with such a name stops the runtime at startup, and
+`function validate` exits with status 2, both with `operator policy <file>:`
+before the sentence. A `compositionPolicy` with one is a fatal result on
+every request of its step and a refusal in `function validate`, both with
+`compositionPolicy is invalid:` before it. The check doesn't read the
+location of an HTTP source (`scheme://host/path`), and it doesn't read a
+name whose first component has no dot or port and isn't `localhost`.
 
 ## Actions
 

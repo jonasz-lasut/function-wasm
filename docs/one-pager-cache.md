@@ -83,8 +83,10 @@ key is also everything a hit checks. A module one Composition pulled with a
 registry credential is served without a fetch to any later request that
 states its digest, whatever the source type. The runtime checks the
 credential at the pull and never at a hit, and a digest quoted in a
-Composition is no secret. The signature verdict and the module's manifest
-are kept per digest per process the same way. The resolver remembers a
+Composition is no secret. The module's manifest is kept per digest per
+process the same way, and the signature verdict per repository and digest,
+since the operator policy decides whose signature counts per repository.
+The resolver remembers a
 manifest by the digest that pins it, and a warm request doesn't contact the
 registry. The raw bytes also go to the `manifests/` store under their own
 digest, verified on read like every disk tier but the compiled one. A

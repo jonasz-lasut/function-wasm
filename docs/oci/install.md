@@ -211,7 +211,8 @@ registry, because an OCI module comes from one alone (`module.type: OCI`:
 the runtime refuses a `Path` or `HTTP` source by name). Run a `registry:3`
 container on `127.0.0.1:5000`, then `docker push` the image there and
 `guestfn push --image` the module. The runtime speaks plain HTTP to
-`localhost`, `127.0.0.1` and `[::1]` alone. A registry in a cluster needs a
+`localhost` and the loopback addresses (`127.0.0.1`, `[::1]`) alone, and never
+to a name that only starts like one. A registry in a cluster needs a
 certificate the pod trusts, through `SSL_CERT_FILE` on the function's
 container, as the end-to-end suite's registry does
 (`crates/e2e/profiles/oci/default/drc.yaml`). To try your own module in a

@@ -22,9 +22,12 @@ Sign a module with `cosign sign --key cosign.key <ref>` and start the runtime
 with `--cosign-key cosign.pub`. A `DeploymentRuntimeConfig` mounts the key and
 sets the flag or `COSIGN_KEY`.
 
-The runtime verifies a module once per manifest digest per process, before it
-consults any cache. An artifact left on a persisted volume by a runtime
-without the key isn't served by one with it.
+The runtime verifies a module once per repository and manifest digest per
+process, before it consults any cache. A verdict holds for one repository:
+the runtime verifies the same digest in another repository there, against
+that repository's referrers and its `trustSigner` rules. An artifact
+left on a persisted volume by a runtime without the key isn't served by one
+with it.
 
 cosign 3 stores a signature as a Sigstore bundle: a DSSE envelope around an
 in-toto statement whose subject is the module's manifest digest, pushed as an
@@ -147,7 +150,7 @@ keyless signature cannot be verified: the trusted root of public-good has not be
 Key-signed and unsigned modules, readiness and liveness are unaffected.
 
 While serving, a changed root replaces the one in use and clears the
-verified-digest memo, so a module whose signer the new root no longer vouches
+memo of verified modules, so a module whose signer the new root no longer vouches
 for is verified again on its next request. A failed refresh keeps the last
 good root. Verification never touches the network: a failed refresh makes the
 root older and never slows a request. The metrics

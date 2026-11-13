@@ -44,7 +44,7 @@ The `memory_denials_total` reasons:
 
 The trusted-root series exist only with `--cosign-trust-instance` ([signatures](signatures.md)), and every outcome starts at zero. The `refreshes_total` outcomes:
 
-- `updated`: a root was put in use, the first one or one that differs from the last. The verified-digest memo is forgotten with it.
+- `updated`: a root was put in use, the first one or one that differs from the last. The memo of verified modules is forgotten with it.
 - `unchanged`: the same root was fetched again.
 - `error`: the fetch failed and the last good root stays. The log has the reason.
 
