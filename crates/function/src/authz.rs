@@ -215,23 +215,56 @@ type CompositionCacheEntry = Result<Option<Arc<CompositionPolicy>>, String>;
 /// entries are bounded by dropping the whole map at the cap. Empty text is
 /// the absent layer.
 pub fn compile_composition_policy(text: &str) -> CompositionCacheEntry {
-    if text.is_empty() {
-        return Ok(None);
+    static CACHE: OnceLock<CompositionCache> = OnceLock::new();
+    CACHE
+        .get_or_init(Default::default)
+        .get(text, CompositionPolicy::new)
+}
+
+/// The compiled compositionPolicy texts, by content hash. The map's lock
+/// is held for a lookup alone: an entry is a cell its first request
+/// compiles into, outside that lock, so a new text being parsed (tens of
+/// milliseconds for a large one) holds back the requests carrying that
+/// same text, which wait for the one compile, and no request carrying
+/// another.
+#[derive(Default)]
+struct CompositionCache {
+    entries: Mutex<HashMap<[u8; 32], Arc<OnceLock<CompositionCacheEntry>>>>,
+}
+
+impl CompositionCache {
+    /// Most texts held before the map starts over.
+    const CAP: usize = 512;
+
+    /// The entry for text, compiled by compile when this is the first
+    /// request to carry it. Whatever compile checks is checked before the
+    /// entry exists for anyone.
+    fn get(
+        &self,
+        text: &str,
+        compile: impl FnOnce(&str) -> Result<CompositionPolicy, String>,
+    ) -> CompositionCacheEntry {
+        if text.is_empty() {
+            return Ok(None);
+        }
+        let key: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+        let cell = {
+            let mut entries = self.entries.lock().expect("poisoned");
+            match entries.get(&key) {
+                Some(cell) => Arc::clone(cell),
+                None => {
+                    // A cell dropped here while its compile runs still
+                    // answers the requests holding it.
+                    if entries.len() >= Self::CAP {
+                        entries.clear();
+                    }
+                    Arc::clone(entries.entry(key).or_default())
+                }
+            }
+        };
+        cell.get_or_init(|| compile(text).map(|p| Some(Arc::new(p))))
+            .clone()
     }
-    static CACHE: OnceLock<Mutex<HashMap<[u8; 32], CompositionCacheEntry>>> = OnceLock::new();
-    const CACHE_CAP: usize = 512;
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key: [u8; 32] = Sha256::digest(text.as_bytes()).into();
-    let mut entries = cache.lock().expect("poisoned");
-    if let Some(e) = entries.get(&key) {
-        return e.clone();
-    }
-    let compiled = CompositionPolicy::new(text).map(|p| Some(Arc::new(p)));
-    if entries.len() >= CACHE_CAP {
-        entries.clear();
-    }
-    entries.insert(key, compiled.clone());
-    compiled
 }
 
 impl CompositionPolicy {
@@ -1975,6 +2008,101 @@ mod tests {
             namespace: namespace.to_string(),
             xr_kind: xr_kind.to_string(),
             composition: String::new(),
+        }
+    }
+
+    /// A text being compiled holds back nobody but the requests carrying
+    /// it: while one compile is held open, another text is compiled and
+    /// then read back, and a second request for the slow text waits for
+    /// that one compile.
+    #[test]
+    fn a_slow_compile_holds_back_its_own_text_alone() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+
+        const SLOW: &str = r#"permit (principal, action == Action::"setEnv", resource);"#;
+        const OTHER: &str = r#"permit (principal, action == Action::"usePrivateTmp", resource);"#;
+        let cache = Arc::new(CompositionCache::default());
+        let compiles = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = channel::<()>();
+        let (release_tx, release_rx) = channel::<()>();
+        let slow = {
+            let (cache, compiles) = (Arc::clone(&cache), Arc::clone(&compiles));
+            std::thread::spawn(move || {
+                cache.get(SLOW, |text| {
+                    compiles.fetch_add(1, Ordering::SeqCst);
+                    started_tx.send(()).expect("the test waits");
+                    release_rx.recv().expect("the test releases");
+                    CompositionPolicy::new(text)
+                })
+            })
+        };
+        started_rx.recv().expect("the slow compile starts");
+
+        // Another text, compiled and read back beside it, on a thread so
+        // that a cache that blocked it fails the test instead of hanging.
+        let (done_tx, done_rx) = channel();
+        let other = Arc::clone(&cache);
+        std::thread::spawn(move || {
+            let first = other.get(OTHER, CompositionPolicy::new);
+            let again = other.get(OTHER, |_| panic!("compiled once"));
+            let _ = done_tx.send((first, again));
+        });
+        let (first, again) = done_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("another text is not held back by the slow compile");
+        let (first, again) = (first.unwrap().unwrap(), again.unwrap().unwrap());
+        assert!(Arc::ptr_eq(&first, &again), "one compiled policy per text");
+
+        // The same text: no second compile, the first one's result.
+        let joined = {
+            let (cache, compiles) = (Arc::clone(&cache), Arc::clone(&compiles));
+            std::thread::spawn(move || {
+                cache.get(SLOW, |text| {
+                    compiles.fetch_add(1, Ordering::SeqCst);
+                    CompositionPolicy::new(text)
+                })
+            })
+        };
+        release_tx.send(()).expect("release the slow compile");
+        let slow = slow.join().expect("join").unwrap().unwrap();
+        let joined = joined.join().expect("join").unwrap().unwrap();
+        assert!(Arc::ptr_eq(&slow, &joined));
+        assert_eq!(compiles.load(Ordering::SeqCst), 1);
+    }
+
+    /// A refused text is refused for everyone and never compiled twice;
+    /// the checks made on the way are the entry's own, and the map starts
+    /// over at its cap.
+    #[test]
+    fn the_cache_keeps_refusals_and_stays_bounded() {
+        let cache = CompositionCache::default();
+        let unnormalised = r#"permit (principal, action == Action::"pullModule", resource in Repository::"GHCR.io/acme");"#;
+        let refused = cache.get(unnormalised, CompositionPolicy::new).unwrap_err();
+        assert_eq!(
+            cache
+                .get(unnormalised, |_| panic!("a refusal is kept"))
+                .unwrap_err(),
+            refused
+        );
+        assert_eq!(
+            refused,
+            CompositionPolicy::new(unnormalised).unwrap_err(),
+            "what the compile refuses is what the cache answers"
+        );
+        assert!(
+            cache
+                .get("", |_| panic!("no text, no layer"))
+                .unwrap()
+                .is_none()
+        );
+
+        // A refusal is an entry like any other, and costs no parse here.
+        for i in 0..2 * CompositionCache::CAP {
+            let refusal = cache.get(&format!("text {i}"), |text| Err(text.to_string()));
+            assert_eq!(refusal.unwrap_err(), format!("text {i}"));
+            assert!(cache.entries.lock().unwrap().len() <= CompositionCache::CAP);
         }
     }
 
