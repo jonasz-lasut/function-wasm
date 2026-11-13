@@ -11,7 +11,7 @@ second.
 | Tier | Runs | What it covers |
 |---|---|---|
 | unit and component | `cargo test --workspace`, on every push and on a pull request that changes code | the engine, the runtime and `function validate` against in-memory stand-ins and recorded goldens, and every scaffold built and run through the host (the guest suite) |
-| end-to-end | `make e2e`, `/e2e` on a pull request, the [release matrix](#the-release-matrix) on a release branch | each function's package installed by Crossplane in a kind cluster, as an XR author and an operator see it |
+| end-to-end | `make e2e`, an `e2e:` label on a pull request, the [release matrix](#the-release-matrix) on a release branch | each function's package installed by Crossplane in a kind cluster, as an XR author and an operator see it |
 
 ## The tier for a new test
 
@@ -69,10 +69,10 @@ the suite's own setup binary, in three steps:
    `crates/function-oci/Dockerfile.dev` around the prebuilt pieces
    `FUNCTION_OCI_TOOLS` names, on the `oci` runtime's `default` profile. `E2E_OCI` decides:
    `auto` (the default) installs it when the kind node has `/dev/kvm`, `1`
-   requires it and `0` leaves it out, the two values CI's cluster jobs set.
+   requires it and `0` leaves it out, the two values CI's profile jobs set.
    `E2E_WASM` decides the same for `function-wasm`: `1` (the default)
-   installs it and `0` leaves it out, which CI's `oci` cluster job sets.
-   Each cluster job installs its own runtime alone. Setup pushes every
+   installs it and `0` leaves it out, which CI's `oci` profile jobs set.
+   Each profile job installs its own runtime alone. Setup pushes every
    variant either way (the `oci` suite's wrong-type case names the `wasm`
    runtime's `plain` variant) and writes the `wasm/default` policy either
    way (the `oci` profile's `DeploymentRuntimeConfig` mounts it); `0` skips
@@ -193,34 +193,77 @@ Two more jobs run the `cargo test` targets that need tools of their own:
   change touches the OCI engine, the init, the protocol, the fixture,
   `crates/engine`, the dependencies or the Firecracker and kernel pins.
 
-A `/e2e` comment on a pull request runs `e2e.yml`. Every job proves one of
-the two functions. For `function-wasm`:
+`e2e.yml` runs on a pull request's own events: when it opens, on every push
+to it and when someone adds a label. The labels on the pull request select
+the scenarios:
 
+| Label | Runs |
+|---|---|
+| `e2e:all` | every scenario below |
+| `e2e:wasm:all` | every `wasm` scenario |
+| `e2e:wasm:default`, `e2e:wasm:strict`, `e2e:wasm:lifecycle` | one `wasm` profile |
+| `e2e:wasm:examples` | the `build (<lang>)` jobs of the WebAssembly examples |
+| `e2e:oci:all` | every `oci` scenario |
+| `e2e:oci:default`, `e2e:oci:privileges`, `e2e:oci:snapshots` | one `oci` profile |
+| `e2e:oci:examples` | `build (oci-go)` |
+
+A pull request with more than one of these labels runs their union. A
+labelled pull request runs again on every push until the label is removed,
+and a newer commit cancels the run of the one before it. A pull request
+without an `e2e:` label doesn't run a scenario.
+
+The `select` job reads the labels and calls two reusable workflows.
+`e2e-wasm.yml` has the scenarios of `function-wasm`:
+
+- `build-tools` compiles the runtime and `guestfn` once
+- one `e2e (<profile>)` job per selected profile, each on a kind cluster of
+  its own at the Makefile's `CROSSPLANE_VERSION` with `function-oci` left out
+  (`E2E_OCI=0`). The profiles run side by side, and a failed job uploads
+  `make e2e.dump`
 - one build job per example toolchain: build, unit tests, lint, and codec and
-  bindings drift, each module wrapped by the `guestfn` the `build-tools` job
-  compiled with the runtime
-- the `wasm` cluster job, which runs the three `wasm` profiles one after another
-  on one kind cluster at the Makefile's `CROSSPLANE_VERSION` with
-  `function-oci` left out (`E2E_OCI=0`), and uploads `make e2e.dump` on failure
+  bindings drift, each module wrapped by the `guestfn` that `build-tools`
+  compiled
 
-For `function-oci`:
+`e2e-oci.yml` has the scenarios of `function-oci`:
 
-- the `oci-go` build job, which vets and tests the process guest and builds
-  its image, pushing nothing
-- a build job that compiles `function-oci`, the init and the test module as
-  a process (musl) and fetches the pinned Firecracker and kernel
-  (`make oci.tools`) for the `oci` cluster job
-- the `oci` cluster job, which installs `function-oci` alone
-  (`E2E_WASM=0 E2E_OCI=1`) and runs the `oci` profiles
+- `build-tools` compiles `function-oci`, the init and the test module as a
+  process (musl) and fetches the pinned Firecracker and kernel
+  (`make oci.tools`)
+- one `e2e (<profile>)` job per selected profile, each on a cluster of its
+  own with `function-oci` alone (`E2E_WASM=0 E2E_OCI=1`)
+- `build (oci-go)` vets and tests the process guest and builds its image,
+  pushing nothing
 
-The run posts three commit statuses on the head of the pull request: `e2e/wasm`
-and `e2e/oci`, each naming the jobs of its runtime that didn't pass, and
-`e2e`, the whole run's verdict. The ruleset on `main` doesn't require any of
-them.
+The workflow doesn't post a comment or a commit status, because every job is
+already a check on the pull request with a link to its run. Its last job, `e2e-gate`, is
+the check a ruleset on `main` can require. It passes when no scenario was
+selected or every selected one passed. It fails when a selected scenario, or
+a build that scenario waited for, failed or was cancelled. On a labelled pull
+request a new commit can't clear a failure, because the push starts the run
+again.
 
-The jobs cache under `e2e-` keys that no trusted workflow restores, and the
-workflow sets `cache-mode: write` because a comment-started run gets a
-read-only cache token.
+Any label starts the workflow, an unrelated one such as `kind:bug` too. That
+run takes a concurrency group of its own, which keeps it from cancelling a
+run in progress, and it doesn't run a scenario. Its `e2e-gate` looks up the verdict the head commit already has
+(the latest `e2e-gate` check that ran to an end) and repeats it, so an
+unrelated label can't replace a failure with a pass. With no verdict yet the
+gate passes, unless the pull request has an `e2e:` label: the run that owes
+the verdict is then still going, and the gate fails until that run's gate
+replaces it.
+
+A pull request's run uses the pull request's own copy of the three workflow
+files, so a change to them is exercised before it merges. A pull request
+from a fork gets a read-only token without secrets, which is all the jobs
+use.
+
+A pull request's run restores caches and saves none, as in `ci.yml`. A
+second workflow, `e2e-caches.yml`, saves them on every push to `main` and
+never runs on a pull request. It
+calls the same two reusable workflows without a profile, which runs both
+`build-tools` jobs and every example's build job without a cluster, and its
+`seed-suite-cache` job compiles the end-to-end crate under the key every
+profile job restores. Because the jobs that save a cache are the jobs that
+restore it, the keys can't drift apart.
 
 GitHub's Linux runners expose `/dev/kvm` to a udev rule the OCI jobs and
 the legs of the release matrix install, and the kind node inherits it. The
@@ -229,44 +272,41 @@ the package's. The suite's setup installs the device plugin
 (`crates/e2e/cluster/kvm-device-plugin.yaml`), reads the node's `kvm` gid and
 puts it into the `oci` runtime config as the supplemental group of the pod: the
 recipe on the operator page for a hosted cluster. The same page says why a
-`hostPath` mount of the device isn't enough. A comment-started run reads
-`e2e.yml` from `main`, so a new job there is proved only after it merges. A
-failed cluster job prints the description and logs of every function pod into
+`hostPath` mount of the device isn't enough. A
+failed profile job prints the description and logs of every function pod into
 the job log (`make e2e.dump` does that before the dump itself).
 
 ### The release matrix
 
 Crossplane maintains its three most recent minor releases
 ([release cycle](https://docs.crossplane.io/latest/learn/release-cycle/)), and
-the function supports the same three. Every `/e2e` run tests the current minor, and the matrix
-adds the two before it.
+the function supports the same three. A pull request's end-to-end run tests
+the current minor, and the matrix adds the two before it.
 
 `release-matrix-e2e.yml` runs on every push to a `release-function-wasm-X.Y`
-or `release-function-oci-X.Y` branch. It
-builds both runtimes from the branch once: `function-wasm`'s in
-`build-tools`, and `function-oci`'s pieces in `build-oci` (the
-`function-oci` binary, the init, the test module as a process, the pinned
-Firecracker and kernel), as the `e2e.yml` jobs of the same names do. It then
-runs `make e2e E2E_OCI=1` three times in parallel, one kind cluster per
-version with both packages installed from those pieces and every profile of
-both runtimes, after the udev rule that gives the runner's kind node
-`/dev/kvm`, and uploads the cluster dump for a failed version. One cluster
-per version runs both runtimes. The matrix checks that the release works on
-that Crossplane; a leg per runtime would double the runners for no new
-proof. Both functions leave through `Publish Function`. A red leg blocks
-either. `gh workflow run "Release Matrix E2E" --ref <ref>` runs it by hand on
-any ref.
+or `release-function-oci-X.Y` branch, and the branch's name says which
+function it tests. Its `plan` job reads the runtime from the name and calls
+that runtime's reusable workflow, `e2e-wasm.yml` or `e2e-oci.yml`, once with
+the three Crossplane versions. The runtime is built from the branch once, and
+every profile runs on a kind cluster of its own per version: nine jobs in
+parallel, each uploading the cluster dump when it fails. A `function-wasm`
+branch doesn't run a VM or an `oci` profile, and a `function-oci` branch
+doesn't run a `wasm` profile: the branch doesn't release what those test. A red job
+blocks the release.
+`gh workflow run "Release Matrix E2E" --ref <ref> -f runtime=<wasm|oci>` runs
+it by hand on any ref.
 
 The Makefile's `CROSSPLANE_VERSION` default names the current version. The
 workflow's `env` (`CROSSPLANE_PREVIOUS`, `CROSSPLANE_OLDEST`) pins the latest
 patch of the two older minors. A red version blocks the release: the release
 process pushes the branch, waits for the matrix and tags only when it's green.
 
-The matrix also runs the OCI engine's VM suite (`make oci.test`) on nine
-pairs: the three most recent Firecracker minors against the three guest kernel
+On a `function-oci` branch the matrix also runs the OCI engine's VM suite
+(`make oci.test`) on nine pairs: the three most recent Firecracker minors against the three guest kernel
 lines Firecracker supports (6.18, 6.1 and 5.10). The Dockerfile's pins are the
 current Firecracker and kernel, and the workflow's `env` pins the others. Only
 the pair the image pins blocks a release, and any other pair that fails stays
-out of the record. A last job writes what passed to a `tested-versions`
-artifact, and the release skills use it to open the pull request that updates
-the tables in `README.md`.
+out of the record. A last job writes what the released function passed to a
+`tested-versions` artifact: the function, the Crossplane versions and, for
+`function-oci`, the pairs. The release skills use it to open the pull request
+that updates the function's table in `README.md`.

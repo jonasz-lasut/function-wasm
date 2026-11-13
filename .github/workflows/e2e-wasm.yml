@@ -1,0 +1,1194 @@
+# Copyright 2026 The guestfn Authors.
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# function-wasm's end-to-end scenarios, called by e2e.yml (a pull request's
+# labels select them), by e2e-caches.yml (a push to main runs the builds
+# alone and saves their caches) and by
+# release-matrix-e2e.yml (every profile on each Crossplane version a
+# function-wasm release supports). The runtime and guestfn are built once;
+# every selected profile of the Kubernetes-native suite (crates/e2e,
+# docs/project/testing.md) is then a job of its own with a kind cluster of
+# its own, and each WebAssembly example has a build job (build, unit tests,
+# lint, codec and bindings drift). The guest behavioural suite is a cargo
+# test with no cluster and runs in ci.yml.
+#
+# The caller's event decides the trust: the header of e2e.yml says what a
+# pull request's run gets. Nothing here writes outside the runner, and a
+# cache is saved only where the caller says so (save-caches), which no
+# caller does for a pull request.
+name: E2E (wasm)
+
+on:
+  workflow_call:
+    inputs:
+      profiles:
+        description: >-
+          The wasm profiles to run, each on a cluster of its own: all, or a
+          JSON array of names ([] runs none).
+        type: string
+        default: all
+      examples:
+        description: Whether the WebAssembly examples' build jobs run.
+        type: boolean
+        default: false
+      crossplane-versions:
+        description: >-
+          A JSON array of Crossplane versions (the chart's, no v); every
+          profile runs on each. An empty string is the Makefile's
+          CROSSPLANE_VERSION default.
+        type: string
+        default: '[""]'
+      save-caches:
+        description: >-
+          Whether the jobs save their caches: true on a push to main or to a
+          release branch, never for a pull request.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# The Zig the example jobs install (the zig, c, cpp and odin examples build
+# with it), one pin per runner architecture as <version>@<sha256 of the
+# tarball>. Renovate moves
+# each line, version and checksum together, through the custom.zig-*
+# datasources in renovate.json5, which read ziglang.org's download index;
+# the two lines must name one version.
+env:
+  # renovate: datasource=custom.zig-x86_64-linux depName=zig
+  ZIG_X86_64_LINUX: 0.16.0@70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+  # renovate: datasource=custom.zig-aarch64-linux depName=zig
+  ZIG_AARCH64_LINUX: 0.16.0@ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17
+
+jobs:
+  # The runtime and guestfn, compiled once per run with a warm cargo cache
+  # and handed to the other jobs as an artifact: a profile job wraps the
+  # runtime into its image (crates/function-wasm/Dockerfile.dev) instead of
+  # compiling the workspace cold in the build stage of
+  # crates/function-wasm/Dockerfile, and the guests that build through guestfn
+  # take it from GUESTFN. The Rust caches here have a shared-key each, so
+  # the key a pull request's job restores is the one the run on main saved
+  # whatever the job is called.
+  build-tools:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: e2e-wasm-tools
+          cache-on-failure: true
+          save-if: ${{ inputs.save-caches }}
+
+      - name: Build the Runtime and guestfn
+        run: cargo build --locked --release -p function-wasm -p guestfn
+
+      - name: Upload the Runtime and guestfn
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-wasm-tools
+          path: |
+            target/release/function-wasm
+            target/release/guestfn
+          if-no-files-found: error
+          retention-days: 1
+
+  # Each example guest, built with its own toolchain, unit-tested and linted,
+  # its generated codec and bindings checked for drift. What an example
+  # composes is asserted by nothing here: the profile jobs below drive the
+  # suite's own module through Crossplane.
+  #
+  # The Go guest, an ABI v2 component: the function-wasm-go use case. go build
+  # emits the wasip1 core module and guestfn embeds its world and wraps it
+  # (no componentize-go, no wasm-tools); wit-bindgen is only needed to
+  # regenerate the checked-in Go bindings, which this job does to catch
+  # drift.
+  build-go:
+    name: build (go)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    env:
+      # The wit-bindgen that wrote the checked-in bindings (their header
+      # names it), as a release binary pinned by checksum.
+      WIT_BINDGEN_VERSION: 0.62.0
+      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-go/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-go
+          fi
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          cache: false
+          go-version-file: examples/function-wasm-go/go.mod
+
+      - name: Restore the Go Modules and Build
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: examples-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-go/go.sum') }}
+          restore-keys: |
+            examples-go-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Setup wit-bindgen
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Check Generated Bindings
+        working-directory: examples/function-wasm-go
+        run: |
+          make gen-bindings
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-go/internal/bindings is not up to date with its wit; commit the result of make gen-bindings (at the root, which also mirrors it into the go template):"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      # vet takes the guest's own packages: internal/bindings is wit-bindgen's
+      # output, whose pointer arithmetic over the wasm linear memory is what
+      # vet's unsafeptr check flags.
+      - name: Build, Vet and Test the Example Guest
+        working-directory: examples/function-wasm-go
+        run: |
+          make build
+          # shellcheck disable=SC2046
+          go vet $(go list ./... | grep -v /internal/bindings/)
+          go test -race ./...
+
+      - name: Save the Go Modules and Build
+        if: inputs.save-caches && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+  # The Rust guest, an ABI v2 component (wasm32-wasip3 on the toolchain its
+  # rust-toolchain.toml pins): the function-wasm-rust use case.
+  build-rust:
+    name: build (rust)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-rust/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-rust
+          fi
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The guest's Makefile names its wasm target (and a rust-toolchain.toml
+      # beside it may pin the compiler), so the lint follows the guest's own
+      # files rather than this one.
+      - name: Cache the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: e2e-example-rust
+          cache-on-failure: true
+          save-if: ${{ inputs.save-caches }}
+          workspaces: examples/function-wasm-rust
+      - name: Build, Lint and Test the ABI v2 Rust Guest
+        run: make -C examples/function-wasm-rust build lint test
+
+  # The same guest in Zig, an ABI v2 component: zig-protobuf over the
+  # vendored proto and wit-bindgen's C bindings over its world (the c
+  # guest's, byte for byte, read through translate-c), built by zig into a
+  # core module that guestfn wraps (no wasm-tools, no adapter download).
+  # One zig binary builds it; protoc (which
+  # zig build gen-proto downloads) and wit-bindgen are only needed to
+  # regenerate the checked-in codec and bindings, which this job does to
+  # catch drift.
+  build-zig:
+    name: build (zig)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    env:
+      # The wit-bindgen that wrote the checked-in bindings (their header
+      # names it), as a release binary pinned by checksum.
+      WIT_BINDGEN_VERSION: 0.62.0
+      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-zig/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-zig
+          fi
+
+      # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
+      # below: the setup action picks a community mirror and has hung for
+      # a quarter of an hour on one; the runner's architecture selects the
+      # tarball (a job may run on either architecture).
+      - name: Setup Zig
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) pin="${ZIG_X86_64_LINUX}" ;;
+            aarch64) pin="${ZIG_AARCH64_LINUX}" ;;
+            *) echo "no zig pin for ${arch}" >&2; exit 1 ;;
+          esac
+          version="${pin%@*}"
+          sha="${pin#*@}"
+          curl -fsSL -o "${RUNNER_TEMP}/zig.tar.xz" \
+            "https://ziglang.org/download/${version}/zig-${arch}-linux-${version}.tar.xz"
+          echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
+
+      # Keyed per job: each zig job fetches its own build.zig.zon's
+      # packages, and actions/cache keeps one save per key.
+      - name: Restore the Zig Packages
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: examples-zig-zig-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/function-wasm-zig/build.zig.zon') }}
+          restore-keys: |
+            examples-zig-zig-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-zig
+        run: |
+          zig build gen-proto
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-zig/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Setup wit-bindgen
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Check Generated Bindings
+        working-directory: examples/function-wasm-zig
+        run: |
+          zig build gen-bindings
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-zig/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Build, Lint and Test the Zig Guest
+        run: make -C examples/function-wasm-zig lint test build
+
+      - name: Save the Zig Packages
+        if: inputs.save-caches && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+  # The same guest in C, an ABI v2 component: nanopb over the vendored proto
+  # and wit-bindgen's C bindings over its world, compiled by zig cc behind
+  # its build.zig into a core module that guestfn wraps (no wasm-tools, no
+  # adapter download). The same zig binary
+  # builds it; nanopb_generator (and protoc) and wit-bindgen are only needed
+  # to regenerate the checked-in codec and bindings, which this job does to
+  # catch drift.
+  build-c:
+    name: build (c)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    env:
+      # The wit-bindgen that wrote the checked-in bindings (their header
+      # names it), as a release binary pinned by checksum.
+      WIT_BINDGEN_VERSION: 0.62.0
+      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-c/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-c
+          fi
+
+      # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
+      # below: the setup action picks a community mirror and has hung for
+      # a quarter of an hour on one; the runner's architecture selects the
+      # tarball (a job may run on either architecture).
+      - name: Setup Zig
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) pin="${ZIG_X86_64_LINUX}" ;;
+            aarch64) pin="${ZIG_AARCH64_LINUX}" ;;
+            *) echo "no zig pin for ${arch}" >&2; exit 1 ;;
+          esac
+          version="${pin%@*}"
+          sha="${pin#*@}"
+          curl -fsSL -o "${RUNNER_TEMP}/zig.tar.xz" \
+            "https://ziglang.org/download/${version}/zig-${arch}-linux-${version}.tar.xz"
+          echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The nanopb version must match the one the checked-in codec was
+      # generated with (its header names it) and the one build.zig fetches.
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15'
+
+      - name: Setup nanopb_generator
+        run: pip install nanopb==0.4.9.1
+
+      # Keyed per job: each zig job fetches its own build.zig.zon's
+      # packages, and actions/cache keeps one save per key.
+      - name: Restore the Zig Packages
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: examples-zig-c-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/function-wasm-c/build.zig.zon') }}
+          restore-keys: |
+            examples-zig-c-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-c
+        run: |
+          zig build gen-proto
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-c/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Setup wit-bindgen
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Check Generated Bindings
+        working-directory: examples/function-wasm-c
+        run: |
+          zig build gen-bindings
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-c/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Build, Lint and Test the C Guest
+        run: make -C examples/function-wasm-c lint test build
+
+      - name: Save the Zig Packages
+        if: inputs.save-caches && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+  # The function-wasm-cpp example in C++, an ABI v2 component on the c flavour's
+  # plumbing (its C bindings, nanopb codec, WIT and proto byte for byte):
+  # zig c++ compiles the logic over mbedTLS, zig cc the C adapter and the
+  # glue, build.zig fetches both libraries, and guestfn wraps the core
+  # module with the wasip1 adapter for the clock and the randomness it
+  # imports. The codec and bindings drift checks are the c job's, over this
+  # example's copies.
+  build-cpp:
+    name: build (cpp)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    env:
+      # The wit-bindgen that wrote the checked-in bindings (their header
+      # names it), as a release binary pinned by checksum.
+      WIT_BINDGEN_VERSION: 0.62.0
+      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-cpp/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-cpp
+          fi
+
+      # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
+      # below: the setup action picks a community mirror and has hung for
+      # a quarter of an hour on one; the runner's architecture selects the
+      # tarball (a job may run on either architecture).
+      - name: Setup Zig
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) pin="${ZIG_X86_64_LINUX}" ;;
+            aarch64) pin="${ZIG_AARCH64_LINUX}" ;;
+            *) echo "no zig pin for ${arch}" >&2; exit 1 ;;
+          esac
+          version="${pin%@*}"
+          sha="${pin#*@}"
+          curl -fsSL -o "${RUNNER_TEMP}/zig.tar.xz" \
+            "https://ziglang.org/download/${version}/zig-${arch}-linux-${version}.tar.xz"
+          echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The nanopb version must match the one the checked-in codec was
+      # generated with (its header names it) and the one build.zig fetches.
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15'
+
+      - name: Setup nanopb_generator
+        run: pip install nanopb==0.4.9.1
+
+      # Keyed per job: each zig job fetches its own build.zig.zon's
+      # packages (this one nanopb and mbedTLS), and actions/cache keeps one
+      # save per key.
+      - name: Restore the Zig Packages
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: examples-zig-cpp-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/function-wasm-cpp/build.zig.zon') }}
+          restore-keys: |
+            examples-zig-cpp-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-cpp
+        run: |
+          zig build gen-proto
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-cpp/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Setup wit-bindgen
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Check Generated Bindings
+        working-directory: examples/function-wasm-cpp
+        run: |
+          zig build gen-bindings
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-cpp/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Build, Lint and Test the C++ Guest
+        run: make -C examples/function-wasm-cpp lint test build
+
+      - name: Save the Zig Packages
+        if: inputs.save-caches && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+  # The same guest in Odin, an ABI v2 component on the c flavour's plumbing
+  # (its C bindings, nanopb codec, WIT and proto byte for byte): odin
+  # compiles the guest to a freestanding wasm32 object, zig cc compiles the
+  # C half and links the core module behind its build.zig, and guestfn
+  # wraps it like the c guest (no wasm-tools, no adapter download). Odin is
+  # its GitHub release for linux amd64, pinned by checksum like wit-bindgen
+  # (the binary is statically linked, its base and core collections sit
+  # beside it); the codec and bindings drift checks are the c job's, over
+  # this example's copies.
+  build-odin:
+    name: build (odin)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    env:
+      # The wit-bindgen that wrote the checked-in bindings (their header
+      # names it), as a release binary pinned by checksum.
+      WIT_BINDGEN_VERSION: 0.62.0
+      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+      # The Odin release the example builds with (its README names it).
+      ODIN_VERSION: dev-2026-10
+      ODIN_SHA256: c3c8b095621fd0c75f7f73e3a0829f1b4d45324225f20ba11ed8dc4da310a8ab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-odin/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-odin
+          fi
+
+      # Zig from ziglang.org by pinned checksum, like wit-bindgen and Odin
+      # below: the setup action picks a community mirror and has hung for
+      # a quarter of an hour on one; the runner's architecture selects the
+      # tarball (a job may run on either architecture).
+      - name: Setup Zig
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) pin="${ZIG_X86_64_LINUX}" ;;
+            aarch64) pin="${ZIG_AARCH64_LINUX}" ;;
+            *) echo "no zig pin for ${arch}" >&2; exit 1 ;;
+          esac
+          version="${pin%@*}"
+          sha="${pin#*@}"
+          curl -fsSL -o "${RUNNER_TEMP}/zig.tar.xz" \
+            "https://ziglang.org/download/${version}/zig-${arch}-linux-${version}.tar.xz"
+          echo "${sha}  ${RUNNER_TEMP}/zig.tar.xz" | sha256sum -c -
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/zig-${arch}-linux-${version}" >> "$GITHUB_PATH"
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The nanopb version must match the one the checked-in codec was
+      # generated with (its header names it) and the one build.zig fetches.
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15'
+
+      - name: Setup nanopb_generator
+        run: pip install nanopb==0.4.9.1
+
+      # Keyed per job: each zig job fetches its own build.zig.zon's
+      # packages, and actions/cache keeps one save per key.
+      - name: Restore the Zig Packages
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: examples-zig-odin-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_X86_64_LINUX }}-${{ hashFiles('examples/function-wasm-odin/build.zig.zon') }}
+          restore-keys: |
+            examples-zig-odin-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-odin
+        run: |
+          zig build gen-proto
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-odin/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Setup wit-bindgen
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Check Generated Bindings
+        working-directory: examples/function-wasm-odin
+        run: |
+          zig build gen-bindings
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-odin/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Setup Odin
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/odin.tar.gz" \
+            "https://github.com/odin-lang/Odin/releases/download/${ODIN_VERSION}/odin-linux-amd64-${ODIN_VERSION}.tar.gz"
+          echo "${ODIN_SHA256}  ${RUNNER_TEMP}/odin.tar.gz" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/odin"
+          tar -xzf "${RUNNER_TEMP}/odin.tar.gz" -C "${RUNNER_TEMP}/odin" --strip-components=1
+          echo "${RUNNER_TEMP}/odin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/odin/odin" version
+
+      - name: Build, Lint and Test the Odin Guest
+        working-directory: examples/function-wasm-odin
+        run: |
+          zig fmt --check build.zig
+          zig build lint
+          zig build test
+          make build
+
+      - name: Save the Zig Packages
+        if: inputs.save-caches && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/zig
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+  # The same guest in MoonBit, an ABI v2 component: protoc-gen-mbt's codec
+  # over the vendored proto (the well-known types from the moonbitlang/protobuf
+  # runtime) and wit-bindgen's MoonBit bindings over its world, built by moon
+  # into a core module that guestfn embeds the world into (UTF-16, MoonBit's
+  # string encoding) and wraps (no wasm-tools, no adapter). moon is pinned
+  # to the release the example was written against, by checksum; protoc
+  # (with protoc-gen-mbt through
+  # moonx) and wit-bindgen are only needed to regenerate the checked-in codec
+  # and bindings, which this job does to catch drift.
+  build-moonbit:
+    name: build (moonbit)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    env:
+      # The toolchain release: moonc's version string names it on
+      # cli.moonbitlang.com (moon 0.1.20260920, moonc v0.10.14+7d59c7ec9),
+      # the toolchain and its core as two tarballs the installer would fetch.
+      MOON_VERSION: 0.10.14+7d59c7ec9
+      MOON_SHA256: 9226694de9ff978db1ecf820b7710c4224e84ec7a76b19a222d96f0cd4e31b6a
+      MOON_CORE_SHA256: 6f18b8fdea18f85e628a75e4a1bd3977c5a5c9c6a836fd8824192b0e6bd91b14
+      # The wit-bindgen that wrote the checked-in bindings (their header
+      # names it), as a release binary pinned by checksum.
+      WIT_BINDGEN_VERSION: 0.62.0
+      WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-moonbit/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-moonbit
+          fi
+
+      # What the official installer does for one pinned release: the
+      # toolchain tarball under ~/.moon, the core beside it, bundled for the
+      # wasm and wasm-gc targets (the latter runs moon test), checksums
+      # verified first. The '+' in the release is URL-encoded. Then what the
+      # installer leaves to the user: moon update clones the registry index
+      # that resolves moon.mod's moonbitlang/protobuf; without it moon check,
+      # test and build fail with "module was not found in the registry"
+      # (moonx needs no index, it fetches its pinned asset directly, which is
+      # why gen-proto passes without one).
+      - name: Setup MoonBit
+        run: |
+          version="${MOON_VERSION/+/%2B}"
+          curl -fsSL -o "${RUNNER_TEMP}/moonbit.tar.gz" \
+            "https://cli.moonbitlang.com/binaries/${version}/moonbit-linux-x86_64.tar.gz"
+          echo "${MOON_SHA256}  ${RUNNER_TEMP}/moonbit.tar.gz" | sha256sum -c -
+          curl -fsSL -o "${RUNNER_TEMP}/core.tar.gz" \
+            "https://cli.moonbitlang.com/cores/core-${version}.tar.gz"
+          echo "${MOON_CORE_SHA256}  ${RUNNER_TEMP}/core.tar.gz" | sha256sum -c -
+          mkdir -p "${HOME}/.moon/lib"
+          tar -xzf "${RUNNER_TEMP}/moonbit.tar.gz" -C "${HOME}/.moon"
+          tar -xzf "${RUNNER_TEMP}/core.tar.gz" -C "${HOME}/.moon/lib"
+          chmod +x "${HOME}/.moon/bin/"* "${HOME}/.moon/bin/internal/tcc"
+          ln -sfn moon "${HOME}/.moon/bin/moonx"
+          export PATH="${HOME}/.moon/bin:${PATH}"
+          moon -C "${HOME}/.moon/lib/core" bundle --warn-list -a --all
+          moon -C "${HOME}/.moon/lib/core" bundle --warn-list -a --target wasm-gc --quiet
+          moon update
+          echo "${HOME}/.moon/bin" >> "$GITHUB_PATH"
+          moon version --all
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # protoc-gen-mbt is not installed: the Makefile runs the pinned release
+      # through moonx, which fetches it into ~/.moon's registry.
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-moonbit
+        run: |
+          make gen-proto
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-moonbit/src/fnv1 is not up to date with its proto; commit the result of make gen-proto:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Setup wit-bindgen
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Check Generated Bindings
+        working-directory: examples/function-wasm-moonbit
+        run: |
+          make gen-bindings
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "examples/function-wasm-moonbit/src bindings are not up to date with its wit; commit the result of make gen-bindings:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Build, Lint and Test the MoonBit Guest
+        run: make -C examples/function-wasm-moonbit build lint test
+
+  # The TypeScript guest, an ABI v2 component (jco): the function-wasm-ts use
+  # case.
+  build-ts:
+    name: build (ts)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-ts/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-ts
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Restore the npm Packages
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: examples-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-ts/package-lock.json') }}
+          restore-keys: |
+            examples-npm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build and Test the TypeScript Guest
+        run: make -C examples/function-wasm-ts build test
+
+      - name: Save the npm Packages
+        if: inputs.save-caches && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+  # The Python guest, an ABI v2 component (componentize-py): the function-wasm-python
+  # use case.
+  build-python:
+    name: build (python)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-python/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-python
+          fi
+
+      - name: Restore the pip Packages
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: examples-pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-python/requirements.txt') }}
+          restore-keys: |
+            examples-pip-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build and Test the Python Guest
+        run: make -C examples/function-wasm-python build test
+
+      - name: Save the pip Packages
+        if: inputs.save-caches && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+  # The C# guest, an ABI v2 component from componentize-dotnet: the
+  # function-wasm-csharp use case.
+  build-dotnet:
+    name: build (dotnet)
+    runs-on: ubuntu-26.04
+    if: inputs.examples
+    needs:
+      - build-tools
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # guestfn comes from build-tools; the Makefiles take it from GUESTFN
+      # instead of building it.
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt guestfn
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" "${RUNNER_TEMP}/e2e-wasm-tools/guestfn"
+          echo "GUESTFN=${RUNNER_TEMP}/e2e-wasm-tools/guestfn" >> "$GITHUB_ENV"
+
+      # What guestfn.lock pins, for the steps below that read wit/ without
+      # going through guestfn build.
+      - name: Fetch the WIT Packages
+        run: |
+          if [ -f examples/function-wasm-csharp/guestfn.lock ]; then
+            "${GUESTFN}" wit fetch --dir examples/function-wasm-csharp
+          fi
+
+      # NativeAOT-LLVM's linux-x64 compiler: the Makefile builds with the
+      # host's dotnet here, no container.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+          cache: false
+
+      - name: Restore the NuGet Packages
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: examples-nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-csharp/Directory.Packages.props', 'examples/function-wasm-csharp/**/*.csproj') }}
+          restore-keys: |
+            examples-nuget-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build, Lint and Test the C# Guest
+        run: make -C examples/function-wasm-csharp build lint test
+
+      - name: Save the NuGet Packages
+        if: inputs.save-caches && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+  # One profile of the Kubernetes-native end-to-end suite (crates/e2e,
+  # docs/project/testing.md) per job, each on a kind cluster of its own, so
+  # the profiles run side by side and a pull request can ask for one:
+  # Crossplane at the matrix's version, provider-nop, the suite's registry
+  # and this tree's runtime installed as a Function - the prebuilt binary
+  # from build-tools wrapped by crates/function-wasm/Dockerfile.dev - with
+  # function-oci left out (E2E_OCI=0: e2e-oci.yml has it). The submodule's
+  # make library pins kind, kubectl, helm and the crossplane CLI, so nothing
+  # is installed by hand here. On failure the cluster's state and the
+  # suite's own logs are uploaded.
+  e2e:
+    runs-on: ubuntu-26.04
+    needs:
+      - build-tools
+    # An empty matrix is an error, so no selected profile skips the job.
+    if: inputs.profiles != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        # The profiles `all` stands for are the Makefile's E2E_WASM_PROFILES.
+        profile: ${{ fromJSON(inputs.profiles == 'all' && '["default", "strict", "lifecycle"]' || inputs.profiles) }}
+        crossplane: ${{ fromJSON(inputs.crossplane-versions) }}
+    env:
+      # Through the environment, never into the script: a profile's name
+      # comes from a label.
+      PROFILE: ${{ matrix.profile }}
+      CROSSPLANE: ${{ matrix.crossplane }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - name: Download the Runtime and guestfn
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-wasm-tools
+          path: ${{ runner.temp }}/e2e-wasm-tools
+
+      - name: Use the Prebuilt Runtime
+        run: |
+          chmod +x "${RUNNER_TEMP}/e2e-wasm-tools/function-wasm"
+          echo "FUNCTION_BIN=${RUNNER_TEMP}/e2e-wasm-tools/function-wasm" >> "$GITHUB_ENV"
+
+      # The end-to-end crate's own build (the setup binary and the profile's
+      # tests), under the one key every profile job of both runtimes
+      # restores and e2e-caches.yml's seed-suite-cache job saves on main. A
+      # profile job saves nothing: a dozen of them would race for one key.
+      - name: Restore the Rust Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: e2e-suite
+          save-if: false
+
+      # After the cache: its key reads the environment.
+      - name: Select the Crossplane Version
+        if: matrix.crossplane != ''
+        run: echo "CROSSPLANE_VERSION=${CROSSPLANE}" >> "$GITHUB_ENV"
+
+      - name: Bring the Cluster Up
+        run: make e2e.up E2E_OCI=0
+
+      - name: Run the Profile
+        run: make "e2e.wasm-profile.${PROFILE}"
+
+      - name: Dump the Cluster
+        if: failure()
+        run: make e2e.dump
+
+      - name: Upload the Dump
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ format('e2e-wasm-dump-{0}{1}', matrix.profile, matrix.crossplane && format('-{0}', matrix.crossplane) || '') }}
+          path: |
+            _output/controlplane-dump
+            _output/e2e/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Tear the Cluster Down
+        if: always()
+        run: make e2e.down

@@ -125,7 +125,8 @@ writes url and hash), which no Renovate manager reads either, move in the
 same pass (the zig and c templates retired in #264).
 Mirror each change into its example (`render_matches_the_examples` fails on
 drift), run `UPDATE_GOLDENS=1 cargo test -p guestfn`, and merge the PR to
-`main` once CI and `/e2e` (comment it on the PR) are green.
+`main` once CI and the end-to-end run are green: label the PR `e2e:all`,
+and `e2e-gate` is its verdict.
 
 ### 3. Cut the new release branch from `main` HEAD
 
@@ -199,8 +200,10 @@ git push -u origin "$NEW_BRANCH"
 
 For a function only: `guestfn` and `wit` have no matrix, so go to step 6. The
 push starts it (`.github/workflows/release-matrix-e2e.yml` runs on every
-push to a `release-function-*` branch, #189; its `workflow_dispatch` is for trying the
-matrix on another ref, not for releasing). Find the run the push started and
+push to a `release-function-wasm-*` or `release-function-oci-*` branch, #189,
+and tests the function the branch names alone; its `workflow_dispatch`, which
+takes `-f runtime=wasm|oci`, is for trying the matrix on another ref, not for
+releasing). Find the run the push started and
 wait for it, as for green CI:
 
 ```bash
@@ -209,15 +212,19 @@ RUN=$(gh run list --workflow "Release Matrix E2E" --branch "$NEW_BRANCH" --limit
 gh run watch "$RUN" --exit-status
 ```
 
-The workflow builds the runtime from the branch and runs the end-to-end
-cluster suite (`make e2e`) three times in parallel: on the Makefile's
-`CROSSPLANE_VERSION` default, what every `/e2e` run tests, and on the two
-older minors pinned in the workflow's `env` - the three minors Crossplane
-maintains (docs.crossplane.io/latest/learn/release-cycle). It takes about
-twenty minutes. Nothing externally visible beyond the branch has happened
+The workflow builds the branch's runtime once and runs every profile of
+that runtime's end-to-end cluster suite on a cluster of its own per
+Crossplane version, nine jobs in parallel (`wasm / e2e (<profile>,
+<version>)` or `oci / ...`): on the Makefile's `CROSSPLANE_VERSION` default,
+what a pull request's end-to-end run tests, and on the two older minors
+pinned in the workflow's `env` - the three minors Crossplane maintains
+(docs.crossplane.io/latest/learn/release-cycle). A `function-oci` branch also
+runs the OCI engine's VM suite on nine Firecracker and kernel pairs, of which
+only the pair the image pins blocks; a `function-wasm` branch runs no VM. It
+takes about twenty minutes. Nothing externally visible beyond the branch has happened
 yet, so a failure here is cheap: **a red version is a release blocker**.
 Stop and report which version failed and why (its
-`release-matrix-dump-<name>` artifact holds the cluster dump) - either the
+`e2e-<runtime>-dump-<profile>-<version>` artifact holds the cluster dump) - either the
 branch gets a fix (merged to `main`, the branch re-cut, the push starting the
 matrix again) or the user decides the version is no longer supported, in
 which case `docs/project/testing.md` states the new floor and the pins move
@@ -371,8 +378,8 @@ release branch where it is: the repository keeps its full release history.
 - Cutting from a red `main` — unlike CVE remediation there's no fix step or
   completeness gate to catch this, so a broken `main` ships broken as-is.
 - Cutting the tag before the release matrix is green on the branch, or
-  skipping it: `/e2e` covered the current Crossplane only; the two older
-  minors are tested nowhere else.
+  skipping it: a pull request's end-to-end run covered the current
+  Crossplane only; the two older minors are tested nowhere else.
 - Running `Publish Function` against the branch instead of the new
   tag — builds a moving target if the branch gets more commits later.
 - Running `Supply Chain and Xpkg Extensions` from the tag instead of `main`
