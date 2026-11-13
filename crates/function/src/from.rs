@@ -428,18 +428,6 @@ mod tests {
         }
     }
 
-    fn http_src(url: &str) -> ModuleSource {
-        ModuleSource {
-            r#type: "HTTP".to_string(),
-            http: Some(crate::input::HttpSource {
-                url: url.to_string(),
-                digest: format!("sha256:{}", "a".repeat(64)),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn a_signature_requirement_holds_for_a_url_it_cannot_place() {
         let policy = crate::authz::OperatorPolicy::new(
@@ -719,13 +707,18 @@ mod tests {
         .expect("compile")
         .expect("some");
         let choose = |field: &str, value: &str| {
-            let xr = serde_json::json!({
+            let digest = format!("sha256:{}", "3f2a".repeat(16));
+            let mut xr = serde_json::json!({
                 "status": { "module": {
                     "url": "https://modules.example.com/team/fn.wasm",
-                    "digest": format!("sha256:{}", "3f2a".repeat(16)),
+                    "digest": digest,
                     field: value,
                 } },
             });
+            // A manifest URL is admitted only with its digest.
+            if field == "manifestURL" {
+                xr["status"]["module"]["manifestDigest"] = digest.into();
+            }
             let src = ModuleSource {
                 r#type: "HTTP".to_string(),
                 from: "status.module".to_string(),

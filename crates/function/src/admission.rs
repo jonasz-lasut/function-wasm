@@ -646,6 +646,31 @@ pub(crate) fn validate_source(src: &ModuleSource) -> Result<(), String> {
                 http.digest
             ));
         }
+        // The manifest is read from the URL and verified against the
+        // digest: one without the other is a manifest that is never read
+        // or never verified.
+        if http.manifest_url.is_empty() != http.manifest_digest.is_empty() {
+            return Err(
+                "module.http.manifestURL and module.http.manifestDigest must be set together"
+                    .to_string(),
+            );
+        }
+        if !http.manifest_url.is_empty() {
+            if !(http.manifest_url.starts_with("http://")
+                || http.manifest_url.starts_with("https://"))
+            {
+                return Err(format!(
+                    "module.http.manifestURL {:?} must be an http or https URL",
+                    http.manifest_url
+                ));
+            }
+            if !digest_is_valid(&http.manifest_digest) {
+                return Err(format!(
+                    "module.http.manifestDigest {:?} is not sha256:<64 hex characters>",
+                    http.manifest_digest
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -727,6 +752,48 @@ mod tests {
 
     /// function-oci serves registries alone: a Path or HTTP source is
     /// refused by name, an OCI source is admitted as under function-wasm.
+    #[test]
+    fn a_manifest_url_and_its_digest_come_together() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let input = |manifest_url: &str, manifest_digest: &str| Input {
+            module: ModuleSource {
+                r#type: "HTTP".to_string(),
+                http: Some(crate::input::HttpSource {
+                    url: "https://example.com/fn.wasm".to_string(),
+                    digest: digest.clone(),
+                    manifest_url: manifest_url.to_string(),
+                    manifest_digest: manifest_digest.to_string(),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let together = "cannot resolve module: module.http.manifestURL and module.http.manifestDigest must be set together";
+        let cases = [
+            ("", "", None),
+            ("https://example.com/guestfn.yaml", digest.as_str(), None),
+            ("https://example.com/guestfn.yaml", "", Some(together.to_string())),
+            ("", digest.as_str(), Some(together.to_string())),
+            (
+                "ftp://example.com/guestfn.yaml",
+                digest.as_str(),
+                Some(r#"cannot resolve module: module.http.manifestURL "ftp://example.com/guestfn.yaml" must be an http or https URL"#.to_string()),
+            ),
+            (
+                "https://example.com/guestfn.yaml",
+                "md5:abc",
+                Some(r#"cannot resolve module: module.http.manifestDigest "md5:abc" is not sha256:<64 hex characters>"#.to_string()),
+            ),
+        ];
+        for (url, manifest_digest, want) in cases {
+            assert_eq!(
+                admit(&input(url, manifest_digest), &ceilings(), "wasm").err(),
+                want,
+                "{url:?} {manifest_digest:?}"
+            );
+        }
+    }
+
     #[test]
     fn function_oci_serves_oci_sources_alone() {
         assert_eq!(
