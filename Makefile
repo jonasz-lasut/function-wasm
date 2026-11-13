@@ -388,8 +388,12 @@ e2e.guest:
 # the c world again; no template). It runs the pinned wit-bindgen in each,
 # mirrors the go result into its template (the module path templated as
 # [[ .Module ]]) and refreshes the goldens - after a change to a world, a
-# move of the guests' WASI versions, or a wit-bindgen bump (the generated files'
-# header names the version; e2e-wasm.yml's drift checks install the same one).
+# move of the guests' WASI versions, or a wit-bindgen bump that changes the
+# output. The generated files' header names the wit-bindgen that last changed
+# them: e2e-wasm.yml's drift checks install the one pinned here and
+# (hack/check-generated.sh) fail on any difference but that version, so a
+# bump with otherwise identical output needs no regeneration, and neither
+# does one of protoc or nanopb.
 .PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens vendor-docs-highlight gen-bindings tools tools-clean vale design-records
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:

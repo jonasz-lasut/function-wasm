@@ -240,7 +240,11 @@ The `select` job reads the labels and calls two reusable workflows.
   `make e2e.dump`
 - one build job per example toolchain: build, unit tests, lint, and codec and
   bindings drift, each module wrapped by the `guestfn` that `build-tools`
-  compiled
+  compiled. A drift check runs the pinned generator again, then
+  `hack/check-generated.sh`. The script fails on any difference from the
+  committed files except the generator's version in a file's header. A
+  generator update that changes nothing else passes. One that changes the
+  output fails until someone commits the result
 
 `e2e-oci.yml` has the scenarios of `function-oci`:
 

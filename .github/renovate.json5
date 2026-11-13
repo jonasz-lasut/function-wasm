@@ -184,8 +184,10 @@
       // (`make vendor-proto` for protoc and nanopb, with nanopb's source in
       // the c and odin examples' build.zig.zon; `make gen-bindings` for
       // wit-bindgen, with go.bytecodealliance.org/pkg at the version
-      // `wit-bindgen go --print-remote-pkg-version` prints), the example
-      // build jobs failing on drift until then.
+      // `wit-bindgen go --print-remote-pkg-version` prints) where its output
+      // changed, the example build jobs failing on drift until then. Where
+      // only the version the generated files state would move, the drift
+      // checks pass and nothing is regenerated (hack/check-generated.sh).
       customType: 'regex',
       description: 'the tool versions a `# renovate:` comment annotates in the workflows and the Makefile',
       managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/', '/^Makefile$/'],
