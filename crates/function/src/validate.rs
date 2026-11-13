@@ -952,7 +952,13 @@ fn describe_source(src: &ModuleSource) -> String {
         );
     }
     if let Some(oci) = &src.oci {
-        return format!("oci {}", oci.r#ref);
+        // The canonical spelling where the reference parses, as the
+        // runtime's messages name the module; else as written, for the
+        // refusal that follows.
+        return format!(
+            "oci {}",
+            crate::location::canonical_oci_ref(&oci.r#ref).unwrap_or_else(|_| oci.r#ref.clone())
+        );
     }
     if let Some(http) = &src.http {
         return format!("http {}", http.url);

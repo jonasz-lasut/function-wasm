@@ -78,7 +78,8 @@ hierarchy. `in` is reflexive: an entity is `in` itself.
 
 - `Repository` is a module's location without its tag or digest. An OCI
   reference is `registry/repository`, normalized as go-containerregistry does
-  (`docker.io/x` is `index.docker.io/x`). For an HTTP URL, it's `scheme://host/path`
+  (`docker.io/x` is `index.docker.io/x`), with the registry in its
+  [canonical form](#the-canonical-registry). For an HTTP URL, it's `scheme://host/path`
   with a lowercase host and without its query. Every path-boundary prefix is an
   ancestor, with and without its trailing slash: `ghcr.io/team` is an ancestor
   of `ghcr.io/team/mod`, and `ghcr.io/team-other` and `ghcr.io/teamsuffix`
@@ -99,6 +100,38 @@ hierarchy. `in` is reflexive: an entity is `in` itself.
 - `Group` is an API group (`apps`, `policy`, `core`) and the parent of every
   `Kind` in it: `resource in Group::"apps"` is every kind of the apps group and
   no other.
+
+### The canonical registry
+
+A registry has one spelling in a policy, whichever way a reference writes
+it. The runtime reads the registry part of every OCI reference into its canonical
+form before it builds the `Repository` entity, so a rule over
+`Repository::"ghcr.io/acme/prod"` covers `GHCR.IO/acme/prod/m`,
+`ghcr.io:443/acme/prod/m` and `ghcr.io./acme/prod/m` alike. Write the
+canonical form in a rule. A rule written with another spelling doesn't match
+any module.
+
+- The host is lowercase.
+- The host has no trailing dot.
+- The port is absent when it's the default of the scheme the runtime uses:
+  `443`, or `80` for `localhost` and the loopback addresses, which the runtime
+  reaches over plain HTTP. Any other port is part of the name:
+  `registry.example.org:5000` and `registry.example.org` are two registries.
+- An IPv6 address is in its shortest form, in brackets: `[::1]:5000`.
+- Docker Hub is `index.docker.io`, whether the reference says `docker.io` or
+  `index.docker.io`, or leaves the registry out. `docker.io` is the one alias.
+  The runtime doesn't rewrite any other host: `registry-1.docker.io` stays
+  `registry-1.docker.io`, and a rule over `index.docker.io` doesn't cover it.
+
+A single-label host keeps the port or the dot that marks it as a registry:
+`registry:443/team/fn` stays `registry:443`, since `registry/team/fn` is a
+Docker Hub repository.
+
+The runtime refuses a registry that isn't a host name or an IP address with
+an optional port. It refuses user information (`user@ghcr.io`), a character
+a host can't contain, an empty label, and a shorthand IP address such as
+`127.1`. The refusals, the logs and `function validate` print a module's
+canonical reference.
 
 ## Actions
 
