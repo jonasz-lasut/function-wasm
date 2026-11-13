@@ -30,8 +30,10 @@ pub const DEFAULT_MAX_REDIRECTS: usize = 5;
 
 /// Refused whatever the grant unless an operator allow rule makes an
 /// exception: loopback, link-local (the cloud metadata endpoint), RFC 1918,
-/// carrier-grade NAT, IPv6 unique-local, the NAT64 and IPv4-compatible
-/// well-known prefixes, and the unspecified, multicast and reserved ranges.
+/// carrier-grade NAT, IPv6 unique-local, the prefixes that carry an IPv4
+/// address inside an IPv6 one (IPv4-compatible, both NAT64 prefixes, 6to4
+/// and Teredo, each a second spelling of an address this list refuses),
+/// and the unspecified, multicast, benchmarking and reserved ranges.
 pub const DEFAULT_BLOCKED_CIDRS: &[&str] = &[
     "0.0.0.0/8",
     "10.0.0.0/8",
@@ -39,11 +41,16 @@ pub const DEFAULT_BLOCKED_CIDRS: &[&str] = &[
     "127.0.0.0/8",
     "169.254.0.0/16",
     "172.16.0.0/12",
+    "192.0.0.0/24",
     "192.168.0.0/16",
+    "198.18.0.0/15",
     "224.0.0.0/4",
     "240.0.0.0/4",
     "::/96",
     "64:ff9b::/96",
+    "64:ff9b:1::/48",
+    "2001::/32",
+    "2002::/16",
     "fc00::/7",
     "fe80::/10",
     "ff00::/8",
@@ -936,6 +943,29 @@ mod tests {
             rsp.error,
             "sandbox.egress: localhost resolves to an address the egress policy blocks"
         );
+    }
+
+    #[test]
+    fn the_default_list_covers_addresses_that_embed_another() {
+        let egress = Egress::new(IpRules::default(), 0.0, 0);
+        let cases = [
+            ("192.0.0.8", "192.0.0.0/24"),
+            ("198.18.0.1", "198.18.0.0/15"),
+            ("198.19.255.254", "198.18.0.0/15"),
+            // 10.0.0.1 behind the local-use NAT64 prefix, 6to4 and Teredo.
+            ("64:ff9b:1::a00:1", "64:ff9b:1::/48"),
+            ("2002:a00:1::1", "2002::/16"),
+            ("2001:0:a00:1::1", "2001::/32"),
+        ];
+        for (ip, by) in cases {
+            let ip: IpAddr = ip.parse().expect("ip");
+            assert_eq!(egress.blocked_by(ip).as_deref(), Some(by), "{ip}");
+        }
+        // Their neighbours stay reachable.
+        for ip in ["192.0.1.1", "198.20.0.1", "2001:db8::1", "2003::1"] {
+            let ip: IpAddr = ip.parse().expect("ip");
+            assert_eq!(egress.blocked_by(ip), None, "{ip}");
+        }
     }
 
     #[test]
