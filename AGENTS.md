@@ -178,6 +178,9 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               canonical (location::canonical_repository_name over the EST's
                               entity literals, scope and conditions) is refused when compiled,
                               in both layers, so a cached compositionPolicy already passed;
+                              a forbid with an unconstrained action applies to every
+                              scoped default-permit action without scoping it (the layer
+                              judged with everything else permitted, open_under_forbids);
                               the other refusal strings stay in the callers
   src/require.rs              the read fence's selectors: every ResourceSelector of a
                               response's requirements (resources, then the deprecated
