@@ -27,6 +27,8 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_MEMORY_LIMIT: u64 = 512 << 20;
 /// wasmtime's own default wasm stack ceiling, kept as ours.
 pub const DEFAULT_STACK_LIMIT: u64 = 512 << 10;
+/// The runtime's --module-size-limit default.
+pub const DEFAULT_MODULE_SIZE_LIMIT: u64 = 128 << 20;
 
 /// An engine failure, whose message wording is pinned: the
 /// message is the contract (it ends up in an XR condition), not a type.
@@ -57,6 +59,11 @@ pub struct Config {
     /// claims it, so only memory a guest actually claims counts against
     /// the pool. 0 means no bound.
     pub max_total_run_memory: u64,
+    /// The cap on a module's bytes as the resolver fetches them (the
+    /// runtime's --module-size-limit). The resolver enforces it; an engine
+    /// that expands what it is handed (the OCI engine unpacking an image's
+    /// layers) bounds the expansion by it.
+    pub module_size_limit: u64,
 }
 
 impl Default for Config {
@@ -68,6 +75,7 @@ impl Default for Config {
             backtrace_details: false,
             max_concurrent_runs: 0,
             max_total_run_memory: 0,
+            module_size_limit: DEFAULT_MODULE_SIZE_LIMIT,
         }
     }
 }

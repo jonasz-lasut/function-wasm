@@ -48,6 +48,117 @@ pub fn tar_layer(entries: &[(&str, Option<&[u8]>, u32)]) -> Vec<u8> {
     tar.into_inner().expect("tar")
 }
 
+/// A layer written header by header, so a test chooses every entry's
+/// type, path and place in the archive: nothing is checked on the way in,
+/// which is what a path with `..` or a size the data does not back needs.
+/// Entries are owned by root, their paths at most 100 bytes.
+#[derive(Default)]
+pub struct Layer {
+    bytes: Vec<u8>,
+}
+
+impl Layer {
+    pub fn new() -> Layer {
+        Layer::default()
+    }
+
+    fn entry(
+        mut self,
+        kind: tar::EntryType,
+        path: &str,
+        mode: u32,
+        size: u64,
+        data: &[u8],
+        more: impl FnOnce(&mut tar::Header),
+    ) -> Layer {
+        let mut header = tar::Header::new_gnu();
+        header.as_old_mut().name[..path.len()].copy_from_slice(path.as_bytes());
+        header.set_entry_type(kind);
+        header.set_mode(mode);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(0);
+        header.set_size(size);
+        more(&mut header);
+        header.set_cksum();
+        self.bytes.extend_from_slice(header.as_bytes());
+        self.bytes.extend_from_slice(data);
+        self.bytes.resize(self.bytes.len().next_multiple_of(512), 0);
+        self
+    }
+
+    pub fn file(self, path: &str, data: &[u8], mode: u32) -> Layer {
+        self.entry(
+            tar::EntryType::Regular,
+            path,
+            mode,
+            data.len() as u64,
+            data,
+            |_| {},
+        )
+    }
+
+    /// A regular file whose header states `size`, whatever `data` holds.
+    pub fn declaring(self, path: &str, size: u64, data: &[u8]) -> Layer {
+        self.entry(tar::EntryType::Regular, path, 0o644, size, data, |_| {})
+    }
+
+    pub fn dir(self, path: &str, mode: u32) -> Layer {
+        self.entry(tar::EntryType::Directory, path, mode, 0, b"", |_| {})
+    }
+
+    pub fn symlink(self, path: &str, target: &str) -> Layer {
+        self.entry(tar::EntryType::Symlink, path, 0o777, 0, b"", |h| {
+            h.as_old_mut().linkname[..target.len()].copy_from_slice(target.as_bytes());
+        })
+    }
+
+    /// A hard link to `target`.
+    pub fn link(self, path: &str, target: &str) -> Layer {
+        self.entry(tar::EntryType::Link, path, 0o644, 0, b"", |h| {
+            h.as_old_mut().linkname[..target.len()].copy_from_slice(target.as_bytes());
+        })
+    }
+
+    pub fn char_device(self, path: &str, major: u32, minor: u32) -> Layer {
+        self.entry(tar::EntryType::Char, path, 0o666, 0, b"", |h| {
+            h.set_device_major(major).expect("major");
+            h.set_device_minor(minor).expect("minor");
+        })
+    }
+
+    pub fn block_device(self, path: &str, major: u32, minor: u32) -> Layer {
+        self.entry(tar::EntryType::Block, path, 0o660, 0, b"", |h| {
+            h.set_device_major(major).expect("major");
+            h.set_device_minor(minor).expect("minor");
+        })
+    }
+
+    pub fn fifo(self, path: &str) -> Layer {
+        self.entry(tar::EntryType::Fifo, path, 0o644, 0, b"", |_| {})
+    }
+
+    /// The whiteout of `path`: `.wh.<name>` beside it.
+    pub fn whiteout(self, path: &str) -> Layer {
+        let at = match path.rsplit_once('/') {
+            Some((dir, name)) => format!("{dir}/.wh.{name}"),
+            None => format!(".wh.{path}"),
+        };
+        self.file(&at, b"", 0o644)
+    }
+
+    /// The opaque marker of `dir`.
+    pub fn opaque(self, dir: &str) -> Layer {
+        self.file(&format!("{dir}/.wh..wh..opq"), b"", 0o644)
+    }
+
+    /// The archive, with its end-of-archive blocks.
+    pub fn finish(mut self) -> Vec<u8> {
+        self.bytes.resize(self.bytes.len() + 1024, 0);
+        self.bytes
+    }
+}
+
 pub fn gzip(bytes: &[u8]) -> Vec<u8> {
     let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
     enc.write_all(bytes).expect("gzip");
@@ -63,6 +174,17 @@ pub const FIXTURE_PATH: &str = "/fixture";
 /// user and env given (an entrypoint elsewhere than FIXTURE_PATH is the
 /// missing-command case).
 pub fn fixture_image(program: &[u8], entrypoint: &[&str], user: &str, env: &[&str]) -> Vec<u8> {
+    fixture_image_with(program, entrypoint, user, env, &[])
+}
+
+/// fixture_image with more layers (plain tars) over its own.
+pub fn fixture_image_with(
+    program: &[u8],
+    entrypoint: &[&str],
+    user: &str,
+    env: &[&str],
+    more: &[&[u8]],
+) -> Vec<u8> {
     let at = FIXTURE_PATH.trim_start_matches('/').to_string();
     let layer = gzip(&tar_layer(&[
         ("etc/", None, 0o755),
@@ -83,11 +205,9 @@ pub fn fixture_image(program: &[u8], entrypoint: &[&str], user: &str, env: &[&st
         "config": {"Entrypoint": entrypoint, "User": user, "Env": env, "WorkingDir": "/home/app"},
         "rootfs": {"type": "layers", "diff_ids": []},
     });
-    image_layout(
-        &serde_json::to_vec(&config).expect("json"),
-        &[(LAYER_GZIP_MEDIA_TYPE, &layer)],
-    )
-    .expect("layout")
+    let mut layers: Vec<(&str, &[u8])> = vec![(LAYER_GZIP_MEDIA_TYPE, &layer)];
+    layers.extend(more.iter().map(|l| (LAYER_MEDIA_TYPE, *l)));
+    image_layout(&serde_json::to_vec(&config).expect("json"), &layers).expect("layout")
 }
 
 /// An image layout from a config and its layers.

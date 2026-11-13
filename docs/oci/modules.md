@@ -56,6 +56,13 @@ the environment variables its manifest's `requires.env` bindings bound.
 The step credentials its manifest's `requires.credentials` names travel in
 the request bytes, as for a component.
 
+The runtime unpacks the image's layers as a container runtime does:
+whiteouts remove what the layers below them left, and an entry under a
+symbolic link to a directory goes where the link leads inside the image.
+It leaves out the image's device nodes, since `/dev` in the VM is the
+kernel's own. It keeps `/.guestfn/config.json` for the image config it
+resolved, so an image can't have a file there.
+
 ## The manifest
 
 ```yaml
@@ -143,6 +150,20 @@ A refusal states the module. The common ones:
 - `image runs as root`: set a non-root `USER` in the `Dockerfile`.
 - `image is built for linux/arm64, and this runtime runs on linux/amd64`:
   build for the node's platform, or push a multi-platform index.
+- `image unpacks to more than 1073741824 bytes, eight times the size limit
+  (--module-size-limit)`: the layers unpack to more than eight times the
+  runtime's `--module-size-limit` between them. Build a smaller image, or
+  have the operator raise the flag.
+- `image holds more than 1000000 entries, the most the OCI runtime
+  unpacks`: the layers contain more than a million files, directories and
+  links between them. Build a smaller image.
+- `layer entry .guestfn/config.json is at /.guestfn/config.json, which the
+  OCI runtime keeps for the image config it resolved`: remove the file from
+  the image.
+- `layer entry <path> has a .. segment, which could name a path outside the
+  image`, or `layer entry <path> is under <parent>, which is not a
+  directory`: a layer doesn't unpack into a root filesystem. Rebuild the
+  image with a builder that writes ordinary layers.
 - `process exited with status 1 before answering the call: <line>`: the
   process ended before it answered. The line is the last one it logged. An
   SDK server without `--insecure` ends this way: check the manifest's

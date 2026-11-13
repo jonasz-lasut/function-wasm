@@ -221,6 +221,18 @@ straight from the layer tarballs; a VMM that shares files through
 virtio-fs takes a directory instead. The image config, with the user
 resolved against the image's `/etc/passwd` and `/etc/group`, goes
 inside the squashfs, so a stored root filesystem describes itself. The
+runtime keeps the unpacked files in memory until the squashfs exists, so it
+bounds what an image unpacks to. The layers may unpack to eight times
+`--module-size-limit` between them, the rule a WebAssembly module's tar
+layer follows. They may contain a million entries. The runtime
+stops reading a layer where the image passes either bound and refuses the
+image. A whiteout or an opaque marker removes what the layers below left,
+whatever its place among its own layer's entries. An entry under a symbolic
+link to a directory goes where the link leads inside the root filesystem,
+as a container runtime puts it. The runtime refuses a path with a `..`
+segment, an entry under a file, and an entry at the path of its own config.
+It leaves device nodes out, because the guest's `/dev` is the kernel's
+`devtmpfs`. The
 content-addressed store keeps the result beside the compiled WebAssembly
 artifacts, under `engine::version()`, under the same LRU sweep and the
 same per-process key. The key check refuses a planted root filesystem
