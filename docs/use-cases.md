@@ -54,9 +54,10 @@ only the `composition` capability.
 
 Each example under
 [`examples/`](https://github.com/jonasz-lasut/guestfn/tree/main/examples)
-is a guest in one language that solves one of these cases. Every `/e2e` run
-builds, tests and lints them, but nothing in CI asserts what an example
-composes. The [design record for the use-case examples](one-pager-use-case-examples.md)
+is a guest in one language that solves one of these cases. The end-to-end
+workflow builds, tests and lints them on a pull request labelled
+`e2e:wasm:examples` or `e2e:oci:examples`, but nothing in CI asserts what an
+example composes. The [design record for the use-case examples](one-pager-use-case-examples.md)
 explains why these were chosen and how they're published.
 
 `Publish Examples` publishes `function-wasm-rust`, `function-wasm-ts`,

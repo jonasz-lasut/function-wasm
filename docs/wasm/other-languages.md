@@ -12,9 +12,10 @@ world and never the language.
 `guestfn init --lang <flavour>` writes the same greeting function in each of
 these, the languages with an official `function-sdk-<lang>` under the
 `crossplane` GitHub organisation, and `guestfn build` detects the toolchain from the
-project. All four build an ABI v2 component, and the guest suite runs them
-through the host, and the example build jobs build, test and lint them, on
-every `/e2e`. The sizes are of the built module.
+project. All four build an ABI v2 component. The guest suite runs them
+through the host on every pull request, and the example build jobs build,
+test and lint them on a pull request labelled `e2e:wasm:examples`. The sizes
+are of the built module.
 
 | `--lang` | example | toolchain | Protobuf codec | module size |
 |---|---|---|---|---|

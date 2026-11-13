@@ -31,7 +31,7 @@ make -C examples/function-wasm-go render
 make e2e
 ```
 
-The first line tests the Go example and its vendored `internal/wasmfn` glue. The second is the [development loop](../wasm/render-locally.md). The third runs the end-to-end suite in a kind cluster. [Testing](testing.md) explains the two tiers and the `/e2e` comment that runs them on a pull request.
+The first line tests the Go example and its vendored `internal/wasmfn` glue. The second is the [development loop](../wasm/render-locally.md). The third runs the end-to-end suite in a kind cluster. [Testing](testing.md) explains the two tiers and the `e2e:` labels that select the end-to-end scenarios on a pull request.
 
 `(cd examples/function-oci-go && go test ./...)` tests the OCI example natively. `make oci.test` runs the suite of the OCI engine in real VMs and needs `/dev/kvm`.
 

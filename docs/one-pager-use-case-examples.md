@@ -144,7 +144,8 @@ pulled from `ghcr.io` with its real signature.
   own tree, and the drift check of its build job compares the generated code
   with the pinned generators.
 - **Each example has unit tests in its language**, covering each fatal path.
-- **Each example has a `build-<lang>` job** in the `/e2e` workflow (`e2e.yml`)
+- **Each example has a `build-<lang>` job** in the end-to-end workflow
+  (`e2e-wasm.yml`, selected by the `e2e:wasm:examples` label)
   covering its toolchain, the build, test and lint targets, and a drift check of
   its
   generated codec and bindings.
