@@ -324,7 +324,7 @@ mod tests {
     use super::*;
     use crate::protocol::Exit;
     use crate::sandbox::{Ended, OUTPUT_CAP, Outcome, Output, VmSpec};
-    use crate::testing::{FakeSandbox, fixture_image};
+    use crate::testing::{FakeSandbox, Layer, fixture_image, fixture_image_with};
 
     fn engine(sandbox: FakeSandbox) -> Oci {
         engine_with(Config::default(), sandbox)
@@ -509,6 +509,54 @@ mod tests {
         ))
         .compile(&image)
         .unwrap();
+    }
+
+    /// The config a stored root filesystem gives back is the one the
+    /// engine resolved: an image with an entry at that path is refused,
+    /// and one with the manifest `guestfn push --image` puts beside it
+    /// loads with the engine's.
+    #[test]
+    fn an_image_cannot_supply_the_stored_config() {
+        let e = engine(FakeSandbox::new(
+            Default::default(),
+            |_: &VmSpec<'_>| unreachable!(),
+        ));
+        let planted = br#"{"entrypoint":["/planted"],"uid":0,"gid":0}"#;
+        let image = fixture_image_with(
+            b"x",
+            &["/fixture"],
+            "app",
+            &[],
+            &[&Layer::new()
+                .file(".guestfn/config.json", planted, 0o644)
+                .finish()],
+        );
+        let err = e.compile(&image).unwrap_err().0;
+        assert!(err.starts_with("cannot unpack layer 1 (sha256:"), "{err}");
+        assert!(
+            err.ends_with(
+                "): layer entry .guestfn/config.json is at /.guestfn/config.json, which the OCI runtime keeps for the image config it resolved"
+            ),
+            "{err}"
+        );
+
+        let image = fixture_image_with(
+            b"x",
+            &["/fixture"],
+            "app",
+            &[],
+            &[&Layer::new()
+                .file(".guestfn/manifest.json", planted, 0o444)
+                .finish()],
+        );
+        let m = e.compile(&image).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let stored = dir.path().join("digest");
+        std::fs::write(&stored, e.serialize(&m).unwrap()).unwrap();
+        let loaded = e.deserialize_file(&stored).unwrap();
+        assert_eq!(loaded.config, m.config);
+        assert_eq!(loaded.config.argv(), vec!["/fixture"]);
+        assert_eq!((loaded.config.uid, loaded.config.gid), (1000, 1000));
     }
 
     #[test]

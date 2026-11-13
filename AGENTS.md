@@ -600,7 +600,11 @@ crates/engine-oci/          the OCI engine of the function-oci runtime (package 
                             (rootfs.rs, backhand, gzip, ownership from the tar headers, what
                             the layers unpack to bounded to eight times Config's
                             module_size_limit - the runtime's --module-size-limit - and to a
-                            million entries, counted through a capped reader, the
+                            million entries, counted through a capped reader, whiteouts
+                            applied to the lower layers alone whatever their place in a
+                            layer, an entry under a symlinked directory put where the link
+                            leads inside the tree, a `..` path, an entry under a file and one
+                            at the engine's config path refused, device nodes left out, the
                             image config with the user resolved inside it at
                             /.guestfn/config.json) that is the compiled store's artifact and
                             the VM's read-only block device; image.rs is the config, the

@@ -174,6 +174,17 @@ pub const FIXTURE_PATH: &str = "/fixture";
 /// user and env given (an entrypoint elsewhere than FIXTURE_PATH is the
 /// missing-command case).
 pub fn fixture_image(program: &[u8], entrypoint: &[&str], user: &str, env: &[&str]) -> Vec<u8> {
+    fixture_image_with(program, entrypoint, user, env, &[])
+}
+
+/// fixture_image with more layers (plain tars) over its own.
+pub fn fixture_image_with(
+    program: &[u8],
+    entrypoint: &[&str],
+    user: &str,
+    env: &[&str],
+    more: &[&[u8]],
+) -> Vec<u8> {
     let at = FIXTURE_PATH.trim_start_matches('/').to_string();
     let layer = gzip(&tar_layer(&[
         ("etc/", None, 0o755),
@@ -194,11 +205,9 @@ pub fn fixture_image(program: &[u8], entrypoint: &[&str], user: &str, env: &[&st
         "config": {"Entrypoint": entrypoint, "User": user, "Env": env, "WorkingDir": "/home/app"},
         "rootfs": {"type": "layers", "diff_ids": []},
     });
-    image_layout(
-        &serde_json::to_vec(&config).expect("json"),
-        &[(LAYER_GZIP_MEDIA_TYPE, &layer)],
-    )
-    .expect("layout")
+    let mut layers: Vec<(&str, &[u8])> = vec![(LAYER_GZIP_MEDIA_TYPE, &layer)];
+    layers.extend(more.iter().map(|l| (LAYER_MEDIA_TYPE, *l)));
+    image_layout(&serde_json::to_vec(&config).expect("json"), &layers).expect("layout")
 }
 
 /// An image layout from a config and its layers.
