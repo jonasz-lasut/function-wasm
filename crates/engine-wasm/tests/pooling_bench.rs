@@ -1,13 +1,36 @@
 //! A hand-run benchmark comparing whole runs under wasmtime's on-demand
-//! allocator (with its default copy-on-write heap images) against the
-//! pooling allocator, at 1, 4 and 16 threads - the evidence behind the
-//! wasmtime-adoption decision "pooling: benchmark first, adopt only on a
-//! clear win". Not part of the suite:
+//! allocator (with its default copy-on-write heap images), which the
+//! runtime uses, against the pooling allocator, at 1, 4 and 16 threads.
+//! Not part of the suite:
 //!
 //!   cargo test -p guestfn-engine-wasm --test pooling_bench --release -- --ignored --nocapture
 //!
 //! GUESTFN_BENCH_GUESTS adds built guests to the table, as
 //! `name=path/fn.wasm` pairs separated by commas.
+//!
+//! Measured on 2026-11-13 with wasmtime 50.0.1, in runs per second over
+//! every thread together, on-demand then pooling:
+//!
+//! | guest, threads    | macOS arm64, 15 cores | Linux x86_64, 4 vCPU | Linux arm64, 4 vCPU |
+//! |-------------------|-----------------------|----------------------|---------------------|
+//! | small fixture, 1  | 56k, 117k             | 20k, 45k             | 18k, 62k            |
+//! | small fixture, 4  | 55k, 201k             | 19k, 113k            | 12k, 121k           |
+//! | small fixture, 16 | 21k, 191k             | 18k, 113k            | 12k, 122k           |
+//! | e2e guest, 1      | 30k, 35k              | 9.4k, 11.8k          | 7.8k, 13.0k         |
+//! | e2e guest, 4      | 51k, 88k              | 12.3k, 24.8k         | 8.6k, 34.6k         |
+//! | e2e guest, 16     | 22k, 96k              | 9.6k, 24.7k          | 7.6k, 33.8k         |
+//! | Go example, 1     | 106, 107              | 39, 38               | 39, 39              |
+//! | Go example, 4     | 359, 351              | 90, 88               | 142, 146            |
+//! | Go example, 16    | 910, 912              | 89, 87               | 151, 148            |
+//!
+//! On-demand allocation maps and unmaps a linear memory and a fiber stack
+//! per run, which the kernel serialises, so the throughput of a small
+//! guest does not grow with threads; pooling reuses its slots. A guest
+//! whose own work is milliseconds (Go everywhere, the Python and
+//! TypeScript examples on macOS) gains nothing. The runtime keeps the
+//! on-demand allocator: a pool has a fixed number of slots and fixed
+//! limits per slot, a run beyond either fails where today it runs, and
+//! each memory slot reserves the address space of a whole linear memory.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -26,7 +49,7 @@ const MEASURED: Duration = Duration::from_secs(2);
 
 fn engine(pooling: bool) -> Wasmtime {
     if pooling {
-        Wasmtime::pooled_for_bench(Config::default(), SLOTS).expect("engine")
+        Wasmtime::pooled(Config::default(), SLOTS).expect("engine")
     } else {
         Wasmtime::new(Config::default()).expect("engine")
     }

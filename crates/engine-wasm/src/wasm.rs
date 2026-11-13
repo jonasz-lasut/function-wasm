@@ -230,12 +230,15 @@ impl Wasmtime {
     }
 
     /// The engine over wasmtime's pooling allocator with this many
-    /// instance slots, for tests/pooling_bench.rs alone.
-    #[doc(hidden)]
-    pub fn pooled_for_bench(config: Config, slots: u32) -> Result<Self, Error> {
+    /// instance slots, for tests/pooling_bench.rs to compare against: the
+    /// runtime allocates on demand. Exhausting the slots fails a run, and
+    /// a guest larger than a slot's limits fails to load.
+    #[cfg(any(test, feature = "testutil"))]
+    pub fn pooled(config: Config, slots: u32) -> Result<Self, Error> {
         Self::build(config, Some(slots))
     }
 
+    /// pooled_slots is None outside the benchmark.
     fn build(config: Config, pooled_slots: Option<u32>) -> Result<Self, Error> {
         // A pool smaller than the per-run ceiling could never admit a
         // full-limit run - caught at startup rather than as a fleet of
