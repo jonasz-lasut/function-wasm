@@ -28,6 +28,10 @@ impl Readiness {
         self.0.load(Ordering::Relaxed)
     }
 }
+/// How long a connection to the metrics or health listener may take to
+/// send its request, and how long a listener waits after a failed accept.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const ACCEPT_BACKOFF: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Serves metrics on address at /metrics - on :8080 by default, the port
 /// function-sdk-go serves them on. OpenMetrics 1.0 is the main exposition
@@ -44,11 +48,19 @@ pub async fn serve_metrics(address: &str) -> Result<(), std::io::Error> {
     tracing::info!(address = %address, "serving metrics");
     loop {
         let Ok((mut conn, _)) = listener.accept().await else {
+            // Out of descriptors, most likely: give them time to come back
+            // instead of spinning on the error.
+            tokio::time::sleep(ACCEPT_BACKOFF).await;
             continue;
         };
         tokio::spawn(async move {
             let mut buf = [0u8; 1024];
-            let n = conn.read(&mut buf).await.unwrap_or(0);
+            // A client that connects and says nothing is let go: these
+            // ports are plain HTTP and open to the cluster.
+            let Ok(read) = tokio::time::timeout(READ_TIMEOUT, conn.read(&mut buf)).await else {
+                return;
+            };
+            let n = read.unwrap_or(0);
             let head = String::from_utf8_lossy(&buf[..n]).into_owned();
             let path = head.split_whitespace().nth(1).unwrap_or_default();
             let response = if path == "/metrics" {
@@ -103,12 +115,20 @@ pub async fn serve_health(address: &str, readiness: Readiness) -> Result<(), std
     tracing::info!(address = %address, "serving health endpoints");
     loop {
         let Ok((mut conn, _)) = listener.accept().await else {
+            // Out of descriptors, most likely: give them time to come back
+            // instead of spinning on the error.
+            tokio::time::sleep(ACCEPT_BACKOFF).await;
             continue;
         };
         let readiness = readiness.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; 1024];
-            let n = conn.read(&mut buf).await.unwrap_or(0);
+            // A client that connects and says nothing is let go: these
+            // ports are plain HTTP and open to the cluster.
+            let Ok(read) = tokio::time::timeout(READ_TIMEOUT, conn.read(&mut buf)).await else {
+                return;
+            };
+            let n = read.unwrap_or(0);
             let head = String::from_utf8_lossy(&buf[..n]).into_owned();
             let path = head.split_whitespace().nth(1).unwrap_or_default();
             let status = match path {
@@ -263,6 +283,28 @@ mod tests {
         assert!(wants_classic_text(
             "GET /metrics HTTP/1.1\r\nAccept: text/plain; version=0.0.4\r\n"
         ));
+    }
+
+    /// Time is paused, so the read timeout passes as soon as the test
+    /// waits: the listener closes a connection that sent nothing.
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_client_is_disconnected() {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = probe.local_addr().expect("addr").to_string();
+        drop(probe);
+        let server_addr = addr.clone();
+        tokio::spawn(async move {
+            let _ = serve_metrics(&server_addr).await;
+        });
+        let mut conn = loop {
+            match tokio::net::TcpStream::connect(&addr).await {
+                Ok(conn) => break conn,
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+            }
+        };
+        let mut out = Vec::new();
+        let closed = tokio::time::timeout(READ_TIMEOUT * 4, conn.read_to_end(&mut out)).await;
+        assert!(matches!(closed, Ok(Ok(0))), "{closed:?}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
