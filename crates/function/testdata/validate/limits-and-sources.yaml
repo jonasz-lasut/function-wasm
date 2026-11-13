@@ -1,0 +1,219 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: limits-and-sources
+spec:
+  compositeTypeRef:
+    apiVersion: example.crossplane.io/v1
+    kind: XR
+  mode: Pipeline
+  pipeline:
+  # limits: a value that does not parse, and one that is not positive.
+  - step: timeout-not-a-duration
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+      limits:
+        timeout: soon
+  - step: timeout-negative
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+      limits:
+        timeout: -5s
+  - step: timeout-zero
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+      limits:
+        timeout: 0s
+  - step: memory-not-a-quantity
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+      limits:
+        memory: lots
+  - step: memory-zero
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+      limits:
+        memory: "0"
+  - step: memory-negative
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+      limits:
+        memory: -64Mi
+  - step: concurrency-zero
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+      limits:
+        concurrency: 0
+  # module: the type, and the one object or from that goes with it.
+  - step: no-type
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+  - step: unknown-type
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Git
+        from: spec.module
+  - step: object-of-another-type
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+  - step: neither-object-nor-from
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: HTTP
+  - step: object-and-from
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+        from: spec.module
+  - step: manifest-path-without-path
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          ref: ghcr.io/example/greeter@sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+        manifestPath: guestfn.yaml
+  # module.oci and module.http: what each object must state.
+  - step: oci-without-ref
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: OCI
+        oci:
+          credentials: registry
+  - step: http-without-url
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: HTTP
+        http:
+          digest: sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+  - step: http-url-not-http
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: HTTP
+        http:
+          url: ftp://example.com/fn.wasm
+          digest: sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+  - step: http-without-digest
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: HTTP
+        http:
+          url: https://example.com/fn.wasm
+  - step: http-digest-not-sha256
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: HTTP
+        http:
+          url: https://example.com/fn.wasm
+          digest: md5:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+  - step: http-digest-uppercase
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: HTTP
+        http:
+          url: https://example.com/fn.wasm
+          digest: sha256:3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A

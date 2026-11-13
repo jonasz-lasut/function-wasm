@@ -35,6 +35,13 @@ fn cases() -> Vec<Case> {
             args: &["testdata/validate/refusals.yaml"],
             stdin: "",
         },
+        // The shape rules of limits and of the module source, one step
+        // per refusal: what admission refuses before any policy is read.
+        Case {
+            name: "LimitsAndSources",
+            args: &["testdata/validate/limits-and-sources.yaml"],
+            stdin: "",
+        },
         Case {
             name: "EgressRateLimitNegative",
             args: &[
