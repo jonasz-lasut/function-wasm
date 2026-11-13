@@ -653,12 +653,23 @@ impl IpPrefix {
         let len: u8 = len
             .parse()
             .map_err(|e| format!("{s:?} is not a CIDR: {e}"))?;
+        let max = if addr.is_ipv4() { 32 } else { 128 };
+        if len > max {
+            return Err(format!(
+                "{s:?} is not a CIDR: prefix length {len} out of range"
+            ));
+        }
         Ok(IpPrefix { addr, len }.masked())
     }
 
     /// Whether ip falls inside this prefix; an IPv4 prefix never contains an
     /// IPv6 address and vice versa, as with netip.
     pub fn contains(&self, ip: IpAddr) -> bool {
+        // The other family first: its prefix lengths run past this one's
+        // width, and masking with one of them is no comparison at all.
+        if ip.is_ipv4() != self.addr.is_ipv4() {
+            return false;
+        }
         IpPrefix {
             addr: ip,
             len: self.len,
