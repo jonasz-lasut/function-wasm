@@ -20,7 +20,8 @@ struct Cli {
     /// How to behave.
     #[arg(default_value = "echo")]
     mode: String,
-    /// The mode's own value: the exit status, the memory to grow by.
+    /// The mode's own value: the exit status, the memory to grow by, the
+    /// bytes to write.
     value: Option<String>,
 }
 
@@ -54,6 +55,12 @@ impl FunctionRunnerService for Fixture {
             "stderr" => {
                 eprintln!("a plain line from the guest");
                 eprintln!(r#"{{"level":"warn","msg":"a structured line","answer":42}}"#);
+                answer(tag)
+            }
+            // As many bytes of lines as the value says, then a last line
+            // and the echo: more output than the host keeps of a run.
+            "flood" => {
+                flood(self.value.as_deref());
                 answer(tag)
             }
             // A function that answers with an error.
@@ -178,6 +185,23 @@ impl FunctionRunnerService for Fixture {
     }
 }
 
+/// Writes at least as many bytes as the value says to standard error in
+/// lines of 64, then one line that says the flood is over.
+fn flood(value: Option<&str>) {
+    use std::io::Write as _;
+    let bytes: usize = value.and_then(|s| s.parse().ok()).unwrap_or(1 << 20);
+    let chunk = format!("{}\n", "f".repeat(63)).repeat(1024);
+    let mut stderr = std::io::stderr().lock();
+    let mut written = 0;
+    while written < bytes {
+        if stderr.write_all(chunk.as_bytes()).is_err() {
+            return;
+        }
+        written += chunk.len();
+    }
+    let _ = stderr.write_all(b"the flood is over\n");
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -188,6 +212,12 @@ async fn main() -> ExitCode {
             return ExitCode::from(cli.value.and_then(|s| s.parse().ok()).unwrap_or(3));
         }
         "silent" => return ExitCode::SUCCESS,
+        // The flood, then an exit before serving: the last line is the
+        // one the fatal result quotes.
+        "flood-exit" => {
+            flood(cli.value.as_deref());
+            return ExitCode::from(3);
+        }
         _ => {}
     }
     let fixture = Fixture {

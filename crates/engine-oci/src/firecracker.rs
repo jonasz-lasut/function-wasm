@@ -20,7 +20,7 @@ use crate::Error;
 use crate::protocol::{Exit, Hello, Kind, read_frame, read_json, write_frame, write_json};
 
 use crate::metrics;
-use crate::sandbox::{Ended, Outcome, Sandbox, Snapshot, VmSpec};
+use crate::sandbox::{Ended, Outcome, Output, Sandbox, Snapshot, VmSpec};
 
 /// The guest's CID; the host is always 2.
 const GUEST_CID: u32 = 3;
@@ -735,8 +735,8 @@ fn drive(
     child: &mut Child,
     spec: &VmSpec<'_>,
     connected: &mut Option<Instant>,
-) -> (Vec<u8>, Ended) {
-    let mut log = Vec::new();
+) -> (Output, Ended) {
+    let mut log = Output::default();
     let stream = loop {
         match ports.control.accept() {
             Ok((s, _)) => break s,
@@ -800,12 +800,14 @@ fn arm(stream: &UnixStream, deadline: Instant) -> Result<(), Talk> {
         .map_err(|e| Talk::Lost(format!("cannot configure the guest's connection: {e}")))
 }
 
-/// The init's frames until the process's exit: what it logs is kept, and
-/// how the connection ended goes to the call.
+/// The init's frames until the process's exit: the end of what it logs is
+/// kept, and how the connection ended goes to the call. Every frame is
+/// read, the ones past the bound too: an init left with a full buffer
+/// would block the process on its own output.
 fn read_frames(
     mut stream: UnixStream,
     deadline: Instant,
-    log: &mut Vec<u8>,
+    log: &mut Output,
     ended: tokio::sync::oneshot::Sender<Result<Exit, Talk>>,
 ) {
     let result = loop {
@@ -813,7 +815,7 @@ fn read_frames(
             break Err(e);
         }
         match read_frame(&mut stream) {
-            Ok((Kind::Stdout | Kind::Stderr, payload)) => log.extend_from_slice(&payload),
+            Ok((Kind::Stdout | Kind::Stderr, payload)) => log.push(&payload),
             Ok((Kind::Exit, payload)) => {
                 break serde_json::from_slice(&payload)
                     .map_err(|e| Talk::Lost(format!("cannot read the exit: {e}")));
@@ -928,7 +930,7 @@ fn talk(
     mut stream: UnixStream,
     grpc: &UnixListener,
     spec: &VmSpec<'_>,
-    log: &mut Vec<u8>,
+    log: &mut Output,
 ) -> Result<Ended, Talk> {
     stream
         .set_nonblocking(false)

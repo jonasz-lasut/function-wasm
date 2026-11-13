@@ -273,6 +273,40 @@ fn a_non_zero_exit_names_the_status_and_the_last_line() {
     );
 }
 
+/// A process that writes more than the host keeps of a run's output runs
+/// as any other: the host reads all of it, so the process never blocks on
+/// its own output, and the last line is in what is kept.
+#[test]
+fn output_over_the_bound_changes_no_result() {
+    let Some(t) = tools() else { return };
+    let e = engine(&t, Config::default());
+    let bytes = (8 * guestfn_engine_oci::sandbox::OUTPUT_CAP).to_string();
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "flood", &bytes],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(
+        ask(&e, &m, "after the flood", opts()).unwrap(),
+        "after the flood"
+    );
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "flood-exit", &bytes],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(
+        ask(&e, &m, "", opts()).unwrap_err(),
+        "process exited with status 3 before answering the call: the flood is over"
+    );
+}
+
 /// A function that answers with an error fails the run with its words.
 #[test]
 fn a_function_s_error_is_the_run_s() {

@@ -2,7 +2,7 @@
 //! "Sandbox evaluation"): what one run needs booted, and what came back.
 //! One type per VMM implements it; `firecracker.rs` is the first.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -94,10 +94,108 @@ pub enum Ended {
     Lost(String),
 }
 
+/// The most of a process's output the host keeps for one run. The output
+/// becomes log lines and nothing else, so the bound is sized for a log: a
+/// function that reports what it did writes a few kilobytes, and 256 KiB
+/// is some thousands of lines, four times what the VM's console is kept
+/// to. It is far below the response's bound because a response is the
+/// run's result and this is not: every concurrent run holds one of these,
+/// and all of it goes to the pod's log.
+pub const OUTPUT_CAP: usize = 256 << 10;
+
+/// The end of what a process wrote: the last bytes up to a bound, and how
+/// many went before them. The end is what is kept because the last line
+/// is what a fatal result quotes and what says why a process stopped.
+#[derive(Debug)]
+pub struct Output {
+    tail: VecDeque<u8>,
+    cap: usize,
+    dropped: u64,
+    /// The last byte dropped: a newline means the kept bytes start a line.
+    last_dropped: Option<u8>,
+}
+
+impl Default for Output {
+    fn default() -> Output {
+        Output::with_cap(OUTPUT_CAP)
+    }
+}
+
+impl From<&[u8]> for Output {
+    fn from(bytes: &[u8]) -> Output {
+        let mut output = Output::default();
+        output.push(bytes);
+        output
+    }
+}
+
+impl Output {
+    pub fn with_cap(cap: usize) -> Output {
+        Output {
+            tail: VecDeque::new(),
+            cap,
+            dropped: 0,
+            last_dropped: None,
+        }
+    }
+
+    /// Appends what the process wrote next, letting go of the oldest bytes
+    /// past the bound.
+    pub fn push(&mut self, bytes: &[u8]) {
+        if bytes.len() >= self.cap {
+            let kept_from = bytes.len() - self.cap;
+            self.last_dropped = match kept_from {
+                0 => self.tail.back().copied().or(self.last_dropped),
+                n => Some(bytes[n - 1]),
+            };
+            self.dropped += (self.tail.len() + kept_from) as u64;
+            self.tail.clear();
+            self.tail.extend(&bytes[kept_from..]);
+            return;
+        }
+        let over = (self.tail.len() + bytes.len()).saturating_sub(self.cap);
+        if over > 0 {
+            self.last_dropped = Some(self.tail[over - 1]);
+            self.tail.drain(..over);
+            self.dropped += over as u64;
+        }
+        self.tail.extend(bytes);
+    }
+
+    /// The bytes kept.
+    pub fn len(&self) -> usize {
+        self.tail.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tail.is_empty()
+    }
+
+    /// The kept output as text and the bytes dropped before it. Output
+    /// that lost its beginning starts on a whole line: when the cut fell
+    /// inside a line, the rest of that line is dropped too, unless it is
+    /// all there is. Bytes that are not UTF-8, a character the cut split among
+    /// them, read as the replacement character.
+    pub fn into_text(self) -> (String, u64) {
+        let text = String::from_utf8(Vec::from(self.tail))
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+        if self.dropped == 0 || self.last_dropped == Some(b'\n') {
+            return (text, self.dropped);
+        }
+        match text.split_once('\n') {
+            Some((cut, rest)) if !rest.trim().is_empty() => {
+                (rest.to_string(), self.dropped + cut.len() as u64 + 1)
+            }
+            _ => (text, self.dropped),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Outcome {
-    /// What the process wrote to its standard output and standard error.
-    pub log: Vec<u8>,
+    /// What the process wrote to its standard output and standard error:
+    /// the end of it, when there was more than a run keeps.
+    pub log: Output,
     pub end: Ended,
     /// The serial console's output: the kernel's and the init's own
     /// lines, for the debug log.
@@ -118,5 +216,107 @@ pub trait Sandbox: Send + Sync + 'static {
     /// does nothing.
     fn prepare(&self, _spec: VmSpec<'_>) -> Result<(), Error> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn filled(cap: usize, chunks: &[&[u8]]) -> Output {
+        let mut output = Output::with_cap(cap);
+        for chunk in chunks {
+            output.push(chunk);
+        }
+        output
+    }
+
+    #[test]
+    fn output_keeps_its_end_and_counts_what_went_before() {
+        type Case<'a> = (&'a str, usize, &'a [&'a [u8]], &'a str, u64);
+        let cases: &[Case<'_>] = &[
+            ("nothing written", 8, &[], "", 0),
+            ("under the bound", 8, &[b"ab\n", b"cd\n"], "ab\ncd\n", 0),
+            (
+                "exactly the bound",
+                8,
+                &[b"abc\n", b"def\n"],
+                "abc\ndef\n",
+                0,
+            ),
+            (
+                "over the bound, the cut on a line's end",
+                8,
+                &[b"abc\n", b"def\n", b"ghi\n"],
+                "def\nghi\n",
+                4,
+            ),
+            (
+                "over the bound, the cut inside a line",
+                8,
+                &[b"abcdef\n", b"gh\n", b"ij\n"],
+                "gh\nij\n",
+                7,
+            ),
+            (
+                "one chunk larger than the bound",
+                4,
+                &[b"ab\n", b"0123456\nxy\n"],
+                "xy\n",
+                11,
+            ),
+            (
+                "a chunk of the bound's size after another",
+                4,
+                &[b"ab\n", b"cde\n"],
+                "cde\n",
+                3,
+            ),
+            (
+                "one line longer than the bound",
+                4,
+                &[b"abcdefgh"],
+                "efgh",
+                4,
+            ),
+            (
+                "the cut line is the only one with words",
+                6,
+                &[b"abcdefgh\n\n"],
+                "efgh\n\n",
+                4,
+            ),
+        ];
+        for (name, cap, chunks, want, dropped) in cases {
+            let got = filled(*cap, chunks).into_text();
+            assert_eq!(got, (want.to_string(), *dropped), "{name}");
+        }
+    }
+
+    #[test]
+    fn output_is_never_larger_than_its_bound() {
+        let mut output = Output::with_cap(1000);
+        let mut written = 0u64;
+        for n in 0..500usize {
+            let chunk = vec![b'a' + (n % 26) as u8; n * 7 % 1300];
+            written += chunk.len() as u64;
+            output.push(&chunk);
+            assert!(output.len() <= 1000);
+        }
+        let kept = output.len() as u64;
+        assert!(!output.is_empty());
+        let (_, dropped) = output.into_text();
+        assert_eq!(kept + dropped, written);
+    }
+
+    #[test]
+    fn a_character_split_by_the_cut_reads_as_a_replacement() {
+        // Two bytes each: a bound of five cuts the first kept one in half.
+        let (text, dropped) = filled(5, &["\u{e9}\u{e9}\u{e9}\u{e9}".as_bytes()]).into_text();
+        assert_eq!(text, "\u{fffd}\u{e9}\u{e9}");
+        assert_eq!(dropped, 3);
+        let (text, dropped) = filled(8, &[b"\xff\xfe ok"]).into_text();
+        assert_eq!(text, "\u{fffd}\u{fffd} ok");
+        assert_eq!(dropped, 0);
     }
 }

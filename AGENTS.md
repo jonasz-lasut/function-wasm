@@ -604,7 +604,9 @@ crates/engine-oci/          the OCI engine of the function-oci runtime (package 
                             contract check (a command, this platform, a user that is not root - as written before a layer is unpacked, as resolved after) and the run's
                             Description; initrd.rs the cpio around the init; run.rs the
                             slot, the whole-VM memory reservation, the stderr lines logged
-                            (JSON level/msg typed) and the fatal wording (`run returned an error`, `process exited
+                            (JSON level/msg typed; the last OUTPUT_CAP, 256 KiB, of a run's
+                            output kept in sandbox.rs's Output with the dropped bytes counted
+                            in one warning, a line cut at 16 KiB) and the fatal wording (`run returned an error`, `process exited
                             with status N before answering the call: <last line>`, the deadline family, the memory
                             limit); testing.rs the image fixtures and the fake sandbox.
                             tests/vm.rs runs the fixture function in real VMs when
@@ -620,8 +622,8 @@ crates/oci-init/            the guest init (package and binary guestfn-init, on 
                             check of /dev/kmsg, then power off. Static (musl), depends on
                             nothing in the image
 crates/oci-fixture/         the function the VM tests run (package and binary guestfn-guest-fixture, on
-                            function-sdk-rust): echo, refuse, exit, stderr, spin, grow, env, cwd, id,
-                            tmp, hostname, rng, silent
+                            function-sdk-rust): echo, refuse, exit, stderr, flood, flood-exit, spin,
+                            grow, env, cwd, id, tmp, hostname, rng, silent
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package guestfn-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library

@@ -24,6 +24,12 @@ configured working directory, with its configured environment, and calls
 | standard output and standard error | log lines. A line that parses as a JSON object with `level` and `msg` becomes a log line of that level with its other keys as fields. Any other line logs at info. The runtime attaches the module and its digest |
 | the process ending before it answers | a fatal result with the exit status and the last log line |
 
+The runtime keeps the last 256 KiB of what the process writes during a run.
+When the process writes more, the runtime logs one warning with the number
+of bytes it dropped from the start, then the lines it kept. The runtime
+shortens a line longer than 16 KiB to that length, in the log and in a fatal
+result, and marks it `[truncated: N more bytes]`.
+
 The server listens without TLS, since the call stays inside the VM. A
 function on a Crossplane SDK demands mTLS otherwise. Its manifest sets
 `oci.args` to `["--insecure"]`, a flag Crossplane's design for functions

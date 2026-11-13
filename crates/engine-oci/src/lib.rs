@@ -323,7 +323,7 @@ pub fn version() -> String {
 mod tests {
     use super::*;
     use crate::protocol::Exit;
-    use crate::sandbox::{Ended, Outcome, VmSpec};
+    use crate::sandbox::{Ended, OUTPUT_CAP, Outcome, Output, VmSpec};
     use crate::testing::{FakeSandbox, fixture_image};
 
     fn engine(sandbox: FakeSandbox) -> Oci {
@@ -379,7 +379,7 @@ mod tests {
                 .push((spec.rootfs.to_path_buf(), spec.store.is_some()));
             spec.snapshots.turn_off();
             Outcome {
-                log: Vec::new(),
+                log: Output::default(),
                 end: Ended::Answered(spec.request.to_vec()),
                 console: String::new(),
             }
@@ -434,7 +434,9 @@ mod tests {
     fn compiles_inspects_stores_and_runs_an_image() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let fake = FakeSandbox::new(Arc::clone(&seen), |spec: &VmSpec<'_>| Outcome {
-            log: b"a line\n{\"level\":\"warn\",\"msg\":\"typed\",\"k\":1}\n".to_vec(),
+            log: Output::from(
+                b"a line\n{\"level\":\"warn\",\"msg\":\"typed\",\"k\":1}\n".as_slice(),
+            ),
             end: Ended::Answered(spec.request.to_vec()),
             console: String::new(),
         });
@@ -544,7 +546,7 @@ mod tests {
             let fake = FakeSandbox::new(
                 Arc::new(std::sync::Mutex::new(Vec::new())),
                 move |_: &VmSpec<'_>| Outcome {
-                    log: log.clone(),
+                    log: Output::from(log.as_slice()),
                     end: end.lock().unwrap().take().unwrap(),
                     console: String::new(),
                 },
@@ -555,6 +557,66 @@ mod tests {
                 .unwrap();
             let err = e.run(&m, b"r", RunOptions::default()).unwrap_err();
             assert_eq!(err.0, want);
+        }
+    }
+
+    /// More output than a run keeps changes neither the answer nor the
+    /// fatal result: the last line is in what is kept.
+    #[test]
+    fn output_over_the_bound_leaves_the_result_as_it_was() {
+        fn flood() -> Output {
+            let mut log = Output::default();
+            let line = [b"filling the log ".repeat(60), b"\n".to_vec()].concat();
+            let mut written = 0;
+            while written < 4 * OUTPUT_CAP {
+                log.push(&line);
+                written += line.len();
+            }
+            log.push(b"out of ideas\n");
+            assert!(log.len() <= OUTPUT_CAP);
+            log
+        }
+        type Want<'a> = Result<&'a [u8], &'a str>;
+        let cases: Vec<(&str, Ended, Want<'_>)> = vec![
+            (
+                "an answer",
+                Ended::Answered(b"the response".to_vec()),
+                Ok(b"the response"),
+            ),
+            (
+                "an exit",
+                Ended::Exit(Exit {
+                    status: Some(3),
+                    ..Default::default()
+                }),
+                Err("process exited with status 3 before answering the call: out of ideas"),
+            ),
+            (
+                "a signal",
+                Ended::Exit(Exit {
+                    signal: Some(11),
+                    ..Default::default()
+                }),
+                Err("process was killed by signal 11: out of ideas"),
+            ),
+        ];
+        for (name, end, want) in cases {
+            let end = std::sync::Mutex::new(Some(end));
+            let fake = FakeSandbox::new(
+                Arc::new(std::sync::Mutex::new(Vec::new())),
+                move |_: &VmSpec<'_>| Outcome {
+                    log: flood(),
+                    end: end.lock().unwrap().take().unwrap(),
+                    console: String::new(),
+                },
+            );
+            let e = engine(fake);
+            let m = e
+                .compile(&fixture_image(b"x", &["/x"], "app", &[]))
+                .unwrap();
+            let got = e.run(&m, b"r", RunOptions::default()).map_err(|e| e.0);
+            let want = want.map(<[u8]>::to_vec).map_err(str::to_string);
+            assert_eq!(got, want, "{name}");
         }
     }
 
