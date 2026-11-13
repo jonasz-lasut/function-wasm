@@ -967,6 +967,22 @@ jobs:
           restore-keys: |
             examples-npm-${{ runner.os }}-${{ runner.arch }}-
 
+      # protoc is only needed to regenerate the checked-in codec, which
+      # this step does to catch drift; protoc-gen-es is the one npm ci
+      # installs from package-lock.json.
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '36.2'
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-ts
+        run: |
+          make gen-proto
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-ts/src/gen is not up to date with its proto; commit the result of make vendor-proto (at the root, which also mirrors it into the ts template)"
+
       - name: Build and Test the TypeScript Guest
         run: make -C examples/function-wasm-ts build test
 
@@ -1021,6 +1037,21 @@ jobs:
           key: examples-pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-python/requirements.txt') }}
           restore-keys: |
             examples-pip-${{ runner.os }}-${{ runner.arch }}-
+
+      # protoc is only needed to regenerate the checked-in codec, which
+      # this step does to catch drift.
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '36.2'
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-python
+        run: |
+          make gen-proto
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-python/src/gen is not up to date with its proto; commit the result of make vendor-proto (at the root, which also mirrors it into the python template)"
 
       - name: Build and Test the Python Guest
         run: make -C examples/function-wasm-python build test
@@ -1084,6 +1115,21 @@ jobs:
           key: examples-nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-csharp/Directory.Packages.props', 'examples/function-wasm-csharp/**/*.csproj') }}
           restore-keys: |
             examples-nuget-${{ runner.os }}-${{ runner.arch }}-
+
+      # protoc is only needed to regenerate the checked-in codec, which
+      # this step does to catch drift.
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '36.2'
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-csharp
+        run: |
+          make gen-proto
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-csharp/src/Gen is not up to date with its proto; commit the result of make gen-proto"
 
       - name: Build, Lint and Test the C# Guest
         run: make -C examples/function-wasm-csharp build lint test
