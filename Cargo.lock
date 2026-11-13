@@ -1875,6 +1875,7 @@ dependencies = [
  "pbjson-types",
  "pem",
  "prost",
+ "prost-types",
  "rcgen",
  "reqwest",
  "schemars 1.2.3",

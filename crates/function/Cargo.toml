@@ -33,6 +33,9 @@ jsonschema = { version = "0.61", default-features = false, features = ["idna"] }
 tempfile = "3"
 pbjson-types = "0.9"
 prost = "0.14"
+# The descriptor types, to read the schema the SDK embeds (partial.rs);
+# tonic-reflection already links them.
+prost-types = "0.14"
 # query and json: the registry client's token request and response; the
 # sigstore 0.14 crate used to enable them transitively.
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "gzip", "query", "json"] }

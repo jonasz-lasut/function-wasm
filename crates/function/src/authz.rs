@@ -197,7 +197,7 @@ pub struct EgressGrant {
 /// `None` at the caller and every Permits question denies there.
 #[derive(Debug)]
 pub struct CompositionPolicy {
-    policy: PolicySet,
+    policy: Judged,
     // Which actions any of the policy's rules scope - the signal the
     // scoped-default-permit reads: an author who wrote any rule for an
     // action has opted into narrowing it.
@@ -205,7 +205,7 @@ pub struct CompositionPolicy {
     // The policies with everything permitted, present when a forbid leaves
     // its action unconstrained: what an action no rule names is judged
     // under, so that such a forbid applies to it.
-    open: Option<PolicySet>,
+    open: Option<Judged>,
 }
 
 type CompositionCacheEntry = Result<Option<Arc<CompositionPolicy>>, String>;
@@ -247,9 +247,9 @@ impl CompositionPolicy {
         }
         let open = open_under_forbids(&policy)?;
         Ok(CompositionPolicy {
-            policy,
+            policy: Judged::new(policy),
             scoped,
-            open,
+            open: open.map(Judged::new),
         })
     }
 
@@ -269,7 +269,7 @@ impl CompositionPolicy {
     /// where a rule names the action (a permit must match), and otherwise
     /// the layer with everything permitted, so that only its forbids with
     /// an unconstrained action decide.
-    fn narrowing(&self, action: &str) -> &PolicySet {
+    fn narrowing(&self, action: &str) -> &Judged {
         match &self.open {
             Some(open) if !self.names_action(action) => open,
             _ => &self.policy,
@@ -403,14 +403,14 @@ impl CompositionPolicy {
 /// and denies everything there.
 #[derive(Debug)]
 pub struct OperatorPolicy {
-    policy: PolicySet,
+    policy: Judged,
     // Which of the output-fence actions any rule scopes: the operator layer
     // narrows a module's output, and its reads, only where it says so.
     scoped: HashMap<&'static str, bool>,
     // The policies with everything permitted, present when a forbid leaves
     // its action unconstrained: what an action no rule names is judged
     // under, so that such a forbid applies to it.
-    open: Option<PolicySet>,
+    open: Option<Judged>,
 }
 
 impl crate::cosign::SignerPolicy for OperatorPolicy {
@@ -444,9 +444,9 @@ impl OperatorPolicy {
         let open = open_under_forbids(&policy)
             .map_err(|e| format!("cannot compile the operator policy {name}: {e}"))?;
         Ok(OperatorPolicy {
-            policy,
+            policy: Judged::new(policy),
             scoped,
-            open,
+            open: open.map(Judged::new),
         })
     }
 
@@ -467,7 +467,7 @@ impl OperatorPolicy {
 
     /// As the composition layer's: the layer's own policies where a rule
     /// names the fence action, otherwise its forbids alone.
-    fn narrowing(&self, action: &str) -> &PolicySet {
+    fn narrowing(&self, action: &str) -> &Judged {
         match &self.open {
             Some(open) if !self.names_action(action) => open,
             _ => &self.policy,
@@ -574,7 +574,7 @@ impl OperatorPolicy {
         let (resource, entities) = repository_entities(location);
         decide_raw(
             &self.policy,
-            uid("Module", "module"),
+            ("Module", "module"),
             None,
             ACTION_REQUIRE_SIGNATURE,
             resource,
@@ -601,7 +601,7 @@ impl OperatorPolicy {
         let (resource, entities) = repository_entities(location);
         decide_raw(
             &self.policy,
-            uid("Module", "module"),
+            ("Module", "module"),
             None,
             ACTION_TRUST_SIGNER,
             resource,
@@ -973,11 +973,95 @@ fn ip_literal_prefix(raw: &Value) -> Result<IpPrefix, String> {
     IpPrefix::parse_cedar(value).map_err(|e| format!("{value:?} is not an ip literal: {e}"))
 }
 
+/// A policy set as the layers judge under it: the policies and the number
+/// that tells this set's decisions from every other's in the memo. The
+/// number is drawn once per set and never reused, so a set compiled later -
+/// another Input's compositionPolicy, a layer's forbids-only variant - can
+/// never read a decision made under this one.
+#[derive(Debug)]
+struct Judged {
+    policies: PolicySet,
+    id: u64,
+}
+
+impl Judged {
+    fn new(policies: PolicySet) -> Judged {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Judged {
+            policies,
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+impl std::ops::Deref for Judged {
+    type Target = PolicySet;
+
+    fn deref(&self) -> &PolicySet {
+        &self.policies
+    }
+}
+
+/// The decisions the policy sets have already given. A decision is a pure
+/// function of the policy set and of what the question hands Cedar - the
+/// principal and its attributes, the action, the resource, the entities and
+/// the context - and the key is exactly that, written out whole: the set's
+/// number and the JSON of every other argument of `decide_raw`. Nothing is
+/// summarised or hashed away, so two questions share an entry only when
+/// Cedar would be asked the same thing of the same policies.
+///
+/// Bounded in two generations: a new decision goes into the recent one,
+/// which becomes the older one when full, dropping what was there; a hit
+/// in the older one moves the decision back. What a busy composition asks
+/// on every reconcile therefore stays, and what one caller asked once ages
+/// out, whatever the number of namespaces, kinds or names. A question
+/// whose key is longer than MAX_KEY is answered and not kept, so a module
+/// cannot size the memo with what it writes in a response.
+#[derive(Default)]
+struct Decisions {
+    recent: HashMap<String, bool>,
+    older: HashMap<String, bool>,
+}
+
+impl Decisions {
+    /// The entries of one generation; the memo holds at most twice that.
+    const GENERATION: usize = 8192;
+    /// The longest key kept, in bytes.
+    const MAX_KEY: usize = 1024;
+
+    fn get(&mut self, key: &str) -> Option<bool> {
+        if let Some(decision) = self.recent.get(key) {
+            return Some(*decision);
+        }
+        let (key, decision) = self.older.remove_entry(key)?;
+        self.put(key, decision);
+        Some(decision)
+    }
+
+    fn put(&mut self, key: String, decision: bool) {
+        if key.len() > Self::MAX_KEY {
+            return;
+        }
+        if self.recent.len() >= Self::GENERATION {
+            self.older = std::mem::take(&mut self.recent);
+        }
+        self.recent.insert(key, decision);
+    }
+}
+
+fn decisions() -> std::sync::MutexGuard<'static, Decisions> {
+    static DECISIONS: OnceLock<Mutex<Decisions>> = OnceLock::new();
+    DECISIONS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("poisoned")
+}
+
 /// Evaluates one request with the Request::"self" principal carrying the
 /// caller's attributes - the evaluation both layers share, so a policy means
 /// the same in both.
 fn decide(
-    ps: &PolicySet,
+    ps: &Judged,
     principal: &Principal,
     action: &str,
     resource: Value,
@@ -995,7 +1079,7 @@ fn decide(
     });
     decide_raw(
         ps,
-        uid("Request", "self"),
+        ("Request", "self"),
         Some(principal_entity),
         action,
         resource,
@@ -1004,9 +1088,72 @@ fn decide(
     )
 }
 
+/// One decision, from the memo when this set was already asked the same
+/// question. Every argument but the set goes into the key as it is given;
+/// the set is in it by its number.
 fn decide_raw(
+    ps: &Judged,
+    principal: (&str, &str),
+    principal_entity: Option<Value>,
+    action: &str,
+    resource: Value,
+    entities: Vec<Value>,
+    context: Value,
+) -> bool {
+    let key = decision_key(
+        ps.id,
+        principal,
+        &principal_entity,
+        action,
+        &resource,
+        &entities,
+        &context,
+    );
+    if let Some(decision) = decisions().get(&key) {
+        return decision;
+    }
+    // Evaluated outside the lock: two requests asking the same new
+    // question both evaluate it, and both write the same answer.
+    let decision = evaluate(
+        &ps.policies,
+        principal,
+        principal_entity,
+        action,
+        resource,
+        entities,
+        context,
+    );
+    decisions().put(key, decision);
+    decision
+}
+
+/// A question as the memo keys it: a JSON array of the set's number and
+/// every argument, in order. JSON is unambiguous, so two different
+/// questions never write the same key.
+fn decision_key(
+    set: u64,
+    principal: (&str, &str),
+    principal_entity: &Option<Value>,
+    action: &str,
+    resource: &Value,
+    entities: &[Value],
+    context: &Value,
+) -> String {
+    serde_json::to_string(&(
+        set,
+        principal,
+        principal_entity,
+        action,
+        resource,
+        entities,
+        context,
+    ))
+    .expect("JSON values serialize")
+}
+
+fn evaluate(
     ps: &PolicySet,
-    principal: EntityUid,
+    principal: (&str, &str),
     principal_entity: Option<Value>,
     action: &str,
     resource: Value,
@@ -1034,7 +1181,7 @@ fn decide_raw(
         resource["id"].as_str().unwrap_or_default(),
     );
     let Ok(request) = Request::new(
-        principal,
+        uid(principal.0, principal.1),
         uid("Action", action),
         resource_uid,
         context,
@@ -1817,5 +1964,431 @@ mod tests {
             bad.compile_ip_rules().expect_err("refuse"),
             r#"operator policy: dialAddress rule "policy0": unsupported operation "isMulticast" (an ip test uses isInRange, isLoopback or ||)"#
         );
+    }
+
+    fn operator(doc: &str) -> OperatorPolicy {
+        OperatorPolicy::new("test", doc).expect("compile")
+    }
+
+    fn principal(namespace: &str, xr_kind: &str) -> Principal {
+        Principal {
+            namespace: namespace.to_string(),
+            xr_kind: xr_kind.to_string(),
+            composition: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_remembered_decision_stays_with_its_policy_set() {
+        let question = |p: &OperatorPolicy| p.permits_private_tmp(&Principal::default());
+        let permits =
+            operator(r#"permit (principal, action == Action::"usePrivateTmp", resource);"#);
+        let denies = operator(r#"permit (principal, action == Action::"setEnv", resource);"#);
+        for _ in 0..3 {
+            assert!(question(&permits));
+            assert!(!question(&denies));
+        }
+        // The same text compiled again is another set, with its own answers.
+        let again = operator(r#"permit (principal, action == Action::"usePrivateTmp", resource);"#);
+        assert_ne!(permits.policy.id, again.policy.id);
+        assert!(question(&again));
+    }
+
+    #[test]
+    fn a_remembered_decision_is_not_another_callers() {
+        let p = operator(
+            r#"permit (principal, action == Action::"usePrivateTmp", resource)
+               when { principal.namespace == "team-a" && principal.xrKind == "Bucket" };"#,
+        );
+        for _ in 0..3 {
+            assert!(p.permits_private_tmp(&principal("team-a", "Bucket")));
+            assert!(!p.permits_private_tmp(&principal("team-b", "Bucket")));
+            assert!(!p.permits_private_tmp(&principal("team-a", "Database")));
+            assert!(!p.permits_private_tmp(&Principal::default()));
+        }
+        // The composition's name is the principal's third attribute.
+        let named = operator(
+            r#"permit (principal, action == Action::"usePrivateTmp", resource)
+               when { principal.composition == "buckets" };"#,
+        );
+        let mut caller = principal("team-a", "Bucket");
+        for _ in 0..3 {
+            caller.composition = "buckets".to_string();
+            assert!(named.permits_private_tmp(&caller));
+            caller.composition = "databases".to_string();
+            assert!(!named.permits_private_tmp(&caller));
+        }
+    }
+
+    #[test]
+    fn a_remembered_decision_is_not_another_questions() {
+        let p = operator(
+            r#"permit (principal, action == Action::"setEnv", resource)
+               when { context.keys.contains("TOKEN") };
+               permit (principal, action == Action::"spendCredential", resource == Credential::"cmdb");
+               permit (principal, action == Action::"grantEgress", resource in HostPattern::"example.org")
+               when { context.method == "GET" && context.path like "/teams/*" };
+               permit (principal, action == Action::"requireSignature", resource in Repository::"ghcr.io/acme");"#,
+        );
+        let caller = principal("team-a", "Bucket");
+        let keys = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let egress = |host: &str, method: &str, path: &str| EgressGrant {
+            host: host.to_string(),
+            method: method.to_string(),
+            path: path.to_string(),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            assert!(p.permits_env(&caller, &keys(&["TOKEN"])));
+            assert!(!p.permits_env(&caller, &keys(&["OTHER"])));
+            assert!(p.permits_env(&caller, &keys(&["OTHER", "TOKEN"])));
+            assert!(p.permits_spend_credential(&caller, "cmdb"));
+            assert!(!p.permits_spend_credential(&caller, "cmdb2"));
+            assert!(p.permits_egress(&caller, &egress("cmdb.example.org", "GET", "/teams/")));
+            assert!(!p.permits_egress(&caller, &egress("cmdb.example.org", "POST", "/teams/")));
+            assert!(!p.permits_egress(&caller, &egress("cmdb.example.org", "GET", "/admin/")));
+            assert!(!p.permits_egress(&caller, &egress("cmdb.example.net", "GET", "/teams/")));
+            assert!(p.requires_signature("ghcr.io/acme/fn"));
+            assert!(!p.requires_signature("ghcr.io/acme-evil/fn"));
+        }
+    }
+
+    /// Every question the layers ask, of a set that has answered it before
+    /// and of one compiled for the question alone, which has no memory:
+    /// the two must agree on every policy, caller and question, in whatever
+    /// order they are asked.
+    #[test]
+    fn remembered_decisions_match_fresh_ones() {
+        const POLICIES: &[&str] = &[
+            r#"permit (principal, action, resource);"#,
+            r#"permit (principal, action == Action::"usePrivateTmp", resource)
+               when { principal.namespace == "team-a" };
+               permit (principal, action == Action::"setEnv", resource)
+               when { context.keys.containsAll(["A"]) && principal.xrKind == "Bucket" };
+               permit (principal, action == Action::"spendCredential", resource == Credential::"a");
+               permit (principal, action == Action::"grantEgress", resource in HostPattern::"example.org")
+               when { context.method == "GET" };
+               permit (principal, action == Action::"pullModule", resource in Repository::"ghcr.io/acme");
+               permit (principal, action == Action::"requireSignature", resource in Repository::"ghcr.io/acme");
+               permit (principal, action == Action::"trustSigner", resource in Repository::"ghcr.io/acme")
+               when { context.issuer == "https://issuer.example" };
+               permit (principal, action == Action::"composeResource", resource in Group::"apps")
+               when { context.change == "add" && context.name like "web-*" };
+               permit (principal, action == Action::"requireResource", resource == Kind::"core/Secret")
+               when { context has name && context.name == "db" };"#,
+            r#"forbid (principal, action, resource) when { principal.namespace == "team-b" };
+               permit (principal, action == Action::"setEnv", resource);
+               permit (principal, action == Action::"spendCredential", resource)
+               when { context has repository && context.repository in Repository::"ghcr.io/acme" };"#,
+            r#"forbid (principal, action == Action::"composeResource", resource in Group::"core")
+               unless { principal.xrKind == "Database" };
+               permit (principal, action == Action::"composeResource", resource);
+               permit (principal, action == Action::"requireResource", resource)
+               when { context has labels && context.labels has "team" && context has namespace && context.namespace == principal.namespace };"#,
+        ];
+        let callers = [
+            Principal::default(),
+            principal("team-a", "Bucket"),
+            principal("team-a", "Database"),
+            principal("team-b", "Bucket"),
+        ];
+        let keys = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let egress = |host: &str, pattern: &str, method: &str| EgressGrant {
+            host: host.to_string(),
+            host_pattern: pattern.to_string(),
+            method: method.to_string(),
+            path: "/".to_string(),
+        };
+        let requirement =
+            |kind: &str, matches: RequirementMatch, namespace: Option<&str>| Requirement {
+                group: "core".to_string(),
+                kind: kind.to_string(),
+                matches,
+                namespace: namespace.map(str::to_string),
+                field: "resources".to_string(),
+                key: "k".to_string(),
+            };
+        type Question = Box<dyn Fn(&OperatorPolicy, &CompositionPolicy, &Principal) -> Vec<bool>>;
+        let questions: Vec<Question> = vec![
+            Box::new(|o, c, p| vec![o.permits_private_tmp(p), c.permits_private_tmp(p)]),
+            Box::new(move |o, c, p| {
+                let mut out = Vec::new();
+                for k in [keys(&["A"]), keys(&["B"]), keys(&["A", "B"]), keys(&[])] {
+                    out.push(o.permits_env(p, &k));
+                    out.push(c.permits_env(p, &k));
+                }
+                out
+            }),
+            Box::new(|o, c, p| {
+                let mut out = Vec::new();
+                for name in ["a", "b", ""] {
+                    out.push(o.permits_spend_credential(p, name));
+                    for location in ["", "ghcr.io/acme/fn", "ghcr.io/other/fn"] {
+                        out.push(c.permits_spend_credential(p, name, location));
+                    }
+                }
+                out
+            }),
+            Box::new(move |o, c, p| {
+                let mut out = Vec::new();
+                for g in [
+                    egress("api.example.org", "", "GET"),
+                    egress("api.example.org", "", "POST"),
+                    egress("", "*.example.org", "GET"),
+                    egress("example.org.evil.net", "", "GET"),
+                ] {
+                    out.push(o.permits_egress(p, &g));
+                    out.push(c.permits_egress(p, &g));
+                }
+                out
+            }),
+            Box::new(|o, c, p| {
+                let mut out = Vec::new();
+                for location in ["ghcr.io/acme/fn", "ghcr.io/acme-evil/fn", "ghcr.io/acme"] {
+                    out.push(c.permits_pull_module(p, location));
+                    out.push(o.requires_signature(location));
+                    out.push(o.permits_signer(location, "https://issuer.example", "ci"));
+                    out.push(o.permits_signer(location, "https://other.example", "ci"));
+                }
+                out
+            }),
+            Box::new(|o, c, p| {
+                let mut out = Vec::new();
+                for change in [
+                    change("apps", "Deployment", ChangeKind::Add, "web-1"),
+                    change("apps", "Deployment", ChangeKind::Modify, "web-1"),
+                    change("apps", "Deployment", ChangeKind::Add, "db"),
+                    change("core", "Secret", ChangeKind::Add, "web-1"),
+                    change("core", "Secret", ChangeKind::Remove, "web-1"),
+                ] {
+                    out.push(o.permits_compose(p, &change));
+                    out.push(c.permits_compose(p, &change));
+                }
+                out
+            }),
+            Box::new(move |o, c, p| {
+                let labels = BTreeMap::from([("team".to_string(), "a".to_string())]);
+                let mut out = Vec::new();
+                for r in [
+                    requirement("Secret", RequirementMatch::Name("db".to_string()), None),
+                    requirement("Secret", RequirementMatch::Name("other".to_string()), None),
+                    requirement("Secret", RequirementMatch::None, Some("team-a")),
+                    requirement("ConfigMap", RequirementMatch::Labels(labels.clone()), None),
+                    requirement(
+                        "ConfigMap",
+                        RequirementMatch::Labels(labels.clone()),
+                        Some("team-a"),
+                    ),
+                ] {
+                    out.push(o.permits_require(p, &r));
+                    out.push(c.permits_require(p, &r));
+                }
+                out
+            }),
+        ];
+
+        let shared: Vec<(OperatorPolicy, CompositionPolicy)> = POLICIES
+            .iter()
+            .map(|text| (operator(text), composition(text)))
+            .collect();
+        let mut asked = 0;
+        let mut permitted = 0;
+        // Three passes over every combination, each in another order, so a
+        // remembered answer is read back between questions of every other
+        // set and caller.
+        for pass in 0..3usize {
+            let mut order: Vec<(usize, usize, usize)> = Vec::new();
+            for policy in 0..POLICIES.len() {
+                for caller in 0..callers.len() {
+                    for question in 0..questions.len() {
+                        order.push((policy, caller, question));
+                    }
+                }
+            }
+            match pass {
+                1 => order.reverse(),
+                2 => order.sort_by_key(|(policy, caller, question)| (*question, *caller, *policy)),
+                _ => {}
+            }
+            for (policy, caller, question) in order {
+                let (o, c) = &shared[policy];
+                let remembered = questions[question](o, c, &callers[caller]);
+                let fresh = questions[question](
+                    &operator(POLICIES[policy]),
+                    &composition(POLICIES[policy]),
+                    &callers[caller],
+                );
+                assert_eq!(
+                    remembered, fresh,
+                    "pass {pass}, policy {policy}, caller {caller}, question {question}"
+                );
+                asked += remembered.len();
+                permitted += remembered.iter().filter(|d| **d).count();
+            }
+        }
+        // The corpus exercises both answers.
+        assert!(permitted > asked / 10, "{permitted} of {asked} permitted");
+        assert!(
+            permitted < asked * 9 / 10,
+            "{permitted} of {asked} permitted"
+        );
+    }
+
+    #[test]
+    fn a_key_tells_every_argument_apart() {
+        let base = || {
+            decision_key(
+                7,
+                ("Request", "self"),
+                &Some(json!({"attrs": {"namespace": "a"}})),
+                "setEnv",
+                &uid_json("Capability", "env"),
+                &[flat_entity(&uid_json("Capability", "env"))],
+                &json!({"keys": ["A"]}),
+            )
+        };
+        let variants = [
+            decision_key(
+                8,
+                ("Request", "self"),
+                &Some(json!({"attrs": {"namespace": "a"}})),
+                "setEnv",
+                &uid_json("Capability", "env"),
+                &[flat_entity(&uid_json("Capability", "env"))],
+                &json!({"keys": ["A"]}),
+            ),
+            decision_key(
+                7,
+                ("Module", "module"),
+                &Some(json!({"attrs": {"namespace": "a"}})),
+                "setEnv",
+                &uid_json("Capability", "env"),
+                &[flat_entity(&uid_json("Capability", "env"))],
+                &json!({"keys": ["A"]}),
+            ),
+            decision_key(
+                7,
+                ("Request", "self"),
+                &Some(json!({"attrs": {"namespace": "b"}})),
+                "setEnv",
+                &uid_json("Capability", "env"),
+                &[flat_entity(&uid_json("Capability", "env"))],
+                &json!({"keys": ["A"]}),
+            ),
+            decision_key(
+                7,
+                ("Request", "self"),
+                &None,
+                "setEnv",
+                &uid_json("Capability", "env"),
+                &[flat_entity(&uid_json("Capability", "env"))],
+                &json!({"keys": ["A"]}),
+            ),
+            decision_key(
+                7,
+                ("Request", "self"),
+                &Some(json!({"attrs": {"namespace": "a"}})),
+                "usePrivateTmp",
+                &uid_json("Capability", "env"),
+                &[flat_entity(&uid_json("Capability", "env"))],
+                &json!({"keys": ["A"]}),
+            ),
+            decision_key(
+                7,
+                ("Request", "self"),
+                &Some(json!({"attrs": {"namespace": "a"}})),
+                "setEnv",
+                &uid_json("Capability", "privateTmp"),
+                &[flat_entity(&uid_json("Capability", "env"))],
+                &json!({"keys": ["A"]}),
+            ),
+            decision_key(
+                7,
+                ("Request", "self"),
+                &Some(json!({"attrs": {"namespace": "a"}})),
+                "setEnv",
+                &uid_json("Capability", "env"),
+                &[],
+                &json!({"keys": ["A"]}),
+            ),
+            decision_key(
+                7,
+                ("Request", "self"),
+                &Some(json!({"attrs": {"namespace": "a"}})),
+                "setEnv",
+                &uid_json("Capability", "env"),
+                &[flat_entity(&uid_json("Capability", "env"))],
+                &json!({"keys": ["A", "B"]}),
+            ),
+        ];
+        assert_eq!(base(), base());
+        let distinct: std::collections::BTreeSet<&String> = variants.iter().collect();
+        assert_eq!(distinct.len(), variants.len());
+        for v in &variants {
+            assert_ne!(*v, base());
+        }
+        // A value cannot pose as two: the quotes and commas a string holds
+        // are escaped, so no argument reads into its neighbour.
+        assert_ne!(
+            decision_key(7, ("a\",\"b", "c"), &None, "x", &json!(1), &[], &json!(2)),
+            decision_key(7, ("a", "b\",\"c"), &None, "x", &json!(1), &[], &json!(2)),
+        );
+    }
+
+    #[test]
+    fn the_memo_is_bounded_and_keeps_what_is_asked_again() {
+        let mut memo = Decisions::default();
+        let key = |i: usize| format!("question-{i}");
+        memo.put("busy".to_string(), true);
+        for i in 0..Decisions::GENERATION * 5 {
+            memo.put(key(i), i.is_multiple_of(2));
+            // Asked on every reconcile, so it survives every turnover.
+            assert_eq!(memo.get("busy"), Some(true));
+            assert!(memo.recent.len() <= Decisions::GENERATION);
+            assert!(memo.older.len() <= Decisions::GENERATION);
+        }
+        // The last generation and a half or so is there, with its answers.
+        let last = Decisions::GENERATION * 5 - 1;
+        assert_eq!(memo.get(&key(last)), Some(last.is_multiple_of(2)));
+        assert_eq!(memo.get(&key(last - 1)), Some((last - 1).is_multiple_of(2)));
+        // What was asked once, long ago, is gone.
+        assert_eq!(memo.get(&key(0)), None);
+        assert_eq!(memo.get("never asked"), None);
+    }
+
+    #[test]
+    fn a_question_too_long_to_keep_is_answered_every_time() {
+        let mut memo = Decisions::default();
+        let long = "k".repeat(Decisions::MAX_KEY + 1);
+        memo.put(long.clone(), true);
+        assert_eq!(memo.get(&long), None);
+        assert!(memo.recent.is_empty());
+        let fits = "k".repeat(Decisions::MAX_KEY);
+        memo.put(fits.clone(), true);
+        assert_eq!(memo.get(&fits), Some(true));
+
+        // Through a policy: a selector with more labels than a key holds
+        // gets its own decision each time, and the right one.
+        let p = operator(
+            r#"permit (principal, action == Action::"requireResource", resource)
+               when { context has labels && context.labels has "k0" };"#,
+        );
+        let labels = |n: usize| -> BTreeMap<String, String> {
+            (0..n).map(|i| (format!("k{i}"), "v".repeat(64))).collect()
+        };
+        let selector = |labels: BTreeMap<String, String>| Requirement {
+            group: "core".to_string(),
+            kind: "Secret".to_string(),
+            matches: RequirementMatch::Labels(labels),
+            namespace: None,
+            field: "resources".to_string(),
+            key: "k".to_string(),
+        };
+        let mut without = labels(40);
+        without.remove("k0");
+        for _ in 0..3 {
+            assert!(p.permits_require(&Principal::default(), &selector(labels(40))));
+            assert!(!p.permits_require(&Principal::default(), &selector(without.clone())));
+        }
     }
 }
