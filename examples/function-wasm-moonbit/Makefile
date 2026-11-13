@@ -46,7 +46,7 @@ gen-proto: ## Regenerate src/fnv1 from proto/ (needs protoc; protoc-gen-mbt runs
 # the run slot beside the bindings) needs the glue imported there, so it is
 # written back after the generator; the generator writes each file's FFI
 # helpers in an order that changes from run to run, so sort-ffi.pl puts them
-# in one (the drift check in e2e.yml compares the result byte for byte); and
+# in one (the drift check in e2e-wasm.yml compares the result byte for byte); and
 # its code trips the deprecations this moonc added since (derive(Show),
 # implicit promotion of trait methods), one warning per type, so the
 # "warn-list": "-44" it writes into every package is extended with their

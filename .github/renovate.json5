@@ -109,11 +109,11 @@
   },
   customManagers: [
     {
-      // The zig pin of the e2e workflow: a `# renovate:` comment names the
+      // The zig pin of the wasm end-to-end workflow: a `# renovate:` comment names the
       // architecture's datasource above each <version>@<sha256> line.
       customType: 'regex',
-      description: 'zig per runner architecture in .github/workflows/e2e.yml',
-      managerFilePatterns: ['/^\\.github/workflows/e2e\\.ya?ml$/'],
+      description: 'zig per runner architecture in .github/workflows/e2e-wasm.yml',
+      managerFilePatterns: ['/^\\.github/workflows/e2e-wasm\\.ya?ml$/'],
       matchStrings: [
         '# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\s+ZIG_[A-Z0-9_]+: (?<currentValue>[^@\\s]+)@(?<currentDigest>[0-9a-f]{64})',
       ],
@@ -160,8 +160,8 @@
     },
     {
       // The Crossplane the end-to-end suite installs: the Makefile's
-      // CROSSPLANE_VERSION default (what every /e2e run and the matrix's
-      // `current` job test) and the release matrix workflow's two older
+      // CROSSPLANE_VERSION default (what a pull request's end-to-end run and
+      // the matrix's first version test) and the release matrix workflow's two older
       // pins, each a `# renovate:` comment above a `<NAME> ?= x.y.z` or
       // `<NAME>: 'x.y.z'` line. Releases are tagged vX.Y.Z; the pins carry
       // the chart version, without the v. The packageRules below let the
@@ -273,7 +273,7 @@
   // Rules are evaluated in order; later rules win.
   packageRules: [
     {
-      // The two zig lines of e2e.yml are one dependency: one PR moves both.
+      // The two zig lines of e2e-wasm.yml are one dependency: one PR moves both.
       // A new minor of Zig 0.x is a new language version: the zig, c, cpp
       // and odin examples are written for 0.16, so a minor moves with them
       // by hand at release time; a patch release flows.
@@ -442,8 +442,8 @@
 
     // The monthly examples refresh. The examples are illustrative and never
     // shipped (the image holds only the runtime binary), so one batch a
-    // month, judged by /e2e, keeps them current. These rules switch back on
-    // only what an example owns alone, never a pin the templates share.
+    // month, judged by the e2e:all label, keeps them current. These rules
+    // switch back on only what an example owns alone, never a pin the templates share.
     //
     // Lock file maintenance: off everywhere first, so the workspace's
     // Cargo.lock keeps the runtime's rules above, then on for the example
@@ -469,8 +469,8 @@
       postUpdateOptions: ['gomodTidy'],
     },
     // ...except what the scaffold template pins, which moves with a release
-    // instead: the go directive (it also picks the Go toolchain /e2e
-    // installs), the go template's function-sdk-go (FALLBACK_SDK_VERSION
+    // instead: the go directive (it also picks the Go toolchain the
+    // example jobs install), the go template's function-sdk-go (FALLBACK_SDK_VERSION
     // in crates/guestfn/src/main.rs) and the runtime of its wit-bindgen Go
     // bindings, go.bytecodealliance.org/pkg, pinned at the version the
     // generator targets (it moves with a wit-bindgen bump and `make
@@ -508,7 +508,7 @@
     // one most days), and the compiler for the build host must be that same
     // build. They stay pinned to what componentize-dotnet was released with
     // and move by hand, when a componentize-dotnet update arrives in the
-    // batch below - that PR is the signal, and /e2e fails until they move.
+    // batch below - that PR is the signal, and build (dotnet) fails until they move.
     {
       matchManagers: ['nuget'],
       matchPackageNames: ['/^(runtime\\.[a-z0-9-]+\\.)?Microsoft\\.DotNet\\.ILCompiler\\.LLVM$/i'],
@@ -532,7 +532,7 @@
     // lock-file-maintenance- branch - so the batch is two PRs:
     // renovate/examples (the Go examples and function-wasm-csharp) and
     // renovate/lock-file-maintenance-examples (the four lockfiles). A major
-    // rides in its batch instead of a PR of its own; /e2e judges the whole.
+    // rides in its batch instead of a PR of its own; the e2e:all label judges the whole.
     // A security update to a Go or .NET example dependency still opens at
     // once on its own branch: Renovate appends those rules after these, with
     // `force`.

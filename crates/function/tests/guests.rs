@@ -16,7 +16,7 @@
 //!
 //! A guest whose toolchain is not on PATH is skipped, naming the guest,
 //! unless GUESTFN_REQUIRE_TOOLCHAINS
-//! is set, as the /e2e workflow's guest-suite job sets it, when a missing
+//! is set, as ci.yml's guest-suite job sets it, when a missing
 //! toolchain fails the guest instead: a runner that lost a toolchain would
 //! otherwise shrink the suite and stay green.
 

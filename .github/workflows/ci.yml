@@ -92,7 +92,7 @@ jobs:
       # Cargo.lock differs) but would otherwise write a copy of its own under
       # refs/pull/N/merge on every push. Those copies pushed the repository
       # over the 10 GiB cache limit, and GitHub evicted the rarely read
-      # e2e- caches first.
+      # end-to-end caches first.
       - name: Cache Rust Builds
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -100,7 +100,7 @@ jobs:
 
       # --all-features: the end-to-end crate (crates/e2e) is empty without
       # its cluster feature, so this is where it gets compiled and linted on
-      # every push; its tests themselves need a cluster (/e2e).
+      # every push; its tests themselves need a cluster (e2e.yml).
       - name: Lint
         run: |
           cargo fmt --all --check
@@ -117,8 +117,8 @@ jobs:
   # runner's preinstalled Go would otherwise build the go guest with an
   # unpinned toolchain) - the full behavioural matrix runs in the guest-suite
   # job below, and each example in its build job and the runtime in a
-  # cluster, both in the comment-triggered e2e workflow (/e2e on a pull
-  # request).
+  # cluster, both in the end-to-end workflow (e2e.yml, for the scenarios a
+  # pull request's labels select).
   unit-test:
     runs-on: ubuntu-26.04
     needs: detect-noop

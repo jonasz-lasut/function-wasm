@@ -26,10 +26,11 @@ $(error the crossplane build submodule is missing: run git submodule update --in
 endif
 
 # The cluster the suite provisions and the Crossplane it installs. Both are
-# overridable from the environment: /e2e runs the default, the release
-# matrix (.github/workflows/release-matrix-e2e.yml) runs the suite once per
-# Crossplane minor the project supports, setting CROSSPLANE_VERSION for the
-# two older ones. Renovate moves the default to the latest release (the
+# overridable from the environment: a pull request's end-to-end run takes
+# the default, the release matrix
+# (.github/workflows/release-matrix-e2e.yml) runs the released function's
+# profiles once per Crossplane minor the project supports, setting
+# CROSSPLANE_VERSION for each. Renovate moves the default to the latest release (the
 # `# renovate:` comment); its PR for a new minor is the signal to shift the
 # matrix's two pins down one minor in the same PR.
 KIND_CLUSTER_NAME ?= function-wasm-e2e
@@ -92,7 +93,7 @@ include build/makelib/local.xpkg.mk
 #                     reads the default this way)
 #
 # FUNCTION_BIN names a prebuilt linux runtime binary for the host's
-# architecture (CI's build-tools job hands one over), wrapped by
+# architecture (e2e-wasm.yml's build-tools job hands one over), wrapped by
 # crates/function-wasm/Dockerfile.dev; without it the image is built from
 # crates/function-wasm/Dockerfile, which compiles the workspace in a
 # container. FUNCTION_OCI_TOOLS names a directory of the prebuilt function-oci
@@ -358,7 +359,7 @@ e2e.guest:
 # first line names the release. A Renovate bump moves that version in every
 # header but can neither re-download the file nor regenerate the codecs checked
 # in beside it, so its PR is the signal to run `make vendor-proto` on the PR's
-# branch, review the diff and comment /e2e.
+# branch, review the diff and label the PR e2e:all.
 #
 # `make vendor-proto` takes the release from the headers (the rust template's);
 # `make vendor-proto PROTO_VERSION=vX.Y.Z` vendors one Renovate has not proposed.
@@ -374,7 +375,7 @@ e2e.guest:
 # mirrors the go result into its template (the module path templated as
 # [[ .Module ]]) and refreshes the goldens - after a change to a world, a
 # move of the guests' WASI versions, or a wit-bindgen bump (the generated files'
-# header names the version; e2e.yml's drift checks install the same one).
+# header names the version; e2e-wasm.yml's drift checks install the same one).
 .PHONY: vendor-proto vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens vendor-docs-highlight gen-bindings tools tools-clean vale design-records
 # The steps rewrite one another's inputs; never run them side by side.
 .NOTPARALLEL:
@@ -383,17 +384,17 @@ e2e.guest:
 # the rest are pinned where each guest builds them: zig-protobuf (and the
 # protoc it downloads) by function-wasm-zig's build.zig.zon, protoc-gen-es by
 # function-wasm-ts's package-lock.json, protoc-gen-mbt by the moonx release
-# function-wasm-moonbit's Makefile names (moon itself is not pinned here: e2e.yml
-# pins the release its render job installs).
+# function-wasm-moonbit's Makefile names (moon itself is not pinned here: e2e-wasm.yml
+# pins the release its build job installs).
 #
 # protoc stamps its version into the Python codec, which refuses to load on a
 # protobuf runtime older than that stamp, so
 # PROTOC_VERSION must not pass the runtime the python template's
 # requirements.txt pins (function-wasm-python's is the same file). NANOPB_VERSION is
 # the nanopb release function-wasm-c's and function-wasm-odin's build.zig.zon compile and
-# e2e.yml's codec drift checks install. WIT_BINDGEN_VERSION is the
+# e2e-wasm.yml's codec drift checks install. WIT_BINDGEN_VERSION is the
 # wit-bindgen-cli release that wrote function-wasm-c's, function-wasm-zig's, function-wasm-odin's and
-# function-wasm-go's checked-in bindings and e2e.yml's bindings drift checks install.
+# function-wasm-go's checked-in bindings and e2e-wasm.yml's bindings drift checks install.
 PROTOC_VERSION := 35.1
 NANOPB_VERSION := 0.4.9.1
 WIT_BINDGEN_VERSION := 0.62.0
@@ -430,7 +431,7 @@ PROTO_VERSION := $(shell sed -n '1s/.*crossplane\/crossplane \(v[0-9.]*\)\..*/\1
 PROTO_URL := https://raw.githubusercontent.com/crossplane/crossplane/$(PROTO_VERSION)/proto/fn/v1/run_function.proto
 
 vendor-proto: vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens ## Re-vendor every copy at $(PROTO_VERSION), regenerate the codecs and the scaffold goldens
-	@echo "vendored run_function.proto $(PROTO_VERSION): review git diff, then comment /e2e on the PR"
+	@echo "vendored run_function.proto $(PROTO_VERSION): review git diff, then label the PR e2e:all"
 
 # Renovate's header regex reads vX.Y.Z only; anything else would leave the
 # copies untracked.
@@ -456,7 +457,7 @@ vendor-proto-fetch: ## Overwrite every copy with the upstream file at $(PROTO_VE
 # by file: a gen/ directory may hold a __pycache__ the templates must not
 # embed. The zig, c, odin, moonbit and csharp codecs have no template (the
 # zig and c templates retired, #264): each example regenerates its own over
-# its copy of the proto, and its build job in e2e.yml fails on drift.
+# its copy of the proto, and its build job in e2e-wasm.yml fails on drift.
 # function-wasm-moonbit's gen-proto runs the pinned protoc-gen-mbt through
 # moonx, so moon must be on PATH.
 vendor-proto-codecs: tools ## Regenerate every checked-in guest codec with the pinned generators and mirror them into the templates
@@ -545,7 +546,7 @@ $(PROTOC):
 		https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOC_VERSION)/protoc-$(PROTOC_VERSION)-$(PROTOC_OS)-$(PROTOC_ARCH).zip; \
 	unzip -q -o "$$tmp/protoc.zip" -d "$(TOOLS)/protoc-$(PROTOC_VERSION)" bin/protoc 'include/*'
 
-# From PyPI, as e2e.yml installs it: nanopb's prebuilt release binaries cover
+# From PyPI, as e2e-wasm.yml installs it: nanopb's prebuilt release binaries cover
 # neither linux-arm64 nor Intel macOS (the macosx-x86 asset is arm64).
 $(NANOPB_GENERATOR):
 	@echo "installing nanopb $(NANOPB_VERSION)"
@@ -553,7 +554,7 @@ $(NANOPB_GENERATOR):
 	@"$(TOOLS)/nanopb-$(NANOPB_VERSION)/bin/pip" install --quiet "nanopb==$(NANOPB_VERSION)"
 
 # The release tarball (one per OS and architecture, the binary at its top
-# level beside the licences), as e2e.yml fetches the linux one.
+# level beside the licences), as e2e-wasm.yml fetches the linux one.
 $(WIT_BINDGEN):
 	@set -e; \
 	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
