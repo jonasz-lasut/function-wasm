@@ -1453,6 +1453,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_a_grpc_timeout() {
+        let cases = [
+            ("1H", Some(Duration::from_secs(3600))),
+            ("2M", Some(Duration::from_secs(120))),
+            ("5S", Some(Duration::from_secs(5))),
+            ("200m", Some(Duration::from_millis(200))),
+            ("7u", Some(Duration::from_micros(7))),
+            ("9n", Some(Duration::from_nanos(9))),
+            ("0S", Some(Duration::ZERO)),
+            ("99999999S", Some(Duration::from_secs(99_999_999))),
+            // No value, no unit, a unit the protocol does not have, and
+            // values that are no unsigned integer.
+            ("", None),
+            ("S", None),
+            ("5", None),
+            ("5s", None),
+            ("5ms", None),
+            ("-5S", None),
+            ("1.5S", None),
+            ("5 S", None),
+        ];
+        for (header, want) in cases {
+            assert_eq!(parse_grpc_timeout(header), want, "{header:?}");
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn refusals_are_fatal_results() {
         let dir = tempfile::tempdir().expect("tempdir");
