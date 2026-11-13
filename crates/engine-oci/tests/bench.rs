@@ -10,9 +10,12 @@
 //! table is Markdown on standard output.
 //!
 //! `a_run_by_phase`, `a_run_by_memory` and `a_run_by_root_filesystem_packing`
-//! are the three; name one to run it alone.
+//! are the three that run VMs; name one to run it alone. `packing_by_level`
+//! needs no VM: it times the root filesystem's writing at each level, over
+//! the binaries GUESTFN_FIXTURE and GUESTFN_BENCH_BINARY name.
 //!
 //!   GUESTFN_BENCH_RUNS     measured runs per row (30)
+//!   GUESTFN_BENCH_ROUNDS   timed writes per row of `packing_by_level` (3)
 //!   GUESTFN_BENCH_PAD_MIB  the size of the file the padded image's process
 //!                          reads before it serves (32)
 //!   GUESTFN_BENCH_BINARY   another function's static binary, measured
@@ -28,6 +31,7 @@ use function_sdk_rust::proto::v1::{
     RequestMeta, Resource, RunFunctionRequest, RunFunctionResponse, State,
 };
 use guestfn_engine::{Config, Engine, RunOptions};
+use guestfn_engine_oci::rootfs::ZSTD_LEVEL;
 use guestfn_engine_oci::testing::{fixture_image, fixture_image_with, tar_layer};
 use guestfn_engine_oci::timeline::{self, Mark};
 use guestfn_engine_oci::{Module, Oci, Options};
@@ -451,23 +455,48 @@ fn a_run_by_memory() {
 /// How a root filesystem's blocks are packed.
 #[derive(Clone, Copy)]
 enum Packing {
-    /// As the engine writes it.
+    /// As the engine writes it: zstd at `rootfs::ZSTD_LEVEL`.
+    Engine,
+    /// As the engine wrote it before: zlib's default level.
     Gzip,
-    Zstd,
+    /// zstd at a level.
+    Zstd(u32),
     Lz4,
     /// No block compressed.
     Stored,
 }
 
 impl Packing {
-    const ALL: [Packing; 4] = [Packing::Gzip, Packing::Zstd, Packing::Lz4, Packing::Stored];
+    /// The packings a run is measured over.
+    const ALL: [Packing; 6] = [
+        Packing::Gzip,
+        Packing::Engine,
+        Packing::Zstd(1),
+        Packing::Zstd(19),
+        Packing::Lz4,
+        Packing::Stored,
+    ];
 
-    fn name(self) -> &'static str {
+    /// The packings whose writing is timed.
+    const LEVELS: [Packing; 9] = [
+        Packing::Gzip,
+        Packing::Zstd(1),
+        Packing::Zstd(3),
+        Packing::Zstd(6),
+        Packing::Zstd(9),
+        Packing::Zstd(12),
+        Packing::Zstd(15),
+        Packing::Zstd(19),
+        Packing::Lz4,
+    ];
+
+    fn name(self) -> String {
         match self {
-            Packing::Gzip => "gzip (the engine's)",
-            Packing::Zstd => "zstd 3",
-            Packing::Lz4 => "lz4",
-            Packing::Stored => "stored",
+            Packing::Engine => format!("zstd {ZSTD_LEVEL} (the engine's)"),
+            Packing::Gzip => "gzip (the engine's before)".to_string(),
+            Packing::Zstd(level) => format!("zstd {level}"),
+            Packing::Lz4 => "lz4".to_string(),
+            Packing::Stored => "stored".to_string(),
         }
     }
 }
@@ -475,11 +504,15 @@ impl Packing {
 /// The engine's squashfs written again with another packing, every node as
 /// it was.
 fn repack(squashfs: &[u8], packing: Packing) -> Vec<u8> {
-    use backhand::compression::{CompressionOptions, Compressor, Gzip, Lz4};
+    use backhand::compression::{CompressionOptions, Compressor, Gzip, Lz4, Zstd};
     use backhand::{FilesystemCompressor, FilesystemReader, FilesystemWriter};
     let (compressor, options) = match packing {
-        Packing::Gzip => return squashfs.to_vec(),
-        Packing::Zstd => (Compressor::Zstd, None),
+        Packing::Engine => return squashfs.to_vec(),
+        Packing::Gzip => (Compressor::Gzip, None),
+        Packing::Zstd(compression_level) => (
+            Compressor::Zstd,
+            Some(CompressionOptions::Zstd(Zstd { compression_level })),
+        ),
         // The kernel reads an lz4 squashfs only with its options present,
         // and only the legacy format, version 1.
         Packing::Lz4 => (
@@ -504,7 +537,9 @@ fn repack(squashfs: &[u8], packing: Packing) -> Vec<u8> {
     let reader = FilesystemReader::from_reader(Cursor::new(squashfs)).expect("the squashfs");
     let mut writer = FilesystemWriter::from_fs_reader(&reader).expect("a writer");
     writer.set_compressor(FilesystemCompressor::new(compressor, options).expect("a compressor"));
-    if matches!(packing, Packing::Stored) {
+    // As the engine writes it, with no options block; the stored packing's
+    // would name a level the kernel refuses.
+    if matches!(packing, Packing::Stored | Packing::Zstd(_)) {
         writer.set_emit_compression_options(false);
     }
     let mut out = Cursor::new(Vec::new());
@@ -614,6 +649,91 @@ fn a_run_by_root_filesystem_packing() {
                 cells["restore"],
             );
             let _ = std::fs::remove_file(&entry);
+        }
+    }
+}
+
+/// What a packing costs where it is paid, at an image's first load, and
+/// what it leaves on disk: the engine's squashfs of each image written
+/// again at every level, timed. Runs without a VM, over the binaries
+/// GUESTFN_FIXTURE and GUESTFN_BENCH_BINARY name. The time is the whole
+/// rewrite, reading the engine's squashfs included, which is the same for
+/// every row of an image; the engine's own compile, layers unpacked and
+/// all, is the row above them.
+#[test]
+#[ignore = "a hand-run benchmark"]
+fn packing_by_level() {
+    use guestfn_engine_oci::sandbox::VmSpec;
+    use guestfn_engine_oci::testing::FakeSandbox;
+    let binaries: Vec<PathBuf> = ["GUESTFN_FIXTURE", "GUESTFN_BENCH_BINARY"]
+        .iter()
+        .filter_map(|name| std::env::var_os(name).map(PathBuf::from))
+        .collect();
+    if binaries.is_empty() {
+        println!("SKIPPED: neither GUESTFN_FIXTURE nor GUESTFN_BENCH_BINARY names a binary");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let init = dir.path().join("init");
+    std::fs::write(&init, b"").expect("init");
+    let e = Oci::with_sandbox(
+        Config::default(),
+        Options {
+            vmm: dir.path().join("firecracker"),
+            kernel: dir.path().join("vmlinux"),
+            init,
+            vcpus: 1,
+            snapshots: false,
+        },
+        Box::new(FakeSandbox::new(Default::default(), |_: &VmSpec<'_>| {
+            unreachable!("nothing runs")
+        })),
+    )
+    .expect("engine");
+    let rounds = number("GUESTFN_BENCH_ROUNDS", 3);
+    let timed = |work: &dyn Fn() -> Vec<u8>| {
+        let mut size = 0;
+        let spent: Vec<f64> = (0..rounds)
+            .map(|_| {
+                let started = Instant::now();
+                size = work().len();
+                ms(started, Instant::now())
+            })
+            .collect();
+        (Spread::of(spent).p50, size)
+    };
+    println!(
+        "\n### Packing by level{}\n\nThe median of {rounds} writes, milliseconds, one thread.\n",
+        label()
+    );
+    println!("| image | program MiB | packing | squashfs MiB | written in ms |");
+    println!("|---|---|---|---|---|");
+    for path in binaries {
+        let binary = std::fs::read(&path).expect("the binary");
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let layout = fixture_image(&binary, &["/fixture", "--insecure"], "app", &[]);
+        let row = |packing: &str, (spent, size): (f64, usize)| {
+            println!(
+                "| {name} | {:.1} | {packing} | {:.2} | {spent:.0} |",
+                mib(binary.len()),
+                mib(size),
+            );
+        };
+        row(
+            &format!("the engine's compile, zstd {ZSTD_LEVEL}"),
+            timed(&|| {
+                let m = e.compile(&layout).expect("the image");
+                e.serialize(&m).expect("its squashfs")
+            }),
+        );
+        let squashfs = e
+            .serialize(&e.compile(&layout).expect("the image"))
+            .expect("its squashfs");
+        for packing in Packing::LEVELS {
+            row(&packing.name(), timed(&|| repack(&squashfs, packing)));
         }
     }
 }

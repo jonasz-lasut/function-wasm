@@ -29,7 +29,10 @@ VM ends with the run, and the next request boots a fresh one.
 The runtime unpacks an image once per digest into a squashfs root
 filesystem, which the compiled store keeps beside function-wasm's
 artifacts, under the same key and the same LRU sweep. The module cache's
-`compile` metrics time the unpacking.
+`compile` metrics time the unpacking. The runtime packs the blocks of
+that file with zstd, which the guest reads faster than gzip: the published
+Go example runs about 120 ms sooner for it, booted or restored
+([the measurement](../one-pager-oci-runtime.md#the-sandbox)).
 
 ## Node requirements
 
@@ -148,7 +151,12 @@ memory before it boots.
 | `--vm-vcpus` | `VM_VCPUS` | `1` | vCPUs per VM |
 | `--enable-vm-snapshots` | `ENABLE_VM_SNAPSHOTS` | `false` | restore a snapshot of the booted VM per image in place of a boot. Warm-up takes the snapshot of a `--warm-modules` image, and an image's first run takes it otherwise. An alpha feature: the [design record](../one-pager-vm-snapshots.md) has what it does and what it measured |
 
-The package image includes the three files. `--module-stack-limit` has no
+The package image includes the three files. A guest kernel of your own
+needs squashfs with zstd built in (`CONFIG_SQUASHFS` and
+`CONFIG_SQUASHFS_ZSTD`), as the included one has: without it no VM mounts
+its root filesystem, and every run fails as a guest that never connected
+([Troubleshooting](../operators/troubleshooting.md#function-oci-modules)).
+`--module-stack-limit` has no
 meaning for a process and the runtime ignores it. `--module-timeout` and a
 step's `limits.timeout` bound the whole run, the boot included.
 

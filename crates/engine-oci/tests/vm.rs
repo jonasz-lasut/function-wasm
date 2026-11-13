@@ -470,6 +470,62 @@ fn the_memory_limit_kills_a_growing_process() {
     );
 }
 
+/// A root filesystem packed with a compressor the guest kernel was built
+/// without ends the run as a failure of the runtime, in a sentence and at
+/// the deadline at the latest: the init's mount is refused, the init says
+/// why on the console and powers the VM off, and no process runs. Where
+/// the VMM outlives a powered-off guest, as on x86-64, the host learns of
+/// it at the run's deadline; where the VMM exits, at once. The image here
+/// names LZMA in its superblock, which no mainline kernel reads: the
+/// refusal a kernel without CONFIG_SQUASHFS_ZSTD gives the engine's own.
+#[test]
+fn a_root_filesystem_the_kernel_cannot_read_fails_the_run() {
+    use std::io::{Seek as _, SeekFrom, Write as _};
+    let Some(t) = tools() else { return };
+    let limit = Duration::from_secs(4);
+    let e = engine(
+        &t,
+        Config {
+            timeout: limit,
+            ..Config::default()
+        },
+    );
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "echo"],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    // The superblock's compressor id, a little-endian u16 at byte 20.
+    const LZMA: u16 = 2;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(m.rootfs.path())
+        .unwrap();
+    file.seek(SeekFrom::Start(20)).unwrap();
+    file.write_all(&LZMA.to_le_bytes()).unwrap();
+    drop(file);
+    let started = std::time::Instant::now();
+    let err = ask(&e, &m, "", opts()).unwrap_err();
+    let took = started.elapsed();
+    eprintln!("an unreadable root filesystem failed the run after {took:?}: {err}");
+    assert!(
+        err.starts_with("run failed: the VMM exited before the guest connected")
+            || err
+                == format!(
+                    "run failed: {}",
+                    guestfn_engine_oci::firecracker::GUEST_NEVER_CONNECTED
+                ),
+        "{err}"
+    );
+    assert!(
+        took < limit + Duration::from_secs(5),
+        "ended after {took:?}"
+    );
+}
+
 /// With snapshots on (#255), the first run of an image boots and
 /// snapshots the VM with its init parked, and every later run restores
 /// it: the process contract is the same on both paths.

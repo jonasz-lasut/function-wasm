@@ -338,11 +338,13 @@ impl Engine for Oci {
 }
 
 /// What namespaces the compiled store: the root filesystem's format is
-/// this crate's, so its version and the platform.
+/// this crate's, so its version, the format's own number (a release does
+/// not move the crate's version) and the platform.
 pub fn version() -> String {
     format!(
-        "oci-v{}-{}-{}",
+        "oci-v{}-rootfs{}-{}-{}",
         env!("CARGO_PKG_VERSION"),
+        rootfs::FORMAT,
         std::env::consts::OS,
         std::env::consts::ARCH
     )

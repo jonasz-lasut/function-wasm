@@ -216,9 +216,10 @@ Firecracker is the sandbox for now (decision 8).
 **What boots.** The runtime unpacks the image's layers once per image
 digest, applies the whiteouts and preserves ownership and modes without
 root, into the form the sandbox boots from. For a VMM with block devices
-only, that form is a squashfs image, which a pure Rust writer builds
-straight from the layer tarballs; a VMM that shares files through
-virtio-fs takes a directory instead. The image config, with the user
+only, that form is a squashfs image, which the runtime writes
+straight from the layer tarballs with its blocks packed with zstd
+(the packing of the root filesystem, after this paragraph); a VMM
+that shares files through virtio-fs takes a directory instead. The image config, with the user
 resolved against the image's `/etc/passwd` and `/etc/group`, goes
 inside the squashfs, so a stored root filesystem describes itself. The
 runtime keeps the unpacked files in memory until the squashfs exists, so it
@@ -249,6 +250,38 @@ config is what the record calls the project's own kernel build. Whether a
 release may include the published kernel is open
 ([#281](https://github.com/jonasz-lasut/guestfn/issues/281)).
 `guestfn_module_compile_duration_seconds` measures the unpacking.
+
+**The packing of the root filesystem.** The squashfs blocks are zstd at
+level 3.
+The guest decompresses every block the process reads, at the start of
+every run, so the packing is part of a run's latency. A CI runner measured
+it on 2026-11-13, 30 runs per cell in one job, with the engine's squashfs
+of each image written again with each of the other compressors:
+
+| image | packing | squashfs | written in | a booted run, median | a restored run, median |
+|---|---|---|---|---|---|
+| `function-oci-go`, 37.4 MiB | gzip | 12.20 MiB | 1450 ms | 552 ms | 448 ms |
+| | zstd 1 | 12.83 MiB | 137 ms | 434 ms | 333 ms |
+| | zstd 3 | 12.22 MiB | 173 ms | 436 ms | 321 ms |
+| | zstd 19 | 10.45 MiB | 13 263 ms | 444 ms | 329 ms |
+| | stored | 37.39 MiB | | 402 ms | 292 ms |
+| the fixture, 9.2 MiB | gzip | 3.35 MiB | 338 ms | 321 ms | 186 ms |
+| | zstd 3 | 3.36 MiB | 42 ms | 294 ms | 170 ms |
+
+Level 3 gives the size gzip gave. A run of the Go example reads it about
+120 ms sooner, and the image's first load writes it in an eighth of the
+time.
+A higher level buys disk alone: level 19 is 14 % smaller, takes 77 times
+as long to write and runs no faster. Level 1 saves 36 ms of a first load
+for 5 % more disk. A squashfs that compresses nothing runs another 30 ms
+faster at three times the disk. The guest kernel has to read zstd
+(`CONFIG_SQUASHFS_ZSTD`), which the kernels Firecracker's CI builds do
+on both architectures for 5.10, 6.1 and 6.18, the three lines the release
+matrix tests. backhand's zstd is the C library, built into function-oci
+alone: the dependency graph of function-wasm has none of it. The format is
+part of `engine::version()`, so a runtime with another packing starts a
+new directory of the compiled store and no VM snapshot taken over one
+format meets a root filesystem written in the other.
 
 **One VM per request.** The runtime starts the VM with the kernel, the
 root filesystem read-only, a vsock device, memory sized to the step's
@@ -623,6 +656,13 @@ The owner decided this on 2026-11-12:
     belongs to the init, which the egress proxy
     ([#280](https://github.com/jonasz-lasut/guestfn/issues/280)) depends
     on.
+
+The owner decided this on 2026-11-13, with the measurements of
+[#376](https://github.com/jonasz-lasut/guestfn/pull/376):
+
+18. **zstd for the root filesystem.** The runtime packs the squashfs with
+    zstd in place of gzip, and function-oci accepts the C library that
+    comes with it. function-wasm doesn't get it.
 
 ## Phases
 

@@ -32,6 +32,10 @@ use crate::plan::{self, First};
 
 /// The image's root filesystem: Firecracker exposes the one drive as vda.
 const ROOTFS_DEVICE: &str = "/dev/vda";
+/// What the root filesystem asks of the guest kernel, said when its mount
+/// fails: a kernel built without the decompressor refuses the mount with
+/// no more than `Invalid argument`.
+const ROOTFS_NEEDS: &str = "the root filesystem is a squashfs packed with zstd, which the guest kernel has to read (CONFIG_SQUASHFS and CONFIG_SQUASHFS_ZSTD)";
 const LOWER: &str = "/lower";
 const RW: &str = "/rw";
 const MERGED: &str = "/merged";
@@ -286,7 +290,8 @@ fn mount_base() -> Result<(), String> {
         "squashfs",
         libc::MS_RDONLY | UNTRUSTED,
         "",
-    )?;
+    )
+    .map_err(|e| format!("{e}; {ROOTFS_NEEDS}"))?;
     mount("tmpfs", RW, "tmpfs", UNTRUSTED, "")?;
     for dir in ["/rw/upper", "/rw/work"] {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {dir}: {e}"))?;
