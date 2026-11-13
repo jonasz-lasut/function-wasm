@@ -267,6 +267,7 @@ where
     let ceilings = Config {
         timeout: args.module_timeout,
         memory_limit: args.module_memory_limit << 20,
+        module_size_limit: args.module_size_limit << 20,
         ..Default::default()
     };
     let mut engine = None;

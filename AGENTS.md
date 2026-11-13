@@ -597,7 +597,10 @@ crates/engine-oci/          the OCI engine of the function-oci runtime (package 
                             config and layers, every blob verified, over the Writer of
                             guestfn-engine's layout module), compiled by applying the layers
                             with their whiteouts into a tree and writing a squashfs
-                            (rootfs.rs, backhand, gzip, ownership from the tar headers, the
+                            (rootfs.rs, backhand, gzip, ownership from the tar headers, what
+                            the layers unpack to bounded to eight times Config's
+                            module_size_limit - the runtime's --module-size-limit - and to a
+                            million entries, counted through a capped reader, the
                             image config with the user resolved inside it at
                             /.guestfn/config.json) that is the compiled store's artifact and
                             the VM's read-only block device; image.rs is the config, the

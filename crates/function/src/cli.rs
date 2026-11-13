@@ -335,6 +335,7 @@ where
             backtrace_details: args.sdk.debug,
             max_concurrent_runs: args.max_concurrent_runs,
             max_total_run_memory: args.max_total_run_memory << 20,
+            module_size_limit: args.module_size_limit << 20,
         },
         &args.engine,
     ) {

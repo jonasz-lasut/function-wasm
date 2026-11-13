@@ -143,6 +143,13 @@ A refusal states the module. The common ones:
 - `image runs as root`: set a non-root `USER` in the `Dockerfile`.
 - `image is built for linux/arm64, and this runtime runs on linux/amd64`:
   build for the node's platform, or push a multi-platform index.
+- `image unpacks to more than 1073741824 bytes, eight times the size limit
+  (--module-size-limit)`: the layers unpack to more than eight times the
+  runtime's `--module-size-limit` between them. Build a smaller image, or
+  have the operator raise the flag.
+- `image holds more than 1000000 entries, the most the OCI runtime
+  unpacks`: the layers contain more than a million files, directories and
+  links between them. Build a smaller image.
 - `process exited with status 1 before answering the call: <line>`: the
   process ended before it answered. The line is the last one it logged. An
   SDK server without `--insecure` ends this way: check the manifest's

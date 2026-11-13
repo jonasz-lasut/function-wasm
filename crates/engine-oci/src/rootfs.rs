@@ -5,14 +5,23 @@
 //! engine's own config goes in beside the image's files, under a path no
 //! image uses, so a stored root filesystem describes itself.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::Error;
 
 /// Where the engine keeps the image config inside the root filesystem.
 pub const CONFIG_PATH: &str = ".guestfn/config.json";
+
+/// An image may unpack to this many times the size limit its layers were
+/// fetched under: the rule the WebAssembly runtime's tar layers follow.
+pub const EXPANSION_FACTOR: u64 = 8;
+
+/// The most tar entries an image's layers may hold between them.
+pub const MAX_ENTRIES: u64 = 1_000_000;
 
 /// One entry of the tree, keyed by its path with no leading slash.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +36,8 @@ pub struct Node {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeKind {
-    File(Vec<u8>),
+    /// Shared, so a hard link costs no second copy of the bytes.
+    File(Arc<[u8]>),
     Dir,
     Symlink(String),
     Char(u32, u32),
@@ -35,9 +45,48 @@ pub enum NodeKind {
     Fifo,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Tree {
     nodes: BTreeMap<String, Node>,
+    /// The bytes the image may unpack to, and how many of them are left.
+    max: u64,
+    left: u64,
+    /// The tar entries the image may hold, and how many were read so far,
+    /// over every layer.
+    max_entries: u64,
+    entries: u64,
+}
+
+impl Default for Tree {
+    fn default() -> Tree {
+        Tree::with_size_limit(crate::DEFAULT_MODULE_SIZE_LIMIT)
+    }
+}
+
+/// Counts what a layer unpacks to against the bytes the image has left,
+/// and ends the read where they run out.
+struct Capped<'a, R> {
+    inner: R,
+    left: &'a Cell<u64>,
+    exceeded: &'a Cell<bool>,
+}
+
+impl<R: Read> Read for Capped<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.left.get();
+        // One byte past the bound tells an image over it from one that
+        // ends on it.
+        let want = usize::try_from(left.saturating_add(1))
+            .unwrap_or(usize::MAX)
+            .min(buf.len());
+        let n = self.inner.read(&mut buf[..want])?;
+        if n as u64 > left {
+            self.exceeded.set(true);
+            return Err(std::io::Error::other("the image's size bound"));
+        }
+        self.left.set(left - n as u64);
+        Ok(n)
+    }
 }
 
 /// A layer's media type says how it is packed; a gzip magic says so too,
@@ -49,8 +98,30 @@ pub fn is_gzip(media_type: &str, bytes: &[u8]) -> bool {
 }
 
 impl Tree {
+    /// A tree bounded by the default size limit.
     pub fn new() -> Tree {
         Tree::default()
+    }
+
+    /// A tree for an image fetched under `limit` bytes
+    /// (--module-size-limit): its layers may unpack to EXPANSION_FACTOR
+    /// times that between them.
+    pub fn with_size_limit(limit: u64) -> Tree {
+        let max = limit.saturating_mul(EXPANSION_FACTOR);
+        Tree {
+            nodes: BTreeMap::new(),
+            max,
+            left: max,
+            max_entries: MAX_ENTRIES,
+            entries: 0,
+        }
+    }
+
+    fn over_the_bound(&self) -> Error {
+        Error(format!(
+            "image unpacks to more than {} bytes, eight times the size limit (--module-size-limit)",
+            self.max
+        ))
     }
 
     pub fn get(&self, path: &str) -> Option<&Node> {
@@ -129,8 +200,9 @@ impl Tree {
 
     /// Applies one layer: its entries over the tree, a `.wh.<name>` entry
     /// removing `<name>` and an opaque marker (`.wh..wh..opq`) emptying its
-    /// directory of what the layers below put there. A hard link copies
-    /// its target's bytes.
+    /// directory of what the layers below put there. A hard link shares
+    /// its target's bytes. Every byte the layer unpacks to counts against
+    /// the image's bound, and the read stops where the bound is passed.
     pub fn apply_layer(&mut self, media_type: &str, bytes: &[u8]) -> Result<(), Error> {
         if media_type.ends_with("+zstd") || bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
             return Err(Error(
@@ -142,12 +214,35 @@ impl Tree {
         } else {
             Box::new(bytes)
         };
-        let mut archive = tar::Archive::new(reader);
+        let over = self.over_the_bound().0;
+        let left = Cell::new(self.left);
+        let exceeded = Cell::new(false);
+        // A read the bound ended says so, whatever the tar reader made of
+        // the failure.
+        let failed = |what: String, e: std::io::Error| {
+            if exceeded.get() {
+                Error(over.clone())
+            } else {
+                Error(format!("{what}: {e}"))
+            }
+        };
+        let mut archive = tar::Archive::new(Capped {
+            inner: reader,
+            left: &left,
+            exceeded: &exceeded,
+        });
         let entries = archive
             .entries()
-            .map_err(|e| Error(format!("cannot read layer: {e}")))?;
+            .map_err(|e| failed("cannot read layer".to_string(), e))?;
         for entry in entries {
-            let mut entry = entry.map_err(|e| Error(format!("cannot read layer: {e}")))?;
+            let mut entry = entry.map_err(|e| failed("cannot read layer".to_string(), e))?;
+            self.entries += 1;
+            if self.entries > self.max_entries {
+                return Err(Error(format!(
+                    "image holds more than {} entries, the most the OCI runtime unpacks",
+                    self.max_entries
+                )));
+            }
             let raw = entry
                 .path()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -218,11 +313,23 @@ impl Tree {
                 tar::EntryType::Regular
                 | tar::EntryType::Continuous
                 | tar::EntryType::GNUSparse => {
-                    let mut data = Vec::with_capacity(entry.size() as usize);
-                    entry
+                    // The header's size is a claim: the buffer grows with
+                    // what is read, and the bound ends the read.
+                    let before = left.get();
+                    let mut data = Vec::new();
+                    (&mut entry)
+                        .take(before.saturating_add(1))
                         .read_to_end(&mut data)
-                        .map_err(|e| Error(format!("cannot read layer entry {path}: {e}")))?;
-                    NodeKind::File(data)
+                        .map_err(|e| failed(format!("cannot read layer entry {path}"), e))?;
+                    // A sparse entry reads longer than the layer stores
+                    // it: its holes count too.
+                    let stored = before - left.get();
+                    let holes = (data.len() as u64).saturating_sub(stored);
+                    if holes > left.get() {
+                        return Err(Error(over));
+                    }
+                    left.set(left.get() - holes);
+                    NodeKind::File(data.into())
                 }
                 // Extended headers, long names and the rest are the tar
                 // crate's to fold into the entries above.
@@ -239,6 +346,7 @@ impl Tree {
                 },
             );
         }
+        self.left = left.get();
         Ok(())
     }
 
@@ -269,7 +377,7 @@ impl Tree {
             match &node.kind {
                 NodeKind::Dir => fs.push_dir(&at, header).map_err(|e| fail(path, e))?,
                 NodeKind::File(data) => fs
-                    .push_file(std::io::Cursor::new(data.clone()), &at, header)
+                    .push_file(std::io::Cursor::new(&data[..]), &at, header)
                     .map_err(|e| fail(path, e))?,
                 NodeKind::Symlink(target) => fs
                     .push_symlink(target.as_str(), &at, header)
@@ -303,7 +411,7 @@ impl Tree {
                 }
             }
             fs.push_file(
-                std::io::Cursor::new(data.to_vec()),
+                std::io::Cursor::new(*data),
                 format!("/{}", path.trim_matches('/')),
                 NodeHeader::new(0o600, 0, 0, 0),
             )
@@ -360,7 +468,112 @@ pub fn read_file(image: &Path, path: &str) -> Result<Vec<u8>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::tar_layer;
+    use crate::testing::{Layer, gzip, tar_layer};
+
+    const TAR: &str = "application/vnd.oci.image.layer.v1.tar";
+    const TAR_GZIP: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
+
+    fn refusal(t: &mut Tree, layer: &[u8]) -> String {
+        t.apply_layer(TAR, layer).unwrap_err().0
+    }
+
+    /// The bound is on what the layers unpack to between them, eight times
+    /// the size limit, and a layer that ends on it is admitted.
+    #[test]
+    fn an_image_over_the_expanded_size_bound_is_refused() {
+        const OVER: &str = "image unpacks to more than 8192 bytes, eight times the size limit (--module-size-limit)";
+        // A gzip layer far smaller than what it unpacks to.
+        let zeros = vec![0u8; 1 << 20];
+        let packed = gzip(&Layer::new().file("zeros", &zeros, 0o644).finish());
+        assert!(packed.len() < zeros.len() / 64);
+        let mut t = Tree::with_size_limit(1024);
+        assert_eq!(t.apply_layer(TAR_GZIP, &packed).unwrap_err().0, OVER);
+
+        // Header, data and the block that ends the archive: 512 + 2560 +
+        // 512 bytes a layer, so two fit and the third passes the bound.
+        let layer = |name: &str| Layer::new().file(name, &[1u8; 2560], 0o644).finish();
+        let mut t = Tree::with_size_limit(1024);
+        t.apply_layer(TAR, &layer("a")).unwrap();
+        t.apply_layer(TAR, &layer("b")).unwrap();
+        assert_eq!(refusal(&mut t, &layer("c")), OVER);
+        assert_eq!(t.get("b").unwrap().kind, NodeKind::File([1u8; 2560].into()));
+
+        // 512 + 7168 + 512 = 8192: on the bound.
+        let mut t = Tree::with_size_limit(1024);
+        t.apply_layer(TAR, &Layer::new().file("a", &[1u8; 7168], 0o644).finish())
+            .unwrap();
+        assert_eq!(t.left, 0);
+    }
+
+    /// A header may state any size: nothing is allocated from it, and the
+    /// read ends with the layer or at the bound.
+    #[test]
+    fn a_declared_size_is_never_allocated() {
+        let layer = Layer::new().declaring("big", 1 << 50, b"tiny").finish();
+        assert_eq!(
+            refusal(&mut Tree::new(), &layer),
+            "cannot read layer: unexpected EOF during skip"
+        );
+        let mut data = vec![0u8; 16 << 10];
+        data.extend_from_slice(&[0u8; 1024]);
+        let layer = gzip(&Layer::new().declaring("big", 1 << 50, &data).finish());
+        assert_eq!(
+            Tree::with_size_limit(1024)
+                .apply_layer(TAR_GZIP, &layer)
+                .unwrap_err()
+                .0,
+            "image unpacks to more than 8192 bytes, eight times the size limit (--module-size-limit)"
+        );
+    }
+
+    #[test]
+    fn an_image_with_too_many_entries_is_refused() {
+        let layer = Layer::new()
+            .dir("a", 0o755)
+            .file("a/b", b"", 0o644)
+            .whiteout("c")
+            .finish();
+        let mut t = Tree::new();
+        t.max_entries = 5;
+        t.apply_layer(TAR, &layer).unwrap();
+        assert_eq!(
+            refusal(&mut t, &layer),
+            "image holds more than 5 entries, the most the OCI runtime unpacks"
+        );
+    }
+
+    /// A hard link is its target's bytes, not a copy of them, with the
+    /// link's own header for the rest.
+    #[test]
+    fn a_hard_link_shares_its_targets_bytes() {
+        let mut t = Tree::new();
+        t.apply_layer(
+            TAR,
+            &Layer::new()
+                .file("bin/tool", b"#!", 0o4755)
+                .link("bin/alias", "bin/tool")
+                .finish(),
+        )
+        .unwrap();
+        let (NodeKind::File(tool), NodeKind::File(alias)) = (
+            &t.get("bin/tool").unwrap().kind,
+            &t.get("bin/alias").unwrap().kind,
+        ) else {
+            panic!("two files");
+        };
+        assert!(Arc::ptr_eq(tool, alias));
+        assert_eq!(t.get("bin/tool").unwrap().mode, 0o4755);
+        assert_eq!(t.get("bin/alias").unwrap().mode, 0o644);
+    }
+
+    #[test]
+    fn a_hard_link_to_nothing_is_refused() {
+        let layer = Layer::new().link("bin/alias", "bin/tool").finish();
+        assert_eq!(
+            refusal(&mut Tree::new(), &layer),
+            "layer links bin/alias to bin/tool, which is not in the image"
+        );
+    }
 
     #[test]
     fn layers_apply_in_order_with_whiteouts() {

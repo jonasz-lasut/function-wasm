@@ -23,8 +23,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub(crate) use guestfn_engine::{
-    ArtifactStore, Config, Engine, Error, Inspection, RunOptions, concurrency, duration, grpc,
-    metrics,
+    ArtifactStore, Config, DEFAULT_MODULE_SIZE_LIMIT, Engine, Error, Inspection, RunOptions,
+    concurrency, duration, grpc, metrics,
 };
 pub(crate) use guestfn_oci_protocol as protocol;
 pub use image::ImageConfig;
@@ -197,7 +197,7 @@ impl Oci {
         let layout = layout::parse(bytes)?;
         let mut config = ImageConfig::parse(&layout.config)?;
         config.check().map_err(Error)?;
-        let mut tree = rootfs::Tree::new();
+        let mut tree = rootfs::Tree::with_size_limit(self.config.module_size_limit);
         let mut size = 0u64;
         for (i, layer) in layout.layers.iter().enumerate() {
             tree.apply_layer(&layer.descriptor.media_type, &layer.bytes)
@@ -327,6 +327,10 @@ mod tests {
     use crate::testing::{FakeSandbox, fixture_image};
 
     fn engine(sandbox: FakeSandbox) -> Oci {
+        engine_with(Config::default(), sandbox)
+    }
+
+    fn engine_with(config: Config, sandbox: FakeSandbox) -> Oci {
         let dir = tempfile::tempdir().unwrap();
         let init = dir.path().join("init");
         std::fs::write(&init, b"#!/bin/sh\n").unwrap();
@@ -337,7 +341,7 @@ mod tests {
             vcpus: 1,
             snapshots: false,
         };
-        let e = Oci::with_sandbox(Config::default(), options, Box::new(sandbox)).unwrap();
+        let e = Oci::with_sandbox(config, options, Box::new(sandbox)).unwrap();
         // The temp dir goes; the engine read the init already.
         std::mem::forget(dir);
         e
@@ -476,6 +480,35 @@ mod tests {
         assert!(seen[0].env.contains(&"A=1".to_string()));
         assert!(seen[0].env.contains(&"B=bound".to_string()));
         assert_eq!((seen[0].uid, seen[0].gid), (1000, 1000));
+    }
+
+    /// What an image unpacks to is bounded by the size limit the engine
+    /// was configured with, and the refusal names the layer that passed it.
+    #[test]
+    fn an_image_that_unpacks_past_the_bound_is_refused_at_compile() {
+        let config = Config {
+            module_size_limit: 4096,
+            ..Config::default()
+        };
+        let e = engine_with(
+            config,
+            FakeSandbox::new(Default::default(), |_: &VmSpec<'_>| unreachable!()),
+        );
+        let image = fixture_image(&vec![0u8; 1 << 20], &["/fixture"], "app", &[]);
+        let err = e.compile(&image).unwrap_err().0;
+        assert!(err.starts_with("cannot unpack layer 0 (sha256:"), "{err}");
+        assert!(
+            err.ends_with(
+                "): image unpacks to more than 32768 bytes, eight times the size limit (--module-size-limit)"
+            ),
+            "{err}"
+        );
+        engine(FakeSandbox::new(
+            Default::default(),
+            |_: &VmSpec<'_>| unreachable!(),
+        ))
+        .compile(&image)
+        .unwrap();
     }
 
     #[test]
