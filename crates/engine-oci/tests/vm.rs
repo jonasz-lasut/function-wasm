@@ -4,7 +4,9 @@
 //! by GUESTFN_FIRECRACKER, GUESTFN_KERNEL, GUESTFN_INIT and
 //! GUESTFN_FIXTURE (`make oci.tools` and `make oci.init` set them up); without them every test
 //! is skipped, or fails under GUESTFN_REQUIRE_KVM=1, which the OCI
-//! workflow sets.
+//! workflow sets. A skip is said on the process's own stderr (`SKIPPED:
+//! ...`, with the count so far), since the harness shows nothing a passing
+//! test printed.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -46,12 +48,30 @@ fn tools() -> Option<Tools> {
                     "GUESTFN_REQUIRE_KVM is set but GUESTFN_FIRECRACKER, GUESTFN_KERNEL, GUESTFN_INIT or GUESTFN_FIXTURE is not"
                 );
             }
-            eprintln!(
-                "skipping: GUESTFN_FIRECRACKER, GUESTFN_KERNEL, GUESTFN_INIT and GUESTFN_FIXTURE name the VM tools"
+            report_skip(
+                "the VM tools are not named (GUESTFN_FIRECRACKER, GUESTFN_KERNEL, GUESTFN_INIT, GUESTFN_FIXTURE; make oci.test sets them)",
             );
             None
         }
     }
+}
+
+/// Says that the calling test asserted nothing, on the process's own
+/// stderr: the harness captures what a passing test prints with eprintln!,
+/// so a skipped suite would otherwise read as a passed one. The count is
+/// this binary's so far, and the last line carries the total.
+fn report_skip(reason: &str) {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static SKIPPED: AtomicUsize = AtomicUsize::new(0);
+    let skipped = SKIPPED.fetch_add(1, Ordering::SeqCst) + 1;
+    let thread = std::thread::current();
+    let test = thread.name().unwrap_or("a test");
+    // One write, so lines from tests running side by side stay whole.
+    let line = format!(
+        "SKIPPED: {test} asserted nothing: {reason} ({skipped} skipped so far in the VM suite)\n"
+    );
+    let _ = std::io::stderr().write_all(line.as_bytes());
 }
 
 fn engine(t: &Tools, config: Config) -> Oci {
@@ -440,9 +460,12 @@ fn the_memory_limit_kills_a_growing_process() {
     let mut o = opts();
     o.memory_limit = Some(96 << 20);
     let err = ask(&e, &m, "", o).unwrap_err();
+    // The limit's own sentence and no other: a bare `process was killed by
+    // signal 9` here means the init no longer recognises the kernel's OOM
+    // kill (the cgroup, its kernel log check or the exit's oom field), and
+    // a module's author would be told of a signal instead of the limit.
     assert!(
-        err.starts_with("process was killed: the run's memory limit of 96Mi was exceeded")
-            || err.starts_with("process was killed by signal 9"),
+        err.starts_with("process was killed: the run's memory limit of 96Mi was exceeded"),
         "{err}"
     );
 }

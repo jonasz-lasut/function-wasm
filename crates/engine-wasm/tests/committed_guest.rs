@@ -5,7 +5,13 @@
 //! (issue #150). The guest GETs the URL its composite resource's spec.egress
 //! names and writes the status and body, or the host's refusal, into the
 //! composite's status.
+//!
+//! The module is a build output checked in, and the build embeds the
+//! machine's paths, so no rebuild can be compared with it byte for byte.
+//! `fn.wasm.stamp` beside it records what it was built from instead, and
+//! the last test here holds the tree to that record.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,6 +21,7 @@ use guestfn_engine::wire::{HttpRequester, Request, Response};
 use guestfn_engine::{Config, RunOptions};
 use guestfn_engine_wasm::{Module, Wasmtime};
 use prost::Message;
+use sha2::{Digest as _, Sha256};
 
 const GUEST: &[u8] = include_bytes!("../../e2e/guest/fn.wasm");
 
@@ -173,4 +180,87 @@ fn an_http_wait_does_not_consume_the_deadline() {
         .run(&m, &request("https://api.example.com/v1/slow"), opts)
         .expect("the wait is credited back, the run completes");
     assert_eq!(egress_status(&out)["status"].as_f64(), Some(200.0));
+}
+
+/// What `make e2e.guest` compiles into fn.wasm, relative to the guest's
+/// directory: a directory stands for every file under it. Cargo.lock is
+/// left out on purpose, so a lock-only dependency update needs no rebuild;
+/// the requirements in Cargo.toml are in.
+const SOURCES: &[&str] = &[
+    "Cargo.toml",
+    "build.rs",
+    "guestfn.lock",
+    "rust-toolchain.toml",
+    "src",
+    "wit/world.wit",
+    "../../guestfn/templates/rust/proto/run_function.proto",
+];
+const STAMP: &str = "fn.wasm.stamp";
+
+fn guest_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../e2e/guest")
+}
+
+/// Every file a source names, with the name it is hashed under.
+fn source_files(dir: &Path, name: &str, into: &mut Vec<(String, PathBuf)>) {
+    let path = dir.join(name);
+    if !path.is_dir() {
+        into.push((name.to_string(), path));
+        return;
+    }
+    for entry in std::fs::read_dir(&path).expect("a source directory") {
+        let file = entry.expect("a directory entry").file_name();
+        let file = file.to_str().expect("a UTF-8 file name");
+        source_files(dir, &format!("{name}/{file}"), into);
+    }
+}
+
+/// The record of the tree as it is: one digest over the sources, each
+/// under its name and length so no two trees share a digest, and the
+/// module's own.
+fn stamp_of_the_tree() -> String {
+    let dir = guest_dir();
+    let mut files = Vec::new();
+    for source in SOURCES {
+        source_files(&dir, source, &mut files);
+    }
+    files.sort();
+    let mut sources = Sha256::new();
+    for (name, path) in &files {
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("cannot read {name}: {e}"));
+        sources.update(name.as_bytes());
+        sources.update([0]);
+        sources.update((bytes.len() as u64).to_le_bytes());
+        sources.update(&bytes);
+    }
+    let module = std::fs::read(dir.join("fn.wasm")).expect("the committed module");
+    [
+        "# What fn.wasm was built from. `make e2e.guest` writes this file after",
+        "# it builds the module; crates/engine-wasm/tests/committed_guest.rs",
+        "# fails when the sources or the module no longer match it.",
+        &format!("sources sha256:{}", hex::encode(sources.finalize())),
+        &format!("fn.wasm sha256:{}", hex::encode(Sha256::digest(&module))),
+        "",
+    ]
+    .join("\n")
+}
+
+/// A source edited with no rebuild, or a module replaced with no record
+/// of its sources, fails here: the suites that drive fn.wasm would
+/// otherwise test a module the source no longer describes.
+/// `make e2e.guest` rebuilds the module and writes the record
+/// (UPDATE_GUEST_STAMP, which nothing else sets).
+#[test]
+fn the_committed_module_is_built_from_its_sources() {
+    let path = guest_dir().join(STAMP);
+    let tree = stamp_of_the_tree();
+    if std::env::var_os("UPDATE_GUEST_STAMP").is_some() {
+        std::fs::write(&path, &tree).expect("write the stamp");
+        return;
+    }
+    let recorded = std::fs::read_to_string(&path).expect("crates/e2e/guest/fn.wasm.stamp");
+    assert_eq!(
+        recorded, tree,
+        "crates/e2e/guest no longer matches {STAMP}: its sources or fn.wasm changed without the other. Run `make e2e.guest` and commit fn.wasm with {STAMP}"
+    );
 }

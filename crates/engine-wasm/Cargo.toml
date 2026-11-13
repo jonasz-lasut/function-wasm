@@ -79,6 +79,9 @@ prost = "0.14"
 # The committed-guest tests build the composite resource a RunFunctionRequest
 # carries (function-sdk-rust's Struct is pbjson's, serde-capable).
 pbjson-types = "0.9"
+# The committed guest's source stamp.
+hex = "0.4"
+sha2 = "0.11"
 
 [features]
 # The testing module: the WAT component fixtures every suite in the workspace

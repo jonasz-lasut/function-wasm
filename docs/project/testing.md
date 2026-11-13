@@ -13,6 +13,14 @@ second.
 | unit and component | `cargo test --workspace`, on every push and on a pull request that changes code | the engine, the runtime and `function validate` against in-memory stand-ins and recorded goldens, and every scaffold built and run through the host (the guest suite) |
 | end-to-end | `make e2e`, an `e2e:` label on a pull request, the [release matrix](#the-release-matrix) on a release branch | each function's package installed by Crossplane in a kind cluster, as an XR author and an operator see it |
 
+On your machine, two suites of the first tier skip what the machine can't
+run. The guest suite skips a guest whose toolchain isn't installed, and the
+VM suite of the OCI engine skips every test without KVM and its tools. The
+harness still reports a skipped test as `ok`. Each one prints a `SKIPPED:`
+line with its name, the reason and the number of tests skipped so far. CI
+sets `GUESTFN_REQUIRE_TOOLCHAINS` and `GUESTFN_REQUIRE_KVM`, which turn a
+skip into a failure.
+
 ## The tier for a new test
 
 | The change | The test |
@@ -79,7 +87,9 @@ the suite's own setup binary, in three steps:
    the package, the `wasm` profiles' runtime configs and the lifecycle
    cache volume.
    The test module as a process is built in a `rust` container on any host
-   but Linux.
+   but Linux. `make e2e.up` builds it every time, and `cargo` rebuilds only
+   what changed. A path given in `E2E_OCI_GUEST` names a prebuilt binary,
+   which `make e2e.up` uses unchanged.
 
 `make e2e.wasm-profile.<p>` and `make e2e.oci-profile.<p>` run one profile's
 tests, `make e2e.test.wasm` and `make e2e.test.oci` one runtime's,
@@ -134,7 +144,13 @@ fetched over TUF from the real public-good repository.
 `crates/e2e/guest` is the one module the suite drives: a Rust ABI v2 guest in
 its own Cargo workspace, reading the `rust` scaffold's `wit/` and `proto/` in
 place. `make e2e.guest` builds it on the scaffold's pinned
-toolchain and the result is committed as `fn.wasm`.
+toolchain and the result is committed as `fn.wasm`. The build embeds the
+machine's paths. A rebuild never matches the committed file byte for byte.
+`make e2e.guest` also writes `fn.wasm.stamp`, a digest of the module's sources
+and of the module, and `crates/engine-wasm/tests/committed_guest.rs` fails
+when either differs from the tree. Edit the module's source, then run
+`make e2e.guest` and commit both files. The stamp leaves `Cargo.lock` out, so
+a dependency update that changes the lock alone doesn't need a rebuild.
 
 The Guest XR is the composite resource the suite creates for each test, and its
 `spec` says what the module exercises:
@@ -185,7 +201,9 @@ Two more jobs run the `cargo test` targets that need tools of their own:
 - `guest-suite` runs the guest suite on every such change, with
   `GUESTFN_REQUIRE_TOOLCHAINS=1` so a missing toolchain fails instead of
   skipping. The scaffolds don't have lockfiles, and an upstream release that
-  breaks one fails this job on every pull request.
+  breaks one fails this job on every pull request. The suite also runs the
+  unit tests and `cargo clippy` of the end-to-end test module, a Cargo
+  workspace of its own that `cargo test --workspace` doesn't reach.
 - `vm-suite` builds the init and the fixture (musl), fetches the pinned
   Firecracker and kernel (`make oci.tools`) and runs the suite of the OCI
   engine in real VMs under the runner's KVM (`GUESTFN_REQUIRE_KVM=1`: a

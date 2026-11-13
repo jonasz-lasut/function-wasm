@@ -64,7 +64,8 @@ mod linux {
     /// kernel answered: `denied` for EPERM or EACCES, `allowed`, or the
     /// error when it failed another way.
     fn attempts() -> BTreeMap<String, String> {
-        let operations: [(&str, fn() -> Result<()>); 14] = [
+        type Operation = (&'static str, fn() -> Result<()>);
+        let operations: [Operation; 14] = [
             ("CAP_SYS_ADMIN mount", mount),
             ("CAP_SYS_ADMIN sethostname", sethostname),
             ("CAP_SYS_CHROOT chroot", chroot),

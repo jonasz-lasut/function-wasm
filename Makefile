@@ -161,9 +161,18 @@ e2e.done: e2e.down
 
 # The steps after the cluster run through $(MAKE), in order: the oci ones
 # depend on what the node has, which is known once the cluster exists
-# (setup fails under E2E_OCI=1 on a node without /dev/kvm).
+# (setup fails under E2E_OCI=1 on a node without /dev/kvm). The test
+# module as a process is built every time at the path this file chooses,
+# cargo deciding what is stale: a binary left by an earlier run would
+# otherwise outlive a change to its source. A path given from outside
+# (E2E_OCI_GUEST in the environment or on the command line, as CI's profile
+# jobs give the one their build job made) is taken as it is.
 e2e.up: controlplane.up e2e.crossplane
+ifeq ($(origin E2E_OCI_GUEST),file)
+	@if $(e2e_oci_wanted); then $(MAKE) e2e.oci.guest; fi
+else
 	@if $(e2e_oci_wanted); then [ -f $(E2E_OCI_GUEST) ] || $(MAKE) e2e.oci.guest; fi
+endif
 	@$(MAKE) e2e.setup
 	@if $(e2e_wasm_wanted); then $(MAKE) e2e.wasm.install; \
 	else echo "function-wasm is left out (E2E_WASM=0); the wasm profiles are skipped"; fi
@@ -340,13 +349,17 @@ e2e.dump: $(KUBECTL)
 
 # The committed test module. cargo builds it on the rust scaffold's pinned
 # toolchain (crates/e2e/guest/rust-toolchain.toml); guestfn inspect states
-# the verdict the runtime will give it.
+# the verdict the runtime will give it. The build embeds this machine's
+# paths, so the module cannot be rebuilt and compared: fn.wasm.stamp records
+# the sources it was built from, written here and held to the tree by
+# crates/engine-wasm/tests/committed_guest.rs.
 e2e.guest:
 	@$(INFO) building $(E2E_GUEST_DIR)/fn.wasm
 	@cargo run -q -p guestfn -- wit fetch --dir $(E2E_GUEST_DIR) || $(FAIL)
 	@cd $(E2E_GUEST_DIR) && cargo build --release --target wasm32-wasip3 || $(FAIL)
 	@cp $(E2E_GUEST_DIR)/target/wasm32-wasip3/release/e2e_guest.wasm $(E2E_GUEST_DIR)/fn.wasm
 	@cargo run -q -p guestfn -- inspect $(E2E_GUEST_DIR)/fn.wasm || $(FAIL)
+	@UPDATE_GUEST_STAMP=1 cargo test -q -p guestfn-engine-wasm --test committed_guest the_committed_module_is_built_from_its_sources || $(FAIL)
 	@$(OK) building $(E2E_GUEST_DIR)/fn.wasm
 
 # The vendoring loops
@@ -435,6 +448,7 @@ PROTO_VERSION := $(shell sed -n '1s/.*crossplane\/crossplane \(v[0-9.]*\)\..*/\1
 PROTO_URL := https://raw.githubusercontent.com/crossplane/crossplane/$(PROTO_VERSION)/proto/fn/v1/run_function.proto
 
 vendor-proto: vendor-proto-fetch vendor-proto-codecs vendor-proto-goldens ## Re-vendor every copy at $(PROTO_VERSION), regenerate the codecs and the scaffold goldens
+	$(WITH_TOOLS) $(MAKE) e2e.guest
 	@echo "vendored run_function.proto $(PROTO_VERSION): review git diff, then label the PR e2e:all"
 
 # Renovate's header regex reads vX.Y.Z only; anything else would leave the
