@@ -460,9 +460,12 @@ fn the_memory_limit_kills_a_growing_process() {
     let mut o = opts();
     o.memory_limit = Some(96 << 20);
     let err = ask(&e, &m, "", o).unwrap_err();
+    // The limit's own sentence and no other: a bare `process was killed by
+    // signal 9` here means the init no longer recognises the kernel's OOM
+    // kill (the cgroup, its kernel log check or the exit's oom field), and
+    // a module's author would be told of a signal instead of the limit.
     assert!(
-        err.starts_with("process was killed: the run's memory limit of 96Mi was exceeded")
-            || err.starts_with("process was killed by signal 9"),
+        err.starts_with("process was killed: the run's memory limit of 96Mi was exceeded"),
         "{err}"
     );
 }

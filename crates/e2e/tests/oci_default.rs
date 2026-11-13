@@ -241,9 +241,10 @@ async fn the_memory_limit_is_the_vms() -> Result<()> {
             .with_limits(json!({"memory": "96Mi"}));
         let guest = ns.guest("probe", &step, json!({"growMiB": 256})).await?;
         let message = guest.wait_fatal(WAIT).await?;
+        // The limit's own sentence: a bare `process was killed by signal 9`
+        // means the init no longer recognises the kernel's OOM kill.
         ensure!(
-            message.contains("the run's memory limit of 96Mi was exceeded")
-                || message.contains("process was killed by signal 9"),
+            message.contains("the run's memory limit of 96Mi was exceeded"),
             "{message}"
         );
         Ok(())
