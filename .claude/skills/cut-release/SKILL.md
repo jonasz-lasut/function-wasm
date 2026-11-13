@@ -214,7 +214,7 @@ gh run watch "$RUN" --exit-status
 
 The workflow builds the branch's runtime once and runs every profile of
 that runtime's end-to-end cluster suite on a cluster of its own per
-Crossplane version, nine jobs in parallel (`wasm / e2e (<profile>, crossplane
+Crossplane version, nine jobs in parallel (`wasm / e2e (<profile>,
 <version>)` or `oci / ...`): on the Makefile's `CROSSPLANE_VERSION` default,
 what a pull request's end-to-end run tests, and on the two older minors
 pinned in the workflow's `env` - the three minors Crossplane maintains
