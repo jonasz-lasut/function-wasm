@@ -197,7 +197,9 @@ jobs:
 
   # The one check a ruleset requires. It passes when nothing was selected
   # or everything selected passed, and fails when a selected scenario, or a
-  # build it waited for, failed or was cancelled.
+  # build it waited for, failed or was cancelled. Its check exists only once
+  # the scenarios have ended: an e2e: label added to a commit that already
+  # has a verdict leaves that verdict standing until this job replaces it.
   #
   # A label that is not an e2e: one starts a run too, with nothing to run.
   # A skipped or passing gate from that run would replace a failed one on
