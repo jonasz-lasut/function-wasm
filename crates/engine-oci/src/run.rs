@@ -5,13 +5,14 @@
 //! the Wasmtime engine's; their wording is for the reader and is no
 //! contract, docs/contract/compatibility.md).
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::concurrency::{MemPool, format_bytes};
 use crate::{Error, RunOptions, duration, metrics};
 
-use crate::sandbox::{Ended, VmSpec};
+use crate::sandbox::{Ended, OUTPUT_CAP, VmSpec};
 use crate::{Image, Oci, Rootfs};
 
 /// What the VM gets beyond the process's limit: the guest kernel, the
@@ -26,6 +27,11 @@ pub const VM_OVERHEAD_MIB: u64 = 64;
 /// The least a process is capped at: below it the kernel's own needs
 /// would end every run.
 pub const MIN_PROCESS_MIB: u64 = 16;
+/// The most of one line of the process's output that is logged or quoted
+/// in a fatal result: 16 KiB, where the container runtimes split a log
+/// line themselves, so a process that writes no newline makes no record
+/// larger than the pod's log would carry whole.
+const MAX_LINE: usize = 16 << 10;
 
 /// Released on drop: what a run reserved from the pool.
 struct Reservation {
@@ -176,11 +182,20 @@ fn boot_and_run(
         snapshots: &image.snapshots,
         store: store_of(engine, image),
     })?;
-    log_lines(&outcome.log, opts);
+    let (output, dropped) = outcome.log.into_text();
+    if dropped > 0 {
+        tracing::warn!(
+            module = %opts.module,
+            digest = %opts.digest,
+            "dropped the first {dropped} bytes of the process's output: a run's last {} are kept",
+            format_bytes(OUTPUT_CAP as u64)
+        );
+    }
+    log_lines(&output, opts);
     if !outcome.console.is_empty() {
         tracing::debug!(module = %opts.module, digest = %opts.digest, console = %outcome.console, "VM console");
     }
-    let last_line = last_line(&outcome.log);
+    let last_line = last_line(&output);
     match outcome.end {
         Ended::Deadline => Err(Error(format!(
             "run failed: module exceeded its execution deadline ({})",
@@ -226,22 +241,40 @@ fn with_last(head: String, last: &str) -> String {
     }
 }
 
-fn last_line(log: &[u8]) -> String {
-    String::from_utf8_lossy(log)
+fn last_line(output: &str) -> String {
+    let line = output
         .lines()
         .rev()
         .map(str::trim)
         .find(|l| !l.is_empty())
-        .unwrap_or_default()
-        .to_string()
+        .unwrap_or_default();
+    bounded(line).into_owned()
+}
+
+/// A line no longer than MAX_LINE: a longer one is cut there, on a
+/// character's boundary, and says how much of it is missing.
+fn bounded(line: &str) -> Cow<'_, str> {
+    if line.len() <= MAX_LINE {
+        return Cow::Borrowed(line);
+    }
+    let mut cut = MAX_LINE;
+    while !line.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    Cow::Owned(format!(
+        "{} [truncated: {} more bytes]",
+        &line[..cut],
+        line.len() - cut
+    ))
 }
 
 /// The process's output as the runtime's log: a line that parses as a
 /// JSON object with `level` and `msg` is a typed line with its other keys
 /// as fields, any other line is info, each with the module and its digest
-/// attached as the typed `log` import's lines are.
-fn log_lines(log: &[u8], opts: &RunOptions) {
-    for line in String::from_utf8_lossy(log).lines() {
+/// attached as the typed `log` import's lines are. A line, a message or
+/// the fields of one longer than MAX_LINE are cut to it.
+fn log_lines(output: &str, opts: &RunOptions) {
+    for line in output.lines() {
         let line = line.trim_end();
         if line.is_empty() {
             continue;
@@ -258,6 +291,7 @@ fn log_lines(log: &[u8], opts: &RunOptions) {
                 .map(|(k, v)| format!("{k}={v}"))
                 .collect();
             let fields = fields.join(" ");
+            let (msg, fields) = (bounded(msg), bounded(&fields));
             match level.to_ascii_lowercase().as_str() {
                 "debug" | "trace" => {
                     tracing::debug!(module = %opts.module, digest = %opts.digest, fields = %fields, "{msg}")
@@ -274,6 +308,7 @@ fn log_lines(log: &[u8], opts: &RunOptions) {
             }
             continue;
         }
+        let line = bounded(line);
         tracing::info!(module = %opts.module, digest = %opts.digest, "{line}");
     }
 }
@@ -284,7 +319,45 @@ mod tests {
 
     #[test]
     fn the_last_line_is_the_last_non_empty_one() {
-        assert_eq!(last_line(b"a\nb\n\n  \n"), "b");
-        assert_eq!(last_line(b""), "");
+        assert_eq!(last_line("a\nb\n\n  \n"), "b");
+        assert_eq!(last_line(""), "");
+    }
+
+    #[test]
+    fn a_long_line_is_cut_and_says_so() {
+        let cases: &[(&str, String, String)] = &[
+            ("a short line", "short".to_string(), "short".to_string()),
+            (
+                "exactly the bound",
+                "a".repeat(MAX_LINE),
+                "a".repeat(MAX_LINE),
+            ),
+            (
+                "one byte over",
+                "a".repeat(MAX_LINE + 1),
+                format!("{} [truncated: 1 more bytes]", "a".repeat(MAX_LINE)),
+            ),
+            (
+                "the cut inside a character",
+                format!("a{}", "\u{e9}".repeat(MAX_LINE)),
+                format!(
+                    "a{} [truncated: {} more bytes]",
+                    "\u{e9}".repeat(MAX_LINE / 2 - 1),
+                    MAX_LINE + 2
+                ),
+            ),
+        ];
+        for (name, line, want) in cases {
+            assert_eq!(bounded(line), want.as_str(), "{name}");
+        }
+        let long = format!("first\n{}\n", "z".repeat(3 * MAX_LINE));
+        assert_eq!(
+            last_line(&long),
+            format!(
+                "{} [truncated: {} more bytes]",
+                "z".repeat(MAX_LINE),
+                2 * MAX_LINE
+            )
+        );
     }
 }
