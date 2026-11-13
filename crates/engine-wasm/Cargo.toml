@@ -57,16 +57,24 @@ wasmtime-wasi-http = { version = "50.0.1", default-features = false, features = 
 # guestfn build's componentizing (componentize.rs) moves with wasmtime: the
 # wasip1 adapter is built in the wasmtime repository and published at its
 # version, so the adapter linked into a guest is always the one the
-# wasmtime-wasi that serves it was released with; wit-component, wit-parser
+# wasmtime-wasi that serves it was released with. wit-component, wit-parser
 # (the embed of a Go guest's world from its wit/ directory) and wasmparser
-# are the versions wasmtime's own bindgen already pulls, so no second copy is
-# compiled. Renovate moves the adapter with the wasmtime group and ignores the
-# other three: bump them by hand in that PR to what `cargo tree -i wit-component`
-# shows wasmtime pulling.
+# state no version of their own: the requirement is open, Cargo.lock holds
+# them at the one wasmtime's own bindgen pulls, and deny.toml refuses a
+# second copy of any of them (the deny job), so guestfn build embeds and
+# wraps with the wasm-tools release the engine reads the result with.
+# Renovate moves the adapter with the wasmtime group and leaves the other
+# three alone. Its wasmtime pull request keeps them where the lockfile had
+# them, beside the copies the new wasmtime pulls, and the deny job fails
+# until they are moved on that branch:
+#   cargo tree -i wit-component        # the version wasmtime pulls
+#   cargo update wit-component@<old> --precise <new>
+# and the same for wit-parser and wasmparser (and wat, held in the lockfile
+# at wasmtime's wasm-encoder for the same reason).
 wasi-preview1-component-adapter-provider = "50.0.1"
-wasmparser = { version = "0.258.3", default-features = false }
-wit-component = "0.258.3"
-wit-parser = "0.258.3"
+wasmparser = { version = ">=0.261", default-features = false }
+wit-component = ">=0.261"
+wit-parser = ">=0.261"
 # The WAT fixtures of the testing module (feature testutil) are assembled
 # with wat.
 wat = { version = "1", optional = true }

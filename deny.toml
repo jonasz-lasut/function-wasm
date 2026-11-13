@@ -43,6 +43,19 @@ confidence-threshold = 0.8
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"
+# The wasm-tools crates guestfn build componentizes with are the copies
+# wasmtime's own bindgen pulls (crates/engine-wasm/Cargo.toml): a second
+# version of one means a guest is embedded and wrapped by another
+# wasm-tools release than the engine reads it with. The fix is in the
+# lockfile, `cargo update <crate>@<old> --precise <the version wasmtime
+# pulls>`; wasm-encoder is here for wat, which the fixtures and wasmtime
+# share.
+deny = [
+    { crate = "wit-component", deny-multiple-versions = true },
+    { crate = "wit-parser", deny-multiple-versions = true },
+    { crate = "wasmparser", deny-multiple-versions = true },
+    { crate = "wasm-encoder", deny-multiple-versions = true },
+]
 
 [sources]
 unknown-registry = "deny"
