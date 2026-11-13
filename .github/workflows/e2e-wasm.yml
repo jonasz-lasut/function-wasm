@@ -479,7 +479,7 @@ jobs:
 
       - name: Setup nanopb_generator
         # renovate: datasource=pypi depName=nanopb versioning=pep440
-        run: pip install nanopb==0.4.9.1
+        run: pip install nanopb==0.4.9.3
 
       # Keyed per job: each zig job fetches its own build.zig.zon's
       # packages, and actions/cache keeps one save per key.
@@ -607,7 +607,7 @@ jobs:
 
       - name: Setup nanopb_generator
         # renovate: datasource=pypi depName=nanopb versioning=pep440
-        run: pip install nanopb==0.4.9.1
+        run: pip install nanopb==0.4.9.3
 
       # Keyed per job: each zig job fetches its own build.zig.zon's
       # packages (this one nanopb and mbedTLS), and actions/cache keeps one
@@ -742,7 +742,7 @@ jobs:
 
       - name: Setup nanopb_generator
         # renovate: datasource=pypi depName=nanopb versioning=pep440
-        run: pip install nanopb==0.4.9.1
+        run: pip install nanopb==0.4.9.3
 
       # Keyed per job: each zig job fetches its own build.zig.zon's
       # packages, and actions/cache keeps one save per key.

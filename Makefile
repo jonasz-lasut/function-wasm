@@ -416,7 +416,7 @@ e2e.guest:
 # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
 PROTOC_VERSION := 36.2
 # renovate: datasource=pypi depName=nanopb versioning=pep440
-NANOPB_VERSION := 0.4.9.1
+NANOPB_VERSION := 0.4.9.3
 # renovate: datasource=github-releases depName=bytecodealliance/wit-bindgen extractVersion=^v(?<version>.+)$
 WIT_BINDGEN_VERSION := 0.62.0
 
