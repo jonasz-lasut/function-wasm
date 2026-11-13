@@ -50,8 +50,8 @@ on:
         default: '[""]'
       save-caches:
         description: >-
-          Whether the jobs save their caches: true on a push to main or to a
-          release branch, never for a pull request.
+          Whether the jobs save their caches: true in e2e-caches.yml's runs
+          on main, never for a pull request or a release branch.
         type: boolean
         default: false
 

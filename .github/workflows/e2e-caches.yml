@@ -13,17 +13,29 @@
 # limitations under the License.
 
 # The caches a pull request's end-to-end run restores (e2e.yml), saved on
-# every push to main: a pull request's run saves none, so without this
-# workflow each one would build the runtimes cold. It runs the builds alone,
-# no cluster: the two workflows a pull request's labels select from, called
-# with no profile, the examples' build jobs and save-caches, plus the
-# end-to-end crate's own compile. Calling the same workflows is what keeps
-# the keys identical: the job that saves a cache here is the job that
-# restores it there. It is a workflow of its own so that a pull request
-# shows nothing of it, not even a skipped job.
+# main: a pull request's run saves none, so without this workflow each one
+# would build the runtimes cold. It runs the builds alone, no cluster: the
+# two workflows a pull request's labels select from, called with no
+# profile, the examples' build jobs and save-caches, plus the end-to-end
+# crate's own compile. Calling the same workflows is what keeps the keys
+# identical: the job that saves a cache here is the job that restores it
+# there. It is a workflow of its own so that a pull request shows nothing
+# of it, not even a skipped job.
 #
-# By hand, on any ref (a run on another branch saves in that branch's cache
-# scope, which no pull request reads):
+# A push runs only the builds whose cache it can have changed (the changes
+# job). A key is made of the compiler, the runner and the dependency files
+# that job lists, never of the sources, so a push touching none of them
+# would rebuild everything and save nothing. What no push changes is the
+# schedule's: a new stable Rust or runner image gives the Rust builds new
+# keys, and a cache nothing read for a week is evicted, so one run a day
+# builds everything and saves the keys that are missing.
+#
+# No concurrency group: a run cancelled or replaced in the queue by a later
+# push would lose its own change, since the later run compares against it.
+# Two runs saving one key at once do no harm: the second save is refused.
+#
+# By hand, on any ref, everything (a run on another branch saves in that
+# branch's cache scope, which no pull request reads):
 #   gh workflow run "E2E Caches" --ref main
 name: E2E Caches
 
@@ -31,28 +43,78 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # Which caches the push can have changed, by the files it touched. Each
+  # pattern is what the keys of its group read, so a new key input belongs
+  # here too; a missed one costs cold builds until the daily run. A run by
+  # the schedule or by hand, a push whose files cannot be listed and a
+  # change to these workflows count as everything.
+  changes:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      workspace: ${{ steps.changes.outputs.workspace }}
+      wasm-examples: ${{ steps.changes.outputs.wasm-examples }}
+      oci-examples: ${{ steps.changes.outputs.oci-examples }}
+    steps:
+      - name: Read the Push
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          all=true
+          if [ "${GITHUB_EVENT_NAME}" = push ]; then
+            # The comparison lists 300 files at most: a longer one counts
+            # as everything.
+            if gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE}...${GITHUB_SHA}" --jq '.files[].filename' > files.txt \
+              && [ "$(wc -l < files.txt)" -lt 300 ] \
+              && ! grep -Eq '^\.github/workflows/e2e-(caches|wasm|oci)\.yml$' files.txt; then
+              all=false
+            fi
+          fi
+          touched() {
+            if [ "$all" = true ] || grep -Eq "$1" files.txt; then echo true; else echo false; fi
+          }
+          {
+            # rust-cache's key: the workspace's manifests, lockfiles and
+            # toolchain files, the end-to-end guest's among them.
+            echo "workspace=$(touched '^(Cargo\.(toml|lock)|rust-toolchain(\.toml)?|\.cargo/.*|crates/.*/(Cargo\.(toml|lock)|rust-toolchain\.toml))$')"
+            # The WebAssembly examples' keys: each guest's lockfile or
+            # dependency manifest (the Zig pin they also read is in
+            # e2e-wasm.yml).
+            echo "wasm-examples=$(touched '^examples/function-wasm-[a-z]+/(Cargo\.(toml|lock)|rust-toolchain\.toml|go\.sum|build\.zig\.zon|package-lock\.json|requirements\.txt|Directory\.Packages\.props|.*\.csproj)$')"
+            echo "oci-examples=$(touched '^examples/function-oci-go/go\.sum$')"
+          } | tee -a "$GITHUB_OUTPUT"
+
   # function-wasm's builds: the runtime and guestfn, and every WebAssembly
-  # example with its dependencies.
+  # example with its dependencies. The examples build with guestfn, so
+  # build-tools runs for them too, from its cache.
   wasm:
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true' || needs.changes.outputs.wasm-examples == 'true'
     uses: ./.github/workflows/e2e-wasm.yml
     with:
       profiles: '[]'
-      examples: true
+      examples: ${{ needs.changes.outputs.wasm-examples == 'true' }}
       save-caches: true
 
   # function-oci's builds: the OCI tools, and the process guest with its
   # dependencies.
   oci:
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true' || needs.changes.outputs.oci-examples == 'true'
     uses: ./.github/workflows/e2e-oci.yml
     with:
       profiles: '[]'
-      examples: true
+      examples: ${{ needs.changes.outputs.oci-examples == 'true' }}
       save-caches: true
 
   # The end-to-end crate (the setup binary and every profile's tests),
@@ -62,6 +124,8 @@ jobs:
   seed-suite-cache:
     runs-on: ubuntu-26.04
     timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

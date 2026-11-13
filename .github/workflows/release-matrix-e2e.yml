@@ -43,8 +43,11 @@
 # states. It can also be started by hand on any ref, to try the matrix
 # itself, naming the runtime the branch would have:
 #   gh workflow run "Release Matrix E2E" --ref main -f runtime=wasm
-# A release branch saves the runtime's build cache in its own scope; a run
-# by hand on another ref restores and saves nothing (ci.yml says why).
+# No run here saves a cache: a release branch reads main's (whole at the cut,
+# when the branch is main's head, and as a base once Cargo.lock differs),
+# and a copy in the branch's own scope would be read by the next push to
+# that branch alone, usually after its week of life, while counting against
+# the 10 GiB that main's caches share.
 name: Release Matrix E2E
 
 on:
@@ -133,7 +136,6 @@ jobs:
     uses: ./.github/workflows/e2e-wasm.yml
     with:
       crossplane-versions: ${{ needs.plan.outputs.crossplane }}
-      save-caches: ${{ startsWith(github.ref, 'refs/heads/release-') }}
 
   # Every oci profile on each of the three versions, function-oci alone on
   # every cluster (the called workflow installs the udev rule that gives
@@ -144,7 +146,6 @@ jobs:
     uses: ./.github/workflows/e2e-oci.yml
     with:
       crossplane-versions: ${{ needs.plan.outputs.crossplane }}
-      save-caches: ${{ startsWith(github.ref, 'refs/heads/release-') }}
 
   # function-oci's alone: no VM runs for a function-wasm release. Only the
   # pair the image pins blocks a release. Another pair that fails uploads
@@ -179,11 +180,11 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cache the Rust Build
+      # The key is the one ci.yml's job of this name saves on main.
+      - name: Restore the Rust Build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          cache-on-failure: true
-          save-if: ${{ startsWith(github.ref, 'refs/heads/release-') }}
+          save-if: false
 
       - name: Install the musl Toolchain
         run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
