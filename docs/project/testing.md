@@ -134,7 +134,13 @@ fetched over TUF from the real public-good repository.
 `crates/e2e/guest` is the one module the suite drives: a Rust ABI v2 guest in
 its own Cargo workspace, reading the `rust` scaffold's `wit/` and `proto/` in
 place. `make e2e.guest` builds it on the scaffold's pinned
-toolchain and the result is committed as `fn.wasm`.
+toolchain and the result is committed as `fn.wasm`. The build embeds the
+machine's paths. A rebuild never matches the committed file byte for byte.
+`make e2e.guest` also writes `fn.wasm.stamp`, a digest of the module's sources
+and of the module, and `crates/engine-wasm/tests/committed_guest.rs` fails
+when either differs from the tree. Edit the module's source, then run
+`make e2e.guest` and commit both files. The stamp leaves `Cargo.lock` out, so
+a dependency update that changes the lock alone doesn't need a rebuild.
 
 The Guest XR is the composite resource the suite creates for each test, and its
 `spec` says what the module exercises:
