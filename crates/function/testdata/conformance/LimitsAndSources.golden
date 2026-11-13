@@ -1,0 +1,22 @@
+exit 1
+--- stdout
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[0] timeout-not-a-duration: refused: limits.timeout "soon" is not a valid duration
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[1] timeout-negative: refused: limits.timeout "-5s" is not a valid duration
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[2] timeout-zero: refused: limits.timeout 0s must be positive
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[3] memory-not-a-quantity: refused: limits.memory "lots" is not a valid quantity
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[4] memory-zero: refused: limits.memory 0 must be positive
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[5] memory-negative: refused: limits.memory -64Mi must be positive
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[6] concurrency-zero: refused: limits.concurrency 0 must be positive
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[7] no-type: refused: cannot resolve module: module.type is required: OCI, HTTP or Path
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[8] unknown-type: refused: cannot resolve module: module.type "Git" must be OCI, HTTP or Path
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[9] object-of-another-type: refused: cannot resolve module: module.oci is set but module.type is Path
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[10] neither-object-nor-from: refused: cannot resolve module: module.type HTTP needs exactly one of module.http and module.from
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[11] object-and-from: refused: cannot resolve module: module.type OCI needs exactly one of module.oci and module.from
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[12] manifest-path-without-path: refused: cannot resolve module: module.manifestPath is set but module.type is OCI: it names a manifest file under --module-dir and is only allowed with type Path
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[13] oci-without-ref: refused: cannot resolve module: module.oci.ref is required
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[14] http-without-url: refused: cannot resolve module: module.http.url is required
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[15] http-url-not-http: refused: cannot resolve module: module.http.url "ftp://example.com/fn.wasm" must be an http or https URL
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[16] http-without-digest: refused: cannot resolve module: module.http.digest is required: the sha256 of the module file (sha256sum fn.wasm)
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[17] http-digest-not-sha256: refused: cannot resolve module: module.http.digest "md5:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a" is not sha256:<64 hex characters>
+testdata/validate/limits-and-sources.yaml: Composition/limits-and-sources pipeline[18] http-digest-uppercase: refused: cannot resolve module: module.http.digest "sha256:3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A3F2A" is not sha256:<64 hex characters>
+--- stderr

@@ -1,0 +1,7 @@
+exit 1
+--- stdout
+testdata/validate/unsignable.yaml: Composition/unsignable pipeline[0] http: refused: cannot resolve module: module.http "https://modules.invalid/secure/fn.wasm" requires a cosign signature (operator policy), but only OCI modules can be signature-verified
+testdata/validate/unsignable.yaml: Composition/unsignable pipeline[1] path: OK (path fn.wasm)
+  module: sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, 255 B, contract wasm@1.0
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+--- stderr

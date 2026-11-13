@@ -955,6 +955,216 @@ mod tests {
         }
     }
 
+    /// A private /tmp and env bindings are refused by the first layer that
+    /// does not permit them, the composition layer read before the
+    /// operator's, each in its own words; a composition layer that scopes
+    /// another action narrows neither.
+    #[test]
+    fn a_capability_is_refused_in_the_words_of_the_layer_that_refused() {
+        use crate::authz::compile_composition_policy;
+
+        let tmp = Requires {
+            filesystem: Some(crate::manifest::Filesystem { private_tmp: true }),
+            ..Default::default()
+        };
+        let binding = |name: &str, credential: &str| EnvBinding {
+            name: name.to_string(),
+            from_credential: crate::sandboxenv::CredentialKey {
+                name: credential.to_string(),
+                key: "token".to_string(),
+            },
+        };
+        let env = Requires {
+            env: vec![
+                binding("API_TOKEN", "apikeys"),
+                binding("DB_PASSWORD", "db"),
+            ],
+            ..Default::default()
+        };
+        const PERMISSIVE: &str = r#"permit (principal, action == Action::"usePrivateTmp", resource);
+            permit (principal, action == Action::"setEnv", resource);
+            permit (principal, action == Action::"spendCredential", resource);"#;
+        const CREDENTIALS_ONLY: &str =
+            r#"permit (principal, action == Action::"spendCredential", resource);"#;
+        const NO_TMP: &str = r#"forbid (principal, action == Action::"usePrivateTmp", resource);"#;
+        const ONE_KEY: &str = r#"permit (principal, action == Action::"setEnv", resource)
+            when { ["API_TOKEN"].containsAll(context.keys) };"#;
+        const ONE_CREDENTIAL: &str = r#"permit (principal, action == Action::"spendCredential", resource == Credential::"apikeys");"#;
+
+        // (name, requires, operator policy, compositionPolicy, the refusal)
+        type Case<'a> = (
+            &'a str,
+            &'a Requires,
+            Option<&'a str>,
+            Option<&'a str>,
+            Result<(), &'a str>,
+        );
+        let cases: &[Case] = &[
+            ("Tmp/BothPermit", &tmp, Some(PERMISSIVE), None, Ok(())),
+            (
+                "Tmp/CompositionScopesAnotherAction",
+                &tmp,
+                Some(PERMISSIVE),
+                Some(ONE_KEY),
+                Ok(()),
+            ),
+            (
+                "Tmp/NoPolicyFile",
+                &tmp,
+                None,
+                None,
+                Err(
+                    "requires a private /tmp (requires.filesystem.privateTmp), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities",
+                ),
+            ),
+            (
+                "Tmp/OperatorDenies",
+                &tmp,
+                Some(CREDENTIALS_ONLY),
+                None,
+                Err(
+                    "requires a private /tmp (requires.filesystem.privateTmp), which the operator policy (--sandbox-policy-file) does not permit for this request",
+                ),
+            ),
+            (
+                "Tmp/CompositionDenies",
+                &tmp,
+                Some(PERMISSIVE),
+                Some(NO_TMP),
+                Err(
+                    "requires a private /tmp (requires.filesystem.privateTmp), which the compositionPolicy does not permit for this request",
+                ),
+            ),
+            (
+                // The composition author reads their own refusal even
+                // where the operator would refuse too.
+                "Tmp/BothDeny",
+                &tmp,
+                None,
+                Some(NO_TMP),
+                Err(
+                    "requires a private /tmp (requires.filesystem.privateTmp), which the compositionPolicy does not permit for this request",
+                ),
+            ),
+            ("Env/BothPermit", &env, Some(PERMISSIVE), None, Ok(())),
+            (
+                "Env/CompositionScopesAnotherAction",
+                &env,
+                Some(PERMISSIVE),
+                Some(NO_TMP),
+                Ok(()),
+            ),
+            (
+                "Env/NoPolicyFile",
+                &env,
+                None,
+                None,
+                Err(
+                    "requires env [API_TOKEN DB_PASSWORD] (requires.env), but the runtime has no --sandbox-policy-file, which is required to grant sandbox capabilities",
+                ),
+            ),
+            (
+                "Env/OperatorDenies",
+                &env,
+                Some(CREDENTIALS_ONLY),
+                None,
+                Err(
+                    "requires env [API_TOKEN DB_PASSWORD] (requires.env), which the operator policy (--sandbox-policy-file) does not permit (setEnv)",
+                ),
+            ),
+            (
+                // Every bound name is judged at once: one the rule leaves
+                // out refuses the set.
+                "Env/CompositionDeniesAKey",
+                &env,
+                Some(PERMISSIVE),
+                Some(ONE_KEY),
+                Err(
+                    "requires env [API_TOKEN DB_PASSWORD] (requires.env), which the compositionPolicy does not permit (setEnv)",
+                ),
+            ),
+            (
+                "Env/CompositionDeniesACredential",
+                &env,
+                Some(PERMISSIVE),
+                Some(ONE_CREDENTIAL),
+                Err(
+                    r#"requires env DB_PASSWORD from credential "db", which the compositionPolicy does not permit (spendCredential)"#,
+                ),
+            ),
+            (
+                "Env/OperatorDeniesACredential",
+                &env,
+                Some(
+                    r#"permit (principal, action == Action::"setEnv", resource);
+                       permit (principal, action == Action::"spendCredential", resource == Credential::"apikeys");"#,
+                ),
+                None,
+                Err(
+                    r#"requires env DB_PASSWORD from credential "db", which the operator policy (--sandbox-policy-file) does not permit (spendCredential)"#,
+                ),
+            ),
+        ];
+        for (name, requires, operator, composition, want) in cases {
+            let operator = operator.map(|doc| OperatorPolicy::new("test.cedar", doc).expect(name));
+            let composition = composition.map(|doc| {
+                compile_composition_policy(doc)
+                    .expect(name)
+                    .expect("present")
+            });
+            let got = admit_requires(
+                Some(requires),
+                None,
+                operator.as_ref(),
+                composition.as_deref(),
+                &Principal::default(),
+            )
+            .map(|_| ());
+            assert_eq!(got, want.map_err(str::to_string), "{name}");
+        }
+    }
+
+    /// Egress the policy layers permit still needs the host's client to go
+    /// through: a caller that hands admission none is told so, never
+    /// granted a rule nothing would enforce.
+    #[test]
+    fn egress_is_refused_where_nothing_would_carry_it() {
+        let requires = Requires {
+            egress: Some(crate::manifest::Egress {
+                http: vec![HttpRule {
+                    host: "api.example.com".to_string(),
+                    methods: vec!["GET".to_string()],
+                    ..Default::default()
+                }],
+            }),
+            ..Default::default()
+        };
+        let operator = OperatorPolicy::new(
+            "test.cedar",
+            r#"permit (principal, action == Action::"grantEgress", resource);"#,
+        )
+        .expect("policy");
+        let principal = Principal::default();
+        assert_eq!(
+            admit_requires(Some(&requires), None, Some(&operator), None, &principal).map(|_| ()),
+            Err(
+                "requires egress (requires.egress.http), but the runtime has no egress mechanism"
+                    .to_string()
+            )
+        );
+        let egress = std::sync::Arc::new(crate::egress::Egress::new(Default::default(), 0.0, 0));
+        let caps = admit_requires(
+            Some(&requires),
+            Some(&egress),
+            Some(&operator),
+            None,
+            &principal,
+        )
+        .expect("admitted");
+        assert!(caps.grant.is_some());
+        assert_eq!(caps.rules.len(), 1);
+    }
+
     #[test]
     fn allow_empty_needs_a_from_source() {
         let mut input = path_input("fn.wasm");

@@ -488,6 +488,243 @@ mod tests {
         }
     }
 
+    fn http_src(url: &str) -> ModuleSource {
+        ModuleSource {
+            r#type: "HTTP".to_string(),
+            http: Some(crate::input::HttpSource {
+                url: url.to_string(),
+                digest: format!("sha256:{}", "3f2a".repeat(16)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn path_src(path: &str) -> ModuleSource {
+        ModuleSource {
+            r#type: "Path".to_string(),
+            path: path.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Only an OCI artifact carries a cosign signature, so a source of
+    /// another type is refused wherever one is required: every Path and
+    /// HTTP source under a verifier with no operator policy, and under a
+    /// policy the HTTP sources its requireSignature rules name. A Path
+    /// source has no location for a rule to name.
+    #[test]
+    fn a_required_source_that_cannot_be_signed_is_refused_by_name() {
+        const KEY_ALONE: &str = "only cosign-signed oci modules are accepted (--cosign-key, --cosign-trusted-root or --cosign-trust-instance is set); http and path sources are refused";
+        let policy = |doc: &str| crate::authz::OperatorPolicy::new("test", doc).expect("compile");
+        let secure = policy(
+            r#"permit (principal, action == Action::"requireSignature", resource)
+               when { resource in Repository::"https://modules.example.com/secure" };"#,
+        );
+        let everything =
+            policy(r#"permit (principal, action == Action::"requireSignature", resource);"#);
+        let no_rule = policy(r#"permit (principal, action == Action::"usePrivateTmp", resource);"#);
+
+        // (name, policy, a verifier is configured, source, the refusal or
+        // None where no signature is required)
+        type Case<'a> = (
+            &'a str,
+            Option<&'a crate::authz::OperatorPolicy>,
+            bool,
+            ModuleSource,
+            Option<&'a str>,
+        );
+        let cases: &[Case] = &[
+            ("Neither/Path", None, false, path_src("fn.wasm"), None),
+            (
+                "Neither/HTTP",
+                None,
+                false,
+                http_src("https://modules.example.com/secure/fn.wasm"),
+                None,
+            ),
+            (
+                "KeyAlone/Path",
+                None,
+                true,
+                path_src("fn.wasm"),
+                Some(KEY_ALONE),
+            ),
+            (
+                "KeyAlone/HTTP",
+                None,
+                true,
+                http_src("https://modules.example.com/open/fn.wasm"),
+                Some(KEY_ALONE),
+            ),
+            (
+                "Policy/HTTPUnderTheRule",
+                Some(&secure),
+                false,
+                http_src("https://modules.example.com/secure/fn.wasm"),
+                Some(
+                    r#"module.http "https://modules.example.com/secure/fn.wasm" requires a cosign signature (operator policy), but only OCI modules can be signature-verified"#,
+                ),
+            ),
+            (
+                // The location, not the URL as written: the host lowercased,
+                // the query left out.
+                "Policy/HTTPUnderTheRuleInAnotherSpelling",
+                Some(&secure),
+                true,
+                http_src("https://Modules.Example.COM/secure/team/fn.wasm?version=2"),
+                Some(
+                    r#"module.http "https://modules.example.com/secure/team/fn.wasm" requires a cosign signature (operator policy), but only OCI modules can be signature-verified"#,
+                ),
+            ),
+            (
+                "Policy/HTTPBesideTheRule",
+                Some(&secure),
+                true,
+                http_src("https://modules.example.com/secure-not/fn.wasm"),
+                None,
+            ),
+            (
+                "Policy/HTTPOverAnotherScheme",
+                Some(&secure),
+                true,
+                http_src("http://modules.example.com/secure/fn.wasm"),
+                None,
+            ),
+            (
+                "Policy/EveryRepository/HTTP",
+                Some(&everything),
+                false,
+                http_src("https://modules.example.com/open/fn.wasm"),
+                Some(
+                    r#"module.http "https://modules.example.com/open/fn.wasm" requires a cosign signature (operator policy), but only OCI modules can be signature-verified"#,
+                ),
+            ),
+            (
+                "Policy/EveryRepository/Path",
+                Some(&everything),
+                true,
+                path_src("fn.wasm"),
+                None,
+            ),
+            (
+                // Under a policy the key only supplies keys.
+                "Policy/NoRule/HTTP",
+                Some(&no_rule),
+                true,
+                http_src("https://modules.example.com/secure/fn.wasm"),
+                None,
+            ),
+            (
+                "Policy/NoRule/Path",
+                Some(&no_rule),
+                true,
+                path_src("fn.wasm"),
+                None,
+            ),
+        ];
+        for (name, policy, verifier, source, want) in cases {
+            let refusal = signature_required(*policy, *verifier, source)
+                .then(|| non_oci_signature_refusal(*policy, source));
+            assert_eq!(refusal.as_deref(), *want, "{name}");
+        }
+    }
+
+    /// An HTTP source the composite resource chooses is fenced by its
+    /// location, so a URL that has none is refused before the fence is
+    /// asked: one carrying user information, or a path a server would
+    /// read as another.
+    #[test]
+    fn a_from_source_must_name_an_http_location() {
+        let comp = compile_composition_policy(
+            r#"permit (principal, action == Action::"pullModule", resource in Repository::"https://modules.example.com/team");"#,
+        )
+        .expect("compile")
+        .expect("some");
+        let choose = |field: &str, value: &str| {
+            let xr = serde_json::json!({
+                "status": { "module": {
+                    "url": "https://modules.example.com/team/fn.wasm",
+                    "digest": format!("sha256:{}", "3f2a".repeat(16)),
+                    field: value,
+                } },
+            });
+            let src = ModuleSource {
+                r#type: "HTTP".to_string(),
+                from: "status.module".to_string(),
+                ..Default::default()
+            };
+            from_composite(&src, Some(&comp), Some(&xr)).map(|_| ())
+        };
+        let refused = |sentence: &str| {
+            Err(format!(
+                "module.from: status.module of the composite resource: {sentence}"
+            ))
+        };
+        let cases = [
+            ("url", "https://modules.example.com/team/fn.wasm", Ok(())),
+            (
+                "url",
+                "https://MODULES.example.com/team/fn.wasm?version=2",
+                Ok(()),
+            ),
+            (
+                "url",
+                "https://team:secret@modules.example.com/team/fn.wasm",
+                refused(
+                    r#"module.http.url "https://team:secret@modules.example.com/team/fn.wasm" must name a host and carry no user information"#,
+                ),
+            ),
+            (
+                "url",
+                "https:///team/fn.wasm",
+                refused(
+                    r#"module.http.url "https:///team/fn.wasm" must name a host and carry no user information"#,
+                ),
+            ),
+            (
+                "url",
+                "https://modules.example.com/team/../other/fn.wasm",
+                refused(
+                    r#"module.http.url "https://modules.example.com/team/../other/fn.wasm" must have a normalized path (no . or .. segments, no empty segments)"#,
+                ),
+            ),
+            (
+                "url",
+                "https://modules.example.com/team//fn.wasm",
+                refused(
+                    r#"module.http.url "https://modules.example.com/team//fn.wasm" must have a normalized path (no . or .. segments, no empty segments)"#,
+                ),
+            ),
+            (
+                "url",
+                "https://modules.example.com/other/fn.wasm",
+                Err(
+                    r#"module.from: status.module of the composite resource names url "https://modules.example.com/other/fn.wasm", which the compositionPolicy does not permit (pullModule)"#
+                        .to_string(),
+                ),
+            ),
+            (
+                "manifestURL",
+                "https://modules.example.com/team/./guestfn.yaml",
+                refused(
+                    r#"module.http.manifestURL "https://modules.example.com/team/./guestfn.yaml" must have a normalized path (no . or .. segments, no empty segments)"#,
+                ),
+            ),
+            (
+                "manifestURL",
+                "https://modules.example.com/other/guestfn.yaml",
+                Err(
+                    r#"module.from: status.module of the composite resource names manifestURL "https://modules.example.com/other/guestfn.yaml", which the compositionPolicy does not permit (pullModule)"#
+                        .to_string(),
+                ),
+            ),
+        ];
+        for (field, value, want) in cases {
+            assert_eq!(choose(field, value), want, "{field} {value}");
+        }
+    }
+
     #[test]
     fn refuses_a_from_source_with_no_policy() {
         let err = from_composite(&from_src("status.module"), None, Some(&xr())).expect_err("fence");

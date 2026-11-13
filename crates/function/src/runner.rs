@@ -1453,6 +1453,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_a_grpc_timeout() {
+        let cases = [
+            ("1H", Some(Duration::from_secs(3600))),
+            ("2M", Some(Duration::from_secs(120))),
+            ("5S", Some(Duration::from_secs(5))),
+            ("200m", Some(Duration::from_millis(200))),
+            ("7u", Some(Duration::from_micros(7))),
+            ("9n", Some(Duration::from_nanos(9))),
+            ("0S", Some(Duration::ZERO)),
+            ("99999999S", Some(Duration::from_secs(99_999_999))),
+            // No value, no unit, a unit the protocol does not have, and
+            // values that are no unsigned integer.
+            ("", None),
+            ("S", None),
+            ("5", None),
+            ("5s", None),
+            ("5ms", None),
+            ("-5S", None),
+            ("1.5S", None),
+            ("5 S", None),
+        ];
+        for (header, want) in cases {
+            assert_eq!(parse_grpc_timeout(header), want, "{header:?}");
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn refusals_are_fatal_results() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1512,6 +1539,189 @@ mod tests {
                 result.message
             );
         }
+    }
+
+    /// The results of a response, each as its severity and its message.
+    fn results(rsp: &RunFunctionResponse) -> Vec<(i32, &str)> {
+        rsp.results
+            .iter()
+            .map(|r| (r.severity, r.message.as_str()))
+            .collect()
+    }
+
+    /// Only an OCI artifact carries a cosign signature: where one is
+    /// required, a Path or HTTP source is refused before it is resolved or
+    /// fetched (the HTTP host here does not exist), and where none is, a
+    /// Path module runs as it would without the key.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_required_signature_refuses_a_source_that_cannot_carry_one() {
+        const KEY_ALONE: &str = "cannot resolve module: only cosign-signed oci modules are accepted (--cosign-key, --cosign-trusted-root or --cosign-trust-instance is set); http and path sources are refused";
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            guestfn_engine_wasm::testing::tiny_component(),
+        )
+        .expect("write");
+        let path = input(serde_json::json!({"type": "Path", "path": "fn.wasm"}));
+        let http = input(serde_json::json!({"type": "HTTP", "http": {
+            "url": "https://modules.invalid/secure/fn.wasm",
+            "digest": format!("sha256:{}", "3f2a".repeat(16)),
+        }}));
+        let with_key = || {
+            let mut f = function(Some(dir.path().to_owned()));
+            let key = crate::testing::TestKey::from_seed(5);
+            f.verifier = Some(Arc::new(
+                crate::cosign::Verifier::new(key.public_pem.as_bytes()).expect("verifier"),
+            ));
+            f
+        };
+        let refused = || {
+            guestfn_engine::metrics::sample(
+                "guestfn_module_requests_total",
+                &[("outcome", "refused")],
+            )
+            .unwrap_or(0.0)
+        };
+
+        // The key with no operator policy: every module needs a signature.
+        let f = with_key();
+        let before = refused();
+        assert_eq!(
+            results(&run(&f, path.clone()).await),
+            [(Severity::Fatal as i32, KEY_ALONE)]
+        );
+        assert_eq!(
+            results(&run(&f, http.clone()).await),
+            [(Severity::Fatal as i32, KEY_ALONE)]
+        );
+        assert!(refused() >= before + 2.0, "both are counted as refused");
+
+        // Under a policy its requireSignature rules say which: the HTTP
+        // source they name, and no Path source.
+        let mut f = with_key();
+        f.policy = Some(Arc::new(
+            crate::authz::OperatorPolicy::new(
+                "test",
+                r#"permit (principal, action == Action::"requireSignature", resource)
+                   when { resource in Repository::"https://modules.invalid/secure" };"#,
+            )
+            .expect("policy"),
+        ));
+        assert_eq!(
+            results(&run(&f, http).await),
+            [(
+                Severity::Fatal as i32,
+                r#"cannot resolve module: module.http "https://modules.invalid/secure/fn.wasm" requires a cosign signature (operator policy), but only OCI modules can be signature-verified"#
+            )]
+        );
+        assert_eq!(results(&run(&f, path).await), []);
+    }
+
+    /// The credential module.oci.credentials names must come with the
+    /// request and hold something a registry can be read with: a step that
+    /// lacks it is refused before any pull (the registry here does not
+    /// exist).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pull_credential_the_request_cannot_supply_is_refused() {
+        let credential = |data: &[(&str, &str)]| Credentials {
+            source: Some(credentials::Source::CredentialData(CredentialData {
+                data: data
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.as_bytes().to_vec()))
+                    .collect(),
+            })),
+        };
+        // (name, the one credential the request carries: its name and its
+        // content, the refusal)
+        let cases: &[(&str, &str, Credentials, &str)] = &[
+            (
+                "Absent",
+                "other",
+                credential(&[("username", "u"), ("password", "p")]),
+                r#"cannot get credentials "registry" for module.oci: the request carries no such credential"#,
+            ),
+            (
+                "NoData",
+                "registry",
+                Credentials { source: None },
+                r#"cannot get credentials "registry" for module.oci: the request carries no such credential"#,
+            ),
+            (
+                "NeitherShape",
+                "registry",
+                credential(&[("token", "t0ken")]),
+                r#"cannot use credentials "registry" for module.oci: the credential carries neither a .dockerconfigjson nor username and password keys"#,
+            ),
+            (
+                "PasswordEmpty",
+                "registry",
+                credential(&[("username", "u"), ("password", "")]),
+                r#"cannot use credentials "registry" for module.oci: the credential carries neither a .dockerconfigjson nor username and password keys"#,
+            ),
+            (
+                "DockerConfigForAnotherRegistry",
+                "registry",
+                credential(&[(
+                    ".dockerconfigjson",
+                    r#"{"auths":{"ghcr.io":{"username":"u","password":"p"}}}"#,
+                )]),
+                r#"cannot use credentials "registry" for module.oci: the .dockerconfigjson carries no entry for "registry.invalid""#,
+            ),
+        ];
+        let f = function(None);
+        for (name, carried, content, want) in cases {
+            let req = RunFunctionRequest {
+                input: Some(resource::json_to_struct(
+                    input(serde_json::json!({"type": "OCI", "oci": {
+                        "ref": format!("registry.invalid/example/greeter@sha256:{}", "3f2a".repeat(16)),
+                        "credentials": "registry",
+                    }}))
+                    .as_object()
+                    .expect("object"),
+                )),
+                credentials: [(carried.to_string(), content.clone())].into(),
+                ..Default::default()
+            };
+            let rsp = f
+                .run_function(Request::new(req))
+                .await
+                .expect("never a gRPC error")
+                .into_inner();
+            assert_eq!(results(&rsp), [(Severity::Fatal as i32, *want)], "{name}");
+        }
+    }
+
+    /// A guest whose run returns bytes that are no RunFunctionResponse
+    /// fails the request with a fatal result naming the module, counted as
+    /// an error: its bytes are never handed on.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_response_that_does_not_decode_is_a_fatal_result() {
+        // Field 1 (meta) announcing more bytes than follow.
+        let (dir, _) = fenced_stage(&RunFunctionResponse::default(), &[0x0a, 0x7f, 0x01]);
+        let f = function(Some(dir.path().to_owned()));
+        let errors = || {
+            guestfn_engine::metrics::sample(
+                "guestfn_module_requests_total",
+                &[("outcome", "error")],
+            )
+            .unwrap_or(0.0)
+        };
+        let before = errors();
+        let rsp = run(
+            &f,
+            input(serde_json::json!({"type": "Path", "path": "fn.wasm"})),
+        )
+        .await;
+        let [(severity, message)] = results(&rsp)[..] else {
+            panic!("want one result, got {:?}", rsp.results);
+        };
+        assert_eq!(severity, Severity::Fatal as i32);
+        assert!(
+            message.starts_with("module module file fn.wasm failed: cannot decode response: "),
+            "{message}"
+        );
+        assert!(errors() >= before + 1.0, "counted as an error");
+        assert_eq!(rsp.meta.expect("meta").tag, "t");
     }
 
     /// The output fence's stage: a module whose run returns `rsp` as given

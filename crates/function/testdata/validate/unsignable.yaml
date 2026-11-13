@@ -1,0 +1,33 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: unsignable
+spec:
+  compositeTypeRef:
+    apiVersion: example.crossplane.io/v1
+    kind: XR
+  mode: Pipeline
+  pipeline:
+  # Only an OCI artifact carries a cosign signature, so neither of these
+  # can: where one is required the step is refused before anything is
+  # fetched (the host does not exist).
+  - step: http
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: HTTP
+        http:
+          url: https://modules.invalid/secure/fn.wasm
+          digest: sha256:3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a
+  - step: path
+    functionRef:
+      name: function-wasm
+    input:
+      apiVersion: guestfn.crossplane.io/v1
+      kind: Input
+      module:
+        type: Path
+        path: fn.wasm

@@ -268,6 +268,29 @@ mod tests {
         }
     }
 
+    /// WASI passes an environment variable as a NUL-terminated string, so
+    /// a value holding the byte is refused, naming the binding and never
+    /// the value.
+    #[test]
+    fn a_value_holding_a_nul_byte_is_refused() {
+        let mut creds = credentials("apikeys", "token", b"secret");
+        creds.extend(credentials("db", "password", b"pass\0word"));
+        let src = Sources {
+            credentials: &creds,
+            withheld: "",
+        };
+        assert_eq!(
+            materialize(
+                &[
+                    binding("API_TOKEN", "apikeys", "token"),
+                    binding("DB_PASSWORD", "db", "password"),
+                ],
+                &src
+            ),
+            Err("requires.env[1] (DB_PASSWORD): the value of DB_PASSWORD contains a NUL byte, which WASI cannot pass".to_string())
+        );
+    }
+
     #[test]
     fn checks_required_credentials_against_the_request() {
         let creds = credentials("cmdb", "payments", b"token");

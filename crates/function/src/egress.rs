@@ -1083,6 +1083,404 @@ mod tests {
         assert_eq!(rsp.body, b"after");
     }
 
+    /// As serve, with the responses built from the server's port, and
+    /// every request it received (the head, and the body its
+    /// Content-Length announces) handed back in order.
+    fn recording(
+        responses: impl FnOnce(u16) -> Vec<String>,
+    ) -> (SocketAddr, std::sync::mpsc::Receiver<Received>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let responses = responses(addr.port());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for response in responses {
+                let Ok((mut conn, _)) = listener.accept() else {
+                    return;
+                };
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                let received = loop {
+                    if let Some(received) = Received::parse(&raw) {
+                        break received;
+                    }
+                    match conn.read(&mut buf) {
+                        Ok(n) if n > 0 => raw.extend_from_slice(&buf[..n]),
+                        _ => return,
+                    }
+                };
+                let _ = tx.send(received);
+                let _ = conn.write_all(response.as_bytes());
+            }
+        });
+        (addr, rx)
+    }
+
+    /// One request as the server read it, header names lowercased.
+    #[derive(Debug, PartialEq)]
+    struct Received {
+        method: String,
+        path: String,
+        headers: BTreeMap<String, String>,
+        body: String,
+    }
+
+    impl Received {
+        /// None until the head and the announced body have arrived.
+        fn parse(raw: &[u8]) -> Option<Received> {
+            let text = String::from_utf8_lossy(raw);
+            let (head, body) = text.split_once("\r\n\r\n")?;
+            let mut lines = head.lines();
+            let mut request_line = lines.next()?.split_whitespace();
+            let method = request_line.next()?.to_string();
+            let path = request_line.next()?.to_string();
+            let headers: BTreeMap<String, String> = lines
+                .filter_map(|l| l.split_once(':'))
+                .map(|(k, v)| (k.to_ascii_lowercase(), v.trim().to_string()))
+                .collect();
+            let announced = headers
+                .get("content-length")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0);
+            (body.len() >= announced).then(|| Received {
+                method,
+                path,
+                headers,
+                body: body.to_string(),
+            })
+        }
+
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers.get(name).map(String::as_str)
+        }
+    }
+
+    fn redirect(status: u16, location: &str) -> String {
+        format!(
+            "HTTP/1.1 {status} Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+    }
+
+    /// loopback_egress with the IPv6 loopback open too: `localhost`, the
+    /// tests' second host name, resolves to both, and every resolved
+    /// address is judged.
+    fn localhost_egress() -> Arc<Egress> {
+        let rules = IpRules {
+            allowed: vec![
+                IpPrefix::parse("127.0.0.0/8").expect("cidr"),
+                IpPrefix::parse("::1/128").expect("cidr"),
+            ],
+            ..Default::default()
+        };
+        Arc::new(Egress::new(rules, 0.0, 0))
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> BTreeMap<String, Vec<String>> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), vec![v.to_string()]))
+            .collect()
+    }
+
+    #[test]
+    fn credentials_survive_a_redirect_to_the_same_host_alone() {
+        // The same server under two names: 127.0.0.1, the host the request
+        // names, and localhost, another host to the client.
+        let cases = [
+            ("127.0.0.1", Some("Bearer t0ken"), Some("session=1")),
+            ("localhost", None, None),
+        ];
+        for (host, authorization, cookie) in cases {
+            let (addr, received) = recording(|port| {
+                vec![
+                    redirect(302, &format!("http://{host}:{port}/next")),
+                    ok_response("after"),
+                ]
+            });
+            let egress = localhost_egress();
+            let c = client_for_hosts(&egress, &["127.0.0.1", "localhost"], &["GET"]);
+            let rsp = c.do_request(
+                &wire::Request {
+                    url: format!("http://127.0.0.1:{}/start", addr.port()),
+                    headers: headers(&[
+                        ("Authorization", "Bearer t0ken"),
+                        ("Cookie", "session=1"),
+                        ("X-Request-Id", "7"),
+                    ]),
+                    ..Default::default()
+                },
+                deadline(),
+            );
+            assert_eq!(rsp.error, "", "{host}");
+            assert_eq!(rsp.body, b"after", "{host}");
+            let first = received.recv().expect("the first request");
+            assert_eq!(
+                (
+                    first.path.as_str(),
+                    first.header("authorization"),
+                    first.header("cookie"),
+                    first.header("x-request-id")
+                ),
+                ("/start", Some("Bearer t0ken"), Some("session=1"), Some("7")),
+                "{host}: the request itself"
+            );
+            let hop = received.recv().expect("the redirect hop");
+            assert_eq!(
+                (
+                    hop.path.as_str(),
+                    hop.header("authorization"),
+                    hop.header("cookie"),
+                    hop.header("x-request-id")
+                ),
+                ("/next", authorization, cookie, Some("7")),
+                "{host}: the redirect hop"
+            );
+        }
+    }
+
+    #[test]
+    fn a_guest_cannot_set_the_headers_the_host_owns() {
+        let (addr, received) = recording(|_| vec![ok_response("ok")]);
+        let egress = loopback_egress();
+        let c = client_for(&egress, "127.0.0.1", &["POST"]);
+        let rsp = c.do_request(
+            &wire::Request {
+                url: format!("http://127.0.0.1:{}/submit", addr.port()),
+                method: "POST".to_string(),
+                headers: headers(&[
+                    ("Host", "metadata.internal"),
+                    ("Content-Length", "2"),
+                    ("Transfer-Encoding", "chunked"),
+                    ("Content-Type", "text/plain"),
+                ]),
+                body: b"hello".to_vec(),
+            },
+            deadline(),
+        );
+        assert_eq!(rsp.error, "");
+        let got = received.recv().expect("the request");
+        let host = addr.to_string();
+        assert_eq!(
+            (
+                got.header("host"),
+                got.header("content-length"),
+                got.header("transfer-encoding"),
+                got.header("content-type"),
+                got.body.as_str()
+            ),
+            (
+                Some(host.as_str()),
+                Some("5"),
+                None,
+                Some("text/plain"),
+                "hello"
+            )
+        );
+    }
+
+    #[test]
+    fn a_redirect_rewrites_the_method_as_its_status_says() {
+        // 301, 302 and 303 turn a POST into a GET without its body; 307
+        // and 308 repeat the request as it was.
+        let cases = [
+            (301, "GET", ""),
+            (302, "GET", ""),
+            (303, "GET", ""),
+            (307, "POST", "payload"),
+            (308, "POST", "payload"),
+        ];
+        for (status, method, body) in cases {
+            let (addr, received) =
+                recording(|_| vec![redirect(status, "/moved"), ok_response("after")]);
+            let egress = loopback_egress();
+            let c = client_for(&egress, "127.0.0.1", &["GET", "POST"]);
+            let rsp = c.do_request(
+                &wire::Request {
+                    url: format!("http://127.0.0.1:{}/start", addr.port()),
+                    method: "POST".to_string(),
+                    body: b"payload".to_vec(),
+                    ..Default::default()
+                },
+                deadline(),
+            );
+            assert_eq!(rsp.error, "", "{status}");
+            let first = received.recv().expect("the first request");
+            assert_eq!(
+                (first.method.as_str(), first.body.as_str()),
+                ("POST", "payload"),
+                "{status}: the request itself"
+            );
+            let hop = received.recv().expect("the redirect hop");
+            assert_eq!(
+                (hop.method.as_str(), hop.path.as_str(), hop.body.as_str()),
+                (method, "/moved", body),
+                "{status}: the redirect hop"
+            );
+        }
+    }
+
+    #[test]
+    fn a_redirect_hop_is_held_to_the_grant() {
+        // The hop is judged as it will be sent: under another host name,
+        // and with the method the redirect rewrote.
+        let (addr, _received) = recording(|port| {
+            vec![
+                redirect(302, &format!("http://localhost:{port}/next")),
+                redirect(302, "/moved"),
+            ]
+        });
+        let port = addr.port();
+        let egress = localhost_egress();
+        let c = client_for(&egress, "127.0.0.1", &["POST"]);
+        let post = wire::Request {
+            url: format!("http://127.0.0.1:{port}/start"),
+            method: "POST".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            c.do_request(&post, deadline()).error,
+            format!(
+                r#"redirect to http://localhost:{port}/next refused: sandbox.egress: no rule admits host "localhost""#
+            )
+        );
+        assert_eq!(
+            c.do_request(&post, deadline()).error,
+            format!(
+                r#"redirect to http://127.0.0.1:{port}/moved refused: sandbox.egress: no rule for host "127.0.0.1" admits GET /moved"#
+            )
+        );
+    }
+
+    #[test]
+    fn the_redirect_budget_is_enforced() {
+        let hops = |n: usize| {
+            let mut responses = vec![redirect(302, "/again"); n];
+            responses.push(ok_response("after"));
+            serve(responses)
+        };
+        let egress = loopback_egress();
+        let get = |addr: SocketAddr| {
+            let c = client_for(&egress, "127.0.0.1", &["GET"]);
+            let rsp = c.do_request(
+                &request(format!("http://127.0.0.1:{}/start", addr.port())),
+                deadline(),
+            );
+            (rsp.error, rsp.body)
+        };
+        assert_eq!(
+            get(hops(DEFAULT_MAX_REDIRECTS)),
+            (String::new(), b"after".to_vec())
+        );
+        assert_eq!(
+            get(hops(DEFAULT_MAX_REDIRECTS + 1)),
+            (
+                "sandbox.egress: stopped after 5 redirects (maxRedirects)".to_string(),
+                Vec::new()
+            )
+        );
+    }
+
+    #[test]
+    fn the_response_body_budget_is_enforced() {
+        let egress = loopback_egress();
+        let get = |len: usize| {
+            let addr = serve(vec![ok_response(&"x".repeat(len))]);
+            let c = client_for(&egress, "127.0.0.1", &["GET"]);
+            let rsp = c.do_request(
+                &request(format!("http://127.0.0.1:{}/big", addr.port())),
+                deadline(),
+            );
+            (rsp.error, rsp.body.len())
+        };
+        let max = DEFAULT_MAX_RESPONSE_BYTES as usize;
+        assert_eq!(get(max), (String::new(), max));
+        assert_eq!(
+            get(max + 1),
+            (
+                "sandbox.egress: the response body exceeds 4194304 bytes (maxResponseBytes)"
+                    .to_string(),
+                0
+            )
+        );
+    }
+
+    /// A server that accepts and never answers.
+    fn silent_server() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for conn in listener.incoming().flatten() {
+                held.push(conn);
+            }
+        });
+        addr
+    }
+
+    #[test]
+    fn a_request_is_cut_at_the_shorter_of_its_timeout_and_the_deadline() {
+        let addr = silent_server();
+        let url = format!("http://127.0.0.1:{}/slow", addr.port());
+        let rules = || IpRules {
+            allowed: vec![IpPrefix::parse("127.0.0.0/8").expect("cidr")],
+            ..Default::default()
+        };
+        let outcome = |egress: Egress, within: Duration| {
+            let c = client_for(&Arc::new(egress), "127.0.0.1", &["GET"]);
+            let (rsp, outcome, _, _) = c.perform(&request(url.clone()), Instant::now() + within);
+            (rsp.error, outcome)
+        };
+
+        // The run's deadline is nearer than the ten seconds a request gets.
+        assert_eq!(
+            outcome(Egress::new(rules(), 0.0, 0), Duration::from_millis(50)),
+            (
+                "sandbox.egress: the request exceeded the run's remaining deadline".to_string(),
+                "budget"
+            )
+        );
+        // A run with no time left is told the same.
+        assert_eq!(
+            outcome(Egress::new(rules(), 0.0, 0), Duration::ZERO),
+            (
+                "sandbox.egress: the request exceeded the run's remaining deadline".to_string(),
+                "budget"
+            )
+        );
+        // The request's own timeout is the nearer one.
+        let mut short = Egress::new(rules(), 0.0, 0);
+        short.budget.timeout = Duration::from_millis(50);
+        assert_eq!(
+            outcome(short, Duration::from_secs(5)),
+            (
+                "sandbox.egress: the request exceeded its 50ms timeout".to_string(),
+                "budget"
+            )
+        );
+    }
+
+    #[test]
+    fn the_unspecified_address_is_refused_whatever_the_operator_allows() {
+        // 0.0.0.0 reaches the host itself on most systems. An allow rule
+        // that covers it opens the block list's entries, never the address.
+        let rules = IpRules {
+            allowed: vec![IpPrefix::parse("0.0.0.0/0").expect("cidr")],
+            ..Default::default()
+        };
+        let egress = Arc::new(Egress::new(rules, 0.0, 0));
+        let c = client_for(&egress, "0.0.0.0", &["GET"]);
+        let (rsp, outcome, _, detail) =
+            c.perform(&request("http://0.0.0.0:9/x".to_string()), deadline());
+        assert_eq!(
+            (rsp.error.as_str(), outcome, detail.as_str()),
+            (
+                "sandbox.egress: 0.0.0.0 resolves to an address the egress policy blocks",
+                "refused",
+                "0.0.0.0 is the unspecified address 0.0.0.0"
+            )
+        );
+    }
+
     #[test]
     fn the_request_budget_is_enforced() {
         let egress = loopback_egress();
