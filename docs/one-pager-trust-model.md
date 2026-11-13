@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.10 (rewritten in the present tense over the Rust workspace; keyless signatures (#116) and the trusted root over TUF (#183) folded into the body as the design)
+* Status: implemented, revision 1.11 (revision 1.11 keeps the signature verdict per repository and digest; rewritten in the present tense over the Rust workspace; keyless signatures (#116) and the trusted root over TUF (#183) folded into the body as the design)
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. The 2026-08-16 review found two ways an
@@ -58,7 +58,7 @@ to) changing.
 
 With `--cosign-key`, only OCI modules carrying a valid signature run, and
 `http` and `path` sources are refused. Verification is a precondition of
-running, checked once per digest per process before the runtime looks in any
+running, checked once per repository and digest per process before the runtime looks in any
 cache tier, so a runtime with a key never serves an artifact that a runtime
 without one (or with a since-rotated key) left on a shared or persisted
 volume.
@@ -118,8 +118,7 @@ A pod that can't fetch starts from that cache, re-verified offline from the
 embedded TUF root. With no cache it serves, refuses keyless signatures
 naming the instance and the last failure, and retries once a minute. That's
 fail-closed per module, and it never becomes a crash loop that takes
-key-signed and unsigned modules down with it. A changed root forgets the verified-digest
-memo, so a signer a rotation dropped is re-verified on the module's next
+key-signed and unsigned modules down with it. A changed root forgets the memo of verified modules, so a signer a rotation dropped is re-verified on the module's next
 request, while a failed refresh keeps the last good root. Verification never
 touches the network. Both root flags are opt-in: the runtime doesn't open a
 connection the operator didn't ask for.

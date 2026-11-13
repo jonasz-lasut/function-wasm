@@ -15,7 +15,7 @@
 //! root (tuf/<instance>), so a pod that cannot reach the repository at
 //! startup starts from what an earlier one verified, and a refresh runs
 //! while serving: a changed root replaces the verifier's and forgets its
-//! verified-digest memo, a failed one keeps the last good root. The
+//! verified-module memo, a failed one keeps the last good root. The
 //! request path never touches the network: a refresh can only make the
 //! root older, never a request slower.
 

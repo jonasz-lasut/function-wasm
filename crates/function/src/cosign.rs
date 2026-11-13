@@ -88,9 +88,11 @@ where
 
 /// Checks cosign signatures: key-based ones against a fixed set of public
 /// keys, keyless ones against a Sigstore trusted root and a signer policy.
-/// Results are remembered per manifest digest for the life of the process
-/// (manifests are immutable by digest) and forgotten when the trusted root
-/// changes, so a signer the new root no longer vouches for is verified
+/// Results are remembered per repository and manifest digest for the life
+/// of the process (manifests are immutable by digest, and whose signature
+/// counts is decided per repository, so one repository's verdict says
+/// nothing of the same digest in another) and forgotten when the trusted
+/// root changes, so a signer the new root no longer vouches for is verified
 /// again on the module's next request.
 pub struct Verifier {
     keys: Vec<VerificationKey>,
@@ -98,7 +100,8 @@ pub struct Verifier {
     /// a repository may trust; None trusts no keyless signer.
     policy: Option<Arc<dyn SignerPolicy>>,
     keyless: RwLock<Keyless>,
-    verified: Mutex<HashSet<String>>,
+    /// The (registry/repository, manifest digest) pairs verified so far.
+    verified: Mutex<HashSet<(String, String)>>,
 }
 
 /// The keyless half: the trusted root sigstore-verify checks bundles
@@ -224,8 +227,8 @@ impl Verifier {
     }
 
     /// Puts the trusted root read from raw (a trusted_root.json) in use.
-    /// Ok(true) when it differs from the root in use, whose verified-digest
-    /// memo is then forgotten; Ok(false) for the same bytes again. A root
+    /// Ok(true) when it differs from the root in use, whose memo of verified
+    /// modules is then forgotten; Ok(false) for the same bytes again. A root
     /// that does not parse leaves the one in use untouched.
     pub fn set_trusted_root(&self, raw: &[u8]) -> Result<bool, String> {
         let text = std::str::from_utf8(raw)
@@ -275,15 +278,11 @@ impl Verifier {
     /// client - the same authenticated path the module pull uses. Blocking:
     /// run it off the async executor.
     pub fn verify(&self, client: &RegistryClient, reference: &OciReference) -> Result<(), String> {
-        if self
-            .verified
-            .lock()
-            .expect("poisoned")
-            .contains(&reference.digest)
-        {
+        let repository = format!("{}/{}", reference.registry, reference.repository);
+        let verdict = (repository.clone(), reference.digest.clone());
+        if self.verified.lock().expect("poisoned").contains(&verdict) {
             return Ok(());
         }
-        let repository = format!("{}/{}", reference.registry, reference.repository);
         let referrers = client.referrers(&reference.digest, MAX_MANIFEST_SIZE)?;
         // Only an image manifest can carry a bundle layer. The listing's
         // artifactType does not say which do: cosign 3.0 sets none, so its
@@ -323,10 +322,7 @@ impl Verifier {
                 bundles += 1;
                 match self.check_bundle(client, layer, &reference.digest, &repository) {
                     Ok(()) => {
-                        self.verified
-                            .lock()
-                            .expect("poisoned")
-                            .insert(reference.digest.clone());
+                        self.verified.lock().expect("poisoned").insert(verdict);
                         return Ok(());
                     }
                     Err(reason) => {
@@ -1394,6 +1390,141 @@ mod tests {
                 &digest,
                 "signed statement's predicate type is \"https://slsa.dev/provenance/v1\", not https://sigstore.dev/cosign/sign/v1"
             ))
+        );
+    }
+
+    /// A registry holding one module signed keyless by the release signer,
+    /// served, with the instance that signed it: the test registry answers
+    /// for every repository, so the digest and its signature are in each.
+    fn keyless_stage() -> (crate::testsigstore::Instance, String, String) {
+        let instance = crate::testsigstore::Instance::new();
+        let (mut registry, digest) = module_registry(false);
+        registry.attach(
+            &digest,
+            &instance.sign(&digest, COSIGN_SIGN_PREDICATE, &release_signer()),
+            Shape::AnnotationsOnly,
+        );
+        (instance, registry.serve(), digest)
+    }
+
+    /// A keyless verifier whose policy trusts the release signer for
+    /// example/greeter alone, counting how often it is asked.
+    fn counting_verifier(
+        instance: &crate::testsigstore::Instance,
+    ) -> (Verifier, Arc<std::sync::atomic::AtomicUsize>) {
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = Arc::clone(&asked);
+        let policy: Arc<dyn SignerPolicy> = Arc::new(move |repository: &str, signer: &Signer| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            repository.ends_with("/example/greeter") && *signer == release_signer()
+        });
+        let verifier = Verifier::empty()
+            .with_trusted_root(instance.trusted_root(), Some(policy))
+            .expect("verifier");
+        (verifier, asked)
+    }
+
+    fn verify_in(
+        verifier: &Verifier,
+        addr: &str,
+        repository: &str,
+        digest: &str,
+    ) -> Result<(), String> {
+        let reference =
+            parse_oci_reference(&format!("{addr}/{repository}@{digest}")).expect("reference");
+        verifier
+            .verify(&RegistryClient::new(&reference, None), &reference)
+            .map_err(|e| e.replace(addr, "<REGISTRY>"))
+    }
+
+    #[test]
+    fn a_verdict_for_one_repository_does_not_admit_the_digest_in_another() {
+        let (instance, addr, digest) = keyless_stage();
+        let (verifier, asked) = counting_verifier(&instance);
+        assert_eq!(
+            verify_in(&verifier, &addr, "example/greeter", &digest),
+            Ok(())
+        );
+        // The same digest, the same signature, a repository whose rules do
+        // not trust the signer: its own referrers are read and its own
+        // rules asked, whatever was verified before.
+        let refusal = Err(format!(
+            "no valid cosign signature for <REGISTRY>/other/greeter@{digest}: keyless signature by {RELEASE_WORKFLOW} (issuer {GITHUB_ACTIONS_ISSUER}) is not trusted for <REGISTRY>/other/greeter: no trustSigner rule in the operator policy permits it"
+        ));
+        assert_eq!(
+            verify_in(&verifier, &addr, "other/greeter", &digest),
+            refusal
+        );
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // A refusal is not remembered either, and the order does not matter.
+        assert_eq!(
+            verify_in(&verifier, &addr, "other/greeter", &digest),
+            refusal
+        );
+        assert_eq!(
+            verify_in(&verifier, &addr, "example/greeter", &digest),
+            Ok(())
+        );
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_verdict_is_reused_for_the_same_repository_and_digest() {
+        let (instance, addr, digest) = keyless_stage();
+        let (verifier, asked) = counting_verifier(&instance);
+        assert_eq!(
+            verify_in(&verifier, &addr, "example/greeter", &digest),
+            Ok(())
+        );
+        assert_eq!(
+            verify_in(&verifier, &addr, "example/greeter", &digest),
+            Ok(())
+        );
+        // The second answer is the memo's: the policy was asked once.
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // And it needs no registry: a client that can reach none still
+        // reads the verdict.
+        let reference =
+            parse_oci_reference(&format!("{addr}/example/greeter@{digest}")).expect("reference");
+        let unreachable =
+            parse_oci_reference(&format!("127.0.0.1:1/example/greeter@{digest}")).expect("ref");
+        assert_eq!(
+            verifier.verify(&RegistryClient::new(&unreachable, None), &reference),
+            Ok(())
+        );
+        assert!(
+            verifier
+                .verify(&RegistryClient::new(&unreachable, None), &unreachable)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_key_verdict_is_kept_per_repository_too() {
+        let key = TestKey::from_seed(7);
+        let (mut registry, digest) = module_registry(false);
+        registry.attach(
+            &digest,
+            &key.bundle(&digest, COSIGN_SIGN_PREDICATE),
+            Shape::ArtifactType,
+        );
+        let addr = registry.serve();
+        let verifier = Verifier::new(key.public_pem.as_bytes()).expect("verifier");
+        assert_eq!(
+            verify_in(&verifier, &addr, "example/greeter", &digest),
+            Ok(())
+        );
+        assert_eq!(
+            verify_in(&verifier, &addr, "other/greeter", &digest),
+            Ok(())
+        );
+        let verified = verifier.verified.lock().expect("poisoned");
+        assert_eq!(
+            *verified,
+            HashSet::from([
+                (format!("{addr}/example/greeter"), digest.clone()),
+                (format!("{addr}/other/greeter"), digest.clone()),
+            ])
         );
     }
 

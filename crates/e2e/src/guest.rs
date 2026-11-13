@@ -2,8 +2,8 @@
 //! by `make e2e.guest`) pushed under several module manifests, so one binary
 //! covers admitted and refused cases alike. A variant's manifest content
 //! differs from every other's (its version carries the variant's name): the
-//! runtime verifies a signature once per manifest digest per process, so two
-//! variants sharing a digest would share a verdict.
+//! runtime verifies a signature once per repository and manifest digest per
+//! process, so two variants sharing both would share a verdict.
 
 use anyhow::{Context as _, Result};
 use guestfn_runtime::cosign::Signer;

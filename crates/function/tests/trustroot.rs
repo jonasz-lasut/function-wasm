@@ -1,7 +1,7 @@
 //! The trusted root over TUF (--cosign-trust-instance, #183) against a
 //! local TUF repository (`testing::tuf`) and the in-memory Sigstore
 //! instances: fetched online and then read from the cache alone, a
-//! rotation taken up by a refresh with the verified-digest memo forgotten,
+//! rotation taken up by a refresh with the verified-module memo forgotten,
 //! a freeze refused with the last good root kept, and a start with neither
 //! network nor cache, which refuses keyless signatures by name until the
 //! repository answers.

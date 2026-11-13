@@ -59,5 +59,5 @@
   - [Read fence (Implemented, revision 1.0)](one-pager-read-fence.md)
   - [Runtime resource governance (Implemented, revision 1.7)](one-pager-resource-governance.md)
   - [Three-layer authorization model (Implemented, revision 1.4)](one-pager-three-layer-authz.md)
-  - [Trust model (Implemented, revision 1.10)](one-pager-trust-model.md)
+  - [Trust model (Implemented, revision 1.11)](one-pager-trust-model.md)
   - [WASM sandbox (Implemented, revision 1.9)](one-pager-sandbox.md)
