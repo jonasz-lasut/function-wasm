@@ -468,6 +468,48 @@ fn validate_resolve_matches_the_goldens() {
     }
 }
 
+/// --module-size-limit, in MiB, over files under --module-dir: a module
+/// within it is read, one a byte over it is refused by its size.
+#[test]
+fn validate_resolve_size_limit_matches_the_golden() {
+    let rust = Path::new(env!("CARGO_BIN_EXE_function-wasm"));
+    let cwd = crate_dir();
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("fn.wasm"), tiny_component()).expect("write");
+    std::fs::write(dir.path().join("big.wasm"), vec![0u8; (1 << 20) + 1]).expect("write");
+    let composition = dir.path().join("composition.yaml");
+    let step = |name: &str, path: &str| {
+        format!(
+            "  - step: {name}\n    functionRef: {{name: function-wasm}}\n    input:\n      apiVersion: guestfn.crossplane.io/v1\n      kind: Input\n      module: {{type: Path, path: {path}}}\n"
+        )
+    };
+    std::fs::write(
+        &composition,
+        format!(
+            "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: size-limit\nspec:\n  pipeline:\n{}{}",
+            step("within", "fn.wasm"),
+            step("over", "big.wasm"),
+        ),
+    )
+    .expect("write composition");
+
+    let composition = composition.display().to_string();
+    let module_dir = dir.path().display().to_string();
+    let args = [
+        composition.as_str(),
+        "--resolve",
+        "--module-dir",
+        module_dir.as_str(),
+        "--module-size-limit",
+        "1",
+    ];
+    let out = run_validate(rust, &args, "", &cwd);
+    if let Some(f) = assert_golden("ModuleSizeLimit", &out, &[(module_dir, "<DIR>")]) {
+        panic!("\n{f}");
+    }
+}
+
 /// The manifest path of the three-layer decision over generated fixtures: a module
 /// whose guestfn.yaml requires a private /tmp, env bindings, or egress, with
 /// and without an operator grant policy. Egress that both layers permit is

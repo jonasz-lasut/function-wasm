@@ -954,4 +954,116 @@ mod tests {
             "module.path is refused: the function was started without --module-dir"
         );
     }
+
+    /// The resolver's size limit (--module-size-limit) holds for every
+    /// source: a module of exactly the limit is read, one a byte over it
+    /// is refused.
+    #[test]
+    fn the_size_limit_bounds_a_module_from_every_source() {
+        use crate::testing::registry::Registry;
+        const LIMIT: u64 = 16;
+        const AT: &str = "sixteen bytes ok";
+        const OVER: &str = "seventeen bytes!!";
+        assert_eq!((AT.len() as u64, OVER.len() as u64), (LIMIT, LIMIT + 1));
+
+        // A file is refused by its size before it is hashed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("at.wasm"), AT).expect("write");
+        std::fs::write(dir.path().join("over.wasm"), OVER).expect("write");
+        let r = Resolver::new(Some(dir.path().to_owned()), LIMIT, None);
+        let resolved = r.resolve(&path_source("at.wasm"), None).expect("resolve");
+        assert_eq!(r.fetch(&resolved), Ok(AT.as_bytes().to_vec()));
+        assert_eq!(
+            r.resolve(&path_source("over.wasm"), None).unwrap_err(),
+            "module file is 17 bytes, the limit is 16"
+        );
+        // One that grew after it was resolved is cut at the read.
+        std::fs::write(dir.path().join("at.wasm"), OVER).expect("write");
+        assert_eq!(
+            r.fetch(&resolved).unwrap_err(),
+            "module exceeds the size limit of 16 bytes"
+        );
+
+        let fetch = |source: ModuleSource| {
+            let resolved = r.resolve(&source, None).expect("resolve");
+            r.fetch(&resolved)
+        };
+        let http = |body: &'static str| {
+            let addr = redirecting_server(body);
+            fetch(ModuleSource {
+                r#type: "HTTP".to_string(),
+                http: Some(crate::input::HttpSource {
+                    url: format!("http://{addr}/module"),
+                    digest: digest_of(body.as_bytes()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        };
+        assert_eq!(http(AT), Ok(AT.as_bytes().to_vec()));
+        assert_eq!(
+            http(OVER).unwrap_err(),
+            "module exceeds the size limit of 16 bytes"
+        );
+
+        let mut registry = Registry::new();
+        let at = registry.module(AT.as_bytes(), None, "at");
+        let over = registry.module(OVER.as_bytes(), None, "over");
+        let addr = registry.serve();
+        let oci = |digest: &str| {
+            fetch(ModuleSource {
+                r#type: "OCI".to_string(),
+                oci: Some(crate::input::OciSource {
+                    r#ref: format!("{addr}/example/module@{digest}"),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        };
+        assert_eq!(oci(&at), Ok(AT.as_bytes().to_vec()));
+        assert_eq!(
+            oci(&over).unwrap_err(),
+            "cannot fetch module layer: module exceeds the size limit of 16 bytes"
+        );
+    }
+
+    /// The OCI runtime holds an image to the limit as a whole: the manifest,
+    /// the config and the layers together, each of which fits by itself.
+    #[test]
+    fn the_size_limit_bounds_an_image_as_a_whole() {
+        use crate::testing::registry::{Registry, plain_image_blobs};
+        let (manifest, blobs) = plain_image_blobs("plain");
+        let total = (manifest.len() + blobs.iter().map(Vec::len).sum::<usize>()) as u64;
+        let largest = blobs.iter().map(Vec::len).max().expect("blobs") as u64;
+        assert!(largest < total - 1, "no blob is the whole image");
+
+        let mut registry = Registry::new();
+        let digest = registry.plain_image("plain");
+        let addr = registry.serve();
+        let fetch = |limit: u64| {
+            let r = Resolver::new(None, limit, None).serving(crate::manifest::TYPE_OCI);
+            let resolved = r
+                .resolve(
+                    &ModuleSource {
+                        r#type: "OCI".to_string(),
+                        oci: Some(crate::input::OciSource {
+                            r#ref: format!("{addr}/example/image@{digest}"),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .expect("resolve");
+            r.fetch(&resolved).map(|_| ())
+        };
+        assert_eq!(fetch(total), Ok(()));
+        assert_eq!(
+            fetch(total - 1),
+            Err(format!(
+                "image exceeds the size limit of {} bytes (--module-size-limit)",
+                total - 1
+            ))
+        );
+    }
 }

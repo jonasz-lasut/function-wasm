@@ -1,0 +1,8 @@
+exit 1
+--- stdout
+<DIR>/composition.yaml: Composition/size-limit pipeline[0] within: OK (path fn.wasm)
+  module: sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, 255 B, contract wasm@1.0
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+<DIR>/composition.yaml: Composition/size-limit pipeline[1] over: refused: cannot resolve module: module file is 1048577 bytes, the limit is 1048576
+  warning: module.type Path names a file under the runtime's --module-dir and carries no digest; a cluster Composition should pin an OCI or HTTP source by digest
+--- stderr
