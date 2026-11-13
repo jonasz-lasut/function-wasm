@@ -10,7 +10,7 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use function_sdk_rust::proto::v1::function_runner_service_client::FunctionRunnerServiceClient;
 use function_sdk_rust::proto::v1::{RequestMeta, RunFunctionRequest};
@@ -22,17 +22,6 @@ const GUEST_MSG: &str = "a debug record from the guest";
 /// Serves the guest with the given flags and environment, runs it once and
 /// returns every log line the process wrote (the subscriber writes to stdout).
 fn serve_and_run(flags: &[&str], rust_log: Option<&str>) -> Vec<String> {
-    serve_and_run_input(flags, rust_log, API_VERSION, GUEST_MSG)
-}
-
-/// serve_and_run with the Input's apiVersion, waiting for the line that
-/// settles the run's output before the lines are read back.
-fn serve_and_run_input(
-    flags: &[&str],
-    rust_log: Option<&str>,
-    api_version: &str,
-    settled_by: &str,
-) -> Vec<String> {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("fn.wasm"),
@@ -97,7 +86,7 @@ fn serve_and_run_input(
             }),
             input: Some(resource::json_to_struct(
                 serde_json::json!({
-                    "apiVersion": api_version,
+                    "apiVersion": API_VERSION,
                     "kind": "Input",
                     "module": {"type": "Path", "path": "fn.wasm"},
                 })
@@ -114,18 +103,11 @@ fn serve_and_run_input(
         assert!(rsp.results.is_empty(), "the run failed: {:?}", rsp.results);
     });
 
-    // The guest's record is written from the run, before the response; one
-    // bounded wait for the reader to see it keeps the assertions honest.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline
-        && !lines
-            .lock()
-            .expect("lock")
-            .iter()
-            .any(|l| l.contains(settled_by))
-    {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    // The guest's record is written from the run, before the response, and
+    // the subscriber writes each line to stdout as it is logged: every
+    // line of the run is in the pipe by now. A kill leaves the pipe's
+    // content in place and the reader goes on to its end, so nothing has
+    // to be waited for, least of all a line a test expects not to find.
     child.kill().expect("kill");
     child.wait().expect("wait");
     reader.join().expect("reader");
