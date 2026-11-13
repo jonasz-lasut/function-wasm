@@ -9,27 +9,25 @@ use std::time::{Duration, Instant};
 use wasmtime::Trap;
 use wasmtime_wasi::I32Exit;
 
-use crate::{EPOCH_TICK, Error, Module, RunOptions, Wasmtime, duration, first_line};
+use crate::{EPOCH_TICK, Module, RunError, RunFailure, RunOptions, Wasmtime, first_line};
 
 pub(crate) fn run(
     engine: &Wasmtime,
     m: &Module,
     request: &[u8],
     opts: RunOptions,
-) -> Result<Vec<u8>, Error> {
-    let limits = engine.effective(&opts);
+) -> Result<Vec<u8>, RunError> {
+    let limits = engine.config().narrowed_by(&opts);
     // A run slot (round-robin by module key when --max-concurrent-runs
     // bounds them) and the memory reservation come first, waited for under
     // the run's own budget - or the request's deadline when that is
     // sooner: a wait cut short held and consumed nothing.
-    let mut wait_deadline = Instant::now() + limits.timeout;
-    if let Some(d) = opts.deadline
-        && d < wait_deadline
-    {
-        wait_deadline = d;
-    }
+    let wait_deadline = opts.deadline_within(limits.timeout);
     let _slot = match &engine.scheduler {
-        Some(s) => Some(s.acquire(&opts.digest, wait_deadline).map_err(Error)?),
+        Some(s) => Some(
+            s.acquire(&opts.digest, wait_deadline)
+                .map_err(RunError::waiting)?,
+        ),
         None => None,
     };
     // A component exports no top-level memory, so nothing is reserved
@@ -46,19 +44,9 @@ pub(crate) fn run(
     let start = Instant::now();
     let result = crate::component::execute(engine, m, request, &opts, &limits, hold, wait_deadline);
     crate::metrics::RUN_DURATION
-        .with_label_values(&[run_outcome(&result)])
+        .with_label_values(&[crate::metrics::run_outcome(&result)])
         .observe(start.elapsed().as_secs_f64());
     result
-}
-
-fn run_outcome<T>(result: &Result<T, Error>) -> &'static str {
-    match result {
-        Ok(_) => crate::metrics::OUTCOME_OK,
-        Err(e) if e.0.contains("exceeded its execution deadline") => {
-            crate::metrics::OUTCOME_TIMEOUT
-        }
-        Err(_) => crate::metrics::OUTCOME_ERROR,
-    }
 }
 
 /// Converts a run's budget into epoch ticks, at least one.
@@ -67,32 +55,25 @@ pub(crate) fn deadline_ticks(timeout: Duration) -> (u64, Duration) {
     (ticks as u64, timeout)
 }
 
-/// A run that outlived its budget, whichever clock ended it.
-pub(crate) fn deadline_error(what: &str, budget: Duration) -> Error {
-    Error(format!(
-        "{what}: module exceeded its execution deadline ({})",
-        duration::format(budget)
-    ))
-}
-
 /// Turns wasmtime's failure into something an operator can act on from an XR
 /// condition: a deadline interrupt becomes the timeout message, a WASI exit
 /// reports its status and a trap is named by its code. wasmtime's backtrace
 /// only helps next to the guest's own stderr, so it goes to the debug log.
-pub(crate) fn guest_error(what: &str, err: wasmtime::Error, budget: Duration) -> Error {
+pub(crate) fn guest_error(what: &str, err: wasmtime::Error, budget: Duration) -> RunError {
+    let stopped = |message: String| RunError::new(RunFailure::Stopped, message);
     if let Some(exit) = err.downcast_ref::<I32Exit>() {
-        return Error(format!("{what}: module exited with status {}", exit.0));
+        return stopped(format!("{what}: module exited with status {}", exit.0));
     }
     if let Some(trap) = err.downcast_ref::<Trap>() {
         if *trap == Trap::Interrupt {
-            return deadline_error(what, budget);
+            return RunError::deadline(what, budget);
         }
         // The Debug format carries the wasm backtrace - file and line frames
         // when the engine's backtrace_details resolved the module's DWARF.
         tracing::debug!(trap = ?err, "Guest trapped");
-        return Error(format!("{what}: {}", trap_text(*trap)));
+        return stopped(format!("{what}: {}", trap_text(*trap)));
     }
-    Error(format!("{what}: {}", first_line(&err.to_string())))
+    stopped(format!("{what}: {}", first_line(&err.to_string())))
 }
 
 /// Names a trap without wasmtime's backtrace.

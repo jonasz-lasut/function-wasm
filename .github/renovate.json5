@@ -344,15 +344,20 @@
       groupName: 'wasmtime',
       rangeStrategy: 'bump',
     },
-    // wit-component, wasmparser and wit-parser are pinned to the versions
-    // wasmtime's own bindgen pulls (crates/engine-wasm/Cargo.toml), so no second
-    // copy is compiled. Renovate leaves them alone: a bump on their own
-    // would only add that copy (#140). They move by hand in the wasmtime
-    // group's PR, to whatever `cargo tree -i wit-component` shows wasmtime
-    // pulling after the bump.
+    // wit-component, wasmparser and wit-parser state an open requirement
+    // (crates/engine-wasm/Cargo.toml) and are held in Cargo.lock at the
+    // versions wasmtime's own bindgen pulls, so one copy is compiled; wat is
+    // held there at the release whose wasm-encoder wasmtime's is. Which
+    // versions those are is written in the wasmtime crates' manifests alone,
+    // where no datasource reads it: a bump of any of the four on its own
+    // would go to the newest release, which is ahead of what the current
+    // wasmtime depends on, and add the second copy deny.toml refuses (#140).
+    // So Renovate leaves them alone, and the wasmtime group's pull request
+    // fails its deny job until they are moved on its branch, with the
+    // commands the manifest gives, to what the new wasmtime pulls.
     {
       matchManagers: ['cargo'],
-      matchPackageNames: ['wit-component', 'wasmparser', 'wit-parser'],
+      matchPackageNames: ['wit-component', 'wasmparser', 'wit-parser', 'wat'],
       enabled: false,
     },
     // kube and k8s-openapi (the end-to-end suite's, crates/e2e/Cargo.toml)

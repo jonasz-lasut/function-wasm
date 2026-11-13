@@ -144,9 +144,21 @@ pub mod registry {
         /// behind an image index, as `docker buildx` pushes one. Returns
         /// the index's digest.
         pub fn plain_index(&mut self, title: &str) -> String {
+            self.index(None, title)
+        }
+
+        /// The module image for the same two platforms behind an image
+        /// index, the module manifest appended to each platform's image,
+        /// as `guestfn push --image` publishes a multi-platform image.
+        /// Returns the index's digest.
+        pub fn module_index(&mut self, module_manifest: &[u8], title: &str) -> String {
+            self.index(Some(module_manifest), title)
+        }
+
+        fn index(&mut self, module_manifest: Option<&[u8]>, title: &str) -> String {
             let mut entries = Vec::new();
             for arch in ["amd64", "arm64"] {
-                let (manifest, blobs) = image_blobs_for(arch, None, title);
+                let (manifest, blobs) = image_blobs_for(arch, module_manifest, title);
                 for b in &blobs {
                     self.blob(b);
                 }

@@ -12,8 +12,8 @@ use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiVie
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 use crate::{
-    ARGV0, CallState, Config, EPOCH_TICK, Error, HostTimer, RunOptions, Wasmtime,
-    run::deadline_ticks, sandbox,
+    ARGV0, CallState, Config, EPOCH_TICK, Error, HostTimer, RunError, RunFailure, RunOptions,
+    Wasmtime, run::deadline_ticks, sandbox,
 };
 
 /// The world a guest implements, named in refusals.
@@ -127,7 +127,7 @@ pub(crate) fn execute(
     limits: &Config,
     hold: Option<crate::PoolHold>,
     wait_deadline: Instant,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, RunError> {
     // The private /tmp outlives the store (declared first, so it drops
     // last): the guest's descriptors into it are closed before it is
     // removed.
@@ -281,8 +281,11 @@ pub(crate) fn execute(
     }
     match outcome {
         Outcome::Response(response) => Ok(response),
-        Outcome::GuestError(msg) => Err(Error(format!("run returned an error: {msg}"))),
+        Outcome::GuestError(msg) => Err(RunError::new(
+            RunFailure::Returned,
+            format!("run returned an error: {msg}"),
+        )),
         Outcome::Failed(what, e) => Err(crate::run::guest_error(what, e, budget)),
-        Outcome::Deadline => Err(crate::run::deadline_error("run failed", budget)),
+        Outcome::Deadline => Err(RunError::deadline("run failed", budget)),
     }
 }

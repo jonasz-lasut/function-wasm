@@ -23,8 +23,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub(crate) use guestfn_engine::{
-    ArtifactStore, Config, DEFAULT_MODULE_SIZE_LIMIT, Engine, Error, Inspection, RunOptions,
-    concurrency, duration, grpc, metrics,
+    ArtifactStore, Config, DEFAULT_MODULE_SIZE_LIMIT, Engine, Error, Inspection, RunError,
+    RunFailure, RunOptions, concurrency, grpc, metrics,
 };
 pub(crate) use guestfn_oci_protocol as protocol;
 pub use image::ImageConfig;
@@ -173,13 +173,7 @@ impl Oci {
         options: Options,
         sandbox: Box<dyn Sandbox>,
     ) -> Result<Oci, Error> {
-        if config.max_total_run_memory > 0 && config.max_total_run_memory < config.memory_limit {
-            return Err(Error(format!(
-                "--max-total-run-memory {} is smaller than the per-run ceiling {} (--module-memory-limit): no full-limit run could ever reserve its memory",
-                concurrency::format_bytes(config.max_total_run_memory),
-                concurrency::format_bytes(config.memory_limit)
-            )));
-        }
+        config.check_run_memory()?;
         if options.vcpus == 0 {
             return Err(Error("--vm-vcpus must be at least 1".to_string()));
         }
@@ -200,10 +194,8 @@ impl Oci {
         std::io::Write::write_all(&mut initrd, &initrd::pack(&init))
             .map_err(|e| Error(format!("cannot write the initramfs: {e}")))?;
         Ok(Oci {
-            scheduler: (config.max_concurrent_runs > 0)
-                .then(|| concurrency::FairScheduler::new(config.max_concurrent_runs)),
-            mem: (config.max_total_run_memory > 0)
-                .then(|| Arc::new(concurrency::MemPool::new(config.max_total_run_memory))),
+            scheduler: config.scheduler(),
+            mem: config.memory_pool(),
             config,
             options,
             initrd: initrd.into_temp_path(),
@@ -215,22 +207,6 @@ impl Oci {
 
     pub fn options(&self) -> &Options {
         &self.options
-    }
-
-    /// The run's ceilings narrowed by its options.
-    pub(crate) fn effective(&self, opts: &RunOptions) -> Config {
-        let mut cfg = self.config;
-        if let Some(t) = opts.timeout
-            && t < cfg.timeout
-        {
-            cfg.timeout = t;
-        }
-        if let Some(m) = opts.memory_limit
-            && m < cfg.memory_limit
-        {
-            cfg.memory_limit = m;
-        }
-        cfg
     }
 
     /// Unpacks an image layout into a root filesystem file under the
@@ -340,7 +316,7 @@ impl Engine for Oci {
         })
     }
 
-    fn run(&self, m: &Module, request: &[u8], opts: RunOptions) -> Result<Vec<u8>, Error> {
+    fn run(&self, m: &Module, request: &[u8], opts: RunOptions) -> Result<Vec<u8>, RunError> {
         run::run(self, m, request, opts)
     }
 
@@ -672,15 +648,17 @@ mod tests {
 
     #[test]
     fn the_endings_become_the_contracts_fatals() {
-        let cases: Vec<(Ended, Vec<u8>, &str)> = vec![
+        let cases: Vec<(Ended, Vec<u8>, RunFailure, &str)> = vec![
             (
                 Ended::Deadline,
                 vec![],
+                RunFailure::Deadline,
                 "run failed: module exceeded its execution deadline (30s)",
             ),
             (
                 Ended::Lost("the VMM exited".into()),
                 vec![],
+                RunFailure::Host,
                 "run failed: the VMM exited",
             ),
             (
@@ -689,6 +667,7 @@ mod tests {
                     ..Default::default()
                 }),
                 b"warming up\nout of ideas\n".to_vec(),
+                RunFailure::Stopped,
                 "process exited with status 3 before answering the call: out of ideas",
             ),
             (
@@ -698,6 +677,7 @@ mod tests {
                     ..Default::default()
                 }),
                 vec![],
+                RunFailure::MemoryLimit,
                 "process was killed: the run's memory limit of 512Mi was exceeded",
             ),
             (
@@ -706,6 +686,7 @@ mod tests {
                     ..Default::default()
                 }),
                 vec![],
+                RunFailure::Stopped,
                 "process was killed by signal 11",
             ),
             (
@@ -714,6 +695,7 @@ mod tests {
                     ..Default::default()
                 }),
                 vec![],
+                RunFailure::Host,
                 "cannot start the process: cannot start /app/run: No such file",
             ),
             (
@@ -722,6 +704,7 @@ mod tests {
                     ..Default::default()
                 }),
                 vec![],
+                RunFailure::Stopped,
                 "process exited with status 0 before answering the call",
             ),
             (
@@ -730,10 +713,11 @@ mod tests {
                     message: "not this time".into(),
                 },
                 vec![],
+                RunFailure::Returned,
                 "run returned an error: not this time (gRPC status FailedPrecondition)",
             ),
         ];
-        for (end, log, want) in cases {
+        for (end, log, kind, want) in cases {
             let end = std::sync::Mutex::new(Some(end));
             let fake = FakeSandbox::new(
                 Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -748,7 +732,7 @@ mod tests {
                 .compile(&fixture_image(b"x", &["/x"], "app", &[]))
                 .unwrap();
             let err = e.run(&m, b"r", RunOptions::default()).unwrap_err();
-            assert_eq!(err.0, want);
+            assert_eq!((err.kind(), err.message()), (kind, want));
         }
     }
 
@@ -806,7 +790,9 @@ mod tests {
             let m = e
                 .compile(&fixture_image(b"x", &["/x"], "app", &[]))
                 .unwrap();
-            let got = e.run(&m, b"r", RunOptions::default()).map_err(|e| e.0);
+            let got = e
+                .run(&m, b"r", RunOptions::default())
+                .map_err(|e| e.to_string());
             let want = want.map(<[u8]>::to_vec).map_err(str::to_string);
             assert_eq!(got, want, "{name}");
         }

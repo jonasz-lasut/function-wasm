@@ -347,9 +347,9 @@ where
     };
     let engine = Arc::new(engine);
 
-    // The on-disk caches under the fixed directory: fetched blobs (for the
-    // OCI/HTTP sources when they land), the compiled artifacts namespaced
-    // by the engine version, and module manifests; a filesystem that cannot
+    // The on-disk caches under the fixed directory: the blobs the OCI and
+    // HTTP sources fetch, the compiled artifacts namespaced by the engine
+    // version, and module manifests; a filesystem that cannot
     // hold them stops the runtime here (mount an emptyDir on a read-only
     // root filesystem).
     let cache_dir = std::path::Path::new(store::DEFAULT_DIR);

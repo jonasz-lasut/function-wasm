@@ -111,7 +111,7 @@ fn ask(e: &Oci, m: &Module, tag: &str, o: RunOptions) -> Result<String, String> 
         ..Default::default()
     }
     .encode_to_vec();
-    let response = e.run(m, &request, o).map_err(|e| e.0)?;
+    let response = e.run(m, &request, o).map_err(|e| e.to_string())?;
     Ok(RunFunctionResponse::decode(response.as_slice())
         .expect("a response")
         .meta

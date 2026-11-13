@@ -5,7 +5,8 @@
 //! milliseconds, and fetch + compile (seconds for a large guest) writes its
 //! result back to disk. A load for one digest runs once even under
 //! concurrent requests, and at most max_concurrent_compiles compile at a
-//! time; a failed load is not cached, so the next request retries.
+//! time; a failed load is not cached, so the next request retries, the
+//! requests that waited on it one at a time.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -108,13 +109,32 @@ impl<E: Engine> ModuleCache<E> {
             .get_or_try_init(|| self.load(digest, fetch))
             .await
             .cloned();
-        // The load is settled either way: drop the flight so a failure is
-        // retried by the next request, and promote a success to memory.
-        self.loading.lock().await.remove(digest);
+        // A success goes to memory before its flight is dropped, so a
+        // request arriving in between finds one of the two.
         if let Ok(m) = &result {
             self.memory_put(digest, m.clone());
         }
+        self.settle(digest, cell).await;
         result
+    }
+
+    /// Drops the flight this request held once nobody is left on it: a
+    /// loaded one has given its module to every holder, and a failed one
+    /// is retried by the holders still waiting, each in its turn, so it
+    /// stays for them and for whoever arrives meanwhile. Only the flight
+    /// the map still holds under the digest is dropped, never a later
+    /// one. Holders are counted under the lock every one of them took its
+    /// handle under.
+    async fn settle(&self, digest: &str, cell: Arc<OnceCell<E::Module>>) {
+        let mut loading = self.loading.lock().await;
+        let Some(current) = loading.get(digest) else {
+            return;
+        };
+        // The map's handle and this request's are the last two.
+        let alone = Arc::strong_count(&cell) <= 2;
+        if Arc::ptr_eq(current, &cell) && (cell.initialized() || alone) {
+            loading.remove(digest);
+        }
     }
 
     async fn load<F>(&self, digest: &str, fetch: F) -> Result<E::Module, String>
@@ -427,6 +447,114 @@ mod tests {
             .get("sha256:m", move || Ok(wasm))
             .await
             .expect("retry succeeds");
+    }
+
+    /// One module, three requests: the first load fails while a second
+    /// request waits on it, the second then loads in its turn, and a third
+    /// arrives while that load runs. The third joins the load in flight:
+    /// the module is fetched by one request at a time, and once after the
+    /// failure.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_load_leaves_one_flight_for_those_behind_it() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::mpsc::channel;
+
+        const DIGEST: &str = "sha256:m";
+        // Two compile slots, so a second flight would fetch beside the
+        // first rather than queue behind it.
+        let cache = Arc::new(ModuleCache::new(
+            engine(),
+            CacheOptions {
+                max_concurrent_compiles: 2,
+                ..Default::default()
+            },
+        ));
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let most_at_once = Arc::new(AtomicUsize::new(0));
+        // A request whose fetch says it started, waits to be released and
+        // then answers with outcome.
+        let request = |outcome: Result<Vec<u8>, String>| {
+            let (started_tx, started_rx) = channel::<()>();
+            let (release_tx, release_rx) = channel::<()>();
+            let (cache, fetches, in_flight, most_at_once) = (
+                Arc::clone(&cache),
+                Arc::clone(&fetches),
+                Arc::clone(&in_flight),
+                Arc::clone(&most_at_once),
+            );
+            let task = tokio::spawn(async move {
+                cache
+                    .get(DIGEST, move || {
+                        fetches.fetch_add(1, Ordering::SeqCst);
+                        let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                        most_at_once.fetch_max(now, Ordering::SeqCst);
+                        let _ = started_tx.send(());
+                        let _ = release_rx.recv();
+                        in_flight.fetch_sub(1, Ordering::SeqCst);
+                        outcome
+                    })
+                    .await
+                    .map(|_| ())
+            });
+            (task, started_rx, release_tx)
+        };
+        // How many requests hold the digest's flight, the map aside.
+        let waiting = || async {
+            let loading = cache.loading.lock().await;
+            loading.get(DIGEST).map_or(0, |c| Arc::strong_count(c) - 1)
+        };
+        let until = |want: usize| async move {
+            for _ in 0..2000 {
+                if waiting().await >= want {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            panic!("{want} requests never held the flight");
+        };
+        let wasm = crate::testing::guests::tiny_component;
+
+        let (first, first_started, first_release) = request(Err("boom".to_string()));
+        first_started.recv().expect("the first fetch starts");
+        let (second, second_started, second_release) = request(Ok(wasm()));
+        until(2).await;
+        first_release.send(()).expect("release the first");
+        assert_eq!(first.await.expect("join"), Err("boom".to_string()));
+        second_started
+            .recv()
+            .expect("the second request loads in its turn");
+
+        // The third arrives while the second's load runs: it either joins
+        // that flight or, were the flight forgotten, fetches beside it.
+        let (third, _third_started, third_release) = request(Ok(wasm()));
+        drop(third_release);
+        for _ in 0..2000 {
+            if waiting().await >= 2 || fetches.load(Ordering::SeqCst) > 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        second_release.send(()).expect("release the second");
+        assert_eq!(second.await.expect("join"), Ok(()));
+        assert_eq!(third.await.expect("join"), Ok(()));
+        assert_eq!(
+            (
+                fetches.load(Ordering::SeqCst),
+                most_at_once.load(Ordering::SeqCst)
+            ),
+            (2, 1),
+            "fetches in all, and most at once"
+        );
+        assert!(
+            cache.loading.lock().await.is_empty(),
+            "a settled flight is dropped"
+        );
+        // The module is in memory: no further fetch.
+        cache
+            .get(DIGEST, || panic!("the memory tier should have served this"))
+            .await
+            .expect("from memory");
     }
 
     /// Gets digest from cache, noting it in fetched when no tier had the

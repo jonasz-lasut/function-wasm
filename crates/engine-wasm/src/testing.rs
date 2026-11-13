@@ -27,7 +27,8 @@ pub fn encoded_wit_package_over(text: &str, dependencies: &[&str]) -> Vec<u8> {
     let package = resolve
         .push_str("package.wit", text)
         .expect("parse the WIT package");
-    wit_component::encode(&resolve, package).expect("encode the WIT package")
+    wit_component::encode(&resolve, package, crate::componentize::CANONICAL_NAMES)
+        .expect("encode the WIT package")
 }
 
 /// Assembles WAT into a wasm binary.

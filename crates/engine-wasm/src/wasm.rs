@@ -15,7 +15,9 @@
 pub use crate::component::ABI_V2_WORLD;
 // What every engine shares lives at the crate root; re-exported
 // here so this crate's users and tests read it from one place.
-use crate::{Config, Engine, Error, Extern, Inspection, RunOptions, concurrency, metrics};
+use crate::{
+    Config, Engine, Error, Extern, Inspection, RunError, RunOptions, concurrency, metrics,
+};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -240,16 +242,7 @@ impl Wasmtime {
 
     /// pooled_slots is None outside the benchmark.
     fn build(config: Config, pooled_slots: Option<u32>) -> Result<Self, Error> {
-        // A pool smaller than the per-run ceiling could never admit a
-        // full-limit run - caught at startup rather than as a fleet of
-        // timing-out requests.
-        if config.max_total_run_memory > 0 && config.max_total_run_memory < config.memory_limit {
-            return Err(Error(format!(
-                "--max-total-run-memory {} is smaller than the per-run ceiling {} (--module-memory-limit): no full-limit run could ever reserve its memory",
-                concurrency::format_bytes(config.max_total_run_memory),
-                concurrency::format_bytes(config.memory_limit)
-            )));
-        }
+        config.check_run_memory()?;
         if config.stack_limit == 0 {
             return Err(Error(
                 "--module-stack-limit must be positive: a guest cannot run on an empty stack"
@@ -330,10 +323,8 @@ impl Wasmtime {
             config,
             inner,
             linker,
-            scheduler: (config.max_concurrent_runs > 0)
-                .then(|| concurrency::FairScheduler::new(config.max_concurrent_runs)),
-            mem: (config.max_total_run_memory > 0)
-                .then(|| Arc::new(concurrency::MemPool::new(config.max_total_run_memory))),
+            scheduler: config.scheduler(),
+            mem: config.memory_pool(),
             active,
             stop,
             ticker: Some(ticker),
@@ -493,25 +484,8 @@ impl Wasmtime {
         m: &Module,
         request: &[u8],
         opts: RunOptions,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<Vec<u8>, RunError> {
         crate::run::run(self, m, request, opts)
-    }
-
-    /// The budget of one run: the engine's ceilings narrowed by opts where
-    /// opts asks for less.
-    pub(crate) fn effective(&self, opts: &RunOptions) -> Config {
-        let mut cfg = self.config;
-        if let Some(t) = opts.timeout
-            && t < cfg.timeout
-        {
-            cfg.timeout = t;
-        }
-        if let Some(m) = opts.memory_limit
-            && m < cfg.memory_limit
-        {
-            cfg.memory_limit = m;
-        }
-        cfg
     }
 
     /// Marks a run in flight for the epoch ticker; the guard marks it done.
@@ -549,7 +523,7 @@ impl Engine for Wasmtime {
         self.deserialize_file(path)
     }
 
-    fn run(&self, m: &Module, request: &[u8], opts: RunOptions) -> Result<Vec<u8>, Error> {
+    fn run(&self, m: &Module, request: &[u8], opts: RunOptions) -> Result<Vec<u8>, RunError> {
         self.run(m, request, opts)
     }
 

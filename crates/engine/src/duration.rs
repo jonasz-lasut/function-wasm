@@ -100,7 +100,8 @@ pub fn parse(s: &str) -> Result<Duration, String> {
         if !fraction.is_empty() {
             let f: u128 = fraction.parse().map_err(|_| err())?;
             let denom = 10u128.checked_pow(fraction.len() as u32).ok_or_else(err)?;
-            total = total.checked_add(f * scale / denom).ok_or_else(err)?;
+            let scaled = f.checked_mul(scale).ok_or_else(err)?;
+            total = total.checked_add(scaled / denom).ok_or_else(err)?;
         }
         rest = next;
     }
@@ -146,6 +147,17 @@ mod tests {
         for (s, want) in cases {
             assert_eq!(parse(s).unwrap(), want, "parse({s:?})");
         }
+        // A fraction too long to scale is no duration, where it used to
+        // wrap into another one.
+        let long_fraction = format!("0.{}h", "9".repeat(38));
+        assert_eq!(
+            parse(&long_fraction),
+            Err(format!("invalid duration {long_fraction:?}"))
+        );
+        assert_eq!(
+            parse(&format!("1.5{}s", "0".repeat(20))),
+            Ok(Duration::from_millis(1500))
+        );
         for bad in ["", "5", "s", "5x", "-5s"] {
             assert!(parse(bad).is_err(), "parse({bad:?}) should fail");
         }

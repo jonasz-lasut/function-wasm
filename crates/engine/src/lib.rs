@@ -36,6 +36,80 @@ pub const DEFAULT_MODULE_SIZE_LIMIT: u64 = 128 << 20;
 #[error("{0}")]
 pub struct Error(pub String);
 
+/// Why a run produced no response: what the engines and their callers
+/// tell apart, so that none of them reads it out of the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunFailure {
+    /// The wait for a run slot or for run memory was cut short by the
+    /// deadline: the module never ran, and the run metric does not count
+    /// it.
+    Waiting,
+    /// The module outlived its budget, whichever clock ended it.
+    Deadline,
+    /// The module was ended at its memory limit.
+    MemoryLimit,
+    /// The module answered with an error of its own: the world's
+    /// `err(string)`, a gRPC status.
+    Returned,
+    /// The module stopped without answering: a trap, an exit, a signal, a
+    /// failed instantiation.
+    Stopped,
+    /// The host could not start the run, or lost it.
+    Host,
+}
+
+/// A failed run: its kind for the code, and the message for the reader,
+/// whose wording is pinned as `Error`'s is (it ends up in an XR
+/// condition). `Display` is the message alone.
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct RunError {
+    kind: RunFailure,
+    message: String,
+}
+
+impl RunError {
+    pub fn new(kind: RunFailure, message: impl Into<String>) -> Self {
+        RunError {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    /// A wait the deadline cut short, in the words the slot or the pool
+    /// gave it.
+    pub fn waiting(message: String) -> Self {
+        Self::new(RunFailure::Waiting, message)
+    }
+
+    /// A run that outlived its budget: one sentence for both engines,
+    /// after what the engine was doing.
+    pub fn deadline(what: &str, budget: Duration) -> Self {
+        Self::new(
+            RunFailure::Deadline,
+            format!(
+                "{what}: module exceeded its execution deadline ({})",
+                duration::format(budget)
+            ),
+        )
+    }
+
+    pub fn kind(&self) -> RunFailure {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+/// A failure of the engine's own on the way to a run is the host's.
+impl From<Error> for RunError {
+    fn from(e: Error) -> Self {
+        Self::new(RunFailure::Host, e.0)
+    }
+}
+
 /// Config bounds what a single run may consume, and how many may run at
 /// once.
 #[derive(Debug, Clone, Copy)]
@@ -64,6 +138,51 @@ pub struct Config {
     /// that expands what it is handed (the OCI engine unpacking an image's
     /// layers) bounds the expansion by it.
     pub module_size_limit: u64,
+}
+
+impl Config {
+    /// The budget of one run: these ceilings narrowed by opts where opts
+    /// asks for less.
+    pub fn narrowed_by(&self, opts: &RunOptions) -> Config {
+        let mut cfg = *self;
+        if let Some(t) = opts.timeout
+            && t < cfg.timeout
+        {
+            cfg.timeout = t;
+        }
+        if let Some(m) = opts.memory_limit
+            && m < cfg.memory_limit
+        {
+            cfg.memory_limit = m;
+        }
+        cfg
+    }
+
+    /// A pool smaller than the per-run ceiling could never admit a
+    /// full-limit run: refused at startup rather than met as a fleet of
+    /// timing-out requests.
+    pub fn check_run_memory(&self) -> Result<(), Error> {
+        if self.max_total_run_memory > 0 && self.max_total_run_memory < self.memory_limit {
+            return Err(Error(format!(
+                "--max-total-run-memory {} is smaller than the per-run ceiling {} (--module-memory-limit): no full-limit run could ever reserve its memory",
+                concurrency::format_bytes(self.max_total_run_memory),
+                concurrency::format_bytes(self.memory_limit)
+            )));
+        }
+        Ok(())
+    }
+
+    /// The run slots `max_concurrent_runs` bounds, when it bounds any.
+    pub fn scheduler(&self) -> Option<concurrency::FairScheduler> {
+        (self.max_concurrent_runs > 0)
+            .then(|| concurrency::FairScheduler::new(self.max_concurrent_runs))
+    }
+
+    /// The memory pool `max_total_run_memory` bounds, when it bounds one.
+    pub fn memory_pool(&self) -> Option<Arc<concurrency::MemPool>> {
+        (self.max_total_run_memory > 0)
+            .then(|| Arc::new(concurrency::MemPool::new(self.max_total_run_memory)))
+    }
 }
 
 impl Default for Config {
@@ -114,6 +233,18 @@ pub struct RunOptions {
     /// The module's description and digest, attached to guest log lines.
     pub module: String,
     pub digest: String,
+}
+
+impl RunOptions {
+    /// When a wait under this budget ends: the budget from now, or the
+    /// request's own deadline when that is sooner.
+    pub fn deadline_within(&self, budget: Duration) -> Instant {
+        let within = Instant::now() + budget;
+        match self.deadline {
+            Some(d) if d < within => d,
+            _ => within,
+        }
+    }
 }
 
 /// What Inspect reads from a module without running it: for a component,
@@ -243,13 +374,100 @@ pub trait Engine: Send + Sync + 'static {
     fn keep_in(&self, _store: Arc<dyn ArtifactStore>) {}
 
     /// Runs one request through a module under the run's options and
-    /// returns the response bytes; every failure is an `Error` whose
-    /// message is the fatal result's.
-    fn run(&self, m: &Self::Module, request: &[u8], opts: RunOptions) -> Result<Vec<u8>, Error>;
+    /// returns the response bytes; every failure is a `RunError`, whose
+    /// message is the fatal result's and whose kind says how the run
+    /// ended.
+    fn run(&self, m: &Self::Module, request: &[u8], opts: RunOptions) -> Result<Vec<u8>, RunError>;
 
     /// What namespaces the compiled store on disk: an artifact is loaded
     /// only by the engine version that wrote it.
     fn version() -> String
     where
         Self: Sized;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_run_is_narrowed_never_widened() {
+        let config = Config {
+            timeout: Duration::from_secs(30),
+            memory_limit: 512 << 20,
+            ..Default::default()
+        };
+        let narrowed = config.narrowed_by(&RunOptions {
+            timeout: Some(Duration::from_secs(5)),
+            memory_limit: Some(64 << 20),
+            ..Default::default()
+        });
+        assert_eq!(
+            (narrowed.timeout, narrowed.memory_limit),
+            (Duration::from_secs(5), 64 << 20)
+        );
+        let widened = config.narrowed_by(&RunOptions {
+            timeout: Some(Duration::from_secs(60)),
+            memory_limit: Some(1 << 30),
+            ..Default::default()
+        });
+        assert_eq!(
+            (widened.timeout, widened.memory_limit),
+            (config.timeout, config.memory_limit)
+        );
+    }
+
+    #[test]
+    fn a_pool_below_the_per_run_ceiling_is_refused() {
+        let config = Config {
+            memory_limit: 512 << 20,
+            max_total_run_memory: 256 << 20,
+            ..Default::default()
+        };
+        assert_eq!(
+            config.check_run_memory().unwrap_err().0,
+            "--max-total-run-memory 256Mi is smaller than the per-run ceiling 512Mi (--module-memory-limit): no full-limit run could ever reserve its memory"
+        );
+        assert!(Config::default().check_run_memory().is_ok());
+    }
+
+    #[test]
+    fn a_wait_ends_at_the_nearer_of_budget_and_deadline() {
+        let near = Instant::now() + Duration::from_millis(10);
+        let opts = RunOptions {
+            deadline: Some(near),
+            ..Default::default()
+        };
+        assert_eq!(opts.deadline_within(Duration::from_secs(30)), near);
+        let far = RunOptions {
+            deadline: Some(Instant::now() + Duration::from_secs(3600)),
+            ..Default::default()
+        };
+        assert!(far.deadline_within(Duration::from_secs(1)) < far.deadline.unwrap());
+    }
+
+    #[test]
+    fn the_outcome_follows_the_kind_not_the_words() {
+        let deadline: Result<(), RunError> =
+            Err(RunError::deadline("run failed", Duration::from_secs(30)));
+        assert_eq!(
+            deadline.as_ref().unwrap_err().to_string(),
+            "run failed: module exceeded its execution deadline (30s)"
+        );
+        assert_eq!(metrics::run_outcome(&deadline), metrics::OUTCOME_TIMEOUT);
+        let said: Result<(), RunError> = Err(RunError::new(
+            RunFailure::Returned,
+            "run returned an error: module exceeded its execution deadline (30s)",
+        ));
+        assert_eq!(metrics::run_outcome(&said), metrics::OUTCOME_ERROR);
+        assert_eq!(
+            metrics::run_outcome(&Ok::<(), RunError>(())),
+            metrics::OUTCOME_OK
+        );
+        let host = RunError::from(Error("cannot create the private /tmp: denied".into()));
+        assert_eq!(
+            (host.kind(), host.message()),
+            (RunFailure::Host, "cannot create the private /tmp: denied")
+        );
+    }
 }

@@ -55,6 +55,13 @@ const WASI_PREVIEW1_MODULE: &str = "wasi_snapshot_preview1";
 /// `component-type:<world>` both count.
 const COMPONENT_TYPE_SECTION: &str = "component-type";
 
+/// Interfaces are named in full, `namespace:package/interface@version`,
+/// in everything encoded here, as the published contract package names
+/// them. wit-component's canonical names, which carry part of the version
+/// in a suffix, stay off: the encoding is what it was before the option
+/// existed.
+pub(crate) const CANONICAL_NAMES: bool = false;
+
 /// What the wrap produced: the component, and whether the wasip1 adapter
 /// was linked into it (only when the core module imported from
 /// `wasi_snapshot_preview1`).
@@ -118,8 +125,14 @@ pub fn embed_world(
         .select_world(&[pkg], Some(world))
         .map_err(|e| Error(format!("cannot embed the world into module: {e:#}")))?;
     let mut wasm = core.to_vec();
-    wit_component::embed_component_metadata(&mut wasm, &resolve, world, encoding.into())
-        .map_err(|e| Error(format!("cannot embed the world into module: {e:#}")))?;
+    wit_component::embed_component_metadata(
+        &mut wasm,
+        &resolve,
+        world,
+        encoding.into(),
+        CANONICAL_NAMES,
+    )
+    .map_err(|e| Error(format!("cannot embed the world into module: {e:#}")))?;
     Ok(wasm)
 }
 
