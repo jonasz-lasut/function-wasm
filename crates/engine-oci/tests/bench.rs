@@ -177,27 +177,39 @@ fn request() -> Vec<u8> {
     .encode_to_vec()
 }
 
-/// One measured run: when it started, the marks it passed and when the
-/// caller had its answer.
+/// One measured run: when it started, the marks it passed, when the
+/// caller had its answer and when the run's VM was gone. The caller of an
+/// answered run does not wait for the last: until the engine returned a
+/// response only once the VM was stopped, it was what the caller waited
+/// for, so the two give the wait before and after in one run.
 struct Run {
     started: Instant,
     marks: Vec<Mark>,
     resolved: Instant,
+    gone: Instant,
 }
 
 impl Run {
+    /// What the caller waited.
     fn total_ms(&self) -> f64 {
         ms(self.started, self.resolved)
+    }
+
+    /// The run to the end of its VM.
+    fn gone_ms(&self) -> f64 {
+        ms(self.started, self.gone)
     }
 
     fn at(&self, name: &str) -> Option<Instant> {
         self.marks.iter().find(|m| m.name == name).map(|m| m.at)
     }
 
-    /// The milliseconds between two marks, `resolved` being the caller's.
+    /// The milliseconds between two marks, `resolved` being the caller's
+    /// and `gone` the end of the VM.
     fn between(&self, from: &str, to: &str) -> Option<f64> {
         let to = match to {
             "resolved" => self.resolved,
+            "gone" => self.gone,
             name => self.at(name)?,
         };
         Some(ms(self.at(from)?, to))
@@ -215,6 +227,10 @@ fn timed(e: &Oci, m: &Module, request: &[u8], opts: RunOptions) -> Result<Run, S
     let started = Instant::now();
     let result = e.run(m, request, opts);
     let resolved = Instant::now();
+    // The VM is stopped on a thread of its own, which marks this timeline
+    // too: the next run starts once it is gone, as the runs before it did.
+    e.settle();
+    let gone = Instant::now();
     let marks = timeline::take();
     let response = result.map_err(|e| e.to_string())?;
     let tag = RunFunctionResponse::decode(response.as_slice())
@@ -229,6 +245,7 @@ fn timed(e: &Oci, m: &Module, request: &[u8], opts: RunOptions) -> Result<Run, S
         started,
         marks,
         resolved,
+        gone,
     })
 }
 
@@ -280,7 +297,9 @@ fn measure_with(
 
 /// A run's timeline, cold and restored: every mark the engine and the
 /// sandbox make, as the time since the mark before it and since the start,
-/// then what the caller waits for after the response's bytes are in hand.
+/// then what follows the response's bytes being in hand: how long the
+/// caller still waits, and how long the VM takes to go, which the caller
+/// waited for too before a response was returned ahead of it.
 #[test]
 #[ignore = "a hand-run benchmark"]
 fn a_run_by_phase() {
@@ -337,14 +356,10 @@ fn a_run_by_phase() {
                 measured.iter().map(|r| r.marks[i].count as f64).collect(),
             );
         }
-        row(
-            "resolved",
-            measured
-                .iter()
-                .map(|r| ms(r.marks.last().expect("a mark").at, r.resolved))
-                .collect(),
-            measured.iter().map(Run::total_ms).collect(),
-            vec![0.0],
+        println!(
+            "\nThe caller has the response at {:.1} (p50), and the VM is gone at {:.1}.",
+            Spread::of(measured.iter().map(Run::total_ms).collect()).p50,
+            Spread::of(measured.iter().map(Run::gone_ms).collect()).p50,
         );
         println!("\n| span | p50 | p90 | max | share of the run: p50 |");
         println!("|---|---|---|---|---|");
@@ -353,6 +368,11 @@ fn a_run_by_phase() {
                 "the response in hand until the caller has it",
                 "response-received",
                 "resolved",
+            ),
+            (
+                "the response in hand until the VM is gone (the caller's wait before)",
+                "response-received",
+                "gone",
             ),
             (
                 "of it: the Finish and the init's Exit",
@@ -367,7 +387,7 @@ fn a_run_by_phase() {
             (
                 "of it: the console drained and the output logged",
                 "vmm-reaped",
-                "resolved",
+                "output-logged",
             ),
             (
                 "the run sent until the function serves",
@@ -396,8 +416,12 @@ fn a_run_by_phase() {
             );
         }
         println!(
-            "| the whole run | {} | 100 % |",
+            "| the whole run for its caller | {} | 100 % |",
             Spread::of(measured.iter().map(Run::total_ms).collect()).cells()
+        );
+        println!(
+            "| the whole run until the VM is gone (the caller's before) | {} | |",
+            Spread::of(measured.iter().map(Run::gone_ms).collect()).cells()
         );
     }
 }
@@ -417,9 +441,9 @@ fn a_run_by_memory() {
         label()
     );
     println!(
-        "| path | limits.memory MiB | the whole run | p90 | until the guest connects | the run sent until the function serves | the VMM killed and reaped | the response in hand until the caller has it |"
+        "| path | limits.memory MiB | the whole run for its caller | p90 | until the guest connects | the run sent until the function serves | the VMM killed and reaped | the response in hand until the caller has it | until the VM is gone |"
     );
-    println!("|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|---|");
     for (path, snapshots) in PATHS {
         let e = engine(&t, snapshots);
         let m = e.compile(&image).expect("the fixture image");
@@ -440,13 +464,14 @@ fn a_run_by_memory() {
             };
             let total = Spread::of(measured.iter().map(Run::total_ms).collect());
             println!(
-                "| {path} | {limit} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} |",
+                "| {path} | {limit} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} |",
                 total.p50,
                 total.p90,
                 p50("vmm-spawned", "guest-connected"),
                 p50("run-sent", "function-serving"),
                 p50("exit-read", "vmm-reaped"),
                 p50("response-received", "resolved"),
+                p50("response-received", "gone"),
             );
         }
     }
@@ -606,13 +631,13 @@ fn a_run_by_root_filesystem_packing() {
         .collect();
     let dir = tempfile::tempdir().expect("tempdir");
     println!(
-        "\n### A run by root filesystem packing{}\n\n{runs} runs per cell, milliseconds; `serving` is the run sent until the function serves.\n",
+        "\n### A run by root filesystem packing{}\n\n{runs} runs per cell, milliseconds, what the caller waited; `serving` is the run sent until the function serves, `VM gone` the run until its VM is stopped (the caller's wait before a response was returned ahead of it).\n",
         label()
     );
     println!(
-        "| image | program MiB | packing | squashfs MiB | boot: p50 | p90 | max | serving p50 | restore: p50 | p90 | max | serving p50 |"
+        "| image | program MiB | packing | squashfs MiB | boot: p50 | p90 | max | serving p50 | VM gone p50 | restore: p50 | p90 | max | serving p50 | VM gone p50 |"
     );
-    println!("|---|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     for (n, (image, program, layout)) in images.iter().enumerate() {
         let written = engines[0].1.compile(layout).expect("the image");
         let squashfs = engines[0].1.serialize(&written).expect("its squashfs");
@@ -632,12 +657,13 @@ fn a_run_by_root_filesystem_packing() {
                             .map(|r| r.between("run-sent", "function-serving").expect("marks"))
                             .collect();
                         format!(
-                            "{} | {:.1}",
+                            "{} | {:.1} | {:.1}",
                             Spread::of(measured.iter().map(Run::total_ms).collect()).cells(),
-                            Spread::of(serving).p50
+                            Spread::of(serving).p50,
+                            Spread::of(measured.iter().map(Run::gone_ms).collect()).p50
                         )
                     })
-                    .unwrap_or_else(|e| format!("failed: {e} | | | "));
+                    .unwrap_or_else(|e| format!("failed: {e} | | | | "));
                 cells.insert(*path, cell);
             }
             println!(

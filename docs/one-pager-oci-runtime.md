@@ -300,10 +300,17 @@ The guest's only root is then the init. Dropping capabilities alone isn't
 enough, because UID 0 can still write the cgroup file that caps the run's memory. Once the function's port accepts a
 connection the init bridges it to a second vsock connection, and the host
 calls `RunFunction` over that, bounded by the run's deadline and a limit on
-the response's size. After the answer the init stops the process and reports
-its exit, which flushes what it logged. The runtime then kills the VM,
-which discards every change the run made, and a fresh instance per request
-holds. `--enable-vm-snapshots` restores a snapshot of the booted VM in place of
+the response's size. The runtime returns the response as soon as it has
+it. A thread of its own ends the rest of the run. The init stops the
+process and reports its exit, which flushes what it logged. The runtime
+logs those lines and the VM's console. Then it kills and reaps the VM,
+which discards every change the run made, and a fresh instance per
+request holds. Until 2026-11-13 the caller waited for that work. A CI
+runner measured its median at 24 ms of a booted run of 400 ms and at
+19 ms of a restored run of 177 ms, 3 to 5 ms of it for the exit report
+and the rest for the VMM's exit. When the function doesn't answer, the
+run is over before its fatal result returns, because the result quotes
+how the process ended and what it logged last. `--enable-vm-snapshots` restores a snapshot of the booted VM in place of
 the boot ([Snapshots](#snapshots)).
 
 **Bounds.** `limits.timeout` is the VM's wall clock, the boot included.
@@ -311,7 +318,16 @@ the boot ([Snapshots](#snapshots)).
 capped at the limit. The VM gets the limit plus a fixed share for the
 kernel, the init and the overlay. The run slots, the fair scheduler by digest, the memory pool,
 the step slots and the gRPC deadline cap apply unchanged, because they
-wrap `Engine::run`. The kernel kills a process past its cap. The
+wrap `Engine::run`. A run's slot and its memory belong to the VM. An
+answered run keeps both after the response, until the runtime has reaped
+the VMM. The next VM starts only once the one before it's gone.
+`runs_in_flight` counts the run until then, and `run_duration` observes
+it at the response, which is what a caller waits. The step slot is the
+runtime's and ends with the call. While the runtime stops one VM of a
+step at its `limits.concurrency`, the step may already run its next,
+inside both bounds of the engine. The runtime drops its engine when it shuts down, and a dropped
+engine waits until it has stopped every VM, which keeps a shutdown from
+leaving a VMM running. The kernel kills a process past its cap. The
 init reports the exit, and the fatal states the limit as the Wasmtime
 limiter's does.
 
@@ -657,12 +673,15 @@ The owner decided this on 2026-11-12:
     ([#280](https://github.com/jonasz-lasut/guestfn/issues/280)) depends
     on.
 
-The owner decided this on 2026-11-13, with the measurements of
+The owner decided these on 2026-11-13, with the measurements of
 [#376](https://github.com/jonasz-lasut/guestfn/pull/376):
 
 18. **zstd for the root filesystem.** The runtime packs the squashfs with
     zstd in place of gzip, and function-oci accepts the C library that
     comes with it. function-wasm doesn't get it.
+19. **The response before the teardown.** A caller gets its response
+    before the runtime has stopped the VM. The run's slot and its memory
+    remain the VM's until the runtime has reaped the VMM.
 
 ## Phases
 

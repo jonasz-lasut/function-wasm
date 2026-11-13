@@ -26,6 +26,16 @@ function over gRPC, and the init relays the process's output and exit
 status to the host ([the contract](modules.md)). The
 VM ends with the run, and the next request boots a fresh one.
 
+A step gets its response as soon as the function has answered. The
+runtime stops the VM after that: the init ends the process, the runtime
+logs what the process wrote last and kills the VMM. A caller doesn't wait
+for that, 19 to 24 ms on a CI runner. The run keeps its run slot
+(`--max-concurrent-runs`) and its share of `--max-total-run-memory`
+until the VMM has exited: both bounds count VMs. The runtime logs the lines
+a process writes around its answer a moment after it returns the
+response. A run the function didn't answer ends as before: its fatal
+result waits for the process's exit and last line.
+
 The runtime unpacks an image once per digest into a squashfs root
 filesystem, which the compiled store keeps beside function-wasm's
 artifacts, under the same key and the same LRU sweep. The module cache's

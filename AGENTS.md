@@ -668,15 +668,35 @@ crates/engine-oci/          the OCI engine of the function-oci runtime (package 
                             the VM's read-only block device; image.rs is the config, the
                             contract check (a command, this platform, a user that is not root - as written before a layer is unpacked, as resolved after) and the run's
                             Description; initrd.rs the cpio around the init; run.rs the
-                            slot, the whole-VM memory reservation, the stderr lines logged
+                            slot, the whole-VM memory reservation, the answered run returned
+                            before its VM is stopped (the sandbox hands back `Run::Answered`
+                            with the response and a `Rest`; a `Teardown` on a thread of its
+                            own finishes it - the init's Exit awaited, the output and the
+                            console logged, the VMM killed and reaped, its directory removed -
+                            holding the run's slot, its reservation, its place in
+                            runs_in_flight and the image until the VM is gone, a panic there
+                            caught and logged; run_duration is observed at the response; any
+                            other run is over before it returns; `Oci::settle` waits for the
+                            teardowns and so does the engine's Drop, which is how a shutdown
+                            leaves no VMM), the stderr lines logged
                             (JSON level/msg typed; the last OUTPUT_CAP, 256 KiB, of a run's
                             output kept in sandbox.rs's Output with the dropped bytes counted
                             in one warning, a line cut at 16 KiB) and the fatal wording (`run returned an error`, `process exited
                             with status N before answering the call: <last line>`, the deadline family, the memory
-                            limit); testing.rs the image fixtures and the fake sandbox.
+                            limit); testing.rs the image fixtures, the fake sandbox (its
+                            `stopping` hook stands where a VM is stopped after an answer) and
+                            `Logs`, the tracing capture a test reads a teardown's lines from;
+                            timeline.rs the marks of a run's moments, compiled to nothing
+                            without the `bench` feature.
                             tests/vm.rs runs the fixture function in real VMs when
                             GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set (make oci.test),
-                            skipping otherwise unless GUESTFN_REQUIRE_KVM
+                            skipping otherwise unless GUESTFN_REQUIRE_KVM; tests/teardown.rs
+                            holds what an answered run leaves behind to the fake sandbox (the
+                            slot, the memory, the image's hold, the metrics, the log, a
+                            panic, a dropped engine); tests/bench.rs is the hand-run
+                            benchmark (`--features bench`, #[ignore]: a run by phase, by VM
+                            memory and by root filesystem packing in real VMs, and
+                            packing_by_level without one)
 crates/oci-init/            the guest init (package and binary guestfn-init, on libc and the protocol
                             alone): src/main.rs is the entry point, src/plan.rs what the init decides with no kernel call (the host's first frame, the command a description amounts to with its root refusal, the OOM verdict over the kernel log's text, the seed's bytes), unit-tested on every host, and src/linux.rs the init,
                             Linux alone (elsewhere the binary says so and exits, so the
@@ -833,11 +853,11 @@ Three on-disk stores under `/tmp/guestfn-cache` (fixed; `store.rs`): `modules/<d
 
 ### Readiness, warm-up and the run bound
 
-Readiness is answered twice — gRPC health on the function port and plain-HTTP `/readyz` (`/livez` always 200) on `--health-address` `:8081` — and starts as NOT_SERVING/503; warm-up loads every `--warm-modules` entry through the request's own path (one entry after another, failures logged, never fatal) and then both flip — while the server already listens, so a probe reads not-ready rather than a refused connection and an early request is served cold or joins the load in flight. `--max-concurrent-runs` is a fair round-robin slot scheduler keyed by module digest in the engine; slot, memory-pool and step-slot waits are all capped by the request's own gRPC deadline, and a request cut short while waiting is a fatal result that is not counted as a run.
+Readiness is answered twice — gRPC health on the function port and plain-HTTP `/readyz` (`/livez` always 200) on `--health-address` `:8081` — and starts as NOT_SERVING/503; warm-up loads every `--warm-modules` entry through the request's own path (one entry after another, failures logged, never fatal) and then both flip — while the server already listens, so a probe reads not-ready rather than a refused connection and an early request is served cold or joins the load in flight. `--max-concurrent-runs` is a fair round-robin slot scheduler keyed by module digest in the engine; slot, memory-pool and step-slot waits are all capped by the request's own gRPC deadline, and a request cut short while waiting is a fatal result that is not counted as a run. function-oci returns an answered run's response before it has stopped the run's VM, and the run keeps its slot and its memory reservation until the VMM is reaped (`crates/engine-oci/src/run.rs`, the scheduler's `acquire_owned`): the step slot, the runtime's, ends with the call.
 
 ### Metrics
 
-`crates/engine/src/metrics.rs` registers the runtime's series, whose names, labels and buckets are contract: `guestfn_module_{compile,fetch,run,snapshot}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` (its `skipped` outcome is a step with no module to run under `module.allowEmpty`), `hostcall_duration_seconds` and `memory_denials_total{reason}`: `hostcall_duration_seconds` (the host-import slice of a run, split by call_hook) and `memory_denials_total{reason}` (guest memory and table growths denied at the per-run ceiling or the pool), registered with prometheus-client (the OpenMetrics-native client; the runtime's own registry, prometheus-client has no default), served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port) - OpenMetrics 1.0 as the main format straight from prometheus-client's encoder, the classic text format derived from it (`metrics::classic_from_openmetrics`: counter families renamed with `_total`, `# EOF` dropped) only for an Accept header that asks for `text/plain` without accepting OpenMetrics (`ops.rs::wants_classic_text`); both renderings carry identical series. The `Labeled{Counter,Gauge,Histogram}` adapters in metrics.rs keep the prometheus crate's `with_label_values` call shape, so metric call sites never name prometheus-client; counters register named without their `_total` (the encoder appends it) and helps without their trailing period (prometheus-client appends one). `crates/function/src/grpcmetrics.rs` adds the gRPC server series (`grpc_server_{started,handled,msg_received,msg_sent}_total`, the names, labels and help strings of function-sdk-go's grpc-prometheus interceptor, so one dashboard reads every Crossplane function) as a tower layer around the whole router in grpc.rs, unary-only, every served method pre-created at zero as that interceptor's InitializeMetrics does, and no handling-time histogram. Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
+`crates/engine/src/metrics.rs` registers the runtime's series, whose names, labels and buckets are contract: `guestfn_module_{compile,fetch,run,snapshot}_duration_seconds`, `runs_in_flight`, `cache_events_total`, `cache_bytes`, `http_requests_total{outcome}`, `requests_total{outcome}` (its `skipped` outcome is a step with no module to run under `module.allowEmpty`), `hostcall_duration_seconds` and `memory_denials_total{reason}`: `hostcall_duration_seconds` (the host-import slice of a run, split by call_hook) and `memory_denials_total{reason}` (guest memory and table growths denied at the per-run ceiling or the pool), registered with prometheus-client (the OpenMetrics-native client; the runtime's own registry, prometheus-client has no default), served at `/metrics` on `--metrics-address` (default `:8080`, function-sdk-go's port) - OpenMetrics 1.0 as the main format straight from prometheus-client's encoder, the classic text format derived from it (`metrics::classic_from_openmetrics`: counter families renamed with `_total`, `# EOF` dropped) only for an Accept header that asks for `text/plain` without accepting OpenMetrics (`ops.rs::wants_classic_text`); both renderings carry identical series. The `Labeled{Counter,Gauge,Histogram}` adapters in metrics.rs keep the prometheus crate's `with_label_values` call shape, so metric call sites never name prometheus-client; counters register named without their `_total` (the encoder appends it) and helps without their trailing period (prometheus-client appends one). `crates/function/src/grpcmetrics.rs` adds the gRPC server series (`grpc_server_{started,handled,msg_received,msg_sent}_total`, the names, labels and help strings of function-sdk-go's grpc-prometheus interceptor, so one dashboard reads every Crossplane function) as a tower layer around the whole router in grpc.rs, unary-only, every served method pre-created at zero as that interceptor's InitializeMetrics does, and no handling-time histogram. For function-oci `run_duration_seconds` is observed when the caller has its response and `runs_in_flight` counts the run until its VM is stopped. Never add a module/digest/host label - unbounded cardinality. `metrics::sample` reads one series back for tests.
 
 ### Signatures
 

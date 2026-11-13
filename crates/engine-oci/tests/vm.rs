@@ -470,6 +470,130 @@ fn the_memory_limit_kills_a_growing_process() {
     );
 }
 
+/// The Firecracker processes this test process has started and not reaped,
+/// by /proc: a VMM is its child until it is waited for.
+fn vmms() -> usize {
+    let me = std::process::id().to_string();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return 0;
+    };
+    entries
+        .filter_map(|entry| std::fs::read_to_string(entry.ok()?.path().join("stat")).ok())
+        .filter(|stat| {
+            // `pid (comm) state ppid ...`, the command in parentheses.
+            let Some((head, rest)) = stat.rsplit_once(") ") else {
+                return false;
+            };
+            head.ends_with("(firecracker") && rest.split_whitespace().nth(1) == Some(me.as_str())
+        })
+        .count()
+}
+
+/// A run's response is back with its caller before the run's VM is gone,
+/// and the run's slot is the VM's until then: with one slot, a run asked
+/// right after an answer finds the slot taken and a VMM still alive, and
+/// once the engine has settled no VMM is left and the slot is free. The
+/// teardown is some milliseconds of another thread, so on a rare round it
+/// is over before the next line here runs: one round in five that sees
+/// the VM alive is the proof, and no round may leave a VMM behind. The
+/// suite runs its tests one at a time, so every VMM is this test's.
+#[test]
+fn a_response_is_back_before_its_vm_is_gone() {
+    let Some(t) = tools() else { return };
+    for snapshots in [false, true] {
+        let e = engine_with(
+            &t,
+            Config {
+                max_concurrent_runs: 1,
+                ..Config::default()
+            },
+            snapshots,
+        );
+        let m = e
+            .compile(&fixture_image(
+                &t.fixture,
+                &["/fixture", "--insecure", "echo"],
+                "app",
+                &[],
+            ))
+            .unwrap();
+        // With snapshots the first run makes one, which is no run's VM.
+        assert_eq!(ask(&e, &m, "warm", opts()).unwrap(), "warm");
+        e.settle();
+        assert_eq!(vmms(), 0);
+        let mut seen_alive = 0;
+        for round in 0..5 {
+            assert_eq!(ask(&e, &m, "answered", opts()).unwrap(), "answered");
+            let alive = vmms();
+            let mut hasty = opts();
+            hasty.deadline = Some(std::time::Instant::now() + Duration::from_millis(1));
+            let next = ask(&e, &m, "next", hasty);
+            if alive == 1 && next == Err("waiting for a run slot: deadline exceeded".to_string()) {
+                seen_alive += 1;
+            }
+            eprintln!("round {round}: {alive} VMM alive after the answer, the next run: {next:?}");
+            e.settle();
+            assert_eq!(vmms(), 0, "a VMM is left after the engine settled");
+            assert_eq!(ask(&e, &m, "free", opts()).unwrap(), "free");
+            e.settle();
+        }
+        assert!(
+            seen_alive > 0,
+            "no round saw the VM alive and its slot taken after the answer (snapshots: {snapshots})"
+        );
+        // An engine that goes waits for its last VM.
+        assert_eq!(ask(&e, &m, "last", opts()).unwrap(), "last");
+        drop(m);
+        drop(e);
+        assert_eq!(vmms(), 0, "a VMM outlived its engine");
+    }
+}
+
+/// What the process wrote and how it ended reach the log after the
+/// answer, from the thread that stops the VM, with the module and its
+/// digest: the lines with their levels, and at debug the VM's console,
+/// where the init reports the exit it saw once the call was over (the
+/// process is killed then, and `oom=` is where a kill by the memory limit
+/// after the answer shows).
+#[test]
+fn what_a_run_left_is_logged_after_its_answer() {
+    let Some(t) = tools() else { return };
+    let logs = guestfn_engine_oci::testing::Logs::capture();
+    let e = engine(&t, Config::default());
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "stderr"],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    let o = RunOptions {
+        module: "oci fixture, logged late".to_string(),
+        digest: "sha256:logged-late".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(ask(&e, &m, "tag", o).unwrap(), "tag");
+    e.settle();
+    let with = |more: &[&str]| {
+        let mine = [
+            "module=oci fixture, logged late",
+            "digest=sha256:logged-late",
+        ];
+        logs.with(&[&mine[..], more].concat())
+    };
+    let plain = with(&["INFO", "message=a plain line from the guest"]);
+    assert_eq!(plain.len(), 1, "{plain:?}");
+    let typed = with(&["WARN", "message=a structured line", "answer=42"]);
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    let console = with(&[
+        "DEBUG",
+        "message=VM console",
+        "guestfn-init: exited status=None signal=Some(9) oom=false",
+    ]);
+    assert_eq!(console.len(), 1, "{console:?}");
+}
+
 /// A root filesystem packed with a compressor the guest kernel was built
 /// without ends the run as a failure of the runtime, in a sentence and at
 /// the deadline at the latest: the init's mount is refused, the init says

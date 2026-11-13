@@ -47,7 +47,37 @@ impl Drop for SlotGuard<'_> {
     }
 }
 
+/// A slot that goes where its run goes: it holds the scheduler itself, so
+/// a run that ends on another thread than the one that asked gives its
+/// slot back from there.
+#[derive(Debug)]
+pub struct OwnedSlot {
+    scheduler: Arc<FairScheduler>,
+}
+
+impl Drop for OwnedSlot {
+    fn drop(&mut self) {
+        let mut s = self.scheduler.state.lock().expect("poisoned");
+        s.active -= 1;
+        self.scheduler.wake_next(&mut s);
+    }
+}
+
 impl FairScheduler {
+    /// `acquire`, with a slot that borrows nothing.
+    pub fn acquire_owned(
+        self: &Arc<Self>,
+        key: &str,
+        deadline: Instant,
+    ) -> Result<OwnedSlot, String> {
+        // The slot is counted once: the borrowed guard hands its count to
+        // the owned one instead of giving it back.
+        std::mem::forget(self.acquire(key, deadline)?);
+        Ok(OwnedSlot {
+            scheduler: Arc::clone(self),
+        })
+    }
+
     pub fn new(slots: usize) -> FairScheduler {
         FairScheduler {
             total: slots,
@@ -339,6 +369,28 @@ mod tests {
             h.join().expect("join");
         }
         assert_eq!(*order.lock().expect("poisoned"), vec!["hot", "cold", "hot"]);
+    }
+
+    /// An owned slot is a slot like any other, wherever it is given back:
+    /// it is counted once, and its drop on another thread admits the next
+    /// waiter.
+    #[test]
+    fn an_owned_slot_is_given_back_from_another_thread() {
+        let s = Arc::new(FairScheduler::new(1));
+        let owned = s.acquire_owned("a", soon()).expect("the slot");
+        assert!(s.acquire("b", soon()).is_err(), "the one slot is taken");
+        let elsewhere = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            drop(owned);
+        });
+        let next = s
+            .acquire("b", Instant::now() + Duration::from_secs(5))
+            .expect("the slot, once given back");
+        elsewhere.join().expect("join");
+        assert!(s.acquire_owned("a", soon()).is_err(), "taken again");
+        drop(next);
+        drop(s.acquire_owned("a", soon()).expect("free again"));
+        drop(s.acquire("a", soon()).expect("and again"));
     }
 
     #[test]
