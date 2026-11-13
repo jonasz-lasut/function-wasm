@@ -13,7 +13,7 @@ use crate::concurrency::{MemPool, format_bytes};
 use crate::{Error, RunOptions, duration, metrics};
 
 use crate::sandbox::{Ended, OUTPUT_CAP, VmSpec};
-use crate::{Image, Oci, Rootfs};
+use crate::{Image, Oci, Rootfs, timeline};
 
 /// What the VM gets beyond the process's limit: the guest kernel, the
 /// init, the root filesystem's overlay and the squashfs page cache. The
@@ -79,6 +79,7 @@ pub(crate) fn run(
     };
     metrics::RUNS_IN_FLIGHT.inc();
     let start = Instant::now();
+    timeline::mark("admitted");
     let result = boot_and_run(
         engine,
         image,
@@ -182,6 +183,7 @@ fn boot_and_run(
         snapshots: &image.snapshots,
         store: store_of(engine, image),
     })?;
+    timeline::mark("sandbox-returned");
     let (output, dropped) = outcome.log.into_text();
     if dropped > 0 {
         tracing::warn!(
@@ -196,6 +198,7 @@ fn boot_and_run(
         tracing::debug!(module = %opts.module, digest = %opts.digest, console = %outcome.console, "VM console");
     }
     let last_line = last_line(&output);
+    timeline::mark("output-logged");
     match outcome.end {
         Ended::Deadline => Err(Error(format!(
             "run failed: module exceeded its execution deadline ({})",

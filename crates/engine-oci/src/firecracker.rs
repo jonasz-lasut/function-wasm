@@ -21,6 +21,7 @@ use crate::protocol::{Exit, Hello, Kind, read_frame, read_json, write_frame, wri
 
 use crate::metrics;
 use crate::sandbox::{Ended, Outcome, Output, Sandbox, Snapshot, VmSpec};
+use crate::timeline;
 
 /// The guest's CID; the host is always 2.
 const GUEST_CID: u32 = 3;
@@ -195,11 +196,16 @@ impl Firecracker {
         let mut connected = None;
         let result = drive(ports, &mut child, spec, &mut connected);
         let driven = Instant::now();
+        timeline::mark("driven");
         let usage = process_usage(child.id());
+        timeline::mark("usage-read");
         let _ = child.kill();
+        timeline::mark("vmm-killed");
         let _ = child.wait();
+        timeline::mark("vmm-reaped");
         let _ = out_thread.join();
         let _ = err_thread.join();
+        timeline::mark("console-drained");
         let console = std::mem::take(&mut *console.lock().expect("poisoned"));
         // GUESTFN_VM_CONSOLE prints every VM's serial console to stderr, for
         // a test run or a laptop debugging a boot; the engine's debug log
@@ -259,6 +265,7 @@ impl Firecracker {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| Error(format!("cannot start {}: {e}", self.binary.display())))?;
+        timeline::mark("vmm-spawned");
         Ok(self.finish(child, &ports, spec, started, "boot"))
     }
 
@@ -526,6 +533,7 @@ impl Firecracker {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("cannot start {}: {e}", self.binary.display()))?;
+        timeline::mark("vmm-spawned");
         if let Err(e) = api_call(
             &api,
             "PUT",
@@ -541,6 +549,7 @@ impl Firecracker {
             let _ = child.wait();
             return Err(e);
         }
+        timeline::mark("snapshot-loaded");
         let mut seed = [0u8; 32];
         let seeded = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut seed));
         let description = crate::protocol::Description {
@@ -654,7 +663,9 @@ fn process_usage(pid: u32) -> (u64, u64) {
 /// process starts, so the connect is tried for a while.
 fn api_call(sock: &Path, method: &str, path: &str, body: &serde_json::Value) -> Result<(), String> {
     let started = Instant::now();
+    let mut tries = 0u64;
     let mut stream = loop {
+        tries += 1;
         match UnixStream::connect(sock) {
             Ok(s) => break s,
             Err(e) if started.elapsed() > Duration::from_secs(5) => {
@@ -663,6 +674,7 @@ fn api_call(sock: &Path, method: &str, path: &str, body: &serde_json::Value) -> 
             Err(_) => std::thread::sleep(Duration::from_millis(1)),
         }
     };
+    timeline::count("api-connected", tries);
     stream
         .set_read_timeout(Some(Duration::from_secs(30)))
         .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(30))))
@@ -728,7 +740,9 @@ impl Sandbox for Firecracker {
             // boot it was meant to save, never the run, and the image its
             // snapshots until it is loaded again: the next run does not try
             // what just failed.
-            match self.snapshot(snapshots, &spec, false) {
+            let found = self.snapshot(snapshots, &spec, false);
+            timeline::mark("snapshot-found");
+            match found {
                 // Another run is making it: this one boots.
                 Ok(None) => {}
                 Ok(Some(snapshot)) => match self.restore(&spec, &snapshot) {
@@ -782,7 +796,9 @@ fn drive(
     connected: &mut Option<Instant>,
 ) -> (Output, Ended) {
     let mut log = Output::default();
+    let mut looks = 0u64;
     let stream = loop {
+        looks += 1;
         match ports.control.accept() {
             Ok((s, _)) => break s,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -807,6 +823,7 @@ fn drive(
         std::thread::sleep(Duration::from_millis(1));
     };
     *connected = Some(Instant::now());
+    timeline::count("guest-connected", looks);
     let end = match talk(stream, &ports.grpc, spec, &mut log) {
         Ok(end) => end,
         Err(Talk::Deadline) => Ended::Deadline,
@@ -916,6 +933,7 @@ async fn call(
         exit = &mut *ended => return ended_of(exit),
         () = tokio::time::sleep_until(deadline) => return Call::Deadline,
     };
+    timeline::mark("function-serving");
     let once = Arc::new(Mutex::new(Some(bridge)));
     let connector = tower::service_fn(move |_: http::Uri| {
         let bridge = once.lock().expect("poisoned").take();
@@ -939,6 +957,7 @@ async fn call(
             .ready()
             .await
             .map_err(|e| tonic::Status::from_error(Box::new(e)))?;
+        timeline::mark("call-ready");
         let mut request = tonic::Request::new(request);
         request.set_timeout(left);
         client
@@ -951,7 +970,10 @@ async fn call(
     };
     tokio::select! {
         answer = rpc => match answer {
-            Ok(response) => Call::Answered(response.into_inner().to_vec()),
+            Ok(response) => {
+                timeline::mark("response-received");
+                Call::Answered(response.into_inner().to_vec())
+            }
             // The client enforces the timeout it sends, and the select below
             // may poll its error first: past the deadline, any failure is
             // the deadline.
@@ -988,8 +1010,10 @@ fn talk(
         ),
         lost => lost,
     })?;
+    timeline::mark("hello-read");
     write_json(&mut stream, Kind::Run, spec.description)
         .map_err(|e| io_err(e, "cannot send the run"))?;
+    timeline::mark("run-sent");
     let mut control = stream
         .try_clone()
         .map_err(|e| Talk::Lost(format!("cannot share the guest's connection: {e}")))?;
@@ -1000,6 +1024,7 @@ fn talk(
         .enable_all()
         .build()
         .map_err(|e| Talk::Lost(format!("cannot start the call's runtime: {e}")))?;
+    timeline::mark("call-runtime-built");
     let (ended_tx, mut ended) = tokio::sync::oneshot::channel();
     let deadline = spec.deadline;
     std::thread::scope(|scope| {
@@ -1016,7 +1041,9 @@ fn talk(
         let end = match outcome {
             Call::Answered(response) => {
                 let _ = write_frame(&mut control, Kind::Finish, &[]);
+                timeline::mark("finish-sent");
                 let _ = exit_within_grace();
+                timeline::mark("exit-read");
                 Ok(Ended::Answered(response))
             }
             Call::Refused { code, message } => {
@@ -1035,6 +1062,7 @@ fn talk(
         // Ends the reader's wait, whatever the run came to.
         let _ = control.shutdown(std::net::Shutdown::Both);
         let _ = reader.join();
+        timeline::mark("reader-joined");
         end
     })
 }

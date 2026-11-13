@@ -18,6 +18,7 @@ mod run;
 pub mod sandbox;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testing;
+pub mod timeline;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
