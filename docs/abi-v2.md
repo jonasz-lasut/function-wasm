@@ -18,7 +18,7 @@ world function {
 }
 ```
 
-- `run` handles one request. The host passes the caller's raw `RunFunctionRequest` bytes and returns the guest's `RunFunctionResponse` bytes verbatim. The host edits out the step credentials the module wasn't granted, and the pull credential in every case. `run` is `async`, so a guest may await its imports, `wasi:http` especially. The host meters the guest's compute while it does. A sync-lifted `run` also satisfies the world, because the canonical ABI accepts a sync function where an async one is expected.
+- `run` handles one request. The host passes the caller's raw `RunFunctionRequest` bytes and returns the guest's `RunFunctionResponse` bytes verbatim. The host edits out the step credentials the module wasn't granted, and the pull credential in every case. `run` is `async`, so a guest may await its imports, `wasi:http` especially. The run's deadline applies while it does, less the time it waits for the host's HTTP answer. A sync-lifted `run` also satisfies the world, because the canonical ABI accepts a sync function where an async one is expected.
 - `log` is structured logging through the host, with typed values. The host attaches the module's identity to every line and renders it at the runtime's level of the same name. `debug` lines appear only under `--debug`.
 - The runtime typechecks `log-level` exactly, so `log` changes only with `2.0.0`.
 - `function-sync`, the package's second world, is this contract with `run` declared sync, for a toolchain that can't async-lift it. The runtime checks every guest against `function`.
@@ -53,7 +53,7 @@ A guest sends HTTP requests through `wasi:http/client@0.3.0` (`send: async func`
 
 - Bodies are complete on both sides, and the response budget applies to whole responses.
 - The guest receives a host-reported failure as the `internal-error` code, whose payload is the refusal string, for a grant refusal, a blocked address, an exhausted budget or a transport failure. The wording is contract, held by the conformance goldens.
-- The time a guest spends awaiting a send is credited back to its compute deadline.
+- The time a guest waits for the host's HTTP answer is credited back to its deadline.
 
 ## Errors
 

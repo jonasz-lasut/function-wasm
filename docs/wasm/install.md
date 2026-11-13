@@ -33,8 +33,9 @@ If it stays unhealthy, read the pod's logs and the Function's conditions (`kubec
 
 The function port speaks mTLS to Crossplane. `/metrics` on `8080` and the
 probes on `8081` are plain HTTP. Their answers contain no secret and no
-module name, and nothing authenticates a caller. Admit them only from where
-they're read. A `NetworkPolicy` on the function's pods, which
+module name, and nothing authenticates a caller. The runtime closes a
+connection that hasn't sent its request within five seconds. Admit the ports only
+from where they're read. A `NetworkPolicy` on the function's pods, which
 Crossplane labels `pkg.crossplane.io/function: function-wasm`, admits the
 metrics port from the monitoring namespace and leaves the probe port to the
 kubelet:

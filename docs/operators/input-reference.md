@@ -55,7 +55,7 @@ The fields are:
 | `module.from` | string | a field of the observed composite resource, under `spec.` or `status.`, that holds the source. See [Modules chosen by the XR](#modules-chosen-by-the-xr) |
 | `module.allowEmpty` | boolean | Optional, with `module.from` only. See [Skipping a step](#skipping-a-step) |
 | `compositionPolicy` | string | the composition author's Cedar layer. See [The composition policy](#the-composition-policy) |
-| `limits.timeout` | duration | compute budget of one run, e.g. `5s`. See [Limits](#limits) |
+| `limits.timeout` | duration | time budget of one run, e.g. `5s`. See [Limits](#limits) |
 | `limits.memory` | quantity | memory a run may use, its linear memories and tables together, e.g. `128Mi`. See [Limits](#limits) |
 | `limits.concurrency` | int32 | at most N runs of this step at once. See [Limits](#limits) |
 | `config` | object | Optional. Where the module's configuration comes from. See [Configuration from the XR](#configuration-from-the-xr) |
@@ -257,7 +257,9 @@ evaluation rules and refusal sentences are in the
 
 - `limits.timeout` is at most `--module-timeout`, otherwise a fatal result
   states both: `limits.timeout 1m0s exceeds the runtime's --module-timeout of 30s`.
-  Time spent waiting on the host's HTTP answers is credited back (see
+  The runtime measures the budget in wall-clock time, and a guest that sleeps
+  or blocks in a WASI call spends it as one that computes does. Time spent
+  waiting on the host's HTTP answers is credited back (see
   [HTTP egress](http-egress.md)), and the request's own gRPC deadline still
   caps the run if shorter.
 - `limits.memory` is at most `--module-memory-limit`, otherwise a fatal result

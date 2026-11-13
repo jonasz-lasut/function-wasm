@@ -28,7 +28,7 @@ content, so resolving a module never waits on a registry.
 ## 2. Loading
 
 Where the operator requires a signature, the runtime verifies it first, once
-per manifest digest per process and before any cache
+per repository and manifest digest per process and before any cache
 ([signatures](operators/signatures.md)).
 
 The runtime then looks the digest up in the compiled modules in memory (kept
@@ -68,8 +68,9 @@ selector or change is a fatal result that specifies the kind, the name, the
 entry or change and the layer.
 
 A trap, a timeout, the memory limit or an unusable module is also a fatal
-result, and the function pod keeps running. The timeout counts guest compute
-only: time waiting for the host's HTTP answers is credited back. A request
+result, and the function pod keeps running. The timeout is wall-clock time,
+whether the guest computes or waits in a WASI call. The time it waits for
+the host's HTTP answers is credited back. A request
 whose deadline passes while it waits for a run slot gets
 `waiting for a run slot: deadline exceeded` and never runs.
 [Troubleshooting](operators/troubleshooting.md) lists the results and their
