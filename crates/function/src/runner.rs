@@ -1617,6 +1617,113 @@ mod tests {
         assert_eq!(results(&run(&f, path).await), []);
     }
 
+    /// The credential module.oci.credentials names must come with the
+    /// request and hold something a registry can be read with: a step that
+    /// lacks it is refused before any pull (the registry here does not
+    /// exist).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pull_credential_the_request_cannot_supply_is_refused() {
+        let credential = |data: &[(&str, &str)]| Credentials {
+            source: Some(credentials::Source::CredentialData(CredentialData {
+                data: data
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.as_bytes().to_vec()))
+                    .collect(),
+            })),
+        };
+        // (name, the one credential the request carries: its name and its
+        // content, the refusal)
+        let cases: &[(&str, &str, Credentials, &str)] = &[
+            (
+                "Absent",
+                "other",
+                credential(&[("username", "u"), ("password", "p")]),
+                r#"cannot get credentials "registry" for module.oci: the request carries no such credential"#,
+            ),
+            (
+                "NoData",
+                "registry",
+                Credentials { source: None },
+                r#"cannot get credentials "registry" for module.oci: the request carries no such credential"#,
+            ),
+            (
+                "NeitherShape",
+                "registry",
+                credential(&[("token", "t0ken")]),
+                r#"cannot use credentials "registry" for module.oci: the credential carries neither a .dockerconfigjson nor username and password keys"#,
+            ),
+            (
+                "PasswordEmpty",
+                "registry",
+                credential(&[("username", "u"), ("password", "")]),
+                r#"cannot use credentials "registry" for module.oci: the credential carries neither a .dockerconfigjson nor username and password keys"#,
+            ),
+            (
+                "DockerConfigForAnotherRegistry",
+                "registry",
+                credential(&[(
+                    ".dockerconfigjson",
+                    r#"{"auths":{"ghcr.io":{"username":"u","password":"p"}}}"#,
+                )]),
+                r#"cannot use credentials "registry" for module.oci: the .dockerconfigjson carries no entry for "registry.invalid""#,
+            ),
+        ];
+        let f = function(None);
+        for (name, carried, content, want) in cases {
+            let req = RunFunctionRequest {
+                input: Some(resource::json_to_struct(
+                    input(serde_json::json!({"type": "OCI", "oci": {
+                        "ref": format!("registry.invalid/example/greeter@sha256:{}", "3f2a".repeat(16)),
+                        "credentials": "registry",
+                    }}))
+                    .as_object()
+                    .expect("object"),
+                )),
+                credentials: [(carried.to_string(), content.clone())].into(),
+                ..Default::default()
+            };
+            let rsp = f
+                .run_function(Request::new(req))
+                .await
+                .expect("never a gRPC error")
+                .into_inner();
+            assert_eq!(results(&rsp), [(Severity::Fatal as i32, *want)], "{name}");
+        }
+    }
+
+    /// A guest whose run returns bytes that are no RunFunctionResponse
+    /// fails the request with a fatal result naming the module, counted as
+    /// an error: its bytes are never handed on.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_response_that_does_not_decode_is_a_fatal_result() {
+        // Field 1 (meta) announcing more bytes than follow.
+        let (dir, _) = fenced_stage(&RunFunctionResponse::default(), &[0x0a, 0x7f, 0x01]);
+        let f = function(Some(dir.path().to_owned()));
+        let errors = || {
+            guestfn_engine::metrics::sample(
+                "guestfn_module_requests_total",
+                &[("outcome", "error")],
+            )
+            .unwrap_or(0.0)
+        };
+        let before = errors();
+        let rsp = run(
+            &f,
+            input(serde_json::json!({"type": "Path", "path": "fn.wasm"})),
+        )
+        .await;
+        let [(severity, message)] = results(&rsp)[..] else {
+            panic!("want one result, got {:?}", rsp.results);
+        };
+        assert_eq!(severity, Severity::Fatal as i32);
+        assert!(
+            message.starts_with("module module file fn.wasm failed: cannot decode response: "),
+            "{message}"
+        );
+        assert!(errors() >= before + 1.0, "counted as an error");
+        assert_eq!(rsp.meta.expect("meta").tag, "t");
+    }
+
     /// The output fence's stage: a module whose run returns `rsp` as given
     /// (an unknown field appended, so transparency on the fenced path is
     /// proven too), a request whose observed composite is a WebApp of

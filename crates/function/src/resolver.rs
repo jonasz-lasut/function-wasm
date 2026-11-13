@@ -947,6 +947,37 @@ mod tests {
             assert_eq!(&r.resolve(&path_source(rel), None).expect_err(rel), want);
         }
 
+        // Inside the directory: a directory, a file that is not there, and
+        // a manifest named outside it beside a module that is fine.
+        std::fs::create_dir(dir.path().join("modules")).expect("mkdir");
+        std::fs::write(dir.path().join("fn.wasm"), b"not really wasm").expect("write");
+        let inside = |rel: &str| dir.path().join(rel).display().to_string();
+        assert_eq!(
+            r.resolve(&path_source("modules"), None).unwrap_err(),
+            format!("module file {:?} is a directory", inside("modules"))
+        );
+        assert_eq!(
+            r.resolve(&path_source("missing.wasm"), None).unwrap_err(),
+            format!(
+                "cannot stat module file: stat {}: no such file or directory",
+                inside("missing.wasm")
+            )
+        );
+        let with_manifest = |manifest: &str| ModuleSource {
+            manifest_path: manifest.to_string(),
+            ..path_source("fn.wasm")
+        };
+        assert_eq!(
+            r.resolve(&with_manifest("../guestfn.yaml"), None)
+                .unwrap_err(),
+            r#"module.manifestPath "../guestfn.yaml" escapes the module directory"#
+        );
+        assert_eq!(
+            r.resolve(&with_manifest("/etc/guestfn.yaml"), None)
+                .unwrap_err(),
+            r#"module.manifestPath "/etc/guestfn.yaml" must be relative to the module directory"#
+        );
+
         let none = Resolver::new(None, 1 << 20, None);
         assert_eq!(
             none.resolve(&path_source("fn.wasm"), None)

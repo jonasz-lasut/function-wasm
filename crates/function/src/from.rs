@@ -630,6 +630,101 @@ mod tests {
         }
     }
 
+    /// An HTTP source the composite resource chooses is fenced by its
+    /// location, so a URL that has none is refused before the fence is
+    /// asked: one carrying user information, or a path a server would
+    /// read as another.
+    #[test]
+    fn a_from_source_must_name_an_http_location() {
+        let comp = compile_composition_policy(
+            r#"permit (principal, action == Action::"pullModule", resource in Repository::"https://modules.example.com/team");"#,
+        )
+        .expect("compile")
+        .expect("some");
+        let choose = |field: &str, value: &str| {
+            let xr = serde_json::json!({
+                "status": { "module": {
+                    "url": "https://modules.example.com/team/fn.wasm",
+                    "digest": format!("sha256:{}", "3f2a".repeat(16)),
+                    field: value,
+                } },
+            });
+            let src = ModuleSource {
+                r#type: "HTTP".to_string(),
+                from: "status.module".to_string(),
+                ..Default::default()
+            };
+            from_composite(&src, Some(&comp), Some(&xr)).map(|_| ())
+        };
+        let refused = |sentence: &str| {
+            Err(format!(
+                "module.from: status.module of the composite resource: {sentence}"
+            ))
+        };
+        let cases = [
+            ("url", "https://modules.example.com/team/fn.wasm", Ok(())),
+            (
+                "url",
+                "https://MODULES.example.com/team/fn.wasm?version=2",
+                Ok(()),
+            ),
+            (
+                "url",
+                "https://team:secret@modules.example.com/team/fn.wasm",
+                refused(
+                    r#"module.http.url "https://team:secret@modules.example.com/team/fn.wasm" must name a host and carry no user information"#,
+                ),
+            ),
+            (
+                "url",
+                "https:///team/fn.wasm",
+                refused(
+                    r#"module.http.url "https:///team/fn.wasm" must name a host and carry no user information"#,
+                ),
+            ),
+            (
+                "url",
+                "https://modules.example.com/team/../other/fn.wasm",
+                refused(
+                    r#"module.http.url "https://modules.example.com/team/../other/fn.wasm" must have a normalized path (no . or .. segments, no empty segments)"#,
+                ),
+            ),
+            (
+                "url",
+                "https://modules.example.com/team//fn.wasm",
+                refused(
+                    r#"module.http.url "https://modules.example.com/team//fn.wasm" must have a normalized path (no . or .. segments, no empty segments)"#,
+                ),
+            ),
+            (
+                "url",
+                "https://modules.example.com/other/fn.wasm",
+                Err(
+                    r#"module.from: status.module of the composite resource names url "https://modules.example.com/other/fn.wasm", which the compositionPolicy does not permit (pullModule)"#
+                        .to_string(),
+                ),
+            ),
+            (
+                "manifestURL",
+                "https://modules.example.com/team/./guestfn.yaml",
+                refused(
+                    r#"module.http.manifestURL "https://modules.example.com/team/./guestfn.yaml" must have a normalized path (no . or .. segments, no empty segments)"#,
+                ),
+            ),
+            (
+                "manifestURL",
+                "https://modules.example.com/other/guestfn.yaml",
+                Err(
+                    r#"module.from: status.module of the composite resource names manifestURL "https://modules.example.com/other/guestfn.yaml", which the compositionPolicy does not permit (pullModule)"#
+                        .to_string(),
+                ),
+            ),
+        ];
+        for (field, value, want) in cases {
+            assert_eq!(choose(field, value), want, "{field} {value}");
+        }
+    }
+
     #[test]
     fn refuses_a_from_source_with_no_policy() {
         let err = from_composite(&from_src("status.module"), None, Some(&xr())).expect_err("fence");
