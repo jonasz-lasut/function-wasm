@@ -415,4 +415,86 @@ mod tests {
             .await
             .expect("retry succeeds");
     }
+
+    /// Gets digest from cache, noting it in fetched when no tier had the
+    /// module and the load went as far as the fetch.
+    async fn get(cache: &ModuleCache<Wasmtime>, digest: &str, fetched: &Arc<Mutex<Vec<String>>>) {
+        let (log, key) = (Arc::clone(fetched), digest.to_string());
+        cache
+            .get(digest, move || {
+                log.lock().expect("poisoned").push(key);
+                Ok(crate::testing::guests::tiny_component())
+            })
+            .await
+            .expect("load");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_entry_bound_drops_the_least_recently_used_module() {
+        // No disk tier, so a module dropped from memory is fetched again:
+        // the fetches say what the bound dropped.
+        let uses = ["a", "b", "a", "c", "a", "c", "b", "c", "a"];
+        let cases: &[(usize, &[&str])] = &[
+            // Unbounded: each module is loaded once.
+            (0, &["a", "b", "c"]),
+            // c pushes out b, which a's second use left the older of the
+            // two; b's return then pushes out a.
+            (2, &["a", "b", "c", "b", "a"]),
+            (1, &["a", "b", "a", "c", "a", "c", "b", "c", "a"]),
+        ];
+        for (max_entries, want) in cases {
+            let cache = ModuleCache::new(
+                engine(),
+                CacheOptions {
+                    max_entries: *max_entries,
+                    ..Default::default()
+                },
+            );
+            let fetched = Arc::new(Mutex::new(Vec::new()));
+            for digest in uses {
+                get(&cache, digest, &fetched).await;
+            }
+            assert_eq!(
+                *fetched.lock().expect("poisoned"),
+                *want,
+                "max_entries {max_entries}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn without_the_memory_tier_nothing_is_kept_in_memory() {
+        // With a store the second get maps the artifact the first wrote.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let disk = Arc::new(Store::open_dir(dir.path(), false).expect("store"));
+        let cache = ModuleCache::new(
+            engine(),
+            CacheOptions {
+                disk: Some(disk),
+                no_memory: true,
+                ..Default::default()
+            },
+        );
+        let fetched = Arc::new(Mutex::new(Vec::new()));
+        get(&cache, "m", &fetched).await;
+        get(&cache, "m", &fetched).await;
+        assert_eq!(*fetched.lock().expect("poisoned"), ["m"]);
+        assert!(
+            cache.entries.lock().expect("poisoned").is_empty(),
+            "the memory tier is off"
+        );
+
+        // With no store either, every get is a fetch and a compile.
+        let cache = ModuleCache::new(
+            engine(),
+            CacheOptions {
+                no_memory: true,
+                ..Default::default()
+            },
+        );
+        let fetched = Arc::new(Mutex::new(Vec::new()));
+        get(&cache, "m", &fetched).await;
+        get(&cache, "m", &fetched).await;
+        assert_eq!(*fetched.lock().expect("poisoned"), ["m", "m"]);
+    }
 }
