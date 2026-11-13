@@ -8,6 +8,10 @@
     // The repo uses conventional commits; a routine bump is a chore, not a fix.
     ':semanticCommitTypeAll(chore)',
   ],
+  // Every pull request Renovate opens runs the whole end-to-end suite: the
+  // label selects every scenario of e2e.yml, and e2e-gate, which the
+  // ruleset on main requires, then reports on all of them.
+  labels: ['e2e:all'],
   // The dependency surfaces: the Cargo workspace, the workflows (actions and
   // the CLI versions in their env), the Dockerfiles and the build submodule.
   // The Dockerfiles' rust:1 build stages float by design; the runtime base
