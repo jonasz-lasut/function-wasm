@@ -42,6 +42,59 @@ const UNTRUSTED: libc::c_ulong = libc::MS_NODEV | libc::MS_NOSUID;
 /// The cgroup the process runs in, under the merged root's cgroup mount.
 const CGROUP: &str = "/sys/fs/cgroup/run";
 
+/// TEMPORARY, a latency experiment that is not for merge: the pause of the
+/// init's polling waits, a tenth of a millisecond under exp-fast-poll in
+/// place of the wait's own.
+fn exp_pause(usual: Duration) -> Duration {
+    if cfg!(feature = "exp-fast-poll") {
+        Duration::from_micros(100)
+    } else {
+        usual
+    }
+}
+
+/// TEMPORARY, a latency experiment that is not for merge: the init's own
+/// moments on the guest's monotonic clock, printed as one line on the
+/// serial console before the exit is reported.
+mod trace {
+    use std::sync::Mutex;
+
+    static STAMPS: Mutex<Vec<(&'static str, u64, u64)>> = Mutex::new(Vec::new());
+
+    pub fn stamp(name: &'static str) {
+        count(name, 0);
+    }
+
+    pub fn count(name: &'static str, n: u64) {
+        if !cfg!(feature = "exp-trace") {
+            return;
+        }
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: a valid timespec for the call to fill.
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+        let micros = ts.tv_sec as u64 * 1_000_000 + ts.tv_nsec as u64 / 1_000;
+        STAMPS.lock().expect("poisoned").push((name, micros, n));
+    }
+
+    pub fn print() {
+        if !cfg!(feature = "exp-trace") {
+            return;
+        }
+        let stamps = STAMPS.lock().expect("poisoned");
+        let line: Vec<String> = stamps
+            .iter()
+            .map(|(name, micros, n)| match n {
+                0 => format!("{name}={micros}"),
+                n => format!("{name}={micros}/{n}"),
+            })
+            .collect();
+        eprintln!("guestfn-init: trace(us) {}", line.join(" "));
+    }
+}
+
 /// The init's whole life: run the description, report, power off. A
 /// failure is printed to the serial console first.
 pub fn main() {
@@ -56,9 +109,12 @@ pub fn main() {
 }
 
 fn run() -> Result<(), String> {
+    trace::stamp("up");
     mount_base()?;
+    trace::stamp("mounted");
     loopback_up()?;
     let mut sock = connect_host()?;
+    trace::stamp("connected");
     write_json(&mut sock, Kind::Hello, &Hello {})
         .map_err(|e| format!("cannot greet the host: {e}"))?;
     // The host answers with the run, or parks the init first: it is about
@@ -70,6 +126,7 @@ fn run() -> Result<(), String> {
     // random state are the snapshot's until the run's description
     // refreshes them.
     let (kind, payload) = read_frame(&mut sock).map_err(|e| format!("cannot read the run: {e}"))?;
+    trace::stamp("first-frame");
     let description: Description = match plan::first(kind, &payload)? {
         First::Run(description) => description,
         First::Park => {
@@ -79,13 +136,17 @@ fn run() -> Result<(), String> {
             // Whatever ends the wait, an error or a close, the connection
             // is gone and the next host is the one to greet.
             let _ = read_frame(&mut sock);
+            trace::stamp("unparked");
             drop(sock);
-            sock = connect_vsock(PORT, 2_000, Duration::from_millis(1))?;
+            sock = connect_vsock(PORT, 2_000, exp_pause(Duration::from_millis(1)))?;
+            trace::stamp("reconnected");
             write_json(&mut sock, Kind::Hello, &Hello {})
                 .map_err(|e| format!("cannot greet the host: {e}"))?;
             let description: Description =
                 read_json(&mut sock, Kind::Run).map_err(|e| format!("cannot read the run: {e}"))?;
+            trace::stamp("run-read");
             refresh(&description);
+            trace::stamp("refreshed");
             eprintln!("guestfn-init: resumed");
             description
         }
@@ -104,6 +165,7 @@ fn run() -> Result<(), String> {
         "guestfn-init: running {}",
         description.argv.first().map(String::as_str).unwrap_or("")
     );
+    trace::stamp("ready-to-spawn");
     let sock = Arc::new(Mutex::new(sock));
     let exit = match spawn(&description, &sock) {
         Ok(exit) => exit,
@@ -116,6 +178,7 @@ fn run() -> Result<(), String> {
         "guestfn-init: exited status={:?} signal={:?} oom={}",
         exit.status, exit.signal, exit.oom
     );
+    trace::print();
     let mut s = sock.lock().expect("poisoned");
     write_json(&mut *s, Kind::Exit, &exit).map_err(|e| format!("cannot report the exit: {e}"))?;
     let _ = s.shutdown(std::net::Shutdown::Write);
@@ -149,6 +212,7 @@ fn spawn(d: &Description, sock: &Arc<Mutex<UnixStream>>) -> Result<Exit, String>
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot start {program}: {e}"))?;
+    trace::stamp("spawned");
     // Into the capped cgroup before it has allocated anything of note; a
     // failure here is the init's, not the process's.
     if d.memory_max > 0 {
@@ -165,9 +229,11 @@ fn spawn(d: &Description, sock: &Arc<Mutex<UnixStream>>) -> Result<Exit, String>
     let status = child
         .wait()
         .map_err(|e| format!("cannot wait for {program}: {e}"))?;
+    trace::stamp("process-exited");
     ended.store(true, Ordering::SeqCst);
     let _ = out.join();
     let _ = err.join();
+    trace::stamp("relays-joined");
     use std::os::unix::process::ExitStatusExt as _;
     let signal = status.signal();
     Ok(Exit {
@@ -183,18 +249,24 @@ fn spawn(d: &Description, sock: &Arc<Mutex<UnixStream>>) -> Result<Exit, String>
 /// serves leaves the host to its deadline, or to the exit the init reports.
 fn bridge_when_serving(ended: Arc<AtomicBool>) {
     std::thread::spawn(move || {
+        let mut tries = 0u64;
         let server = loop {
             if ended.load(Ordering::SeqCst) {
                 return;
             }
+            tries += 1;
             match TcpStream::connect(("127.0.0.1", SERVER_PORT)) {
                 Ok(s) => break s,
-                Err(_) => std::thread::sleep(Duration::from_millis(2)),
+                Err(_) => std::thread::sleep(exp_pause(Duration::from_millis(2))),
             }
         };
+        trace::count("function-serving", tries);
         let _ = server.set_nodelay(true);
         let host = match connect_vsock(GRPC_PORT, 200, Duration::from_millis(5)) {
-            Ok(h) => h,
+            Ok(h) => {
+                trace::stamp("bridged");
+                h
+            }
             Err(e) => {
                 eprintln!("guestfn-init: cannot bridge the function: {e}");
                 return;
@@ -230,6 +302,7 @@ fn stop_on_finish(
     std::thread::spawn(move || {
         while let Ok((kind, _)) = read_frame(&mut reader) {
             if kind == Kind::Finish {
+                trace::stamp("finish-read");
                 if !ended.load(Ordering::SeqCst) {
                     // SAFETY: a signal to the child this process has not
                     // reaped yet.
@@ -406,7 +479,7 @@ fn set_hostname(name: &str) {
 /// Connects to the host on the well-known port; the host listens before
 /// the VM boots, and the retries cover the vsock driver coming up.
 fn connect_host() -> Result<UnixStream, String> {
-    connect_vsock(PORT, 200, Duration::from_millis(25))
+    connect_vsock(PORT, 200, exp_pause(Duration::from_millis(25)))
 }
 
 /// The capability header and one of its two data words, as capset(2)
@@ -592,7 +665,7 @@ fn refresh(d: &Description) {
 /// Connects to a port of the host, trying again after each refusal.
 fn connect_vsock(port: u32, tries: u32, pause: Duration) -> Result<UnixStream, String> {
     let mut last = String::new();
-    for _ in 0..tries {
+    for attempt in 0..tries {
         // SAFETY: socket(2) with constant arguments.
         let fd = unsafe { libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
         if fd < 0 {
@@ -615,6 +688,7 @@ fn connect_vsock(port: u32, tries: u32, pause: Duration) -> Result<UnixStream, S
             )
         };
         if rc == 0 {
+            trace::count("vsock-tries", u64::from(attempt) + 1);
             use std::os::unix::io::FromRawFd as _;
             // SAFETY: a connected stream socket this function owns; a
             // UnixStream is a wrapper over read, write and shutdown on it.

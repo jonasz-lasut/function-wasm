@@ -13,3 +13,10 @@ publish = false
 guestfn-oci-protocol = { path = "../oci-protocol" }
 libc = "0.2"
 serde_json.workspace = true
+
+# TEMPORARY, latency experiments that are not for merge: exp-fast-poll
+# shortens the init's polling waits, exp-trace prints where the init's own
+# time went on the serial console before it reports the exit.
+[features]
+exp-fast-poll = []
+exp-trace = []

@@ -52,6 +52,28 @@ struct Snapshots {
     fingerprint: std::sync::OnceLock<String>,
 }
 
+/// TEMPORARY, a latency experiment that is not for merge: the pause of the
+/// two polling waits on a run's path, GUESTFN_EXP_POLL_US microseconds in
+/// place of the millisecond each has.
+fn exp_pause() -> Duration {
+    static PAUSE: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *PAUSE.get_or_init(|| {
+        std::env::var("GUESTFN_EXP_POLL_US")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .map(Duration::from_micros)
+            .unwrap_or(Duration::from_millis(1))
+    })
+}
+
+/// TEMPORARY, a latency experiment that is not for merge: under
+/// GUESTFN_EXP_NO_FINISH_WAIT an answered run does not wait for the
+/// init's exit, so the process's last output may be lost.
+fn exp_no_finish_wait() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var_os("GUESTFN_EXP_NO_FINISH_WAIT").is_some())
+}
+
 /// The two host ports the guest connects to.
 struct GuestPorts {
     /// The init's connection: the protocol.
@@ -671,7 +693,7 @@ fn api_call(sock: &Path, method: &str, path: &str, body: &serde_json::Value) -> 
             Err(e) if started.elapsed() > Duration::from_secs(5) => {
                 return Err(format!("cannot reach the VMM's API socket: {e}"));
             }
-            Err(_) => std::thread::sleep(Duration::from_millis(1)),
+            Err(_) => std::thread::sleep(exp_pause()),
         }
     };
     timeline::count("api-connected", tries);
@@ -820,7 +842,7 @@ fn drive(
                 )),
             );
         }
-        std::thread::sleep(Duration::from_millis(1));
+        std::thread::sleep(exp_pause());
     };
     *connected = Some(Instant::now());
     timeline::count("guest-connected", looks);
@@ -1042,7 +1064,9 @@ fn talk(
             Call::Answered(response) => {
                 let _ = write_frame(&mut control, Kind::Finish, &[]);
                 timeline::mark("finish-sent");
-                let _ = exit_within_grace();
+                if !exp_no_finish_wait() {
+                    let _ = exit_within_grace();
+                }
                 timeline::mark("exit-read");
                 Ok(Ended::Answered(response))
             }
