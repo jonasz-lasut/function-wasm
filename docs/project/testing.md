@@ -242,9 +242,11 @@ The `select` job reads the labels and calls two reusable workflows.
   bindings drift, each module wrapped by the `guestfn` that `build-tools`
   compiled. A drift check runs the pinned generator again, then
   `hack/check-generated.sh`. The script fails on any difference from the
-  committed files except the generator's version in a file's header. A
-  generator update that changes nothing else passes. One that changes the
-  output fails until someone commits the result
+  committed files except the version a Protobuf generator writes in the
+  header of a generated file. An update of protoc, protoc-gen-es or nanopb that changes
+  nothing else passes. One that changes the output fails until someone
+  commits the result, and so does every wit-bindgen update, since the
+  bindings are compared whole
 
 `e2e-oci.yml` has the scenarios of `function-oci`:
 

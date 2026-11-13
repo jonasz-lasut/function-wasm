@@ -121,9 +121,10 @@ jobs:
   #
   # A drift check regenerates with the pinned generator and runs
   # hack/check-generated.sh, which fails on any difference from what is
-  # checked in but the generator's own version in a file's stamp: a
-  # generator bump that changes nothing else passes as it is, and one that
-  # changes the output fails until the result is committed.
+  # checked in but the version a protobuf generator states in a codec's
+  # header: a bump of protoc, protoc-gen-es or nanopb that changes nothing
+  # else passes as it is, and one that changes the output fails until the
+  # result is committed. The WIT bindings are compared whole.
   #
   # The Go guest, an ABI v2 component: the function-wasm-go use case. go build
   # emits the wasip1 core module and guestfn embeds its world and wraps it
