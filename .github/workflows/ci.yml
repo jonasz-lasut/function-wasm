@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-26.04
     outputs:
       noop: ${{ steps.noop.outputs.should_skip }}
+      oci: ${{ steps.oci.outputs.changed }}
     steps:
       - name: Detect No-op Changes
         id: noop
@@ -35,6 +36,25 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           paths_ignore: '["**.md", "**.json", "**.svg"]'
           do_not_skip: '["workflow_dispatch", "schedule", "push"]'
+
+      # Whether the change touches what the OCI engine's VM suite tests: the
+      # engine, the init, the protocol and the fixture, the crate the engine
+      # builds on, the dependencies, the Firecracker and kernel pins (in
+      # crates/function-oci/Dockerfile, read by hack/oci-tools.sh) and this
+      # file. A pull request is judged by its files; any other run counts as
+      # a change.
+      - name: Detect OCI Changes
+        id: oci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+        run: |
+          changed=true
+          if [ "${GITHUB_EVENT_NAME}" = pull_request ]; then
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PULL_REQUEST}/files" --jq '.[].filename' > files.txt
+            grep -Eq '^(crates/(engine-oci|oci-init|oci-protocol|oci-fixture|engine)/|crates/function-oci/Dockerfile$|hack/oci-tools\.sh$|Cargo\.(lock|toml)$|Makefile$|\.github/workflows/ci\.yml$)' files.txt || changed=false
+          fi
+          echo "changed=${changed}" >> "$GITHUB_OUTPUT"
 
   # cargo-deny over Cargo.lock, with deny.toml as the policy: an advisory
   # against a pinned crate fails the pull request instead of waiting for
@@ -87,7 +107,7 @@ jobs:
           cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   # cargo test covers the whole workspace: both engines' tests, the VM
-  # suite skipping without KVM (the comment-triggered e2e workflow runs it),
+  # suite skipping without its tools (the vm-suite job below runs it),
   # the runtime's unit and integration tests (the raw-client transparency
   # proof included), the conformance goldens - recorded the day the output
   # last diffed byte-identical against the Go runtime - and guestfn's
@@ -96,8 +116,9 @@ jobs:
   # toolchain-free: SKIP_GUEST_BUILDS turns the guest suite off (the
   # runner's preinstalled Go would otherwise build the go guest with an
   # unpinned toolchain) - the full behavioural matrix runs in the guest-suite
-  # job, each example in its build job and the runtime in a cluster, all in
-  # the comment-triggered e2e workflow (/e2e on a pull request).
+  # job below, and each example in its build job and the runtime in a
+  # cluster, both in the comment-triggered e2e workflow (/e2e on a pull
+  # request).
   unit-test:
     runs-on: ubuntu-26.04
     needs: detect-noop
@@ -120,3 +141,145 @@ jobs:
         env:
           SKIP_GUEST_BUILDS: '1'
         run: cargo test --workspace --locked
+
+  # The guest behavioural suite with every toolchain installed - what the
+  # unit-test job skips (SKIP_GUEST_BUILDS): every language's scaffold,
+  # built from what guestfn init writes, through the whole host - greetings,
+  # granted and refused egress, manifestPath, guest-side fatals and logs. A
+  # scaffold has no lockfile, so this resolves dependencies the way a user's
+  # first build does, and an upstream release that breaks a scaffold shows
+  # here on every pull request.
+  #
+  # Built in release: a debug wasmtime compiles the large guests (the Go
+  # module, the TypeScript and Python components) many times slower, and
+  # the arm64 runner is faster again. x86-64 code generation stays covered
+  # by the end-to-end cluster jobs, which serve the test module through an
+  # x86-64 runtime.
+  #
+  # GUESTFN_REQUIRE_TOOLCHAINS: a guest whose toolchain is missing fails
+  # here instead of skipping, so a runner that lost a toolchain cannot
+  # shrink the suite and stay green.
+  guest-suite:
+    runs-on: ubuntu-26.04-arm
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The rust guest's rust-toolchain.toml names stable with its target,
+      # which rustup adds on first use; stable builds the runtime under test.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          cache: false
+          go-version-file: examples/function-wasm-go/go.mod
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # What the scaffolds download on a first build: Go modules and the Go
+      # build cache, and npm's and pip's package caches, keyed by the
+      # templates' pins. Restored everywhere and saved on main only, for the
+      # reason the lint job's Rust cache is.
+      - name: Restore the Scaffolds' Dependencies
+        id: guests
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/.npm
+            ~/.cache/pip
+          key: guests-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/guestfn/templates/go/go.mod.tmpl', 'crates/guestfn/templates/ts/package.json.tmpl', 'crates/guestfn/templates/python/requirements.txt', 'crates/guestfn/templates/rust/rust-toolchain.toml', 'crates/guestfn/templates/rust/Cargo.toml.tmpl') }}
+          restore-keys: |
+            guests-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Run the Guest Suite
+        env:
+          GUESTFN_REQUIRE_TOOLCHAINS: '1'
+        run: cargo test --locked --release -p guestfn-runtime --test guests
+
+      - name: Save the Scaffolds' Dependencies
+        if: github.ref == 'refs/heads/main' && steps.guests.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/.npm
+            ~/.cache/pip
+          key: ${{ steps.guests.outputs.cache-primary-key }}
+
+  # The OCI engine's own suite over Firecracker (docs/one-pager-oci-runtime.md):
+  # the process contract's clauses with the fixture process, in real VMs
+  # under the runner's KVM, which GitHub's Linux runners expose to a udev
+  # rule. It runs when the change touches what it tests (detect-noop's oci
+  # output), since most of its time is building the init and the fixture.
+  vm-suite:
+    runs-on: ubuntu-26.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true' && needs.detect-noop.outputs.oci == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl
+
+      - name: Cache Rust Builds
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Fetch Firecracker and the Guest Kernel
+        run: make oci.tools
+
+      # function-sdk-rust's TLS (aws-lc) has a C half that builds with
+      # musl-gcc: the fixture links it.
+      - name: Install the musl Toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
+
+      - name: Build the Init and the Fixture
+        run: cargo build --locked --release -p guestfn-init -p guestfn-guest-fixture --target x86_64-unknown-linux-musl
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      # The files this job built and fetched, by absolute path: cargo test
+      # runs the engine's suite from the crate's directory.
+      - name: Run the Engine Suite in VMs
+        env:
+          GUESTFN_REQUIRE_KVM: "1"
+          GUESTFN_VM_CONSOLE: "1"
+          GUESTFN_FIRECRACKER: ${{ github.workspace }}/.cache/tools/oci/firecracker
+          GUESTFN_KERNEL: ${{ github.workspace }}/.cache/tools/oci/vmlinux
+          GUESTFN_INIT: ${{ github.workspace }}/target/x86_64-unknown-linux-musl/release/guestfn-init
+          GUESTFN_FIXTURE: ${{ github.workspace }}/target/x86_64-unknown-linux-musl/release/guestfn-guest-fixture
+        run: cargo test --locked -p guestfn-engine-oci -- --nocapture --test-threads=1

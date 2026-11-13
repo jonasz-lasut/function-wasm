@@ -15,19 +15,19 @@
 # The end-to-end workflow, hand-triggered by commenting /e2e on a pull
 # request (the pattern upjet providers use for uptest), for both functions
 # the repository ships, each proved by its own jobs on its own cluster.
-# For function-wasm: the full guest behavioural suite, which the always-on
-# CI keeps toolchain-free; one build job per example toolchain (build,
+# For function-wasm: one build job per example toolchain (build,
 # unit tests, lint, codec and bindings drift); and the wasm cluster job,
 # the Kubernetes-native end-to-end suite (crates/e2e,
 # docs/project/testing.md) against the runtime built from the PR,
 # installed as a Function in a kind cluster. For function-oci: the process
-# guest's build job, the OCI runtime's build with the OCI engine's suite
-# in real VMs at its tail, and the oci cluster job with function-oci alone
-# installed for the oci profiles. The two cluster jobs share kind,
+# guest's build job, the OCI runtime's build, and the oci cluster job with
+# function-oci alone installed for the oci profiles. The guest behavioural
+# suite and the OCI engine's suite in real VMs are cargo tests with no
+# cluster, and run in ci.yml. The two cluster jobs share kind,
 # Crossplane and the setup, nothing else. The result is reported as three
 # commit statuses on the PR's head - e2e/wasm, e2e/oci and e2e, the
-# overall verdict that branch protection names - since an issue_comment
-# run does not show up as a check by itself.
+# overall verdict - since an issue_comment run does not show up as a check
+# by itself.
 #
 # An issue_comment run uses this file from the default branch but builds the
 # pull request's code (so a change to this file is exercised by the first
@@ -63,8 +63,7 @@ permissions:
 cache-mode: write
 
 # The Zig the example jobs install (the zig, c, cpp and odin examples build
-# with it; the guest suite needs none since the zig and c scaffolds retired,
-# #264), one pin per runner architecture as <version>@<sha256 of the
+# with it), one pin per runner architecture as <version>@<sha256 of the
 # tarball>. Renovate moves
 # each line, version and checksum together, through the custom.zig-*
 # datasources in renovate.json5, which read ziglang.org's download index;
@@ -154,81 +153,6 @@ jobs:
             target/release/guestfn
           if-no-files-found: error
           retention-days: 1
-
-  # The guest behavioural suite with every toolchain installed - what the
-  # always-on unit-test job skips (SKIP_GUEST_BUILDS): every language's
-  # scaffold, built from what guestfn init writes, through the whole host -
-  # greetings, granted and refused egress, manifestPath, guest-side fatals
-  # and logs. A scaffold has no lockfile, so this resolves dependencies the
-  # way a user's first build does.
-  #
-  # Built in release: a debug wasmtime compiles the large guests (the Go
-  # module, the TypeScript and Python components) many times slower, and
-  # the arm64 runner is faster again. x86-64 code generation stays covered
-  # by the cluster job, which serves the test module through an x86-64
-  # runtime.
-  #
-  # GUESTFN_REQUIRE_TOOLCHAINS: a guest whose toolchain is missing
-  # fails here instead of skipping, so a runner that lost a toolchain cannot
-  # shrink the suite and stay green.
-  guest-suite:
-    runs-on: ubuntu-26.04-arm
-    needs: start
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: refs/pull/${{ github.event.issue.number }}/merge
-          persist-credentials: false
-
-      # The rust-v2 guest's rust-toolchain.toml brings its own toolchain and
-      # target; stable builds the runtime under test.
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: stable
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          cache: false
-          go-version-file: examples/function-wasm-go/go.mod
-
-      - name: Setup protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '26'
-
-      - name: Cache the Rust Build
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          prefix-key: e2e-rust
-          cache-on-failure: true
-
-      # What the scaffolds download on a first build: Go modules and the Go
-      # build cache, and npm's and pip's package caches. The templates' pins
-      # key it.
-      - name: Cache the Scaffolds' Dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-            ~/.npm
-            ~/.cache/pip
-          key: e2e-guests-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/guestfn/templates/go/go.mod.tmpl', 'crates/guestfn/templates/ts/package.json.tmpl', 'crates/guestfn/templates/python/requirements.txt', 'crates/guestfn/templates/rust/rust-toolchain.toml', 'crates/guestfn/templates/rust/Cargo.toml.tmpl') }}
-          restore-keys: |
-            e2e-guests-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Run the Guest Suite
-        env:
-          GUESTFN_REQUIRE_TOOLCHAINS: '1'
-        run: cargo test --locked --release -p guestfn-runtime --test guests
 
   # Each example guest, built with its own toolchain, unit-tested and linted,
   # its generated codec and bindings checked for drift. What an example
@@ -1206,13 +1130,10 @@ jobs:
   # The OCI runtime's pieces (docs/one-pager-oci-runtime.md), built once
   # and handed to the oci cluster job as one artifact: the runtime with its
   # oci engine, the init (static, musl), the end-to-end guest as a process,
-  # and the pinned Firecracker and guest kernel. Then, over the same files
-  # on disk, the OCI engine's own suite over Firecracker: the process
-  # contract's clauses with the fixture process, in real VMs under the
-  # runner's KVM, which GitHub's Linux runners expose to a udev rule. One
-  # job proves the OCI engine.
+  # and the pinned Firecracker and guest kernel. The OCI engine's own suite
+  # in real VMs is ci.yml's vm-suite job.
   build-oci:
-    name: build (oci, engine)
+    name: build (oci)
     runs-on: ubuntu-26.04
     needs: start
     steps:
@@ -1245,16 +1166,16 @@ jobs:
         run: make oci.tools
 
       # function-sdk-rust's TLS (aws-lc) has a C half that builds with
-      # musl-gcc: the fixture and the end-to-end guest link it.
+      # musl-gcc: the end-to-end guest links it.
       - name: Install the musl Toolchain
         run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
 
       # guestfn is build-tools' (the example jobs take it from there), and
       # nothing downstream of this job reads one.
-      - name: Build the Runtime, the Init and the Fixture
+      - name: Build the Runtime and the Init
         run: |
           cargo build --locked --release -p function-oci
-          cargo build --locked --release -p guestfn-init -p guestfn-guest-fixture --target x86_64-unknown-linux-musl
+          cargo build --locked --release -p guestfn-init --target x86_64-unknown-linux-musl
 
       - name: Build the End-to-End Guest as a Process
         run: make e2e.oci.guest
@@ -1274,25 +1195,6 @@ jobs:
           path: ${{ runner.temp }}/e2e-oci-tools
           if-no-files-found: error
           retention-days: 1
-
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          ls -l /dev/kvm
-
-      # The files this job built and fetched, by absolute path: cargo test
-      # runs the engine's suite from the crate's directory.
-      - name: Run the Engine Suite in VMs
-        env:
-          GUESTFN_REQUIRE_KVM: "1"
-          GUESTFN_VM_CONSOLE: "1"
-          GUESTFN_FIRECRACKER: ${{ github.workspace }}/.cache/tools/oci/firecracker
-          GUESTFN_KERNEL: ${{ github.workspace }}/.cache/tools/oci/vmlinux
-          GUESTFN_INIT: ${{ github.workspace }}/target/x86_64-unknown-linux-musl/release/guestfn-init
-          GUESTFN_FIXTURE: ${{ github.workspace }}/target/x86_64-unknown-linux-musl/release/guestfn-guest-fixture
-        run: cargo test --locked -p guestfn-engine-oci -- --nocapture --test-threads=1
 
   # The Kubernetes-native end-to-end suite (crates/e2e, docs/project/testing.md):
   # a kind cluster with Crossplane at CROSSPLANE_VERSION, provider-nop, the
@@ -1455,7 +1357,7 @@ jobs:
   # failure there skips them, and skipped is not success.
   report:
     runs-on: ubuntu-26.04
-    needs: [start, guest-suite, build-go, build-oci-go, build-rust, build-zig, build-c, build-cpp, build-odin, build-moonbit, build-ts, build-python, build-dotnet, build-oci, e2e-cluster-wasm, e2e-cluster-oci]
+    needs: [start, build-go, build-oci-go, build-rust, build-zig, build-c, build-cpp, build-odin, build-moonbit, build-ts, build-python, build-dotnet, build-oci, e2e-cluster-wasm, e2e-cluster-oci]
     if: always() && needs.start.result == 'success'
     permissions:
       statuses: write
@@ -1481,7 +1383,6 @@ jobs:
               -f state="$2" -f context="$1" -f description="${3:0:140}" -f target_url="$url"
           }
           wasm_failed=$(failed \
-            "guest-suite=${{ needs.guest-suite.result }}" \
             "build-go=${{ needs.build-go.result }}" "build-rust=${{ needs.build-rust.result }}" \
             "build-zig=${{ needs.build-zig.result }}" "build-c=${{ needs.build-c.result }}" \
             "build-cpp=${{ needs.build-cpp.result }}" "build-odin=${{ needs.build-odin.result }}" \
