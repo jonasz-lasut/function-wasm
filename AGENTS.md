@@ -25,7 +25,12 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
     ↓
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ crates/function/src/runner.rs: WasmFunction::handle_raw()                    │
-│  1. decode a typed copy for admission (the group of 0.6 and earlier,        │
+│  1. check that the bytes decode (partial.rs: a walk against the              │
+│       message's schema that builds nothing; what it cannot vouch for is      │
+│       decoded by prost, whose error is the gRPC error) and decode what       │
+│       admission reads: tag, Input, observed composite, step credentials;     │
+│       the whole typed decode is the fatal path's alone (the group of 0.6     │
+│       and earlier,                                                           │
 │       wasm.fn.crossplane.io: refused by name, input::renamed_group);         │
 │       admission::admit(input, ceilings) -                                    │
 │       compositionPolicy compiled (content-hash cached, malformed Cedar →     │
@@ -81,6 +86,10 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       outgoing-handler) → the run's egress client (grant, block list,        │
 │       budgets, audit line) or an internal-error (wasihttp.rs); a core        │
 │       module (ABI v1, removed in 1.0.0) never gets here: refused at load     │
+│  8'. the response is checked the same way: where a policy layer fences       │
+│       it, decoded whole for the fences; where none does, checked by the      │
+│       walk and read for its meta alone; one that does not decode is a        │
+│       fatal result (cannot decode response) either way                       │
 │  8a. the read fence (require.rs + admission::admit_require, #208): where a   │
 │       policy layer scopes requireResource, every resource selector of the    │
 │       decoded response's requirements (resources, then the deprecated        │
@@ -94,7 +103,8 @@ Crossplane RunFunctionRequest (raw bytes - the gRPC codec is pass-through)
 │       bytes are never touched                                                 │
 │  8b. the output fence (compose.rs + admission::admit_compose, #174): where   │
 │       a policy layer scopes composeResource, the decoded response's desired  │
-│       state is diffed against the request's by composition resource name    │
+│       state is diffed against the request's (decoded here alone) by          │
+│       composition resource name                                              │
 │       (add / modify by value / remove, a kind swap = remove + add, the       │
 │       composite included) and every change judged as Kind::"<group>/<Kind>"  │
 │       in a Group hierarchy with context change/name/target - composition     │
@@ -148,6 +158,17 @@ crates/function/            the runtime crate (package `guestfn-runtime`): a lib
                               (a deliberate copy - see the function-sdk-rust decision below)
   src/grpcmetrics.rs          function-sdk-go's gRPC server series (grpc_server_*) as a tower layer
                               around the whole router (see "Metrics")
+  src/partial.rs              the partial decode: Request (meta, observed composite, Input,
+                              credentials), Desired and ResponseHead, prost messages over the
+                              SDK's field numbers that skip every other field by its length;
+                              request_decodes/response_decodes, the check that the whole
+                              message would decode - a walk of the bytes against the schema
+                              read from the SDK's embedded descriptor (wire types, varints,
+                              UTF-8, nesting to MAX_DEPTH), building nothing, conservative:
+                              it may decline bytes prost reads (a group, deep nesting), never
+                              vouch for bytes prost refuses, and the caller asks prost where
+                              it declines. Held to prost by a differential test over damaged
+                              and respelled messages
   src/protowire.rs            wire-level protobuf surgery: retain_credentials (drops every field-7 map
                               entry the module was not granted, failing closed), append_meta (field
                               1), noop_response (the skipped step's reply:
@@ -776,7 +797,7 @@ The guest contract, the one ABI the runtime serves since 1.0.0 (`docs/abi-v2.md`
 
 ### The transparent proxy is wire-level
 
-The host forwards the whole request and returns the whole response - requirements/extra-resource round trips work with no runtime knowledge. In Rust this needs care: prost drops protobuf fields it does not know, so the gRPC layer uses a raw pass-through codec (`grpc.rs`), the runtime decodes only a typed *copy* for admission, and the guest receives the caller's exact bytes with the step credentials it was not granted edited out at the wire level (`protowire.rs`: only those `credentials` map entries go, the pull credential always among them; a module receives only the credentials its admitted `requires.env` bindings and `requires.credentials` name). The guest's response bytes travel back untouched; `meta` is appended as raw bytes only when the guest omitted it. `tests/raw_client.rs` proves unknown fields survive the whole served stack, in place, while the credentials around them are withheld. Never route the forwarded payload through prost structs.
+The host forwards the whole request and returns the whole response - requirements/extra-resource round trips work with no runtime knowledge. In Rust this needs care: prost drops protobuf fields it does not know, so the gRPC layer uses a raw pass-through codec (`grpc.rs`), the runtime decodes only a typed *copy* for admission - a partial one, of the fields admission reads, after a check that the whole message would decode (`partial.rs`); the whole request is decoded for a fatal result alone, its desired state for the output fence, and the response whole only where a policy layer fences it - and the guest receives the caller's exact bytes with the step credentials it was not granted edited out at the wire level (`protowire.rs`: only those `credentials` map entries go, the pull credential always among them; a module receives only the credentials its admitted `requires.env` bindings and `requires.credentials` name). The guest's response bytes travel back untouched; `meta` is appended as raw bytes only when the guest omitted it. `tests/raw_client.rs` proves unknown fields survive the whole served stack, in place, while the credentials around them are withheld. Never route the forwarded payload through prost structs.
 
 ### The goldens are the contract
 

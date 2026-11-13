@@ -4,9 +4,10 @@
 //! of about 3 KB each in both the observed and the desired state (5 to 10
 //! is what a composition usually holds; 100 and 1000 are stress sizes).
 //! Beside each end-to-end figure it times the stages on their own - the
-//! request decode, admission, the capability decision, the run, the
-//! response decode, the fences - so a change to one of them can be read
-//! against what it costs. Not part of the suite:
+//! request's check and partial decode (and the whole decode they stand in
+//! for), admission, the capability decision, the run, the response's, the
+//! fences - so a change to one of them can be read against what it costs.
+//! Not part of the suite:
 //!
 //!   cargo test -p guestfn-runtime --test request_bench --release -- --ignored --nocapture
 //!
@@ -27,7 +28,7 @@ use guestfn_runtime::input::Input;
 use guestfn_runtime::manifest::Manifest;
 use guestfn_runtime::runner::WasmFunction;
 use guestfn_runtime::testing::{registry::Registry, runtime};
-use guestfn_runtime::{admission, compose, from};
+use guestfn_runtime::{admission, compose, from, partial};
 use prost::Message;
 
 const E2E_GUEST: &[u8] = include_bytes!("../../e2e/guest/fn.wasm");
@@ -315,7 +316,9 @@ async fn end_to_end(f: &WasmFunction<Wasmtime>, raw: &[u8], iters: usize) -> (Sa
     (Samples(s), last)
 }
 
-/// The stages of one request on their own, as handle_raw runs them today.
+/// The stages of one request on their own, as handle_raw runs them, and
+/// the whole decodes it keeps for a fatal result, for a fenced response and
+/// for bytes the wire check will not vouch for.
 fn stages(
     raw: &[u8],
     response: &[u8],
@@ -327,12 +330,18 @@ fn stages(
     Samples::of(iters, || {
         std::hint::black_box(RunFunctionRequest::decode(raw).expect("a request"));
     })
-    .print("request decode (prost, whole)");
+    .print("request decode, whole (fatal path, fallback)");
+    Samples::of(iters, || {
+        assert!(partial::request_decodes(raw));
+        std::hint::black_box(partial::Request::decode(raw).expect("a request"));
+    })
+    .print("request check + partial decode");
 
     let req = RunFunctionRequest::decode(raw).expect("a request");
+    let partial = partial::Request::decode(raw).expect("a request");
     let config = Config::default();
     Samples::of(iters, || {
-        let input: Input = function_sdk_rust::request::get_input(&req).expect("an Input");
+        let input: Input = partial.input().expect("an Input");
         let admitted = admission::admit(&input, &config, "wasm").expect("admitted");
         let source = from::from_composite(&input.module, admitted.composition.as_deref(), None)
             .expect("a source")
@@ -381,7 +390,12 @@ fn stages(
     Samples::of(iters, || {
         std::hint::black_box(RunFunctionResponse::decode(response).expect("a response"));
     })
-    .print("response decode (prost, whole)");
+    .print("response decode, whole (fenced)");
+    Samples::of(iters, || {
+        assert!(partial::response_decodes(response));
+        std::hint::black_box(partial::ResponseHead::decode(response).expect("a response"));
+    })
+    .print("response check + meta (unfenced)");
 
     if admission::compose_fenced(policy, admitted.composition.as_deref()) {
         let got = RunFunctionResponse::decode(response).expect("a response");

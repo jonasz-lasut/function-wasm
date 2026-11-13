@@ -11,7 +11,7 @@ use function_sdk_rust::proto::v1::function_runner_service_server::FunctionRunner
 use function_sdk_rust::proto::v1::{
     ResponseMeta, RunFunctionRequest, RunFunctionResponse, Severity,
 };
-use function_sdk_rust::{request, response};
+use function_sdk_rust::response;
 use guestfn_engine::{Engine, RunOptions};
 use prost::Message;
 use tonic::{Request, Response, Status};
@@ -20,6 +20,7 @@ use crate::admission;
 use crate::authz::{OperatorPolicy, Principal};
 use crate::cache::ModuleCache;
 use crate::input::Input;
+use crate::partial;
 use crate::resolver::Resolver;
 use crate::sandboxenv;
 
@@ -59,21 +60,19 @@ impl<E: Engine> WasmFunction<E> {
     /// it visible on the runtime side too: one log line with the reason, so
     /// an operator of a shared runtime can see what is being refused without
     /// reading every XR's conditions. The response is built here, on the
-    /// fatal path alone: response::to clones the request's desired state
-    /// and context, a copy a request that runs to completion never needs
-    /// (the guest's own bytes go back), and one that grows with the
-    /// composite.
-    fn fatal(
-        &self,
-        req: &RunFunctionRequest,
-        outcome: &str,
-        reason: String,
-    ) -> RunFunctionResponse {
+    /// fatal path alone, and so is the one typed decode of the whole
+    /// request: response::to carries the request's desired state and
+    /// context, which a request that runs to completion never needs (the
+    /// guest's own bytes go back) and whose decode grows with the
+    /// composite. The bytes decoded before they got here (handle_raw's
+    /// first step), so the default stands for nothing that happens.
+    fn fatal(&self, raw: &[u8], outcome: &str, reason: String) -> RunFunctionResponse {
         tracing::info!(outcome, reason = %reason, "Request ended with a fatal result");
         guestfn_engine::metrics::REQUESTS
             .with_label_values(&[outcome])
             .inc();
-        let mut rsp = response::to(req, self.ttl);
+        let req = RunFunctionRequest::decode(raw).unwrap_or_default();
+        let mut rsp = response::to(&req, self.ttl);
         response::fatal(&mut rsp, reason);
         rsp
     }
@@ -121,16 +120,31 @@ impl<E: Engine> WasmFunction<E> {
         raw: Vec<u8>,
         deadline: Option<std::time::Instant>,
     ) -> Result<Vec<u8>, Status> {
-        let req = RunFunctionRequest::decode(raw.as_slice())
-            .map_err(|e| Status::internal(format!("cannot decode the request: {e}")))?;
+        // A request the typed message cannot decode is refused before
+        // anything reads it, as it always was; what changed is who says
+        // so. The check walks the bytes and builds nothing, and only
+        // where it cannot vouch for them is prost asked, for its verdict
+        // and its words. What the path then reads - the tag, the Input,
+        // the observed composite resource, the step credentials - is a
+        // partial decode; the composed resources, most of a request, are
+        // skipped by their length (partial.rs).
+        let decoding = |e| Status::internal(format!("cannot decode the request: {e}"));
+        if !partial::request_decodes(&raw) {
+            RunFunctionRequest::decode(raw.as_slice()).map_err(decoding)?;
+        }
+        let req = partial::Request::decode(raw.as_slice()).map_err(decoding)?;
+        // The caller's bytes are kept for the whole request: a fatal
+        // result is built from them, and the run reads them where the
+        // module is forwarded all of it.
+        let raw = Arc::new(raw);
         let tag = req.meta.as_ref().map(|m| m.tag.clone()).unwrap_or_default();
         tracing::info!(tag, "Running function");
 
-        let input: Input = match request::get_input(&req) {
+        let input: Input = match req.input() {
             Ok(input) => input,
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    &req,
+                    &raw,
                     OUTCOME_REFUSED,
                     format!("cannot get function input from *v1.RunFunctionRequest: {e}"),
                 )));
@@ -140,7 +154,7 @@ impl<E: Engine> WasmFunction<E> {
         // module is read or compiled: nothing will run if it is refused.
         let admitted = match admission::admit(&input, &self.engine.config(), E::KIND) {
             Ok(admitted) => admitted,
-            Err(e) => return Ok(raw_rsp(self.fatal(&req, OUTCOME_REFUSED, e))),
+            Err(e) => return Ok(raw_rsp(self.fatal(&raw, OUTCOME_REFUSED, e))),
         };
         // A module.from source names a field of the composite resource; the
         // compositionPolicy fences what it may pick (from.rs, default-deny).
@@ -148,9 +162,7 @@ impl<E: Engine> WasmFunction<E> {
         let composite = if input.module.from.is_empty() && input.config.is_none() {
             None
         } else {
-            req.observed
-                .as_ref()
-                .and_then(|o| o.composite.as_ref())
+            req.composite()
                 .and_then(|c| c.resource.as_ref())
                 .map(function_sdk_rust::resource::struct_to_json)
         };
@@ -166,7 +178,7 @@ impl<E: Engine> WasmFunction<E> {
             Ok(None) => return Ok(self.skip(&raw, &input.module.from, tag)),
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    &req,
+                    &raw,
                     OUTCOME_REFUSED,
                     format!("cannot resolve module: {e}"),
                 )));
@@ -180,7 +192,7 @@ impl<E: Engine> WasmFunction<E> {
             None => None,
             Some(c) => match crate::from::config_from_composite(c, composite.as_ref()) {
                 Ok(config) => config,
-                Err(e) => return Ok(raw_rsp(self.fatal(&req, OUTCOME_REFUSED, e))),
+                Err(e) => return Ok(raw_rsp(self.fatal(&raw, OUTCOME_REFUSED, e))),
             },
         };
         // Whether this module must carry a cosign signature is settled
@@ -194,7 +206,7 @@ impl<E: Engine> WasmFunction<E> {
         );
         if signature_required && source.r#type != "OCI" {
             return Ok(raw_rsp(self.fatal(
-                &req,
+                &raw,
                 OUTCOME_REFUSED,
                 format!(
                     "cannot resolve module: {}",
@@ -218,7 +230,7 @@ impl<E: Engine> WasmFunction<E> {
                     |function_sdk_rust::proto::v1::credentials::Source::CredentialData(d)| &d.data,
                 )
             }) else {
-                return Ok(raw_rsp(self.fatal(&req,
+                return Ok(raw_rsp(self.fatal(&raw,
                     OUTCOME_REFUSED,
                     format!("cannot get credentials {name:?} for module.oci: the request carries no such credential"),
                 )));
@@ -230,7 +242,7 @@ impl<E: Engine> WasmFunction<E> {
                 Ok(a) => Some(a),
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        &req,
+                        &raw,
                         OUTCOME_REFUSED,
                         format!("cannot use credentials {name:?} for module.oci: {e}"),
                     )));
@@ -250,14 +262,14 @@ impl<E: Engine> WasmFunction<E> {
                 Ok(Ok(resolved)) => resolved,
                 Ok(Err(e)) => {
                     return Ok(raw_rsp(self.fatal(
-                        &req,
+                        &raw,
                         OUTCOME_REFUSED,
                         format!("cannot resolve module: {e}"),
                     )));
                 }
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        &req,
+                        &raw,
                         OUTCOME_ERROR,
                         format!("internal error while running the module: {e}"),
                     )));
@@ -269,7 +281,7 @@ impl<E: Engine> WasmFunction<E> {
         // the key), once per repository and digest per process.
         if signature_required {
             let Some(verifier) = self.verifier.clone() else {
-                return Ok(raw_rsp(self.fatal(&req,
+                return Ok(raw_rsp(self.fatal(&raw,
                     OUTCOME_REFUSED,
                     format!(
                         "cannot verify module {}: the operator policy requires a cosign signature, but the runtime has neither --cosign-key nor --cosign-trusted-root to verify it",
@@ -295,14 +307,14 @@ impl<E: Engine> WasmFunction<E> {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     return Ok(raw_rsp(self.fatal(
-                        &req,
+                        &raw,
                         OUTCOME_REFUSED,
                         format!("cannot verify module {}: {e}", resolved.description),
                     )));
                 }
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        &req,
+                        &raw,
                         OUTCOME_ERROR,
                         format!("internal error while running the module: {e}"),
                     )));
@@ -322,7 +334,7 @@ impl<E: Engine> WasmFunction<E> {
                 Ok(module) => module,
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        &req,
+                        &raw,
                         OUTCOME_ERROR,
                         format!("cannot load module {}: {e}", resolved.description),
                     )));
@@ -346,7 +358,7 @@ impl<E: Engine> WasmFunction<E> {
                     Ok(Ok(bytes)) => bytes,
                     Ok(Err(e)) => {
                         return Ok(raw_rsp(self.fatal(
-                            &req,
+                            &raw,
                             OUTCOME_REFUSED,
                             format!(
                                 "cannot read the manifest of module {}: {e}",
@@ -356,7 +368,7 @@ impl<E: Engine> WasmFunction<E> {
                     }
                     Err(e) => {
                         return Ok(raw_rsp(self.fatal(
-                            &req,
+                            &raw,
                             OUTCOME_ERROR,
                             format!("internal error while running the module: {e}"),
                         )));
@@ -371,7 +383,7 @@ impl<E: Engine> WasmFunction<E> {
                 Ok(m) => Some(m),
                 Err(e) => {
                     return Ok(raw_rsp(self.fatal(
-                        &req,
+                        &raw,
                         OUTCOME_REFUSED,
                         format!(
                             "module {} has an invalid manifest: {e}",
@@ -385,7 +397,7 @@ impl<E: Engine> WasmFunction<E> {
             && let Err(e) = m.check_type(E::KIND)
         {
             return Ok(raw_rsp(self.fatal(
-                &req,
+                &raw,
                 OUTCOME_REFUSED,
                 format!("module {} {e}", resolved.description),
             )));
@@ -401,7 +413,7 @@ impl<E: Engine> WasmFunction<E> {
             Ok(caps) => caps,
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    &req,
+                    &raw,
                     OUTCOME_REFUSED,
                     format!("module {} {e}", resolved.description),
                 )));
@@ -411,7 +423,7 @@ impl<E: Engine> WasmFunction<E> {
             && let Err(e) = m.check(&caps.grants(), config.as_ref())
         {
             return Ok(raw_rsp(self.fatal(
-                &req,
+                &raw,
                 OUTCOME_REFUSED,
                 format!("module {} {e}", resolved.description),
             )));
@@ -435,7 +447,7 @@ impl<E: Engine> WasmFunction<E> {
             Ok(env) => env,
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    &req,
+                    &raw,
                     OUTCOME_REFUSED,
                     format!("module {}: {e}", resolved.description),
                 )));
@@ -448,7 +460,8 @@ impl<E: Engine> WasmFunction<E> {
         // unconditionally - and the Input's config reference replaced by
         // the configuration read from the composite resource; the engine
         // works on the protobuf bytes.
-        let raw = if input.config.is_some() {
+        let mut forwarded = Arc::clone(&raw);
+        if input.config.is_some() {
             // A one-entry Struct encodes to exactly the map entry the
             // Input's Struct gains.
             let entry = config.as_ref().map(|value| {
@@ -458,17 +471,15 @@ impl<E: Engine> WasmFunction<E> {
                 function_sdk_rust::resource::json_to_struct(&entry).encode_to_vec()
             });
             match crate::protowire::replace_input_config(&raw, entry.as_deref()) {
-                Some(bytes) => bytes,
+                Some(bytes) => forwarded = Arc::new(bytes),
                 None => {
-                    return Ok(raw_rsp(self.fatal(&req,
+                    return Ok(raw_rsp(self.fatal(&raw,
                         OUTCOME_ERROR,
                         "internal error while running the module: cannot replace the Input's config: the request does not parse as protobuf".to_string(),
                     )));
                 }
             }
-        } else {
-            raw
-        };
+        }
         let granted = caps.forwarded_credentials();
         let forward = |name: &str| name != pull_credential && granted.contains(name);
         let mut withheld: Vec<&str> = req
@@ -477,25 +488,23 @@ impl<E: Engine> WasmFunction<E> {
             .map(String::as_str)
             .filter(|name| !forward(name))
             .collect();
-        let bytes = if withheld.is_empty() {
-            raw
-        } else {
+        if !withheld.is_empty() {
             withheld.sort_unstable();
             tracing::debug!(
                 module = %resolved.description,
                 credentials = ?withheld,
                 "Withholding the step credentials the module was not granted"
             );
-            match crate::protowire::retain_credentials(&raw, forward) {
-                Some(bytes) => bytes,
+            match crate::protowire::retain_credentials(&forwarded, forward) {
+                Some(bytes) => forwarded = Arc::new(bytes),
                 None => {
-                    return Ok(raw_rsp(self.fatal(&req,
+                    return Ok(raw_rsp(self.fatal(&raw,
                         OUTCOME_ERROR,
                         "internal error while running the module: cannot withhold the step credentials it was not granted: the request does not parse as protobuf".to_string(),
                     )));
                 }
             }
-        };
+        }
         // The per-run client logs every request with the module's reference
         // and digest attached.
         let http = caps.grant.map(|grant| {
@@ -536,7 +545,9 @@ impl<E: Engine> WasmFunction<E> {
             } else {
                 None
             };
-            engine.run(&module, &bytes, opts).map_err(|e| e.to_string())
+            engine
+                .run(&module, &forwarded, opts)
+                .map_err(|e| e.to_string())
         })
         .await;
         let out = match out {
@@ -545,7 +556,7 @@ impl<E: Engine> WasmFunction<E> {
                 // A panic in the run is this request's fatal result, never
                 // the process's end.
                 return Ok(raw_rsp(self.fatal(
-                    &req,
+                    &raw,
                     OUTCOME_ERROR,
                     format!("internal error while running the module: {e}"),
                 )));
@@ -555,23 +566,45 @@ impl<E: Engine> WasmFunction<E> {
             Ok(out) => out,
             Err(e) => {
                 return Ok(raw_rsp(self.fatal(
-                    &req,
+                    &raw,
                     OUTCOME_ERROR,
                     format!("module {} failed: {e}", resolved.description),
                 )));
             }
         };
-        let got = match RunFunctionResponse::decode(out.as_slice()) {
-            Ok(got) => got,
-            Err(e) => {
-                return Ok(raw_rsp(self.fatal(
-                    &req,
-                    OUTCOME_ERROR,
-                    format!(
-                        "module {} failed: cannot decode response: {e}",
-                        resolved.description
-                    ),
-                )));
+        // A response the typed message cannot decode never goes back: it
+        // is the module's failure, in the same words whoever finds it.
+        // Where a policy layer fences the response it is decoded whole,
+        // for the fences to read. Where none does, the runtime asks one
+        // thing of it, whether the guest wrote a meta, so the check that
+        // builds nothing vouches for the bytes and the meta alone is
+        // decoded; what the check cannot vouch for is prost's to judge.
+        let fenced_reads =
+            admission::require_fenced(self.policy.as_deref(), admitted.composition.as_deref());
+        let fenced_output =
+            admission::compose_fenced(self.policy.as_deref(), admitted.composition.as_deref());
+        let undecodable = |e| {
+            format!(
+                "module {} failed: cannot decode response: {e}",
+                resolved.description
+            )
+        };
+        let (got, has_meta) = if fenced_reads || fenced_output || !partial::response_decodes(&out) {
+            match RunFunctionResponse::decode(out.as_slice()) {
+                Ok(got) => {
+                    let has_meta = got.meta.is_some();
+                    (Some(got), has_meta)
+                }
+                Err(e) => {
+                    return Ok(raw_rsp(self.fatal(&raw, OUTCOME_ERROR, undecodable(e))));
+                }
+            }
+        } else {
+            match partial::ResponseHead::decode(out.as_slice()) {
+                Ok(head) => (None, head.meta.is_some()),
+                Err(e) => {
+                    return Ok(raw_rsp(self.fatal(&raw, OUTCOME_ERROR, undecodable(e))));
+                }
             }
         };
         // The read fence (requireResource, #208): where a policy layer
@@ -581,8 +614,8 @@ impl<E: Engine> WasmFunction<E> {
         // say, and before the output fence, since the read precedes the
         // write. Judged over the decoded copy: the guest's bytes stay
         // untouched either way.
-        if admission::require_fenced(self.policy.as_deref(), admitted.composition.as_deref()) {
-            let judged = crate::require::requirements(&got).and_then(|requirements| {
+        if fenced_reads && let Some(got) = &got {
+            let judged = crate::require::requirements(got).and_then(|requirements| {
                 tracing::debug!(
                     module = %resolved.description,
                     digest = %resolved.digest,
@@ -599,7 +632,7 @@ impl<E: Engine> WasmFunction<E> {
             });
             if let Err(e) = judged {
                 return Ok(raw_rsp(self.fatal(
-                    &req,
+                    &raw,
                     OUTCOME_REFUSED,
                     format!("module {} {e}", resolved.description),
                 )));
@@ -611,12 +644,25 @@ impl<E: Engine> WasmFunction<E> {
         // guest's bytes stay untouched either way. A response carrying a
         // fatal result is never applied by Crossplane, so it is not judged
         // and the guest's own message stays the one the author reads.
-        if admission::compose_fenced(self.policy.as_deref(), admitted.composition.as_deref())
-            && !carries_fatal(&got)
+        if fenced_output
+            && let Some(got) = &got
+            && !carries_fatal(got)
         {
+            // The request's desired state is decoded here alone, where
+            // there is a diff to make.
+            let desired = match partial::Desired::decode(raw.as_slice()) {
+                Ok(d) => d.desired,
+                Err(e) => {
+                    return Ok(raw_rsp(self.fatal(
+                        &raw,
+                        OUTCOME_ERROR,
+                        format!("internal error while running the module: cannot decode the request's desired state: {e}"),
+                    )));
+                }
+            };
             let composite = composite_kind_from(&req);
             let judged = crate::compose::changes(
-                req.desired.as_ref(),
+                desired.as_ref(),
                 got.desired.as_ref(),
                 composite.as_ref().map(|(g, k)| (g.as_str(), k.as_str())),
             )
@@ -637,7 +683,7 @@ impl<E: Engine> WasmFunction<E> {
             });
             if let Err(e) = judged {
                 return Ok(raw_rsp(self.fatal(
-                    &req,
+                    &raw,
                     OUTCOME_REFUSED,
                     format!("module {} {e}", resolved.description),
                 )));
@@ -649,7 +695,7 @@ impl<E: Engine> WasmFunction<E> {
         guestfn_engine::metrics::REQUESTS
             .with_label_values(&["ok"])
             .inc();
-        if got.meta.is_some() {
+        if has_meta {
             return Ok(out);
         }
         Ok(crate::protowire::append_meta(
@@ -698,25 +744,17 @@ fn carries_fatal(rsp: &RunFunctionResponse) -> bool {
 
 /// The composite resource's group and kind from the observed composite,
 /// for the output fence's judgement of the composite's own desired state.
-fn composite_kind_from(req: &RunFunctionRequest) -> Option<(String, String)> {
-    req.observed
-        .as_ref()
-        .and_then(|o| o.composite.as_ref())
-        .and_then(crate::compose::kind_of)
+fn composite_kind_from(req: &partial::Request) -> Option<(String, String)> {
+    req.composite().and_then(crate::compose::kind_of)
 }
 
 /// The operator-policy principal from the observed composite resource: its
 /// kind and namespace, read without converting the whole object. A request
 /// with no observed composite yields the zero principal, which matches no
 /// principal condition - safe, since the policy layers only narrow.
-fn principal_from(req: &RunFunctionRequest) -> Principal {
+fn principal_from(req: &partial::Request) -> Principal {
     use pbjson_types::value::Kind;
-    let Some(xr) = req
-        .observed
-        .as_ref()
-        .and_then(|o| o.composite.as_ref())
-        .and_then(|c| c.resource.as_ref())
-    else {
+    let Some(xr) = req.composite().and_then(|c| c.resource.as_ref()) else {
         return Principal::default();
     };
     let str_field = |s: &pbjson_types::Struct, key: &str| -> String {
@@ -2143,5 +2181,152 @@ when { context has name };"#;
         let req = fence_request("", desired_with(&[("deployment", deployment())]));
         let out = f.handle_raw(req.encode_to_vec(), None).await.expect("run");
         assert_eq!(out, bytes, "unscoped, the selector is relayed as before");
+    }
+
+    /// A length-delimited field on the wire.
+    fn wire_field(number: u8, value: &[u8]) -> Vec<u8> {
+        let mut out = vec![number << 3 | 2];
+        let mut len = value.len();
+        while len >= 0x80 {
+            out.push(len as u8 | 0x80);
+            len >>= 7;
+        }
+        out.push(len as u8);
+        out.extend_from_slice(value);
+        out
+    }
+
+    /// A State whose one composed resource has a field name that is no
+    /// UTF-8: well-formed down to the last string, six messages deep, in a
+    /// part of a request or a response the request path never reads.
+    fn state_with_a_fault() -> Vec<u8> {
+        let entry = [wire_field(1, &[0xff, 0xfe]), wire_field(2, &[])].concat();
+        let object = wire_field(1, &entry);
+        let resource = wire_field(1, &object);
+        let composed = [wire_field(1, b"bucket"), wire_field(2, &resource)].concat();
+        wire_field(2, &composed)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_request_that_does_not_decode_is_a_grpc_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            wat::parse_str(EMPTY_RESPONSE_WAT).expect("wat"),
+        )
+        .expect("write");
+        let f = function(Some(dir.path().to_owned()));
+        let good = request(input(
+            serde_json::json!({"type": "Path", "path": "fn.wasm"}),
+        ))
+        .into_inner()
+        .encode_to_vec();
+        f.handle_raw(good.clone(), None).await.expect("runs");
+
+        // The fault in the observed and in the desired composed resources,
+        // which admission skips, and in the context, which nothing reads.
+        for number in [2, 3] {
+            let mut raw = good.clone();
+            raw.extend(wire_field(number, &state_with_a_fault()));
+            let want = RunFunctionRequest::decode(raw.as_slice()).expect_err("refused");
+            let got = f.handle_raw(raw, None).await.expect_err("a gRPC error");
+            assert_eq!(got.code(), tonic::Code::Internal);
+            assert_eq!(
+                got.message(),
+                format!("cannot decode the request: {want}"),
+                "field {number}"
+            );
+        }
+        let mut raw = good.clone();
+        raw.extend(wire_field(5, &[0x0a, 0x7f]));
+        let got = f.handle_raw(raw, None).await.expect_err("a gRPC error");
+        assert!(
+            got.message().starts_with("cannot decode the request: "),
+            "{}",
+            got.message()
+        );
+    }
+
+    /// A response whose fault is deep in its desired state, under no
+    /// policy layer that would decode it for a fence: still the module's
+    /// failure, in the same words.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fault_deep_in_an_unfenced_response_is_a_fatal_result() {
+        let tail = wire_field(2, &state_with_a_fault());
+        let rsp = RunFunctionResponse {
+            meta: Some(ResponseMeta {
+                tag: "guest".to_string(),
+                ttl: None,
+            }),
+            ..Default::default()
+        };
+        let (dir, bytes) = fenced_stage(&rsp, &tail);
+        let want = RunFunctionResponse::decode(bytes.as_slice()).expect_err("refused");
+        let f = function(Some(dir.path().to_owned()));
+        let rsp = run(
+            &f,
+            input(serde_json::json!({"type": "Path", "path": "fn.wasm"})),
+        )
+        .await;
+        assert_eq!(
+            results(&rsp),
+            [(
+                Severity::Fatal as i32,
+                format!("module module file fn.wasm failed: cannot decode response: {want}")
+                    .as_str()
+            )]
+        );
+    }
+
+    /// A request the wire check declines to judge (it holds a group, which
+    /// prost skips) is decoded by prost and runs: the caller's bytes reach
+    /// the guest whole, the group included.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_request_the_check_declines_runs_on_prosts_word() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("fn.wasm"),
+            guestfn_engine_wasm::testing::echo_component(),
+        )
+        .expect("write");
+        let f = function(Some(dir.path().to_owned()));
+        let mut raw = request(input(
+            serde_json::json!({"type": "Path", "path": "fn.wasm"}),
+        ))
+        .into_inner()
+        .encode_to_vec();
+        // Field 999 as a group holding one varint: start, field 1, end.
+        raw.extend_from_slice(&[0xbb, 0x3e, 0x08, 0x01, 0xbc, 0x3e]);
+        assert!(!crate::partial::request_decodes(&raw));
+        assert!(RunFunctionRequest::decode(raw.as_slice()).is_ok());
+
+        let out = f.handle_raw(raw.clone(), None).await.expect("run");
+        assert_eq!(out, raw);
+    }
+
+    /// A fatal result goes back with the caller's desired state and
+    /// context, as response::to builds it from the whole request.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fatal_result_carries_the_desired_state_and_context() {
+        let req = request_with_composite(
+            input(serde_json::json!({"type": "Path", "path": "fn.wasm"})),
+            serde_json::json!({"kind": "Bucket", "metadata": {"namespace": "team-a"}}),
+        );
+        // No --module-dir: the request is refused before anything runs.
+        let f = function(None);
+        let out = f
+            .handle_raw(req.encode_to_vec(), None)
+            .await
+            .expect("never a gRPC error");
+        let rsp = RunFunctionResponse::decode(out.as_slice()).expect("a response");
+        let [(severity, message)] = results(&rsp)[..] else {
+            panic!("want one result, got {:?}", rsp.results);
+        };
+        assert_eq!(severity, Severity::Fatal as i32);
+        assert!(message.starts_with("cannot resolve module: "), "{message}");
+        assert_eq!(rsp.meta.as_ref().expect("meta").tag, "t");
+        assert_eq!(rsp.desired, req.desired);
+        assert_eq!(rsp.context, req.context);
+        assert!(rsp.desired.is_some() && rsp.context.is_some());
     }
 }
