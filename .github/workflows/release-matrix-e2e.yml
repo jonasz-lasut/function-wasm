@@ -180,7 +180,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
-          version: '35.1'
+          version: '36.2'
 
       # The key is the one ci.yml's job of this name saves on main.
       - name: Restore the Rust Build

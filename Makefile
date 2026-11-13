@@ -410,7 +410,7 @@ e2e.guest:
 # wit-bindgen-cli release that wrote function-wasm-c's, function-wasm-zig's, function-wasm-odin's and
 # function-wasm-go's checked-in bindings and e2e-wasm.yml's bindings drift checks install.
 # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
-PROTOC_VERSION := 35.1
+PROTOC_VERSION := 36.2
 # renovate: datasource=pypi depName=nanopb versioning=pep440
 NANOPB_VERSION := 0.4.9.1
 # renovate: datasource=github-releases depName=bytecodealliance/wit-bindgen extractVersion=^v(?<version>.+)$
