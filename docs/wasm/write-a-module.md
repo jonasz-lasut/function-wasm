@@ -10,7 +10,7 @@ Install the CLI and scaffold a project:
 
 ```shell
 # Prebuilt, from a guestfn-v* release (guestfn-linux-amd64, -linux-arm64, -darwin-amd64 or -darwin-arm64):
-curl -fsSLo guestfn https://github.com/jonasz-lasut/guestfn/releases/download/guestfn-v0.2.0/guestfn-linux-amd64 && chmod +x guestfn
+curl -fsSLo guestfn https://github.com/jonasz-lasut/guestfn/releases/download/guestfn-v0.3.0/guestfn-linux-amd64 && chmod +x guestfn
 # Or from source:
 cargo install --git https://github.com/jonasz-lasut/guestfn guestfn
 
