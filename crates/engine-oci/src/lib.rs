@@ -18,6 +18,7 @@ mod run;
 pub mod sandbox;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testing;
+pub mod timeline;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -130,9 +131,11 @@ pub struct Oci {
     options: Options,
     initrd: tempfile::TempPath,
     scratch: tempfile::TempDir,
-    scheduler: Option<concurrency::FairScheduler>,
+    scheduler: Option<Arc<concurrency::FairScheduler>>,
     mem: Option<Arc<concurrency::MemPool>>,
     sandbox: Box<dyn Sandbox>,
+    /// The answered runs whose VMs are still being stopped.
+    teardowns: Arc<run::Teardowns>,
     /// The runtime's compiled store, once the runtime has opened it: where
     /// a stored image's snapshots are kept.
     store: std::sync::OnceLock<Arc<dyn crate::ArtifactStore>>,
@@ -194,7 +197,10 @@ impl Oci {
         std::io::Write::write_all(&mut initrd, &initrd::pack(&init))
             .map_err(|e| Error(format!("cannot write the initramfs: {e}")))?;
         Ok(Oci {
-            scheduler: config.scheduler(),
+            // In an Arc: an answered run's slot goes with the thread that
+            // stops its VM.
+            scheduler: config.scheduler().map(Arc::new),
+            teardowns: Arc::default(),
             mem: config.memory_pool(),
             config,
             options,
@@ -207,6 +213,14 @@ impl Oci {
 
     pub fn options(&self) -> &Options {
         &self.options
+    }
+
+    /// Waits until every VM is stopped: a run returns its response before
+    /// its VM is gone, and this returns once none is left, with every
+    /// slot, reservation and file such a run held given back. The engine
+    /// waits the same way when it is dropped.
+    pub fn settle(&self) {
+        self.teardowns.settle();
     }
 
     /// Unpacks an image layout into a root filesystem file under the
@@ -249,6 +263,18 @@ impl Oci {
             config,
             snapshots: Default::default(),
         })
+    }
+}
+
+/// An engine that goes leaves no VM behind: the VMs of answered runs are
+/// stopped on threads of their own, which a process that exits would cut
+/// short with the VMMs still running. The runtime drops its engine once
+/// the server has stopped, so a shutdown waits here, for as long as the
+/// last VMs take to stop. Their directories are under the engine's
+/// scratch directory, which goes after this.
+impl Drop for Oci {
+    fn drop(&mut self) {
+        self.teardowns.settle();
     }
 }
 
@@ -337,11 +363,13 @@ impl Engine for Oci {
 }
 
 /// What namespaces the compiled store: the root filesystem's format is
-/// this crate's, so its version and the platform.
+/// this crate's, so its version, the format's own number (a release does
+/// not move the crate's version) and the platform.
 pub fn version() -> String {
     format!(
-        "oci-v{}-{}-{}",
+        "oci-v{}-rootfs{}-{}-{}",
         env!("CARGO_PKG_VERSION"),
+        rootfs::FORMAT,
         std::env::consts::OS,
         std::env::consts::ARCH
     )

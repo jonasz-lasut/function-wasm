@@ -95,7 +95,7 @@ Egress is explained on the [HTTP egress](http-egress.md) page.
 - **`module … requires egress (requires.egress.http), which function-oci does not serve yet: the VM has no network device (docs/one-pager-oci-runtime.md)`**: function-oci 0.1 has no egress. Remove `requires.egress` from the manifest.
 - **`module … failed: process exited with status 1 before answering the call: <line>`**: the process ended before it answered, and the line is the last one it logged. An SDK server without `--insecure` ends this way: check the manifest's `oci.args`.
 - **`module … failed: run returned an error: <message> (gRPC status <code>)`**: the function answered the call with an error.
-- **`module … failed: run failed: the guest did not connect before the deadline: the VM booted but its init never reached the host`**: the runtime failed before the module ran. `--debug` logs the VM's console, which says how far the boot got.
+- **`module … failed: run failed: the guest did not connect before the deadline: the VM booted but its init never reached the host`**: the runtime failed before the module ran. `--debug` logs the VM's console, which says how far the boot got. A console that ends with `guestfn-init: cannot mount "squashfs" "/dev/vda" on "/lower": Invalid argument (os error 22); the root filesystem is a squashfs packed with zstd, which the guest kernel has to read (CONFIG_SQUASHFS and CONFIG_SQUASHFS_ZSTD)` means the kernel `--guest-kernel-path` names was built without zstd for squashfs: every run then fails this way, at its deadline. Use the kernel the package includes, or build yours with both options.
 
 ## Runtime and startup
 

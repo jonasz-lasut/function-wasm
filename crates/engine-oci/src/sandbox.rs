@@ -215,13 +215,52 @@ pub struct Outcome {
     pub console: String,
 }
 
+/// A run as the sandbox hands it back.
+pub enum Run {
+    /// Over: the VM is stopped, and this is all it left.
+    Over(Outcome),
+    /// The function answered and its VM is still up: the response's bytes
+    /// as they came, which the caller gets at once, and the rest of the
+    /// run, which nobody waits for.
+    Answered(Vec<u8>, Rest),
+}
+
+/// What is left of a run once its response is in hand: the process is
+/// stopped and what it wrote last is read, the VM is stopped and its files
+/// are removed. The engine brings it to its end off the caller's path,
+/// with the run's slot and memory held until it is over.
+pub struct Rest(Box<dyn FnOnce() -> Remains + Send + 'static>);
+
+impl Rest {
+    pub fn new(finish: impl FnOnce() -> Remains + Send + 'static) -> Rest {
+        Rest(Box::new(finish))
+    }
+
+    /// Stops the VM and returns what the run left. The VM is gone when
+    /// this returns, and when it panics.
+    pub fn finish(self) -> Remains {
+        (self.0)()
+    }
+}
+
+/// What an answered run left besides its response.
+#[derive(Debug, Default)]
+pub struct Remains {
+    /// What the process wrote, as `Outcome::log`.
+    pub log: Output,
+    /// The serial console's output, as `Outcome::console`.
+    pub console: String,
+}
+
 pub trait Sandbox: Send + Sync + 'static {
     /// The VMM's name, for logs.
     fn name(&self) -> &'static str;
-    /// Boots the VM, drives the run through the protocol and stops the VM
-    /// whatever happened; an Err is a failure of the sandbox itself (the
-    /// VMM would not start), not of the process.
-    fn run(&self, spec: VmSpec<'_>) -> Result<Outcome, Error>;
+    /// Boots the VM and drives the run through the protocol. A run whose
+    /// function answered comes back with the response and the VM still to
+    /// stop (`Run::Answered`); any other is over, its VM stopped whatever
+    /// happened. An Err is a failure of the sandbox itself (the VMM would
+    /// not start), not of the process.
+    fn run(&self, spec: VmSpec<'_>) -> Result<Run, Error>;
 
     /// Makes ready what a later run of this VM would otherwise make
     /// first: a sandbox that restores snapshots takes the snapshot here.

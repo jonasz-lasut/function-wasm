@@ -8,10 +8,14 @@ description = "The OCI engine of function-oci, behind guestfn-engine's Engine tr
 publish = false
 
 [dependencies]
-# The root filesystem is a squashfs written in pure Rust (gzip through
-# zlib-rs, so no C), kept read-only on the VM's block device under a tmpfs
-# overlay; the layers and the image layout are tar.
-backhand = { version = "0.25.5", default-features = false, features = ["gzip"] }
+# The root filesystem is a squashfs, kept read-only on the VM's block
+# device under a tmpfs overlay, its blocks packed with zstd: the guest
+# reads them faster than gzip's (docs/one-pager-oci-runtime.md, "The
+# packing of the root filesystem"). backhand's zstd is the zstd crate over zstd-sys,
+# the C library built with `cc`, in function-oci alone: function-wasm
+# depends on no part of this crate. The layers and the image layout are
+# tar, a gzip layer unpacked by flate2 (zlib-rs).
+backhand = { version = "0.25.5", default-features = false, features = ["zstd"] }
 flate2 = "1"
 guestfn-engine = { path = "../engine" }
 guestfn-oci-protocol = { path = "../oci-protocol" }
@@ -39,3 +43,11 @@ prost = "0.14"
 [features]
 # The testing module: the image fixtures and the fake sandbox.
 testutil = []
+# The hand-run benchmark (tests/bench.rs): the marks of a run's timeline,
+# and the squashfs compressors it compares with the one the engine writes.
+# No function is built with it.
+bench = ["backhand/gzip", "backhand/lz4"]
+
+[[test]]
+name = "bench"
+required-features = ["bench"]

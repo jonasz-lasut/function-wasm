@@ -8,7 +8,7 @@ use crate::Error;
 use crate::protocol::Description;
 
 use crate::layout::{OCI_MANIFEST_TYPE, Writer};
-use crate::sandbox::{Outcome, Sandbox, VmSpec};
+use crate::sandbox::{Ended, Outcome, Remains, Rest, Run, Sandbox, VmSpec};
 
 pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.image.config.v1+json";
 pub const LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar";
@@ -232,11 +232,15 @@ pub fn image_layout(config: &[u8], layers: &[(&str, &[u8])]) -> Result<Vec<u8>, 
 }
 
 /// A sandbox that records every run's description and answers with what
-/// the closure says.
+/// the closure says. Its runs are over when they come back, unless
+/// `stopping` says what stopping a VM does: an answered run then comes
+/// back as Firecracker's does, the response first and the rest of the
+/// outcome once the engine has stopped the VM.
 pub struct FakeSandbox {
     seen: Arc<Mutex<Vec<Description>>>,
     answer: Box<dyn Fn(&VmSpec<'_>) -> Outcome + Send + Sync>,
     prepared: Arc<Mutex<Vec<u64>>>,
+    stopping: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl FakeSandbox {
@@ -248,7 +252,17 @@ impl FakeSandbox {
             seen,
             answer: Box::new(answer),
             prepared: Arc::default(),
+            stopping: None,
         }
+    }
+
+    /// Hands an answered run back with its VM still to stop, and runs
+    /// `hook` when the engine stops it, before the run's output and
+    /// console are handed over: where a test holds a VM up, or has its
+    /// stopping panic.
+    pub fn stopping(mut self, hook: impl Fn() + Send + Sync + 'static) -> FakeSandbox {
+        self.stopping = Some(Arc::new(hook));
+        self
     }
 
     /// The memory in MiB of every VM the sandbox was asked to prepare.
@@ -262,12 +276,25 @@ impl Sandbox for FakeSandbox {
         "fake"
     }
 
-    fn run(&self, spec: VmSpec<'_>) -> Result<Outcome, Error> {
+    fn run(&self, spec: VmSpec<'_>) -> Result<Run, Error> {
         self.seen
             .lock()
             .expect("poisoned")
             .push(spec.description.clone());
-        Ok((self.answer)(&spec))
+        let Outcome { log, end, console } = (self.answer)(&spec);
+        Ok(match (&self.stopping, end) {
+            (Some(hook), Ended::Answered(response)) => {
+                let hook = Arc::clone(hook);
+                Run::Answered(
+                    response,
+                    Rest::new(move || {
+                        hook();
+                        Remains { log, console }
+                    }),
+                )
+            }
+            (_, end) => Run::Over(Outcome { log, end, console }),
+        })
     }
 
     fn prepare(&self, spec: VmSpec<'_>) -> Result<(), Error> {
@@ -276,5 +303,73 @@ impl Sandbox for FakeSandbox {
             .expect("poisoned")
             .push(spec.memory_mib);
         Ok(())
+    }
+}
+
+/// Every tracing event of the process as a line of text, for a test that
+/// asserts what was logged: `LEVEL field=value ...`, the event's message
+/// under `message`. The capture is the process's one subscriber, since a
+/// run's last lines are logged from a thread the test never sees.
+pub struct Logs {
+    lines: Arc<Mutex<Vec<String>>>,
+}
+
+impl Logs {
+    /// The capture, installed on the first call. A test binary that uses
+    /// it installs no other subscriber.
+    pub fn capture() -> &'static Logs {
+        static LOGS: std::sync::OnceLock<Logs> = std::sync::OnceLock::new();
+        LOGS.get_or_init(|| {
+            let lines = Arc::default();
+            tracing::subscriber::set_global_default(Capture(Arc::clone(&lines)))
+                .expect("no subscriber before the capture");
+            Logs { lines }
+        })
+    }
+
+    /// The lines so far that contain every one of `needles`.
+    pub fn with(&self, needles: &[&str]) -> Vec<String> {
+        self.lines
+            .lock()
+            .expect("poisoned")
+            .iter()
+            .filter(|line| needles.iter().all(|needle| line.contains(needle)))
+            .cloned()
+            .collect()
+    }
+}
+
+struct Capture(Arc<Mutex<Vec<String>>>);
+
+impl tracing::Subscriber for Capture {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut line = event.metadata().level().to_string();
+        event.record(&mut Fields(&mut line));
+        self.0.lock().expect("poisoned").push(line);
+    }
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+struct Fields<'a>(&'a mut String);
+
+impl tracing::field::Visit for Fields<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write as _;
+        let _ = write!(self.0, " {}={value:?}", field.name());
     }
 }

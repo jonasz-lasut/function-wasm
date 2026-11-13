@@ -4,16 +4,23 @@
 //! (the runtime prefixes them with `module <desc> failed: `, as it does
 //! the Wasmtime engine's; their wording is for the reader and is no
 //! contract, docs/contract/compatibility.md).
+//!
+//! A run whose function answered returns its response as soon as the
+//! sandbox has it. What is left of the run - the process stopped, its
+//! last output logged, the VM stopped and reaped - ends on a thread of
+//! its own (`Teardown`), which holds the run's slot and memory until the
+//! VM is gone. Any other run is over before it returns, as its fatal
+//! result is made of how the VM ended.
 
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::concurrency::{MemPool, format_bytes};
+use crate::concurrency::{MemPool, OwnedSlot, format_bytes};
 use crate::{Error, RunError, RunFailure, RunOptions, metrics};
 
-use crate::sandbox::{Ended, OUTPUT_CAP, VmSpec};
-use crate::{Image, Oci, Rootfs};
+use crate::sandbox::{Ended, OUTPUT_CAP, Outcome, Output, Rest, Run, VmSpec};
+use crate::{Image, Module, Oci, Rootfs, timeline};
 
 /// What the VM gets beyond the process's limit: the guest kernel, the
 /// init, the root filesystem's overlay and the squashfs page cache. The
@@ -45,17 +52,161 @@ impl Drop for Reservation {
     }
 }
 
+/// What a run holds from its admission until its VM is gone: its slot, its
+/// memory and its place among the runs in flight. Dropped, it gives them
+/// back, on whichever thread that is: the thread that stops an answered
+/// run's VM drops it. The run's duration is another matter, observed when
+/// the run is over for its caller.
+struct Bounds {
+    start: Instant,
+    observed: bool,
+    _slot: Option<OwnedSlot>,
+    _reservation: Option<Reservation>,
+}
+
+impl Bounds {
+    fn open(slot: Option<OwnedSlot>, reservation: Option<Reservation>) -> Bounds {
+        metrics::RUNS_IN_FLIGHT.inc();
+        Bounds {
+            start: Instant::now(),
+            observed: false,
+            _slot: slot,
+            _reservation: reservation,
+        }
+    }
+
+    /// Observes the run's duration, once: the time until its caller has
+    /// the response or the failure, which is what the series has always
+    /// been read as (docs/operators/metrics.md). The VM of an answered run
+    /// is stopped after that, and the time it takes is in no series: the
+    /// run stays in flight meanwhile.
+    fn observe(&mut self, outcome: &'static str) {
+        if !std::mem::replace(&mut self.observed, true) {
+            metrics::RUN_DURATION
+                .with_label_values(&[outcome])
+                .observe(self.start.elapsed().as_secs_f64());
+        }
+    }
+}
+
+impl Drop for Bounds {
+    fn drop(&mut self) {
+        // A run that got here unobserved panicked on its way.
+        self.observe(metrics::OUTCOME_ERROR);
+        metrics::RUNS_IN_FLIGHT.dec();
+    }
+}
+
+/// The answered runs whose VMs are still being stopped: counted, so the
+/// engine can wait for them.
+#[derive(Default)]
+pub(crate) struct Teardowns {
+    pending: Mutex<usize>,
+    none: Condvar,
+}
+
+/// One teardown in the count, taken out of it when dropped.
+struct Pending(Arc<Teardowns>);
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        let mut pending = self.0.pending.lock().expect("poisoned");
+        *pending -= 1;
+        if *pending == 0 {
+            self.0.none.notify_all();
+        }
+    }
+}
+
+impl Teardowns {
+    /// Finishes `teardown` on a thread of its own. Where none can be
+    /// started it is finished here, and the caller waits as it did when a
+    /// run stopped its VM before it returned.
+    fn spawn(self: &Arc<Self>, teardown: Teardown) {
+        *self.pending.lock().expect("poisoned") += 1;
+        let work = Arc::new(Mutex::new(Some((teardown, Pending(Arc::clone(self))))));
+        let finish = |work: &Mutex<Option<(Teardown, Pending)>>| {
+            let taken = work.lock().expect("poisoned").take();
+            if let Some((teardown, pending)) = taken {
+                teardown.finish();
+                // Last: whoever waits for the count finds everything the
+                // run held given back.
+                drop(pending);
+            }
+        };
+        let theirs = Arc::clone(&work);
+        let spawned = std::thread::Builder::new()
+            .name("vm-teardown".to_string())
+            .spawn(move || finish(&theirs));
+        if let Err(e) = spawned {
+            tracing::warn!(error = %e, "cannot start a thread to stop the VM of an answered run; stopping it before the response is returned");
+            finish(&work);
+        }
+    }
+
+    /// Waits until no VM of an answered run is left to stop.
+    pub(crate) fn settle(&self) {
+        let mut pending = self.pending.lock().expect("poisoned");
+        while *pending > 0 {
+            pending = self.none.wait(pending).expect("poisoned");
+        }
+    }
+}
+
+/// The rest of an answered run, which its caller does not wait for: the
+/// sandbox stops the VM, and what the run left is reported as it would
+/// have been before the response was returned. It owns what must outlive
+/// the VM: the run's slot and memory, and the image, whose root filesystem
+/// the VM has open and whose hold in the store goes with the last clone.
+struct Teardown {
+    rest: Rest,
+    bounds: Bounds,
+    image: Module,
+    opts: RunOptions,
+    marks: timeline::Handle,
+}
+
+impl Teardown {
+    fn finish(self) {
+        let Teardown {
+            rest,
+            bounds,
+            image,
+            opts,
+            marks,
+        } = self;
+        timeline::adopt(marks);
+        // A sandbox that panics has stopped its VM on the way out
+        // (`Rest::finish`): the run gives back what it held all the same,
+        // and the process goes on.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rest.finish())) {
+            Ok(remains) => {
+                report(remains.log, &remains.console, &opts);
+            }
+            Err(_) => tracing::error!(
+                module = %opts.module,
+                digest = %opts.digest,
+                "stopping the VM of an answered run panicked; what the process wrote last is lost"
+            ),
+        }
+        // The VM is gone: the image it had open may go, then the run's
+        // slot and memory.
+        drop(image);
+        drop(bounds);
+    }
+}
+
 pub(crate) fn run(
     engine: &Oci,
-    image: &Image,
+    image: &Module,
     request: &[u8],
     opts: RunOptions,
 ) -> Result<Vec<u8>, RunError> {
     let limits = engine.config.narrowed_by(&opts);
     let wait_deadline = opts.deadline_within(limits.timeout);
-    let _slot = match &engine.scheduler {
+    let slot = match &engine.scheduler {
         Some(s) => Some(
-            s.acquire(&opts.digest, wait_deadline)
+            s.acquire_owned(&opts.digest, wait_deadline)
                 .map_err(RunError::waiting)?,
         ),
         None => None,
@@ -64,7 +215,7 @@ pub(crate) fn run(
     // may touch all of it, so the pool counts the ceiling, not a growth.
     let process_mib = limits.memory_limit.div_ceil(1 << 20).max(MIN_PROCESS_MIB);
     let memory_mib = process_mib + VM_OVERHEAD_MIB;
-    let _reservation = match &engine.mem {
+    let reservation = match &engine.mem {
         Some(pool) => {
             pool.reserve(memory_mib << 20, wait_deadline)
                 .map_err(RunError::waiting)?;
@@ -75,24 +226,61 @@ pub(crate) fn run(
         }
         None => None,
     };
-    metrics::RUNS_IN_FLIGHT.inc();
-    let start = Instant::now();
-    let result = boot_and_run(
-        engine,
-        image,
-        request,
-        &opts,
-        limits.timeout,
+    // The slot and the memory are the VM's, not the call's: they are held
+    // until the VM is gone, which for an answered run is after its caller
+    // has the response. Released at the response, the next run's VM would
+    // be up beside one still being stopped, past both bounds.
+    let mut bounds = Bounds::open(slot, reservation);
+    timeline::mark("admitted");
+    let budget = limits.timeout;
+    // The budget covers the boot: a VM that takes the whole budget to boot
+    // never ran, and the deadline says so.
+    let deadline = opts.deadline_within(budget);
+    let mut description = image.config.describe(&opts);
+    description.memory_max = process_mib << 20;
+    let run = engine.sandbox.run(VmSpec {
+        kernel: &engine.options.kernel,
+        initrd: engine.initrd.as_ref(),
+        rootfs: image.rootfs.path(),
         memory_mib,
-        process_mib,
-    );
-    metrics::RUNS_IN_FLIGHT.dec();
-    metrics::RUN_DURATION
-        .with_label_values(&[metrics::run_outcome(&result)])
-        .observe(start.elapsed().as_secs_f64());
-    result
+        vcpus: engine.options.vcpus,
+        description: &description,
+        request,
+        deadline,
+        scratch: engine.scratch.path(),
+        snapshots: &image.snapshots,
+        store: store_of(engine, image),
+    });
+    let run = match run {
+        Ok(run) => run,
+        // The sandbox's own failure: observed by its kind, like any other.
+        Err(e) => {
+            let failed: Result<Vec<u8>, RunError> = Err(e.into());
+            bounds.observe(metrics::run_outcome(&failed));
+            return failed;
+        }
+    };
+    timeline::mark("sandbox-returned");
+    match run {
+        Run::Over(outcome) => {
+            let result = conclude(outcome, &opts, budget, process_mib);
+            bounds.observe(metrics::run_outcome(&result));
+            result
+        }
+        Run::Answered(response, rest) => {
+            let answered: Result<Vec<u8>, RunError> = Ok(response);
+            bounds.observe(metrics::run_outcome(&answered));
+            engine.teardowns.spawn(Teardown {
+                rest,
+                bounds,
+                image: Arc::clone(image),
+                opts,
+                marks: timeline::handle(),
+            });
+            answered
+        }
+    }
 }
-
 /// The store a stored image's files live in, with the root filesystem
 /// marked used: every run reads that file from the store, and each one is
 /// a use. The loaded image holds the file against the sweep; the mark is
@@ -144,34 +332,12 @@ pub(crate) fn prepare(engine: &Oci, image: &Image) -> Result<(), Error> {
     })
 }
 
-fn boot_and_run(
-    engine: &Oci,
-    image: &Image,
-    request: &[u8],
-    opts: &RunOptions,
-    budget: Duration,
-    memory_mib: u64,
-    process_mib: u64,
-) -> Result<Vec<u8>, RunError> {
-    // The budget covers the boot: a VM that takes the whole budget to boot
-    // never ran, and the deadline says so.
-    let deadline = opts.deadline_within(budget);
-    let mut description = image.config.describe(opts);
-    description.memory_max = process_mib << 20;
-    let outcome = engine.sandbox.run(VmSpec {
-        kernel: &engine.options.kernel,
-        initrd: engine.initrd.as_ref(),
-        rootfs: image.rootfs.path(),
-        memory_mib,
-        vcpus: engine.options.vcpus,
-        description: &description,
-        request,
-        deadline,
-        scratch: engine.scratch.path(),
-        snapshots: &image.snapshots,
-        store: store_of(engine, image),
-    })?;
-    let (output, dropped) = outcome.log.into_text();
+/// What a run left besides its result, as the runtime's log: a warning
+/// for output past what a run keeps, the process's lines, and the VM's
+/// console at debug, each with the module and its digest. Returns the
+/// output it logged.
+fn report(log: Output, console: &str, opts: &RunOptions) -> String {
+    let (output, dropped) = log.into_text();
     if dropped > 0 {
         tracing::warn!(
             module = %opts.module,
@@ -181,9 +347,22 @@ fn boot_and_run(
         );
     }
     log_lines(&output, opts);
-    if !outcome.console.is_empty() {
-        tracing::debug!(module = %opts.module, digest = %opts.digest, console = %outcome.console, "VM console");
+    if !console.is_empty() {
+        tracing::debug!(module = %opts.module, digest = %opts.digest, console = %console, "VM console");
     }
+    timeline::mark("output-logged");
+    output
+}
+
+/// A run that is over: what it left is logged, and how the VM ended
+/// becomes the response or the fatal result.
+fn conclude(
+    outcome: Outcome,
+    opts: &RunOptions,
+    budget: Duration,
+    process_mib: u64,
+) -> Result<Vec<u8>, RunError> {
+    let output = report(outcome.log, &outcome.console, opts);
     let last_line = last_line(&output);
     match outcome.end {
         Ended::Deadline => Err(RunError::deadline("run failed", budget)),
@@ -229,7 +408,6 @@ fn boot_and_run(
         }
     }
 }
-
 fn with_last(head: String, last: &str) -> String {
     if last.is_empty() {
         head

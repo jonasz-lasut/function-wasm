@@ -20,7 +20,8 @@ use crate::Error;
 use crate::protocol::{Exit, Hello, Kind, read_frame, read_json, write_frame, write_json};
 
 use crate::metrics;
-use crate::sandbox::{Ended, Outcome, Output, Sandbox, Snapshot, VmSpec};
+use crate::sandbox::{Ended, Outcome, Output, Remains, Rest, Run, Sandbox, Snapshot, VmSpec};
+use crate::timeline;
 
 /// The guest's CID; the host is always 2.
 const GUEST_CID: u32 = 3;
@@ -151,95 +152,33 @@ impl Firecracker {
         Ok((dir, uds, ports))
     }
 
-    /// Drives the run over the guest's connection, then stops the VM
-    /// whatever happened: a run leaves nothing behind.
-    fn finish(
-        &self,
-        mut child: Child,
-        ports: &GuestPorts,
-        spec: &VmSpec<'_>,
-        started: Instant,
-        how: &str,
-    ) -> Outcome {
-        let ready = Instant::now();
-        let console = Arc::new(Mutex::new(String::new()));
-        let drain = |stream: Option<Box<dyn Read + Send>>, sink: Arc<Mutex<String>>| {
-            std::thread::spawn(move || {
-                let Some(mut stream) = stream else { return };
-                let mut buf = [0u8; 4096];
-                while let Ok(n) = stream.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    let mut s = sink.lock().expect("poisoned");
-                    if s.len() < CONSOLE_CAP {
-                        s.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    }
-                }
-            })
-        };
-        let out_thread = drain(
-            child
-                .stdout
-                .take()
-                .map(|s| Box::new(s) as Box<dyn Read + Send>),
-            Arc::clone(&console),
-        );
-        let err_thread = drain(
-            child
-                .stderr
-                .take()
-                .map(|s| Box::new(s) as Box<dyn Read + Send>),
-            Arc::clone(&console),
-        );
-        let mut connected = None;
-        let result = drive(ports, &mut child, spec, &mut connected);
-        let driven = Instant::now();
-        let usage = process_usage(child.id());
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = out_thread.join();
-        let _ = err_thread.join();
-        let console = std::mem::take(&mut *console.lock().expect("poisoned"));
-        // GUESTFN_VM_CONSOLE prints every VM's serial console to stderr, for
-        // a test run or a laptop debugging a boot; the engine's debug log
-        // carries it otherwise.
-        if std::env::var_os("GUESTFN_VM_CONSOLE").is_some() {
-            eprintln!(
-                "--- VM console ({}) ---\n{console}--- end ---",
-                spec.description.argv.join(" ")
-            );
+    /// Drives the run over the guest's connection. A run that is over comes
+    /// back with its VM stopped. An answered one comes back with the
+    /// response as soon as it is in hand, and its VM is stopped when the
+    /// engine finishes the rest: either way a run leaves nothing behind.
+    fn finish(&self, mut vm: Vm, spec: &VmSpec<'_>) -> Run {
+        let driven = drive(&vm.ports, &mut vm.vmm.0, spec, &mut vm.connected);
+        timeline::mark("driven");
+        match driven {
+            Driven::Over(log, end) => {
+                vm.driven = Some(Instant::now());
+                let console = vm.stop();
+                Run::Over(Outcome { log, end, console })
+            }
+            Driven::Answered(response, late) => Run::Answered(
+                response,
+                Rest::new(move || {
+                    let log = late.finish();
+                    vm.driven = Some(Instant::now());
+                    let console = vm.stop();
+                    Remains { log, console }
+                }),
+            ),
         }
-        // Where a run's time went: until the VMM had its VM (the process
-        // start, and the snapshot load of a restore), until the init
-        // connected, until the process exited.
-        let connected = connected.unwrap_or(driven);
-        let ms =
-            |from: Instant, to: Instant| to.saturating_duration_since(from).as_secs_f64() * 1e3;
-        tracing::debug!(
-            how,
-            vmm_ms = ms(started, ready),
-            guest_ms = ms(ready, connected),
-            run_ms = ms(connected, driven),
-            "the VM's run, by phase"
-        );
-        if std::env::var_os("GUESTFN_VM_TIMING").is_some() {
-            eprintln!(
-                "vm-timing how={how} vmm_ms={:.1} guest_ms={:.1} run_ms={:.1} total_ms={:.1} vmm_rss_mib={:.1} vmm_minor_faults={}",
-                ms(started, ready),
-                ms(ready, connected),
-                ms(connected, driven),
-                ms(started, driven),
-                usage.0 as f64 / (1u64 << 20) as f64,
-                usage.1,
-            );
-        }
-        let (log, end) = result;
-        Outcome { log, end, console }
     }
 
     /// A boot: the VM from its configuration file, with no API socket.
-    fn boot(&self, spec: &VmSpec<'_>) -> Result<Outcome, Error> {
+    fn boot(&self, spec: &VmSpec<'_>) -> Result<Run, Error> {
         let started = Instant::now();
         let (dir, uds, ports) = Self::workdir(spec)?;
         let config_path = dir.path().join("vm.json");
@@ -259,9 +198,10 @@ impl Firecracker {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| Error(format!("cannot start {}: {e}", self.binary.display())))?;
-        Ok(self.finish(child, &ports, spec, started, "boot"))
+        timeline::mark("vmm-spawned");
+        let vm = Vm::new(child, ports, dir, None, started, "boot", spec);
+        Ok(self.finish(vm, spec))
     }
-
     /// The names a stored image's snapshot goes by in the store: the root
     /// filesystem's own entry name, the machine shape and the fingerprint
     /// of what else the frozen VM depends on, so a snapshot is found only
@@ -512,7 +452,7 @@ impl Firecracker {
     /// writes are its own), the parked init connects to this run's socket
     /// and the run proceeds as after a boot. The description carries the
     /// host's clock and fresh randomness for the init to set.
-    fn restore(&self, spec: &VmSpec<'_>, snapshot: &Snapshot) -> Result<Outcome, String> {
+    fn restore(&self, spec: &VmSpec<'_>, snapshot: &Arc<Snapshot>) -> Result<Run, String> {
         let started = Instant::now();
         let (dir, uds, ports) = Self::workdir(spec).map_err(|e| e.0)?;
         let api = dir.path().join("api.sock");
@@ -526,6 +466,7 @@ impl Firecracker {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("cannot start {}: {e}", self.binary.display()))?;
+        timeline::mark("vmm-spawned");
         if let Err(e) = api_call(
             &api,
             "PUT",
@@ -541,6 +482,7 @@ impl Firecracker {
             let _ = child.wait();
             return Err(e);
         }
+        timeline::mark("snapshot-loaded");
         let mut seed = [0u8; 32];
         let seeded = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut seed));
         let description = crate::protocol::Description {
@@ -559,7 +501,168 @@ impl Firecracker {
             description: &description,
             ..*spec
         };
-        Ok(self.finish(child, &ports, &spec, started, "restore"))
+        let snapshot = Some(Arc::clone(snapshot));
+        let vm = Vm::new(child, ports, dir, snapshot, started, "restore", &spec);
+        Ok(self.finish(vm, &spec))
+    }
+}
+
+/// The VMM's process, killed and reaped when it is dropped: a run that
+/// panics on its way leaves no VM behind either.
+struct Vmm(Child);
+
+impl Drop for Vmm {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// One run's VM as the host holds it, from the VMM's start until the VM is
+/// stopped: the process, the threads that read its console, the guest's
+/// ports and the directory they are bound in.
+struct Vm {
+    vmm: Vmm,
+    ports: GuestPorts,
+    console: Arc<Mutex<String>>,
+    drains: [std::thread::JoinHandle<()>; 2],
+    /// The VM's directory, removed once the VM is stopped.
+    dir: tempfile::TempDir,
+    /// The snapshot a restored VM maps its memory from, kept while it runs.
+    snapshot: Option<Arc<Snapshot>>,
+    how: &'static str,
+    /// The process's command line, the console's heading.
+    argv: String,
+    started: Instant,
+    /// When the VMM had its VM.
+    ready: Instant,
+    /// When the init connected.
+    connected: Option<Instant>,
+    /// When the process had exited, or the run was given up.
+    driven: Option<Instant>,
+}
+
+impl Vm {
+    /// The VM around a VMM just started, its console read from here on.
+    fn new(
+        mut child: Child,
+        ports: GuestPorts,
+        dir: tempfile::TempDir,
+        snapshot: Option<Arc<Snapshot>>,
+        started: Instant,
+        how: &'static str,
+        spec: &VmSpec<'_>,
+    ) -> Vm {
+        let console = Arc::new(Mutex::new(String::new()));
+        let drain = |stream: Option<Box<dyn Read + Send>>, sink: Arc<Mutex<String>>| {
+            std::thread::spawn(move || {
+                let Some(mut stream) = stream else { return };
+                let mut buf = [0u8; 4096];
+                while let Ok(n) = stream.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    let mut s = sink.lock().expect("poisoned");
+                    if s.len() < CONSOLE_CAP {
+                        s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    }
+                }
+            })
+        };
+        let drains = [
+            drain(
+                child
+                    .stdout
+                    .take()
+                    .map(|s| Box::new(s) as Box<dyn Read + Send>),
+                Arc::clone(&console),
+            ),
+            drain(
+                child
+                    .stderr
+                    .take()
+                    .map(|s| Box::new(s) as Box<dyn Read + Send>),
+                Arc::clone(&console),
+            ),
+        ];
+        Vm {
+            vmm: Vmm(child),
+            ports,
+            console,
+            drains,
+            dir,
+            snapshot,
+            how,
+            argv: spec.description.argv.join(" "),
+            started,
+            ready: Instant::now(),
+            connected: None,
+            driven: None,
+        }
+    }
+
+    /// Stops the VM, whatever its run came to, and returns its console:
+    /// the VMM is killed and reaped, and its directory goes.
+    fn stop(self) -> String {
+        let Vm {
+            mut vmm,
+            ports,
+            console,
+            drains,
+            dir,
+            snapshot,
+            how,
+            argv,
+            started,
+            ready,
+            connected,
+            driven,
+        } = self;
+        let usage = process_usage(vmm.0.id());
+        timeline::mark("usage-read");
+        let _ = vmm.0.kill();
+        timeline::mark("vmm-killed");
+        let _ = vmm.0.wait();
+        timeline::mark("vmm-reaped");
+        for drain in drains {
+            let _ = drain.join();
+        }
+        timeline::mark("console-drained");
+        // The VM is gone: what it was bound to and mapped goes after it.
+        drop((ports, dir, snapshot));
+        let console = std::mem::take(&mut *console.lock().expect("poisoned"));
+        // GUESTFN_VM_CONSOLE prints every VM's serial console to stderr, for
+        // a test run or a laptop debugging a boot; the engine's debug log
+        // carries it otherwise.
+        if std::env::var_os("GUESTFN_VM_CONSOLE").is_some() {
+            eprintln!("--- VM console ({argv}) ---\n{console}--- end ---");
+        }
+        // Where a run's time went: until the VMM had its VM (the process
+        // start, and the snapshot load of a restore), until the init
+        // connected, until the process exited.
+        let driven = driven.unwrap_or_else(Instant::now);
+        let connected = connected.unwrap_or(driven);
+        let ms =
+            |from: Instant, to: Instant| to.saturating_duration_since(from).as_secs_f64() * 1e3;
+        tracing::debug!(
+            how,
+            vmm_ms = ms(started, ready),
+            guest_ms = ms(ready, connected),
+            run_ms = ms(connected, driven),
+            "the VM's run, by phase"
+        );
+        if std::env::var_os("GUESTFN_VM_TIMING").is_some() {
+            eprintln!(
+                "vm-timing how={how} vmm_ms={:.1} guest_ms={:.1} run_ms={:.1} total_ms={:.1} vmm_rss_mib={:.1} vmm_minor_faults={}",
+                ms(started, ready),
+                ms(ready, connected),
+                ms(connected, driven),
+                ms(started, driven),
+                usage.0 as f64 / (1u64 << 20) as f64,
+                usage.1,
+            );
+        }
+        console
     }
 }
 
@@ -654,7 +757,9 @@ fn process_usage(pid: u32) -> (u64, u64) {
 /// process starts, so the connect is tried for a while.
 fn api_call(sock: &Path, method: &str, path: &str, body: &serde_json::Value) -> Result<(), String> {
     let started = Instant::now();
+    let mut tries = 0u64;
     let mut stream = loop {
+        tries += 1;
         match UnixStream::connect(sock) {
             Ok(s) => break s,
             Err(e) if started.elapsed() > Duration::from_secs(5) => {
@@ -663,6 +768,7 @@ fn api_call(sock: &Path, method: &str, path: &str, body: &serde_json::Value) -> 
             Err(_) => std::thread::sleep(Duration::from_millis(1)),
         }
     };
+    timeline::count("api-connected", tries);
     stream
         .set_read_timeout(Some(Duration::from_secs(30)))
         .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(30))))
@@ -720,7 +826,7 @@ impl Sandbox for Firecracker {
         "firecracker"
     }
 
-    fn run(&self, spec: VmSpec<'_>) -> Result<Outcome, Error> {
+    fn run(&self, spec: VmSpec<'_>) -> Result<Run, Error> {
         if let Some(snapshots) = &self.snapshots
             && !spec.snapshots.is_off()
         {
@@ -728,11 +834,13 @@ impl Sandbox for Firecracker {
             // boot it was meant to save, never the run, and the image its
             // snapshots until it is loaded again: the next run does not try
             // what just failed.
-            match self.snapshot(snapshots, &spec, false) {
+            let found = self.snapshot(snapshots, &spec, false);
+            timeline::mark("snapshot-found");
+            match found {
                 // Another run is making it: this one boots.
                 Ok(None) => {}
                 Ok(Some(snapshot)) => match self.restore(&spec, &snapshot) {
-                    Ok(outcome) => return Ok(outcome),
+                    Ok(run) => return Ok(run),
                     Err(e) => {
                         tracing::warn!(error = %e, "cannot restore the VM's snapshot; booting it");
                         *spec
@@ -771,52 +879,52 @@ impl Sandbox for Firecracker {
 /// not the module's deadline: the process never ran (#272).
 pub const GUEST_NEVER_CONNECTED: &str = "the guest did not connect before the deadline: the VM booted but its init never reached the host";
 
+/// How driving a run came out.
+enum Driven {
+    /// Over: what the process wrote, and how the run ended.
+    Over(Output, Ended),
+    /// The function answered: the response, and what the run still owes.
+    Answered(Vec<u8>, Late),
+}
+
 /// Waits for the init's connection, then speaks the protocol until the
-/// exit, the deadline or a lost connection. Until the run is sent, time
-/// running out is the sandbox's failure, not the module's: a guest that
-/// never connects, or connects and sends no hello, never ran the process.
+/// function's answer, the exit, the deadline or a lost connection. Until
+/// the run is sent, time running out is the sandbox's failure, not the
+/// module's: a guest that never connects, or connects and sends no hello,
+/// never ran the process.
 fn drive(
     ports: &GuestPorts,
     child: &mut Child,
     spec: &VmSpec<'_>,
     connected: &mut Option<Instant>,
-) -> (Output, Ended) {
-    let mut log = Output::default();
+) -> Driven {
+    let lost = |why: String| Driven::Over(Output::default(), Ended::Lost(why));
+    let mut looks = 0u64;
     let stream = loop {
+        looks += 1;
         match ports.control.accept() {
             Ok((s, _)) => break s,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(e) => {
-                return (
-                    log,
-                    Ended::Lost(format!("cannot accept the guest's connection: {e}")),
-                );
-            }
+            Err(e) => return lost(format!("cannot accept the guest's connection: {e}")),
         }
         if Instant::now() >= spec.deadline {
-            return (log, Ended::Lost(GUEST_NEVER_CONNECTED.to_string()));
+            return lost(GUEST_NEVER_CONNECTED.to_string());
         }
         if let Ok(Some(status)) = child.try_wait() {
-            return (
-                log,
-                Ended::Lost(format!(
-                    "the VMM exited before the guest connected ({status})"
-                )),
-            );
+            return lost(format!(
+                "the VMM exited before the guest connected ({status})"
+            ));
         }
         std::thread::sleep(Duration::from_millis(1));
     };
     *connected = Some(Instant::now());
-    let end = match talk(stream, &ports.grpc, spec, &mut log) {
-        Ok(end) => end,
-        Err(Talk::Deadline) => Ended::Deadline,
-        Err(Talk::Lost(e)) => Ended::Lost(e),
-    };
-    // The stream is dropped here: the init reads the close as its cue to
-    // power off, after every frame it sent has been drained.
-    (log, end)
+    timeline::count("guest-connected", looks);
+    match talk(stream, &ports.grpc, spec) {
+        Ok(driven) => driven,
+        Err((log, Talk::Deadline)) => Driven::Over(log, Ended::Deadline),
+        Err((log, Talk::Lost(e))) => Driven::Over(log, Ended::Lost(e)),
+    }
 }
-
 enum Talk {
     Deadline,
     Lost(String),
@@ -916,6 +1024,7 @@ async fn call(
         exit = &mut *ended => return ended_of(exit),
         () = tokio::time::sleep_until(deadline) => return Call::Deadline,
     };
+    timeline::mark("function-serving");
     let once = Arc::new(Mutex::new(Some(bridge)));
     let connector = tower::service_fn(move |_: http::Uri| {
         let bridge = once.lock().expect("poisoned").take();
@@ -939,6 +1048,7 @@ async fn call(
             .ready()
             .await
             .map_err(|e| tonic::Status::from_error(Box::new(e)))?;
+        timeline::mark("call-ready");
         let mut request = tonic::Request::new(request);
         request.set_timeout(left);
         client
@@ -951,7 +1061,10 @@ async fn call(
     };
     tokio::select! {
         answer = rpc => match answer {
-            Ok(response) => Call::Answered(response.into_inner().to_vec()),
+            Ok(response) => {
+                timeline::mark("response-received");
+                Call::Answered(response.into_inner().to_vec())
+            }
             // The client enforces the timeout it sends, and the select below
             // may poll its error first: past the deadline, any failure is
             // the deadline.
@@ -971,74 +1084,137 @@ async fn call(
     }
 }
 
+/// The init's side of a run once the call is over: the connection the
+/// Finish goes out on, the thread reading the init's frames with the
+/// process's output, and the exit that thread reports. A run that is over
+/// settles it before it returns. An answered run hands it on with the
+/// response, so the wait for the exit is nobody's but the VM's.
+struct Late {
+    control: UnixStream,
+    /// The call's runtime: the exit's wait runs on it.
+    runtime: tokio::runtime::Runtime,
+    ended: tokio::sync::oneshot::Receiver<Result<Exit, Talk>>,
+    reader: std::thread::JoinHandle<Output>,
+}
+
+impl Late {
+    /// Tells the init the call is over: it stops the process.
+    fn say_finish(&mut self) {
+        let _ = write_frame(&mut self.control, Kind::Finish, &[]);
+    }
+
+    /// Waits for the init's exit, for what the process logged or for why
+    /// the call broke.
+    fn exit_within_grace(&mut self) -> Option<Result<Exit, Talk>> {
+        let ended = &mut self.ended;
+        self.runtime
+            .block_on(async { tokio::time::timeout(FINISH_GRACE, ended).await })
+            .ok()
+            .and_then(Result::ok)
+    }
+
+    /// Ends the reader's wait, whatever the run came to, and returns what
+    /// the process wrote. The connection is closed here: the init reads
+    /// the close as its cue to power off, after every frame it sent has
+    /// been drained.
+    fn close(self) -> Output {
+        let _ = self.control.shutdown(std::net::Shutdown::Both);
+        let log = self.reader.join().unwrap_or_default();
+        timeline::mark("reader-joined");
+        log
+    }
+
+    /// What an answered run still owes: the wait for the process to stop,
+    /// with what it wrote until then.
+    fn finish(mut self) -> Output {
+        let _ = self.exit_within_grace();
+        timeline::mark("exit-read");
+        self.close()
+    }
+}
+
+/// Speaks the protocol over the init's connection: the run sent, the
+/// function called, and how that ended. An error carries what the process
+/// had written by then.
 fn talk(
     mut stream: UnixStream,
     grpc: &UnixListener,
     spec: &VmSpec<'_>,
-    log: &mut Output,
-) -> Result<Ended, Talk> {
+) -> Result<Driven, (Output, Talk)> {
+    // Before the run is sent the process has written nothing.
+    let early = |talk: Talk| (Output::default(), talk);
     stream
         .set_nonblocking(false)
-        .map_err(|e| Talk::Lost(format!("cannot configure the guest's connection: {e}")))?;
-    arm(&stream, spec.deadline)?;
+        .map_err(|e| Talk::Lost(format!("cannot configure the guest's connection: {e}")))
+        .map_err(early)?;
+    arm(&stream, spec.deadline).map_err(early)?;
     let _: Hello = read_json(&mut stream, Kind::Hello).map_err(|e| match io_err(e, "cannot read the init's hello") {
         Talk::Deadline => Talk::Lost(
             "the guest connected but sent no hello before the deadline: its init stalled before the run"
                 .to_string(),
         ),
         lost => lost,
-    })?;
+    }).map_err(early)?;
+    timeline::mark("hello-read");
     write_json(&mut stream, Kind::Run, spec.description)
-        .map_err(|e| io_err(e, "cannot send the run"))?;
-    let mut control = stream
+        .map_err(|e| io_err(e, "cannot send the run"))
+        .map_err(early)?;
+    timeline::mark("run-sent");
+    let control = stream
         .try_clone()
-        .map_err(|e| Talk::Lost(format!("cannot share the guest's connection: {e}")))?;
+        .map_err(|e| Talk::Lost(format!("cannot share the guest's connection: {e}")))
+        .map_err(early)?;
     let grpc = grpc
         .try_clone()
-        .map_err(|e| Talk::Lost(format!("cannot share the function's port: {e}")))?;
+        .map_err(|e| Talk::Lost(format!("cannot share the function's port: {e}")))
+        .map_err(early)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|e| Talk::Lost(format!("cannot start the call's runtime: {e}")))?;
+        .map_err(|e| Talk::Lost(format!("cannot start the call's runtime: {e}")))
+        .map_err(early)?;
+    timeline::mark("call-runtime-built");
     let (ended_tx, mut ended) = tokio::sync::oneshot::channel();
     let deadline = spec.deadline;
-    std::thread::scope(|scope| {
-        let reader = scope.spawn(move || read_frames(stream, deadline, log, ended_tx));
-        let outcome = runtime.block_on(call(grpc, spec, &mut ended));
-        // Waits for the init's exit, for what the process logged or for
-        // why the call broke.
-        let mut exit_within_grace = || {
-            runtime
-                .block_on(async { tokio::time::timeout(FINISH_GRACE, &mut ended).await })
-                .ok()
-                .and_then(Result::ok)
-        };
-        let end = match outcome {
-            Call::Answered(response) => {
-                let _ = write_frame(&mut control, Kind::Finish, &[]);
-                let _ = exit_within_grace();
-                Ok(Ended::Answered(response))
-            }
-            Call::Refused { code, message } => {
-                let _ = write_frame(&mut control, Kind::Finish, &[]);
-                let _ = exit_within_grace();
-                Ok(Ended::Refused { code, message })
-            }
-            Call::Broken(why) => match exit_within_grace() {
-                Some(Ok(exit)) => Ok(Ended::Exit(exit)),
-                _ => Ok(Ended::Lost(why)),
-            },
-            Call::Ended(Ok(exit)) => Ok(Ended::Exit(exit)),
-            Call::Ended(Err(talk)) => Err(talk),
-            Call::Deadline => Ok(Ended::Deadline),
-        };
-        // Ends the reader's wait, whatever the run came to.
-        let _ = control.shutdown(std::net::Shutdown::Both);
-        let _ = reader.join();
-        end
-    })
+    let reader = std::thread::spawn(move || {
+        let mut log = Output::default();
+        read_frames(stream, deadline, &mut log, ended_tx);
+        log
+    });
+    let outcome = runtime.block_on(call(grpc, spec, &mut ended));
+    let mut late = Late {
+        control,
+        runtime,
+        ended,
+        reader,
+    };
+    let end = match outcome {
+        Call::Answered(response) => {
+            // The response is the caller's from here: the process is told
+            // to stop, and the wait for it is left to whoever stops the VM.
+            late.say_finish();
+            timeline::mark("finish-sent");
+            return Ok(Driven::Answered(response, late));
+        }
+        Call::Refused { code, message } => {
+            late.say_finish();
+            let _ = late.exit_within_grace();
+            Ok(Ended::Refused { code, message })
+        }
+        Call::Broken(why) => match late.exit_within_grace() {
+            Some(Ok(exit)) => Ok(Ended::Exit(exit)),
+            _ => Ok(Ended::Lost(why)),
+        },
+        Call::Ended(Ok(exit)) => Ok(Ended::Exit(exit)),
+        Call::Ended(Err(talk)) => Err(talk),
+        Call::Deadline => Ok(Ended::Deadline),
+    };
+    let log = late.close();
+    match end {
+        Ok(end) => Ok(Driven::Over(log, end)),
+        Err(talk) => Err((log, talk)),
+    }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1328,7 +1504,9 @@ mod tests {
             snapshots: &Default::default(),
             store: None,
         };
-        let (log, end) = drive(&ports, &mut child, &spec, &mut None);
+        let Driven::Over(log, end) = drive(&ports, &mut child, &spec, &mut None) else {
+            panic!("no function was there to answer");
+        };
         let _ = child.kill();
         let _ = child.wait();
         assert!(log.is_empty());

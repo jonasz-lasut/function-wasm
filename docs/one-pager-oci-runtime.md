@@ -216,9 +216,10 @@ Firecracker is the sandbox for now (decision 8).
 **What boots.** The runtime unpacks the image's layers once per image
 digest, applies the whiteouts and preserves ownership and modes without
 root, into the form the sandbox boots from. For a VMM with block devices
-only, that form is a squashfs image, which a pure Rust writer builds
-straight from the layer tarballs; a VMM that shares files through
-virtio-fs takes a directory instead. The image config, with the user
+only, that form is a squashfs image, which the runtime writes
+straight from the layer tarballs with its blocks packed with zstd
+(the packing of the root filesystem, after this paragraph); a VMM
+that shares files through virtio-fs takes a directory instead. The image config, with the user
 resolved against the image's `/etc/passwd` and `/etc/group`, goes
 inside the squashfs, so a stored root filesystem describes itself. The
 runtime keeps the unpacked files in memory until the squashfs exists, so it
@@ -250,6 +251,38 @@ release may include the published kernel is open
 ([#281](https://github.com/jonasz-lasut/guestfn/issues/281)).
 `guestfn_module_compile_duration_seconds` measures the unpacking.
 
+**The packing of the root filesystem.** The squashfs blocks are zstd at
+level 3.
+The guest decompresses every block the process reads, at the start of
+every run, so the packing is part of a run's latency. A CI runner measured
+it on 2026-11-13, 30 runs per cell in one job, with the engine's squashfs
+of each image written again with each of the other compressors:
+
+| image | packing | squashfs | written in | a booted run, median | a restored run, median |
+|---|---|---|---|---|---|
+| `function-oci-go`, 37.4 MiB | gzip | 12.20 MiB | 1450 ms | 552 ms | 448 ms |
+| | zstd 1 | 12.83 MiB | 137 ms | 434 ms | 333 ms |
+| | zstd 3 | 12.22 MiB | 173 ms | 436 ms | 321 ms |
+| | zstd 19 | 10.45 MiB | 13 263 ms | 444 ms | 329 ms |
+| | stored | 37.39 MiB | | 402 ms | 292 ms |
+| the fixture, 9.2 MiB | gzip | 3.35 MiB | 338 ms | 321 ms | 186 ms |
+| | zstd 3 | 3.36 MiB | 42 ms | 294 ms | 170 ms |
+
+Level 3 gives the size gzip gave. A run of the Go example reads it about
+120 ms sooner, and the image's first load writes it in an eighth of the
+time.
+A higher level buys disk alone: level 19 is 14 % smaller, takes 77 times
+as long to write and runs no faster. Level 1 saves 36 ms of a first load
+for 5 % more disk. A squashfs that compresses nothing runs another 30 ms
+faster at three times the disk. The guest kernel has to read zstd
+(`CONFIG_SQUASHFS_ZSTD`), which the kernels Firecracker's CI builds do
+on both architectures for 5.10, 6.1 and 6.18, the three lines the release
+matrix tests. backhand's zstd is the C library, built into function-oci
+alone: the dependency graph of function-wasm has none of it. The format is
+part of `engine::version()`, so a runtime with another packing starts a
+new directory of the compiled store and no VM snapshot taken over one
+format meets a root filesystem written in the other.
+
 **One VM per request.** The runtime starts the VM with the kernel, the
 root filesystem read-only, a vsock device, memory sized to the step's
 `limits.memory` plus the kernel's share, one vCPU (`--vm-vcpus`) and
@@ -267,10 +300,17 @@ The guest's only root is then the init. Dropping capabilities alone isn't
 enough, because UID 0 can still write the cgroup file that caps the run's memory. Once the function's port accepts a
 connection the init bridges it to a second vsock connection, and the host
 calls `RunFunction` over that, bounded by the run's deadline and a limit on
-the response's size. After the answer the init stops the process and reports
-its exit, which flushes what it logged. The runtime then kills the VM,
-which discards every change the run made, and a fresh instance per request
-holds. `--enable-vm-snapshots` restores a snapshot of the booted VM in place of
+the response's size. The runtime returns the response as soon as it has
+it. A thread of its own ends the rest of the run. The init stops the
+process and reports its exit, which flushes what it logged. The runtime
+logs those lines and the VM's console. Then it kills and reaps the VM,
+which discards every change the run made, and a fresh instance per
+request holds. Until 2026-11-13 the caller waited for that work. A CI
+runner measured its median at 24 ms of a booted run of 400 ms and at
+19 ms of a restored run of 177 ms, 3 to 5 ms of it for the exit report
+and the rest for the VMM's exit. When the function doesn't answer, the
+run is over before its fatal result returns, because the result quotes
+how the process ended and what it logged last. `--enable-vm-snapshots` restores a snapshot of the booted VM in place of
 the boot ([Snapshots](#snapshots)).
 
 **Bounds.** `limits.timeout` is the VM's wall clock, the boot included.
@@ -278,7 +318,16 @@ the boot ([Snapshots](#snapshots)).
 capped at the limit. The VM gets the limit plus a fixed share for the
 kernel, the init and the overlay. The run slots, the fair scheduler by digest, the memory pool,
 the step slots and the gRPC deadline cap apply unchanged, because they
-wrap `Engine::run`. The kernel kills a process past its cap. The
+wrap `Engine::run`. A run's slot and its memory belong to the VM. An
+answered run keeps both after the response, until the runtime has reaped
+the VMM. The next VM starts only once the one before it's gone.
+`runs_in_flight` counts the run until then, and `run_duration` observes
+it at the response, which is what a caller waits. The step slot is the
+runtime's and ends with the call. While the runtime stops one VM of a
+step at its `limits.concurrency`, the step may already run its next,
+inside both bounds of the engine. The runtime drops its engine when it shuts down, and a dropped
+engine waits until it has stopped every VM, which keeps a shutdown from
+leaving a VMM running. The kernel kills a process past its cap. The
 init reports the exit, and the fatal states the limit as the Wasmtime
 limiter's does.
 
@@ -623,6 +672,16 @@ The owner decided this on 2026-11-12:
     belongs to the init, which the egress proxy
     ([#280](https://github.com/jonasz-lasut/guestfn/issues/280)) depends
     on.
+
+The owner decided these on 2026-11-13, with the measurements of
+[#376](https://github.com/jonasz-lasut/guestfn/pull/376):
+
+18. **zstd for the root filesystem.** The runtime packs the squashfs with
+    zstd in place of gzip, and function-oci accepts the C library that
+    comes with it. function-wasm doesn't get it.
+19. **The response before the teardown.** A caller gets its response
+    before the runtime has stopped the VM. The run's slot and its memory
+    remain the VM's until the runtime has reaped the VMM.
 
 ## Phases
 

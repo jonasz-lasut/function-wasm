@@ -31,6 +31,23 @@ pub const EXPANSION_FACTOR: u64 = 8;
 /// The most tar entries an image's layers may hold between them.
 pub const MAX_ENTRIES: u64 = 1_000_000;
 
+/// The root filesystem's format, part of the engine's version and so of
+/// the compiled store's directory: 1 was gzip, 2 is zstd. A guest that
+/// mounts either reads both, but a VM snapshot holds what its guest read
+/// of one file, and the store names a root filesystem by its image, not
+/// by its bytes. A new number keeps a snapshot taken over one format from
+/// ever meeting a file written in another: both are left behind in the
+/// old directory, which the store reaps.
+pub const FORMAT: u32 = 2;
+
+/// The zstd level the root filesystem's blocks are packed at
+/// (docs/one-pager-oci-runtime.md, "The packing of the root filesystem"): the
+/// size gzip gave, written in an eighth of the time. A run is no faster
+/// for another level, since the guest decompresses at about one speed
+/// whatever the level; a higher one buys disk alone, 14 % at level 19 for
+/// 77 times the write, which an image's first load pays.
+pub const ZSTD_LEVEL: u32 = 3;
+
 /// One entry of the tree, keyed by its path with no leading slash.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
@@ -449,23 +466,30 @@ impl Tree {
     }
 
     /// Writes the tree as a squashfs, with `extra` files put in beside it
-    /// (the engine's config), gzip-compressed, times zeroed so the same
-    /// image gives the same bytes.
+    /// (the engine's config), its blocks packed with zstd, times zeroed so
+    /// the same image gives the same bytes.
     pub fn write_squashfs(
         &self,
         extra: &[(&str, &[u8])],
         out: &mut (impl Write + Seek),
     ) -> Result<(), Error> {
-        use backhand::{
-            FilesystemCompressor, FilesystemWriter, NodeHeader, compression::Compressor,
-        };
+        use backhand::compression::{CompressionOptions, Compressor, Zstd};
+        use backhand::{FilesystemCompressor, FilesystemWriter, NodeHeader};
         let mut fs = FilesystemWriter::default();
         fs.set_time(0);
         fs.set_root_mode(0o755);
         fs.set_compressor(
-            FilesystemCompressor::new(Compressor::Gzip, None)
-                .map_err(|e| Error(format!("cannot configure the root filesystem: {e}")))?,
+            FilesystemCompressor::new(
+                Compressor::Zstd,
+                Some(CompressionOptions::Zstd(Zstd {
+                    compression_level: ZSTD_LEVEL,
+                })),
+            )
+            .map_err(|e| Error(format!("cannot configure the root filesystem: {e}")))?,
         );
+        // The level is the writer's alone: a reader needs none of it, so
+        // the image carries no options block for a guest kernel to parse.
+        fs.set_emit_compression_options(false);
         let fail = |path: &str, e: backhand::BackhandError| {
             Error(format!("cannot write {path} into the root filesystem: {e}"))
         };
@@ -723,6 +747,29 @@ mod tests {
                 .0
                 .contains("zstd")
         );
+    }
+
+    /// The superblock names zstd and no options block: what the guest
+    /// kernel reads to pick its decompressor (CONFIG_SQUASHFS_ZSTD).
+    #[test]
+    fn the_squashfs_is_packed_with_zstd() {
+        let mut t = Tree::new();
+        t.apply_layer(
+            "application/vnd.oci.image.layer.v1.tar",
+            &tar_layer(&[("run", Some(&[7u8; 300_000]), 0o755)]),
+        )
+        .unwrap();
+        let mut image = std::io::Cursor::new(Vec::new());
+        t.write_squashfs(&[(CONFIG_PATH, b"{}")], &mut image)
+            .unwrap();
+        let image = image.into_inner();
+        let u16_at = |at: usize| u16::from_le_bytes([image[at], image[at + 1]]);
+        assert_eq!(&image[..4], b"hsqs");
+        const ZSTD: u16 = 6;
+        assert_eq!(u16_at(20), ZSTD, "the compressor's id");
+        const COMPRESSOR_OPTIONS: u16 = 0x0400;
+        assert_eq!(u16_at(24) & COMPRESSOR_OPTIONS, 0, "no options block");
+        assert!(image.len() < 100_000, "the blocks are compressed");
     }
 
     #[test]

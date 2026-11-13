@@ -112,7 +112,11 @@ compiled store, `compiled/<version>/`. It's a state file and a memory file.
 Their names start with the entry name of the root filesystem and go on
 with the VM's memory size, its vCPU count and a fingerprint of the
 Firecracker binary, the guest kernel, the init and the boot arguments. A
-different Firecracker, kernel or init looks under another name.
+different Firecracker, kernel or init looks under another name. The
+`<version>` of the directory includes the format of the root filesystem.
+A runtime that packs the root filesystem another way starts a new
+directory, which keeps a snapshot apart from a root filesystem in a
+format the snapshot didn't come from.
 
 Firecracker writes both files in place, since a VM's memory is too large to
 hand over as bytes. The store signs a file under its per-process key once

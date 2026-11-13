@@ -10,8 +10,8 @@ only ([the side ports](../wasm/install.md#the-side-ports)). Probes are on
 | metric | labels | meaning |
 |---|---|---|
 | `guestfn_module_requests_total` | `outcome` = `ok`, `refused`, `error`, `skipped` | requests by outcome |
-| `guestfn_module_run_duration_seconds` | `outcome` = `ok`, `error`, `timeout` | histogram of one guest run, instantiate to response; a wait for a run slot isn't part of it, and a request cut short while waiting for one isn't counted |
-| `guestfn_module_runs_in_flight` | | gauge of guest runs executing now, at most `--max-concurrent-runs`; a gauge held at that value means requests are queuing for a slot |
+| `guestfn_module_run_duration_seconds` | `outcome` = `ok`, `error`, `timeout` | histogram of one guest run, instantiate to response; a wait for a run slot isn't part of it, and a request cut short while waiting for one isn't counted. For function-oci a run is the VM's boot or restore to the response: the runtime stops the VM after it has returned the response, and that time isn't part of the histogram |
+| `guestfn_module_runs_in_flight` | | gauge of guest runs executing now, at most `--max-concurrent-runs`. function-oci counts a run until its VM is stopped, some milliseconds after the response, since the run keeps its slot until then. A gauge held at the bound means requests are queuing for a slot |
 | `guestfn_module_hostcall_duration_seconds` | | histogram of the time a run spent inside host imports (the `log` import, HTTP egress over `wasi:http`, and WASI); the rest of `run_duration_seconds` is guest compute |
 | `guestfn_module_compile_duration_seconds` | | histogram of Wasmtime compile time on compiled-cache misses |
 | `guestfn_module_fetch_duration_seconds` | `source` = `oci`, `http`, `path` | histogram of fetch and verify time, blob-cache hits and served-file reads included |
