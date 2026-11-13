@@ -640,14 +640,15 @@ crates/oci-init/            the guest init (package and binary guestfn-init, on 
                             alone): src/main.rs is the entry point and src/linux.rs the init,
                             Linux alone (elsewhere the binary says so and exits, so the
                             workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
-                            on /dev/vda under a tmpfs overlay, a fresh /tmp, vsock to the
+                            on /dev/vda under a tmpfs overlay, a fresh /tmp (all of them
+                            mounted nosuid and nodev), vsock to the
                             host, loopback up, chroot, the process as the described user (never root, every capability set emptied and no_new_privs set before the exec), its
                             server once serving bridged to the host over a second vsock port, stdout/stderr relayed as frames, the exit with an OOM
                             check of /dev/kmsg, then power off. Static (musl), depends on
                             nothing in the image
 crates/oci-fixture/         the function the VM tests run (package and binary guestfn-guest-fixture, on
                             function-sdk-rust): echo, refuse, exit, stderr, flood, flood-exit, spin,
-                            grow, env, cwd, id, tmp, hostname, rng, silent
+                            grow, env, cwd, id, tmp, mounts, hostname, rng, silent
 crates/e2e/                 the Kubernetes-native end-to-end suite (docs/project/testing.md, #185):
                             package guestfn-e2e, empty without its `cluster` feature so
                             `cargo test --workspace` builds none of it. src/ is the library

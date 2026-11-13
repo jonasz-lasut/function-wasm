@@ -168,6 +168,25 @@ impl FunctionRunnerService for Fixture {
                     .collect();
                 answer(fields.join(" "))
             }
+            // How the kernel mounted what the process may write to: the
+            // nosuid and nodev options of its root and of /tmp, as /proc
+            // prints them. The last mount on a path is the one in effect.
+            "mounts" => {
+                let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+                let options = |target: &str| {
+                    mounts
+                        .lines()
+                        .map(|line| line.split_whitespace().collect::<Vec<_>>())
+                        .rfind(|fields| fields.get(1) == Some(&target))
+                        .and_then(|fields| fields.get(3).copied())
+                        .unwrap_or_default()
+                        .split(',')
+                        .filter(|option| matches!(*option, "nosuid" | "nodev"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                answer(format!("/={} /tmp={}", options("/"), options("/tmp")))
+            }
             "rng" => answer(
                 std::fs::read_to_string("/sys/class/misc/hw_random/rng_current")
                     .unwrap_or_default()

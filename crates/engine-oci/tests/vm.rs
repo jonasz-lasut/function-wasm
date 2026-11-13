@@ -208,6 +208,28 @@ fn the_process_holds_no_privilege() {
     );
 }
 
+/// What the image and the process supply is mounted nosuid and nodev: the
+/// root filesystem through its overlay, and /tmp. A device node there
+/// opens no device and a setuid bit changes nothing, whatever the image
+/// carries.
+#[test]
+fn the_process_s_filesystems_are_nosuid_and_nodev() {
+    let Some(t) = tools() else { return };
+    let e = engine(&t, Config::default());
+    let m = e
+        .compile(&fixture_image(
+            &t.fixture,
+            &["/fixture", "--insecure", "mounts"],
+            "app",
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(
+        ask(&e, &m, "", opts()).unwrap().trim(),
+        "/=nosuid,nodev /tmp=nosuid,nodev"
+    );
+}
+
 #[test]
 fn the_root_filesystem_is_writable_and_discarded() {
     let Some(t) = tools() else { return };
