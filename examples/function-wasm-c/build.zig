@@ -60,7 +60,7 @@ pub fn build(b: *std.Build) void {
 
     // Regenerate the world's bindings: zig build gen-bindings (needs
     // wit-bindgen on PATH at the version the checked-in src/gen names in its
-    // header, wit-bindgen-cli 0.62.0).
+    // header, wit-bindgen-cli 0.63.0).
     const gen_bindings = b.step("gen-bindings", "generate src/gen from wit/ with wit-bindgen c");
     const bindgen = b.addSystemCommand(&.{ "wit-bindgen", "c", "wit", "--world", "function", "--out-dir", "src/gen" });
     bindgen.setCwd(b.path(""));

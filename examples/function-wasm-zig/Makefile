@@ -3,7 +3,7 @@
 # bindings (src/gen, checked in) and the guest into the core module - and
 # guestfn, which comes from this repository (cargo run) and wraps that core
 # module into the component the runtime loads (no wasm-tools, no adapter
-# download). wit-bindgen 0.62.0 is only needed to regenerate the checked-in
+# download). wit-bindgen 0.63.0 is only needed to regenerate the checked-in
 # bindings (make gen-bindings; the root Makefile's gen-bindings installs it
 # pinned) and protoc the checked-in codec (make gen-proto). Render needs the
 # crossplane CLI and
@@ -26,7 +26,7 @@ lint: ## Check the formatting of build.zig and the guest's sources
 gen-proto: ## Regenerate src/fnv1 from proto/run_function.proto (needs protoc)
 	zig build gen-proto
 
-gen-bindings: wit-deps ## Regenerate src/gen from wit/ (needs wit-bindgen 0.62.0)
+gen-bindings: wit-deps ## Regenerate src/gen from wit/ (needs wit-bindgen 0.63.0)
 	zig build gen-bindings
 
 render: build ## Start the runtime serving this directory and crossplane render example/

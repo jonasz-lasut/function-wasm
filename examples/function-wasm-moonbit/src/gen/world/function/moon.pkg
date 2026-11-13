@@ -1,0 +1,5 @@
+import {
+  "jonasz-lasut/function-wasm-moonbit/wasmfn" @wasmfn,
+}
+
+warnings = "-44-implicit_impl_as_method-deprecated_syntax-deprecated"

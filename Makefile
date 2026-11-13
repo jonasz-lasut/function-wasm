@@ -531,8 +531,8 @@ vendor-docs-highlight: ## Re-vendor the docs site's highlight.js core and Cedar 
 	@echo "vendored highlight.js $(HLJS_VERSION) and highlightjs-cedar $(HLJS_CEDAR_VERSION): review git diff, then check the Cedar pages under mdbook serve"
 
 # The go bindings are mirrored whole: wit-bindgen writes a wit_bindings.go
-# and an empty.s per package plus wit_exports, beside the hand-written slot
-# package export_wit_world. A generated Go file names the guest's module path
+# and an empty.s per package under imports/ plus exports/wit_exports, beside
+# the hand-written slot package exports/export_wit_world. A generated Go file names the guest's module path
 # in its imports, so it becomes a .go.tmpl with the path as [[ .Module ]];
 # the rest is copied as it is. The C bindings (function.c, function.h,
 # function_component_type.o) stay where the generator writes them, in the

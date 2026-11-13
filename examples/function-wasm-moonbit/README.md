@@ -28,7 +28,7 @@ links and wraps that into the component - no wasm-tools, no adapter
   build` needs only moon. The generator declares `run` in
   `src/gen/world/function/top.mbt` and leaves its body to the guest:
   `run.mbt` beside it is the one hand-written file among the bindings, and
-  that package's `moon.pkg.json` (generated too) must import the glue, which
+  that package's `moon.pkg` (generated too) must import the glue, which
   `make gen-bindings` re-applies after regenerating.
 - `proto/run_function.proto` is crossplane's `RunFunction` contract, vendored
   (its `google/protobuf` imports resolve from protoc's own include
@@ -113,17 +113,14 @@ module (`moon build`), 107 KB wrapped; the runtime compiles it in ~170 ms.
 ## Gotchas
 
 - **Manifest format.** This moon writes `moon.mod` and `moon.pkg` (a plain
-  syntax) and deprecates the `.json` manifests wit-bindgen 0.62.0 and
-  protoc-gen-mbt 0.2.0 still write. The module file and the hand-written
-  packages (`src/hello`, `src/wasmfn`, `src/fnv1`'s config) use the current
-  format; the generated packages keep their `moon.pkg.json`. `moon fmt`
-  migrates every manifest it touches in place and reformats generated
-  code, so `make lint` runs `moon fmt --check` over the hand-written
-  packages only; after a regeneration, leave the generated files as
-  written.
+  syntax). wit-bindgen 0.63.0 writes the generated packages' `moon.pkg`
+  in that format too, and the module file is the hand-written `moon.mod`.
+  `moon fmt` reformats generated code, so `make lint` runs `moon fmt
+  --check` over the hand-written packages only; after a regeneration,
+  leave the generated files as written.
 - **The `run` slot.** The export is declared in the generated package
   `src/gen/world/function` and implemented there (`run.mbt`); the
-  generated `moon.pkg.json` beside it carries the glue import, which a
+  generated `moon.pkg` beside it carries the glue import, which a
   regeneration overwrites (`make gen-bindings` restores it). Moving the
   body elsewhere is not possible: a `declare`d function without a body
   links to a trap.

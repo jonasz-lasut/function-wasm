@@ -2,7 +2,7 @@
 # `guestfn` and the runtime come from this repository (cargo run), so nothing
 # needs to be installed except Go, Rust and, for render, the crossplane CLI
 # and Docker (the render engine runs in a container; the platform's
-# go-templating step too). wit-bindgen 0.62.0
+# go-templating step too). wit-bindgen 0.63.0
 # is only needed to regenerate the checked-in bindings (make gen-bindings;
 # the root Makefile's gen-bindings installs it pinned and mirrors the result
 # into the go template). GUESTFN, FUNCTION_BIN (read by ../render.sh)
@@ -30,7 +30,7 @@ test: ## Run the guest's unit tests natively
 
 # wit-bindgen overwrites its own files and leaves export_wit_world/run.go,
 # the hand-written slot, alone.
-gen-bindings: wit-deps ## Regenerate internal/bindings from wit/ (needs wit-bindgen 0.62.0)
+gen-bindings: wit-deps ## Regenerate internal/bindings from wit/ (needs wit-bindgen 0.63.0)
 	$(WIT_BINDGEN) go wit -w function --pkg-name $(MODULE)/internal/bindings --out-dir internal/bindings
 
 render: build ## Start the runtime serving this directory and crossplane render example/
