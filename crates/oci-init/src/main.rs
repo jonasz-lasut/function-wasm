@@ -8,6 +8,10 @@
 
 #[cfg(target_os = "linux")]
 mod linux;
+// The init's decisions that touch no kernel interface, apart from it so
+// that their tests run on every host.
+#[cfg(any(target_os = "linux", test))]
+mod plan;
 
 #[cfg(target_os = "linux")]
 fn main() {

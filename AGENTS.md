@@ -638,7 +638,7 @@ crates/engine-oci/          the OCI engine of the function-oci runtime (package 
                             GUESTFN_FIRECRACKER/KERNEL/INIT/FIXTURE are set (make oci.test),
                             skipping otherwise unless GUESTFN_REQUIRE_KVM
 crates/oci-init/            the guest init (package and binary guestfn-init, on libc and the protocol
-                            alone): src/main.rs is the entry point and src/linux.rs the init,
+                            alone): src/main.rs is the entry point, src/plan.rs what the init decides with no kernel call (the host's first frame, the command a description amounts to with its root refusal, the OOM verdict over the kernel log's text, the seed's bytes), unit-tested on every host, and src/linux.rs the init,
                             Linux alone (elsewhere the binary says so and exits, so the
                             workspace builds on a Mac): PID 1 of the VM: devtmpfs/proc/sys, the squashfs
                             on /dev/vda under a tmpfs overlay, a fresh /tmp (all of them

@@ -19,7 +19,6 @@ use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,6 +27,8 @@ use guestfn_oci_protocol::{
     Description, Exit, GRPC_PORT, Hello, Kind, PORT, SERVER_PORT, read_frame, read_json,
     write_frame, write_json,
 };
+
+use crate::plan::{self, First};
 
 /// The image's root filesystem: Firecracker exposes the one drive as vda.
 const ROOTFS_DEVICE: &str = "/dev/vda";
@@ -69,11 +70,9 @@ fn run() -> Result<(), String> {
     // random state are the snapshot's until the run's description
     // refreshes them.
     let (kind, payload) = read_frame(&mut sock).map_err(|e| format!("cannot read the run: {e}"))?;
-    let description: Description = match kind {
-        Kind::Run => {
-            serde_json::from_slice(&payload).map_err(|e| format!("cannot read the run: {e}"))?
-        }
-        Kind::Park => {
+    let description: Description = match plan::first(kind, &payload)? {
+        First::Run(description) => description,
+        First::Park => {
             eprintln!("guestfn-init: parked");
             write_frame(&mut sock, Kind::Parked, &[])
                 .map_err(|e| format!("cannot answer the park: {e}"))?;
@@ -90,7 +89,6 @@ fn run() -> Result<(), String> {
             eprintln!("guestfn-init: resumed");
             description
         }
-        other => return Err(format!("unexpected {other:?} frame in place of the run")),
     };
     if !description.hostname.is_empty() {
         set_hostname(&description.hostname);
@@ -139,26 +137,8 @@ fn run() -> Result<(), String> {
 /// Runs the process and relays its streams; the error is a run that never
 /// started.
 fn spawn(d: &Description, sock: &Arc<Mutex<UnixStream>>) -> Result<Exit, String> {
-    let Some(program) = d.argv.first() else {
-        return Err("the image has neither an entrypoint nor a command".to_string());
-    };
-    let mut cmd = Command::new(program);
-    cmd.args(&d.argv[1..]);
-    cmd.env_clear();
-    for entry in &d.env {
-        if let Some((k, v)) = entry.split_once('=') {
-            cmd.env(k, v);
-        }
-    }
-    cmd.current_dir(if d.cwd.is_empty() { "/" } else { &d.cwd });
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    // The engine refuses an image that runs as root at load; the init is
-    // where the rule is enforced, whatever described the run.
-    if d.uid == 0 {
-        return Err("the run describes a root process, which the init does not start".to_string());
-    }
+    let mut cmd = plan::command(d)?;
+    let program = cmd.get_program().to_string_lossy().into_owned();
     let (uid, gid) = (d.uid, d.gid);
     let groups: Vec<libc::gid_t> = d.groups.iter().map(|g| *g as libc::gid_t).collect();
     // SAFETY: the closure makes the identity and capability syscalls and
@@ -571,10 +551,7 @@ fn refresh(d: &Description) {
             );
         }
     }
-    let seed: Vec<u8> = (0..d.seed.len() / 2)
-        .filter_map(|i| u8::from_str_radix(d.seed.get(2 * i..2 * i + 2)?, 16).ok())
-        .take(64)
-        .collect();
+    let seed = plan::seed(&d.seed);
     if seed.is_empty() {
         return;
     }
@@ -670,8 +647,7 @@ fn kmsg_mentions_oom() -> bool {
             Ok(n) => text.push_str(&String::from_utf8_lossy(&buf[..n])),
         }
     }
-    let lower = text.to_ascii_lowercase();
-    lower.contains("out of memory") || lower.contains("oom-kill")
+    plan::mentions_oom(&text)
 }
 
 fn poweroff() {
