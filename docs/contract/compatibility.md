@@ -45,6 +45,20 @@ Removing or renaming anything on the list takes a major release, after the
 deprecation below, and so does changing a pinned wording or a default or
 narrowing what's accepted.
 
+## Patch releases
+
+A patch is a release for fixes, and it changes nothing on the list, with one
+exception: a security fix may narrow what's accepted. Such a patch can refuse
+a document or a policy that the release before it admitted, where the defect
+is that the runtime admitted it. function-wasm 1.0.1 did so: it
+reads a registry into one canonical form, and it refuses a policy that
+specifies a repository in another spelling.
+
+The notes of such a patch list every change of this kind in their "Before you
+upgrade" section, with the refusal as the runtime prints it and what to write
+instead. A patch doesn't narrow anything for another reason, and it doesn't
+remove or rename what's on the list.
+
 ## Deprecation policy
 
 A removal runs in two steps:
@@ -77,7 +91,8 @@ releases
 
 What function-oci shares with function-wasm is the Input, the module
 manifest and the `guestfn_*` metric names. Whether those are stable for
-function-oci isn't decided: that waits for function-wasm's 1.0.0.
+function-oci isn't decided while function-oci is at 0.x. Its own 1.0.0
+decides it.
 
 `oci@0.1` is the contract an image follows
 ([OCI modules](../oci/modules.md#the-contract)). The image's command starts
