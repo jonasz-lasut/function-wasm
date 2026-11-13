@@ -119,6 +119,13 @@ jobs:
   # composes is asserted by nothing here: the profile jobs below drive the
   # suite's own module through Crossplane.
   #
+  # A drift check regenerates with the pinned generator and runs
+  # hack/check-generated.sh, which fails on any difference from what is
+  # checked in but the version a protobuf generator states in a codec's
+  # header: a bump of protoc, protoc-gen-es or nanopb that changes nothing
+  # else passes as it is, and one that changes the output fails until the
+  # result is committed. The WIT bindings are compared whole.
+  #
   # The Go guest, an ABI v2 component: the function-wasm-go use case. go build
   # emits the wasip1 core module and guestfn embeds its world and wraps it
   # (no componentize-go, no wasm-tools); wit-bindgen is only needed to
@@ -132,8 +139,9 @@ jobs:
     needs:
       - build-tools
     env:
-      # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum.
+      # The wit-bindgen the bindings drift check regenerates with, as a
+      # release binary pinned by checksum. The checked-in bindings' header
+      # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
       WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
@@ -193,12 +201,7 @@ jobs:
         working-directory: examples/function-wasm-go
         run: |
           make gen-bindings
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-go/internal/bindings is not up to date with its wit; commit the result of make gen-bindings (at the root, which also mirrors it into the go template):"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-go/internal/bindings is not up to date with its wit; commit the result of make gen-bindings (at the root, which also mirrors it into the go template)"
 
       # vet takes the guest's own packages: internal/bindings is wit-bindgen's
       # output, whose pointer arithmetic over the wasm linear memory is what
@@ -297,8 +300,9 @@ jobs:
     needs:
       - build-tools
     env:
-      # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum.
+      # The wit-bindgen the bindings drift check regenerates with, as a
+      # release binary pinned by checksum. The checked-in bindings' header
+      # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
       WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
@@ -364,12 +368,7 @@ jobs:
         working-directory: examples/function-wasm-zig
         run: |
           zig build gen-proto
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-zig/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-zig/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto"
 
       - name: Setup wit-bindgen
         run: |
@@ -383,12 +382,7 @@ jobs:
         working-directory: examples/function-wasm-zig
         run: |
           zig build gen-bindings
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-zig/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-zig/src/gen is not up to date with its wit; commit the result of zig build gen-bindings"
 
       - name: Build, Lint and Test the Zig Guest
         run: make -C examples/function-wasm-zig lint test build
@@ -415,8 +409,9 @@ jobs:
     needs:
       - build-tools
     env:
-      # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum.
+      # The wit-bindgen the bindings drift check regenerates with, as a
+      # release binary pinned by checksum. The checked-in bindings' header
+      # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
       WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
@@ -474,8 +469,9 @@ jobs:
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
           version: '36.2'
 
-      # The nanopb version must match the one the checked-in codec was
-      # generated with (its header names it) and the one build.zig fetches.
+      # The nanopb the codec drift check regenerates with. The checked-in
+      # codec's header names the release that last changed it, and
+      # build.zig fetches the sources that codec compiles against.
       - name: Setup Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -500,12 +496,7 @@ jobs:
         working-directory: examples/function-wasm-c
         run: |
           zig build gen-proto
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-c/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-c/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto"
 
       - name: Setup wit-bindgen
         run: |
@@ -519,12 +510,7 @@ jobs:
         working-directory: examples/function-wasm-c
         run: |
           zig build gen-bindings
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-c/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-c/src/gen is not up to date with its wit; commit the result of zig build gen-bindings"
 
       - name: Build, Lint and Test the C Guest
         run: make -C examples/function-wasm-c lint test build
@@ -551,8 +537,9 @@ jobs:
     needs:
       - build-tools
     env:
-      # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum.
+      # The wit-bindgen the bindings drift check regenerates with, as a
+      # release binary pinned by checksum. The checked-in bindings' header
+      # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
       WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
@@ -610,8 +597,9 @@ jobs:
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
           version: '36.2'
 
-      # The nanopb version must match the one the checked-in codec was
-      # generated with (its header names it) and the one build.zig fetches.
+      # The nanopb the codec drift check regenerates with. The checked-in
+      # codec's header names the release that last changed it, and
+      # build.zig fetches the sources that codec compiles against.
       - name: Setup Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -637,12 +625,7 @@ jobs:
         working-directory: examples/function-wasm-cpp
         run: |
           zig build gen-proto
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-cpp/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-cpp/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto"
 
       - name: Setup wit-bindgen
         run: |
@@ -656,12 +639,7 @@ jobs:
         working-directory: examples/function-wasm-cpp
         run: |
           zig build gen-bindings
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-cpp/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-cpp/src/gen is not up to date with its wit; commit the result of zig build gen-bindings"
 
       - name: Build, Lint and Test the C++ Guest
         run: make -C examples/function-wasm-cpp lint test build
@@ -690,8 +668,9 @@ jobs:
     needs:
       - build-tools
     env:
-      # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum.
+      # The wit-bindgen the bindings drift check regenerates with, as a
+      # release binary pinned by checksum. The checked-in bindings' header
+      # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
       WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
@@ -753,8 +732,9 @@ jobs:
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
           version: '36.2'
 
-      # The nanopb version must match the one the checked-in codec was
-      # generated with (its header names it) and the one build.zig fetches.
+      # The nanopb the codec drift check regenerates with. The checked-in
+      # codec's header names the release that last changed it, and
+      # build.zig fetches the sources that codec compiles against.
       - name: Setup Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -779,12 +759,7 @@ jobs:
         working-directory: examples/function-wasm-odin
         run: |
           zig build gen-proto
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-odin/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-odin/src/fnv1 is not up to date with its proto; commit the result of zig build gen-proto"
 
       - name: Setup wit-bindgen
         run: |
@@ -798,12 +773,7 @@ jobs:
         working-directory: examples/function-wasm-odin
         run: |
           zig build gen-bindings
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-odin/src/gen is not up to date with its wit; commit the result of zig build gen-bindings:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-odin/src/gen is not up to date with its wit; commit the result of zig build gen-bindings"
 
       - name: Setup Odin
         run: |
@@ -853,8 +823,9 @@ jobs:
       MOON_VERSION: 0.10.14+7d59c7ec9
       MOON_SHA256: 9226694de9ff978db1ecf820b7710c4224e84ec7a76b19a222d96f0cd4e31b6a
       MOON_CORE_SHA256: 6f18b8fdea18f85e628a75e4a1bd3977c5a5c9c6a836fd8824192b0e6bd91b14
-      # The wit-bindgen that wrote the checked-in bindings (their header
-      # names it), as a release binary pinned by checksum.
+      # The wit-bindgen the bindings drift check regenerates with, as a
+      # release binary pinned by checksum. The checked-in bindings' header
+      # names the release that last changed them.
       # renovate: release-asset depName=bytecodealliance/wit-bindgen
       WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
@@ -928,12 +899,7 @@ jobs:
         working-directory: examples/function-wasm-moonbit
         run: |
           make gen-proto
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-moonbit/src/fnv1 is not up to date with its proto; commit the result of make gen-proto:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-moonbit/src/fnv1 is not up to date with its proto; commit the result of make gen-proto"
 
       - name: Setup wit-bindgen
         run: |
@@ -947,12 +913,7 @@ jobs:
         working-directory: examples/function-wasm-moonbit
         run: |
           make gen-bindings
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "examples/function-wasm-moonbit/src bindings are not up to date with its wit; commit the result of make gen-bindings:"
-            git status --porcelain
-            git diff
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-moonbit/src bindings are not up to date with its wit; commit the result of make gen-bindings"
 
       - name: Build, Lint and Test the MoonBit Guest
         run: make -C examples/function-wasm-moonbit build lint test
@@ -1006,6 +967,22 @@ jobs:
           key: examples-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-ts/package-lock.json') }}
           restore-keys: |
             examples-npm-${{ runner.os }}-${{ runner.arch }}-
+
+      # protoc is only needed to regenerate the checked-in codec, which
+      # this step does to catch drift; protoc-gen-es is the one npm ci
+      # installs from package-lock.json.
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '36.2'
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-ts
+        run: |
+          make gen-proto
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-ts/src/gen is not up to date with its proto; commit the result of make vendor-proto (at the root, which also mirrors it into the ts template)"
 
       - name: Build and Test the TypeScript Guest
         run: make -C examples/function-wasm-ts build test
@@ -1061,6 +1038,21 @@ jobs:
           key: examples-pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-python/requirements.txt') }}
           restore-keys: |
             examples-pip-${{ runner.os }}-${{ runner.arch }}-
+
+      # protoc is only needed to regenerate the checked-in codec, which
+      # this step does to catch drift.
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '36.2'
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-python
+        run: |
+          make gen-proto
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-python/src/gen is not up to date with its proto; commit the result of make vendor-proto (at the root, which also mirrors it into the python template)"
 
       - name: Build and Test the Python Guest
         run: make -C examples/function-wasm-python build test
@@ -1124,6 +1116,21 @@ jobs:
           key: examples-nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/function-wasm-csharp/Directory.Packages.props', 'examples/function-wasm-csharp/**/*.csproj') }}
           restore-keys: |
             examples-nuget-${{ runner.os }}-${{ runner.arch }}-
+
+      # protoc is only needed to regenerate the checked-in codec, which
+      # this step does to catch drift.
+      - name: Setup protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '36.2'
+
+      - name: Check Generated Codec
+        working-directory: examples/function-wasm-csharp
+        run: |
+          make gen-proto
+          "${GITHUB_WORKSPACE}/hack/check-generated.sh" -m "examples/function-wasm-csharp/src/Gen is not up to date with its proto; commit the result of make gen-proto"
 
       - name: Build, Lint and Test the C# Guest
         run: make -C examples/function-wasm-csharp build lint test

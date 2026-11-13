@@ -105,6 +105,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # The drift check of the checked-in generated code, which the example
+      # build jobs of e2e-wasm.yml run after regenerating: here against a
+      # repository of its own, a change per case.
+      - name: Test the Generated Code Check
+        run: hack/check-generated-test.sh
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
