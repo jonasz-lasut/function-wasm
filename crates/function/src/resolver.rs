@@ -78,6 +78,7 @@ pub struct Resolver {
     blobs: Option<Arc<Store>>,
     files: Mutex<HashMap<PathBuf, FileStamp>>,
     http: std::sync::OnceLock<reqwest::blocking::Client>,
+    redirects: crate::egress::Guarded,
     /// The on-disk tier of the manifest cache: raw manifest bytes keyed by
     /// their own digest (the manifest layer's digest for an OCI source, the
     /// stated manifestDigest for an HTTP one) and verified on read, never
@@ -104,6 +105,12 @@ pub struct Resolver {
 /// most manifest::MAX_SIZE, so the tier is bounded to a few megabytes.
 const MAX_CACHED_MANIFESTS: usize = 4096;
 
+/// The bounds of one HTTP download: its duration, and how many redirects
+/// it follows (reqwest's own default, which applied before the resolver
+/// followed them itself).
+const FETCH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const MAX_REDIRECTS: usize = 10;
+
 impl Resolver {
     pub fn new(dir: Option<PathBuf>, max_size: u64, blobs: Option<Arc<Store>>) -> Self {
         Resolver {
@@ -112,6 +119,7 @@ impl Resolver {
             blobs,
             files: Mutex::new(HashMap::new()),
             http: std::sync::OnceLock::new(),
+            redirects: crate::egress::Guarded::default(),
             manifests: None,
             cached_manifests: Mutex::new(HashMap::new()),
             serves: crate::manifest::TYPE_WASM,
@@ -553,18 +561,49 @@ impl Resolver {
     fn http_get(&self, url: &str, what: &str, limit: u64) -> Result<Vec<u8>, String> {
         let client = self.http.get_or_init(|| {
             reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(5 * 60))
+                .timeout(FETCH_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("the resolver client's configuration is static")
         });
-        let rsp = client
-            .get(url)
-            .send()
-            .map_err(|e| format!("cannot download {what}: {e}"))?;
-        if rsp.status() != reqwest::StatusCode::OK {
-            return Err(format!("cannot download {what}: {}", rsp.status()));
+        let failed = |e: &dyn std::fmt::Display| format!("cannot download {what}: {e}");
+        let mut url: reqwest::Url = url.parse().map_err(|e| failed(&e))?;
+        let origin = url.origin();
+        // Redirects are followed here, one hop at a time: within the origin
+        // the Input named as that origin is fetched, and to another host
+        // only through the guarded client.
+        for _ in 0..=MAX_REDIRECTS {
+            let rsp = if url.origin() == origin {
+                client.get(url.clone()).send().map_err(|e| failed(&e))?
+            } else {
+                self.redirects.get(&url, FETCH_TIMEOUT).map_err(|e| {
+                    format!("cannot download {what}: the redirect to {url} is not followed: {e}")
+                })?
+            };
+            let status = rsp.status();
+            if status.is_redirection()
+                && let Some(location) = rsp
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+            {
+                let next = url.join(location).map_err(|e| failed(&e))?;
+                if !matches!(next.scheme(), "http" | "https") {
+                    return Err(format!(
+                        "cannot download {what}: the redirect to {next} is not followed: not an http or https URL"
+                    ));
+                }
+                url = next;
+                continue;
+            }
+            if status != reqwest::StatusCode::OK {
+                return Err(format!("cannot download {what}: {status}"));
+            }
+            return read_capped(rsp, limit);
         }
-        read_capped(rsp, limit)
+        Err(format!(
+            "cannot download {what}: more than {MAX_REDIRECTS} redirects"
+        ))
     }
 
     /// Resolves rel under the module directory, refusing an absolute path or
@@ -702,6 +741,75 @@ mod tests {
             r#type: "Path".to_string(),
             path: rel.to_string(),
             ..Default::default()
+        }
+    }
+
+    /// Serves /module with body, and a redirect from every other path:
+    /// /hop to /module, /away to the same server under another host name.
+    fn redirecting_server(body: &'static str) -> std::net::SocketAddr {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            for mut conn in listener.incoming().flatten() {
+                let mut buf = [0u8; 1024];
+                let n = conn.read(&mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let reply = match head.split_whitespace().nth(1).unwrap_or_default() {
+                    "/module" => format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    ),
+                    "/hop" => "HTTP/1.1 302 Found\r\nLocation: /module\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                    "/loop" => "HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                    "/meta" => "HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                    "/file" => "HTTP/1.1 302 Found\r\nLocation: file:///etc/passwd\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                    _ => format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://localhost:{}/module\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        addr.port()
+                    ),
+                };
+                let _ = conn.write_all(reply.as_bytes());
+            }
+        });
+        addr
+    }
+
+    #[test]
+    fn a_download_follows_a_redirect_within_its_origin_alone() {
+        let addr = redirecting_server("module bytes");
+        let r = Resolver::new(None, 1 << 20, None);
+        let get = |path: &str| {
+            r.http_get(&format!("http://{addr}{path}"), "module", 1 << 20)
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+        };
+        let port = addr.port();
+        let cases = [
+            ("/module", Ok("module bytes".to_string())),
+            ("/hop", Ok("module bytes".to_string())),
+            // The same server under another name is another host, and a
+            // loopback one: the block list refuses it.
+            (
+                "/away",
+                Err(format!(
+                    "cannot download module: the redirect to http://localhost:{port}/module is not followed: localhost resolves to an address the default block list refuses"
+                )),
+            ),
+            (
+                "/meta",
+                Err("cannot download module: the redirect to http://169.254.169.254/latest is not followed: 169.254.169.254 resolves to an address the default block list refuses".to_string()),
+            ),
+            (
+                "/file",
+                Err("cannot download module: the redirect to file:///etc/passwd is not followed: not an http or https URL".to_string()),
+            ),
+            (
+                "/loop",
+                Err("cannot download module: more than 10 redirects".to_string()),
+            ),
+        ];
+        for (path, want) in cases {
+            assert_eq!(get(path), want, "{path}");
         }
     }
 

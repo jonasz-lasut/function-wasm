@@ -201,6 +201,62 @@ impl Egress {
     }
 }
 
+/// What the runtime itself fetches from an address a response chose: the
+/// target of a redirect that leaves the host an Input named. Such a target
+/// is held to the default block list, with the egress client's own
+/// guarantees (every resolved address judged, the judged address dialled,
+/// no proxy), so a redirect cannot point the runtime at an address inside
+/// the cluster.
+pub struct Guarded {
+    egress: Arc<Egress>,
+}
+
+impl Default for Guarded {
+    fn default() -> Self {
+        Guarded {
+            egress: Arc::new(Egress::new(IpRules::default(), 0.0, 0)),
+        }
+    }
+}
+
+impl Guarded {
+    /// GETs url without following a redirect, or says why not.
+    pub fn get(
+        &self,
+        url: &reqwest::Url,
+        timeout: Duration,
+    ) -> Result<reqwest::blocking::Response, String> {
+        let host = url.host_str().unwrap_or_default();
+        let blocked = || format!("{host} resolves to an address the default block list refuses");
+        // A literal never reaches the resolver, so it is judged here.
+        let literal = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+            .ok();
+        if let Some(ip) = literal.map(unmap)
+            && (ip.is_unspecified() || self.egress.blocked_by(ip).is_some())
+        {
+            return Err(blocked());
+        }
+        self.egress
+            .http_client()
+            .get(url.clone())
+            .timeout(timeout)
+            .send()
+            .map_err(|e| {
+                let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&e);
+                while let Some(s) = source {
+                    if s.to_string().contains(REFUSAL_FRAME) {
+                        return blocked();
+                    }
+                    source = s.source();
+                }
+                e.to_string()
+            })
+    }
+}
+
 /// A module's compiled egress rules - built per request after the manifest
 /// is read and its rules admitted by the policy layers.
 pub struct Grant {
