@@ -53,8 +53,6 @@ env:
   DOCKERFILE: ${{ inputs.function == 'function-oci' && 'crates/function-oci/Dockerfile' || 'crates/function-wasm/Dockerfile' }}
   PACKAGE_ROOT: ${{ inputs.function == 'function-oci' && 'package/oci' || 'package/wasm' }}
 
-  UP_VERSION: v0.51.1
-
 permissions:
   contents: read
   id-token: write

@@ -40,7 +40,8 @@ jobs:
       WIT_REPOSITORY: jonasz-lasut/guestfn/function
       # Installed from the release binary and checked against its digest
       # rather than through cargo-binstall's install script.
-      WKG_VERSION: 0.16.1
+      # renovate: release-asset depName=bytecodealliance/wasm-pkg-tools
+      WKG_VERSION: v0.16.1
       WKG_SHA256: 235ecf455e11b8b146e00f24f24c95b573cfe6a432f332358463b229311cec57
     steps:
       - name: Checkout
@@ -90,7 +91,7 @@ jobs:
         if: steps.world.outputs.publish == 'true'
         run: |
           curl -sSfL -o "${RUNNER_TEMP}/wkg" \
-            "https://github.com/bytecodealliance/wasm-pkg-tools/releases/download/v${WKG_VERSION}/wkg-x86_64-unknown-linux-gnu"
+            "https://github.com/bytecodealliance/wasm-pkg-tools/releases/download/${WKG_VERSION}/wkg-x86_64-unknown-linux-gnu"
           echo "${WKG_SHA256}  ${RUNNER_TEMP}/wkg" | sha256sum -c -
           chmod +x "${RUNNER_TEMP}/wkg"
 

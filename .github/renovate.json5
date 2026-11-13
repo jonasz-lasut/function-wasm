@@ -19,6 +19,20 @@
   // in crates/function-wasm and crates/function-oci, in each one's Dockerfile
   // and Dockerfile.dev, and the dockerfile manager keeps the digests current.
   //
+  // Three pins have no tracker, each for a reason:
+  // - debian:bookworm-slim, the stage of crates/function-oci/Dockerfile that
+  //   downloads Firecracker and the kernel, floats like rust:1: nothing of
+  //   it reaches the image, and what it fetches is held to a checksum.
+  // - The guest kernel (KERNEL_CI, KERNEL_VERSION and their checksums, in
+  //   that Dockerfile and the release matrix) sits under a dated prefix of
+  //   Firecracker's artifact bucket, which no datasource lists: it moves by
+  //   hand with the Firecracker pull request.
+  // - MoonBit (MOON_VERSION and its two checksums in e2e-wasm.yml) is
+  //   served from cli.moonbitlang.com under a version that carries a commit
+  //   hash, with no index of releases or checksums to read: it moves by
+  //   hand at release time (the cut-release skill), with the generator pins
+  //   in function-wasm-moonbit's Makefile.
+  //
   // The scaffold goldens are NOT a surface, and the example guests are one
   // only once a month: both mirror the templates under
   // crates/guestfn/templates, which Renovate cannot parse (`.tmpl`), so a
@@ -44,6 +58,10 @@
     // library.
     'git-submodules',
   ],
+  // The manager is off by default, and listing it above does not switch it
+  // on: without this the submodule, which pins the kind, kubectl, helm and
+  // crossplane CLI of every cluster job, never moved.
+  'git-submodules': { enabled: true },
   // config:recommended's :ignoreModulesAndTests skips **/examples/**, so
   // Renovate never read a file there: the version-header tripwire below
   // moved the templates and goldens but not the examples. ignorePaths is
@@ -151,6 +169,51 @@
       packageNameTemplate: 'firecracker-microvm/firecracker',
       datasourceTemplate: 'github-release-attachments',
       versioningTemplate: 'semver',
+    },
+    {
+      // The tools a workflow or the Makefile installs at a pinned version,
+      // each under a `# renovate:` comment naming its datasource: up
+      // (supplychain.yml), lychee (docs.yml), provider-nop (the Makefile),
+      // and the three generators the checked-in codecs and bindings were
+      // written by, protoc (the Makefile, and the `version` every
+      // setup-protoc step installs), nanopb (the Makefile and the
+      // `pip install` of e2e-wasm.yml) and wit-bindgen (the Makefile; the
+      // workflow's copies are the next manager's). The version alone moves:
+      // up's checksum beside it is added to the pull request by hand, and a
+      // generator's pull request is the signal to regenerate what it wrote
+      // (`make vendor-proto` for protoc and nanopb, with nanopb's source in
+      // the c and odin examples' build.zig.zon; `make gen-bindings` for
+      // wit-bindgen, with go.bytecodealliance.org/pkg at the version
+      // `wit-bindgen go --print-remote-pkg-version` prints), the example
+      // build jobs failing on drift until then.
+      customType: 'regex',
+      description: 'the tool versions a `# renovate:` comment annotates in the workflows and the Makefile',
+      managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/', '/^Makefile$/'],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)(?: versioning=(?<versioning>[^\\s]+))?(?: extractVersion=(?<extractVersion>[^\\s]+))?\\s+(?:UP_VERSION|PROTOC_VERSION|NANOPB_VERSION|WIT_BINDGEN_VERSION|PROVIDER_NOP_VERSION|lycheeVersion|version) ?(?::=|\\?=|:) ?'?(?<currentValue>[^'\\s]+)'?",
+        '# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)(?: versioning=(?<versioning>[^\\s]+))?\\s+run: pip install [a-z]+==(?<currentValue>[^\\s]+)',
+      ],
+    },
+    {
+      // The tools a workflow downloads as a GitHub release asset and holds
+      // to a checksum: wit-bindgen and Odin (e2e-wasm.yml), wkg
+      // (publish-wit.yml) and mdBook (docs.yml), each a `<NAME>_VERSION`
+      // line with the release's tag as it is, the `<NAME>_SHA256` of the
+      // asset under it and a `# renovate: release-asset` comment above.
+      // github-release-attachments finds the asset with that checksum in
+      // the pinned release and writes the checksum of the same asset in
+      // the new one, so the two lines move together; it asks for the
+      // release by the pinned value, which is why the value is the tag.
+      // Odin's tags are dev-<year>-<month>, which its comment states as a
+      // versioning; a re-release with a letter after the month matches no
+      // version and is passed over.
+      customType: 'regex',
+      description: 'the release assets the workflows download, version and checksum',
+      managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/'],
+      matchStrings: [
+        '# renovate: release-asset depName=(?<depName>[^\\s]+)(?: versioning=(?<versioning>[^\\s]+))?\\s+[A-Z_]+_VERSION: (?<currentValue>[^\\s]+)\\s+[A-Z_]+_SHA256: (?<currentDigest>[0-9a-f]{64})',
+      ],
+      datasourceTemplate: 'github-release-attachments',
     },
     {
       // Crossplane CLI version installed by install.sh in the release workflows.
@@ -376,6 +439,18 @@
       enabled: false,
     },
 
+    // The Go toolchain image function-oci-go's Dockerfile builds with, which
+    // the dockerfile manager reads: the example is published, so its
+    // toolchain takes Go's releases with the monthly batch below. go.mod's
+    // go directive, which moves with a release, states the minimum, and the
+    // image may run ahead of it.
+    {
+      matchManagers: ['dockerfile'],
+      matchFileNames: ['examples/function-oci-go/Dockerfile'],
+      matchPackageNames: ['golang'],
+      enabled: true,
+    },
+
     // The one exception, and the reason it is safe: the vendored proto's
     // version header is the same dep in all sixteen copies, so Renovate
     // moves templates, goldens and examples in a single PR - the examples
@@ -428,6 +503,19 @@
       matchPackageNames: ['@highlightjs/cdn-assets', 'cedar-policy/highlightjs-cedar'],
       groupName: 'docs Cedar highlighting',
     },
+    // The generators: every copy of a pin is one dependency, so one pull
+    // request moves the Makefile and the workflows together (wit-bindgen's
+    // come from two managers, the workflows' with their checksum).
+    {
+      matchManagers: ['custom.regex'],
+      matchDepNames: ['bytecodealliance/wit-bindgen'],
+      groupName: 'wit-bindgen',
+    },
+    { matchManagers: ['custom.regex'], matchDepNames: ['protocolbuffers/protobuf'], groupName: 'protoc' },
+    { matchManagers: ['custom.regex'], matchDepNames: ['nanopb'], groupName: 'nanopb' },
+    // The build submodule follows crossplane/build's main branch, which
+    // moves often: one pull request a month, with the examples batch.
+    { matchManagers: ['git-submodules'], schedule: ['* 0-3 1 * *'] },
     // Vale and its style packages: the binary's pin in the Makefile and the
     // package URLs in .vale.ini move in one PR, which the docs workflow's
     // prose job checks against the whole book.
@@ -541,7 +629,7 @@
     // once on its own branch: Renovate appends those rules after these, with
     // `force`.
     {
-      matchManagers: ['cargo', 'npm', 'gomod', 'nuget'],
+      matchManagers: ['cargo', 'npm', 'gomod', 'nuget', 'dockerfile'],
       matchFileNames: ['examples/**'],
       groupName: 'examples',
       schedule: ['* 0-3 1 * *'],
@@ -606,9 +694,19 @@
         'crossplane/crossplane',
         '/^errata-ai//',
         'tbhb/vale-ai-tells',
+        // The Crossplane CLI and up need their checksum added by hand, and
+        // no check on a pull request runs the workflows that install them.
+        'crossplane/cli',
+        'upbound/up',
+        // The generators need what they wrote regenerated.
+        'bytecodealliance/wit-bindgen',
+        'protocolbuffers/protobuf',
+        'nanopb',
       ],
       automerge: false,
     },
+    // The build submodule moves the cluster tools of every end-to-end job.
+    { matchManagers: ['git-submodules'], automerge: false },
     { matchFileNames: ['examples/**'], automerge: false },
     { matchUpdateTypes: ['major'], automerge: false },
   ],

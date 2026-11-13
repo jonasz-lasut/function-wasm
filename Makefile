@@ -36,6 +36,7 @@ endif
 KIND_CLUSTER_NAME ?= function-wasm-e2e
 # renovate: datasource=github-releases depName=crossplane/crossplane
 CROSSPLANE_VERSION ?= 2.4.3
+# renovate: datasource=github-releases depName=crossplane-contrib/provider-nop
 PROVIDER_NOP_VERSION ?= v0.6.0
 
 include build/makelib/common.mk
@@ -395,8 +396,11 @@ e2e.guest:
 # e2e-wasm.yml's codec drift checks install. WIT_BINDGEN_VERSION is the
 # wit-bindgen-cli release that wrote function-wasm-c's, function-wasm-zig's, function-wasm-odin's and
 # function-wasm-go's checked-in bindings and e2e-wasm.yml's bindings drift checks install.
+# renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
 PROTOC_VERSION := 35.1
+# renovate: datasource=pypi depName=nanopb versioning=pep440
 NANOPB_VERSION := 0.4.9.1
+# renovate: datasource=github-releases depName=bytecodealliance/wit-bindgen extractVersion=^v(?<version>.+)$
 WIT_BINDGEN_VERSION := 0.62.0
 
 PROTOC_OS := $(if $(filter Darwin,$(shell uname -s)),osx,linux)

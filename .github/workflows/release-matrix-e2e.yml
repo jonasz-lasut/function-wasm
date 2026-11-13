@@ -179,6 +179,8 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '35.1'
 
       # The key is the one ci.yml's job of this name saves on main.
       - name: Restore the Rust Build

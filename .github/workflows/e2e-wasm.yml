@@ -134,7 +134,8 @@ jobs:
     env:
       # The wit-bindgen that wrote the checked-in bindings (their header
       # names it), as a release binary pinned by checksum.
-      WIT_BINDGEN_VERSION: 0.62.0
+      # renovate: release-asset depName=bytecodealliance/wit-bindgen
+      WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
     steps:
       - name: Checkout
@@ -183,10 +184,10 @@ jobs:
       - name: Setup wit-bindgen
         run: |
           curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
-            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux.tar.gz"
           echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
           tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
         working-directory: examples/function-wasm-go
@@ -264,6 +265,8 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '35.1'
 
       # The guest's Makefile names its wasm target (and a rust-toolchain.toml
       # beside it may pin the compiler), so the lint follows the guest's own
@@ -296,7 +299,8 @@ jobs:
     env:
       # The wit-bindgen that wrote the checked-in bindings (their header
       # names it), as a release binary pinned by checksum.
-      WIT_BINDGEN_VERSION: 0.62.0
+      # renovate: release-asset depName=bytecodealliance/wit-bindgen
+      WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
     steps:
       - name: Checkout
@@ -370,10 +374,10 @@ jobs:
       - name: Setup wit-bindgen
         run: |
           curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
-            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux.tar.gz"
           echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
           tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
         working-directory: examples/function-wasm-zig
@@ -413,7 +417,8 @@ jobs:
     env:
       # The wit-bindgen that wrote the checked-in bindings (their header
       # names it), as a release binary pinned by checksum.
-      WIT_BINDGEN_VERSION: 0.62.0
+      # renovate: release-asset depName=bytecodealliance/wit-bindgen
+      WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
     steps:
       - name: Checkout
@@ -466,6 +471,8 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '35.1'
 
       # The nanopb version must match the one the checked-in codec was
       # generated with (its header names it) and the one build.zig fetches.
@@ -475,6 +482,7 @@ jobs:
           python-version: '3.15'
 
       - name: Setup nanopb_generator
+        # renovate: datasource=pypi depName=nanopb versioning=pep440
         run: pip install nanopb==0.4.9.1
 
       # Keyed per job: each zig job fetches its own build.zig.zon's
@@ -502,10 +510,10 @@ jobs:
       - name: Setup wit-bindgen
         run: |
           curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
-            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux.tar.gz"
           echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
           tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
         working-directory: examples/function-wasm-c
@@ -545,7 +553,8 @@ jobs:
     env:
       # The wit-bindgen that wrote the checked-in bindings (their header
       # names it), as a release binary pinned by checksum.
-      WIT_BINDGEN_VERSION: 0.62.0
+      # renovate: release-asset depName=bytecodealliance/wit-bindgen
+      WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
     steps:
       - name: Checkout
@@ -598,6 +607,8 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '35.1'
 
       # The nanopb version must match the one the checked-in codec was
       # generated with (its header names it) and the one build.zig fetches.
@@ -607,6 +618,7 @@ jobs:
           python-version: '3.15'
 
       - name: Setup nanopb_generator
+        # renovate: datasource=pypi depName=nanopb versioning=pep440
         run: pip install nanopb==0.4.9.1
 
       # Keyed per job: each zig job fetches its own build.zig.zon's
@@ -635,10 +647,10 @@ jobs:
       - name: Setup wit-bindgen
         run: |
           curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
-            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux.tar.gz"
           echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
           tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
         working-directory: examples/function-wasm-cpp
@@ -680,9 +692,11 @@ jobs:
     env:
       # The wit-bindgen that wrote the checked-in bindings (their header
       # names it), as a release binary pinned by checksum.
-      WIT_BINDGEN_VERSION: 0.62.0
+      # renovate: release-asset depName=bytecodealliance/wit-bindgen
+      WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
       # The Odin release the example builds with (its README names it).
+      # renovate: release-asset depName=odin-lang/Odin versioning=regex:^dev-(?<major>\d{4})-(?<minor>\d{2})$
       ODIN_VERSION: dev-2026-10
       ODIN_SHA256: c3c8b095621fd0c75f7f73e3a0829f1b4d45324225f20ba11ed8dc4da310a8ab
     steps:
@@ -736,6 +750,8 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '35.1'
 
       # The nanopb version must match the one the checked-in codec was
       # generated with (its header names it) and the one build.zig fetches.
@@ -745,6 +761,7 @@ jobs:
           python-version: '3.15'
 
       - name: Setup nanopb_generator
+        # renovate: datasource=pypi depName=nanopb versioning=pep440
         run: pip install nanopb==0.4.9.1
 
       # Keyed per job: each zig job fetches its own build.zig.zon's
@@ -772,10 +789,10 @@ jobs:
       - name: Setup wit-bindgen
         run: |
           curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
-            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux.tar.gz"
           echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
           tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
         working-directory: examples/function-wasm-odin
@@ -838,7 +855,8 @@ jobs:
       MOON_CORE_SHA256: 6f18b8fdea18f85e628a75e4a1bd3977c5a5c9c6a836fd8824192b0e6bd91b14
       # The wit-bindgen that wrote the checked-in bindings (their header
       # names it), as a release binary pinned by checksum.
-      WIT_BINDGEN_VERSION: 0.62.0
+      # renovate: release-asset depName=bytecodealliance/wit-bindgen
+      WIT_BINDGEN_VERSION: v0.62.0
       WIT_BINDGEN_SHA256: 3e81cc6523729f7532b4aa7968648a04abf0c711b7d1677150e9121f4e6458fe
     steps:
       - name: Checkout
@@ -901,6 +919,8 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
+          version: '35.1'
 
       # protoc-gen-mbt is not installed: the Makefile runs the pinned release
       # through moonx, which fetches it into ~/.moon's registry.
@@ -918,10 +938,10 @@ jobs:
       - name: Setup wit-bindgen
         run: |
           curl -fsSL -o "${RUNNER_TEMP}/wit-bindgen.tar.gz" \
-            "https://github.com/bytecodealliance/wit-bindgen/releases/download/v${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux.tar.gz"
+            "https://github.com/bytecodealliance/wit-bindgen/releases/download/${WIT_BINDGEN_VERSION}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux.tar.gz"
           echo "${WIT_BINDGEN_SHA256}  ${RUNNER_TEMP}/wit-bindgen.tar.gz" | sha256sum -c -
           tar -xzf "${RUNNER_TEMP}/wit-bindgen.tar.gz" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+          echo "${RUNNER_TEMP}/wit-bindgen-${WIT_BINDGEN_VERSION#v}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Check Generated Bindings
         working-directory: examples/function-wasm-moonbit
