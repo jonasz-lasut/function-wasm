@@ -38,7 +38,8 @@ result waits for the process's exit and last line.
 
 The runtime unpacks an image once per digest into a squashfs root
 filesystem, which the compiled store keeps beside function-wasm's
-artifacts, under the same key and the same LRU sweep. The module cache's
+artifacts, under the same key and the same LRU sweep, which skips the
+root filesystem of an image the runtime has in memory. The module cache's
 `compile` metrics time the unpacking. The runtime packs the blocks of
 that file with zstd, which the guest reads faster than gzip: the published
 Go example runs about 120 ms sooner for it, booted or restored
@@ -217,7 +218,7 @@ and `function-oci` built from the checkout, installed with
 
 On a Mac, Colima with nested virtualization
 (`colima start --vm-type vz --nested-virtualization`) gives the kind node
-the VM's `/dev/kvm`, at about 5 s per run. function-oci 0.1 runs on KVM
+the VM's `/dev/kvm`, at about 5 s per run. function-oci runs on KVM
 only, and Docker Desktop doesn't expose it.
 
 ## The development loop

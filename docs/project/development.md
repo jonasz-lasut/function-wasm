@@ -4,8 +4,9 @@ This page is for contributors to guestfn. It lists the commands that build, test
 
 ## Commands that run on every push
 
-CI runs these on every push, and on a pull request that changes code (a
-pull request touching only Markdown, JSON or SVG files skips them):
+CI runs these on every push, and on a pull request that changes code. A
+pull request that touches documentation alone skips them: `docs/`, the
+top-level, package and example Markdown files, `.claude/` and `extensions/`.
 
 ```shell
 cargo build --workspace && cargo test --workspace

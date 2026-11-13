@@ -512,6 +512,11 @@ When a rule requires a signature, a module is refused with one of these:
   to verify it`
 - an HTTP source: `module.http "https://example.com/fn.wasm" requires a cosign
   signature (operator policy), but only OCI modules can be signature-verified`
+- an HTTP source whose URL the rules can't be matched against, when the
+  policy has a `requireSignature` rule: `module.http.url "…" must have a normalized
+  path (no . or .. segments, no empty segments): the operator policy requires
+  cosign signatures by location (requireSignature), and this one cannot be
+  read`, or the same after `must name a host and carry no user information`
 - a verified keyless signer no rule trusts: `cannot verify module oci …: no
   valid cosign signature for <ref>: keyless signature by <identity> (issuer
   <issuer>) is not trusted for <repository>: no trustSigner rule in the

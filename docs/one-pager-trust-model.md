@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.11 (revision 1.11 keeps the signature verdict per repository and digest; rewritten in the present tense over the Rust workspace; keyless signatures (#116) and the trusted root over TUF (#183) folded into the body as the design)
+* Status: implemented, revision 1.12 (revision 1.12 holds a redirected HTTP download to the default block list, and 1.11 keeps the signature verdict per repository and digest; rewritten in the present tense over the Rust workspace; keyless signatures (#116) and the trusted root over TUF (#183) folded into the body as the design)
 
 Who decides what code runs, what that code can see and reach, and what the
 runtime guarantees to each of them. The 2026-08-16 review found two ways an
@@ -274,7 +274,7 @@ sandbox's own security fixes alone.
 | module reads or writes host files | never: host directories aren't mountable into a module. A module gets at most its private `/tmp`, a fresh directory per request that's removed afterward. The filesystem behind `$TMPDIR` bounds it, and Wasmtime refuses `..` escapes inside the pre-open (`EPERM`) |
 | module reads the runtime's environment | never: the WASI environment is empty, or exactly the manifest's `requires.env` bindings resolved from step credentials the request already included |
 | module starves the runtime | deadline, memory cap, compile slots, bounded tiers |
-| SSRF through `module.from` (`type: HTTP` or `OCI`) | a `compositionPolicy` `pullModule` permit is required for an XR-chosen network source. The runtime fetches only from repositories the Composition permitted; permits match a normalized location over the boundary-correct hierarchy and dot segments are refused, so a prefix can't be escaped; the runtime sends only GET requests; restrict the pod's egress with a NetworkPolicy where internal endpoints matter |
+| SSRF through `module.from` (`type: HTTP` or `OCI`) | a `compositionPolicy` `pullModule` permit is required for an XR-chosen network source. The runtime fetches only from repositories the Composition permitted; permits match a normalized location over the boundary-correct hierarchy and dot segments are refused, so a prefix can't be escaped; the runtime sends only GET requests, and follows a redirect of an HTTP download to another host only at an address outside the default block list; restrict the pod's egress with a NetworkPolicy where internal endpoints matter |
 | decompression bomb in a tar layer | extraction bounded at eight times the module size limit |
 
 ## Alternatives

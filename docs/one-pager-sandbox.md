@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.9 (rewritten in the present tense over the Rust workspace; host mounts removed (Jonasz, 2026-08-16); Cedar is the one authority that enables a capability (Jonasz, 2026-08-19); the ask is stated in the module's manifest)
+* Status: implemented, revision 1.10 (revision 1.10 adds the 6to4, Teredo, local-use NAT64, benchmarking and `192.0.0.0/24` ranges to the block list and bounds a request body; rewritten in the present tense over the Rust workspace; host mounts removed (Jonasz, 2026-08-16); Cedar is the one authority that enables a capability (Jonasz, 2026-08-19); the ask is stated in the module's manifest)
 
 How the sandbox grants a module some filesystem, network or environment
 access without giving up what makes it safe to run other people's modules.
@@ -117,13 +117,15 @@ with a `wasi:http` client has egress. The host:
   pattern, method, and a normalized path prefix (dot segments are refused);
 - resolves DNS itself and judges every address a name resolves to against the
   block list (`DEFAULT_BLOCKED_CIDRS`: loopback, link-local, RFC 1918, CGNAT,
-  ULA, NAT64, IPv4-compatible, unspecified, multicast, reserved); the
+  ULA, the prefixes that embed an IPv4 address in an IPv6 one (IPv4-compatible,
+  both NAT64 prefixes, 6to4, Teredo), unspecified, multicast, benchmarking,
+  `192.0.0.0/24`, reserved); the
   operator's `dialAddress` rules punch holes or add blocks, and an explicit
   block takes precedence;
 - dials the address it checked without re-resolving or using a proxy, and
   handles TLS itself;
 - enforces fixed per-run budgets (`timeout` 10 s, 16 requests, 4 MiB of
-  response, 5 redirects) and the process-wide rate limit
+  request body, 4 MiB of response, 5 redirects) and the process-wide rate limit
   (`--egress-rate-limit-per-minute`, `--egress-rate-limit-burst`); a request
   is also cut at the run's remaining deadline;
 - counts `guestfn_module_http_requests_total{outcome}` and writes one log line

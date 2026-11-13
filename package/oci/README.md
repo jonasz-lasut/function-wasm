@@ -19,7 +19,7 @@ discards, and `/tmp`, with no network device.
 > [!CAUTION]
 > **Alpha.** function-oci is 0.x, and until 1.0.0 a release may break
 > anything ([Compatibility](https://jonasz-lasut.github.io/guestfn/contract/compatibility.html#function-oci-at-0x)).
-> The pod needs `/dev/kvm`. function-oci 0.1 has no egress and refuses a
+> The pod needs `/dev/kvm`. function-oci has no egress yet and refuses a
 > manifest that requires it ([#280](https://github.com/jonasz-lasut/guestfn/issues/280)).
 > The sandbox has had no independent security review.
 

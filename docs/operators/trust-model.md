@@ -75,9 +75,9 @@ module's bytes by content digest and serves them, without a fetch, to any
 Composition on the runtime that states the digest, from an `OCI`, `HTTP` or
 `Path` source alike. A private module remains private only while no
 Composition another tenant can read quotes its digest. The runtime checks
-the credential and the signature at the first load of a digest in a process,
-for the module's bytes and its manifest alike, and a warm request doesn't
-contact the registry. A credential withdrawn later stops a cached module at
+the credential at the first load of a digest in a process, for the module's
+bytes and its manifest alike, and the signature once per repository and
+digest. A warm request doesn't contact the registry. A credential withdrawn later stops a cached module at
 its next cold load: a restart, an idle eviction past the ten-minute TTL with the
 disk entry swept, or a key rotation under `requireSignature`. To stop a
 module now, forbid it: the `pullModule` fence for a `module.from` source, or

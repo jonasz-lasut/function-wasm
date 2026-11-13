@@ -15,15 +15,15 @@ record fails the prose job until both say the same.
 | [Module and compiled artifacts cache](../one-pager-cache.md) | Implemented, revision 2.8 |
 | [Module configuration from the composite resource](../one-pager-module-config.md) | Implemented, revision 1.0 |
 | [Module manifest](../one-pager-module-manifest.md) | Implemented, revision 1.8 |
-| [Module source schema](../one-pager-module-source-schema.md) | Implemented, revision 2.4 |
+| [Module source schema](../one-pager-module-source-schema.md) | Implemented, revision 2.5 |
 | [OCI runtime](../one-pager-oci-runtime.md) | Draft |
 | [Per-image microVM snapshots](../one-pager-vm-snapshots.md) | Draft |
 | [Read fence](../one-pager-read-fence.md) | Implemented, revision 1.0 |
-| [Runtime resource governance](../one-pager-resource-governance.md) | Implemented, revision 1.7 |
-| [Three-layer authorization model](../one-pager-three-layer-authz.md) | Implemented, revision 1.4 |
-| [Trust model](../one-pager-trust-model.md) | Implemented, revision 1.11 |
+| [Runtime resource governance](../one-pager-resource-governance.md) | Implemented, revision 1.8 |
+| [Three-layer authorization model](../one-pager-three-layer-authz.md) | Implemented, revision 1.5 |
+| [Trust model](../one-pager-trust-model.md) | Implemented, revision 1.12 |
 | [Use-case examples](../one-pager-use-case-examples.md) | Implemented, revision 1.11 |
-| [WASM sandbox](../one-pager-sandbox.md) | Implemented, revision 1.9 |
+| [WASM sandbox](../one-pager-sandbox.md) | Implemented, revision 1.10 |
 
 The guest ABI isn't a one-pager: [ABI v2](../abi-v2.md) is the contract
 itself, with its own version.

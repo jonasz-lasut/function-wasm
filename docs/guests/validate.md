@@ -26,7 +26,7 @@ Each step prints one line, with its warnings indented below. A step checked thro
 
 ```text
 testdata/validate/credentials.yaml: Composition/credentials pipeline[1] permitted: OK (path fn.wasm, compositionPolicy)
-  module: sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, 255 B, ABI v2; manifest: cmdb-reader 0.1.0, credentials cmdb
+  module: sha256:09e6ac0cbcc0abcea78afa7df96114b5e4c3bf4020eb97a9aa188e17473d9714, 255 B, contract wasm@1.0; manifest: cmdb-reader 0.1.0, credentials cmdb
   credentials: cmdb
 testdata/validate/credentials.yaml: Composition/credentials pipeline[2] fenced: refused: module module file fn.wasm requires credential "cmdb" (requires.credentials[0]), which the compositionPolicy does not permit
 ```
@@ -53,7 +53,6 @@ Warnings never change the exit code. The runtime warns about:
 - A module that requires egress when the runtime can't verify signatures, under `--resolve`: `the module requires egress but is not signature-verified: neither --cosign-key nor --cosign-trusted-root was given`
 - A limit equal to its ceiling: `limits.timeout <value> equals --module-timeout: it narrows nothing`, and the same for `limits.memory` against `--module-memory-limit`
 - A field the runtime ignores: `unknown field "<name>" is ignored by the runtime`
-- The deprecated `v1beta1` `apiVersion`: `apiVersion guestfn.crossplane.io/v1 is deprecated and is removed in function-wasm 2.0.0; write apiVersion: guestfn.crossplane.io/v1 (the same fields)`
 
 The exit code is:
 

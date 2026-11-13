@@ -2,7 +2,7 @@
 
 * Owner: @jonasz-lasut (Jonasz Małecki)
 * Reviewers: function-wasm maintainers
-* Status: implemented, revision 1.7 (the per-run ceiling is checked over every region together, not per region; a cold load bounded by `--module-compile-timeout`, the 1.0 audit's F-4; table growth charged to the ceiling and the pool like memory growth, the 1.0 audit's F-1; rewritten in the present tense over the Rust workspace; merges in the governance-perf record, revision 0.2: the egress rate limit and the fair run slots are part of the model, and its dropped fuel phase is under Alternatives)
+* Status: implemented, revision 1.8 (revision 1.8 holds a run to the wall clock while its guest waits in a host call, and bounds a `wasi:http` request body; the per-run ceiling is checked over every region together, not per region; a cold load bounded by `--module-compile-timeout`, the 1.0 audit's F-4; table growth charged to the ceiling and the pool like memory growth, the 1.0 audit's F-1; rewritten in the present tense over the Rust workspace; merges in the governance-perf record, revision 0.2: the egress rate limit and the fair run slots are part of the model, and its dropped fuel phase is under Alternatives)
 
 One runtime serves many Compositions, many teams and many modules. This
 document is the model of what a module may consume, what bounds the runtime as
@@ -35,7 +35,7 @@ for memory, restart with an empty cache and begin again.
 
 | dimension | bound | flag or Input field | default | at the bound |
 |---|---|---|---|---|
-| one run, wall clock | epoch deadline, or the request's gRPC deadline when that's sooner | `--module-timeout`; `limits.timeout` narrows it | 30 s | the run is interrupted and the fatal result states the module and the budget |
+| one run, wall clock | epoch deadline over guest code and a wall-clock timer over a guest suspended in a host call, or the request's gRPC deadline when that's sooner | `--module-timeout`; `limits.timeout` narrows it | 30 s | the run is interrupted and the fatal result states the module and the budget |
 | one run, guest memory | Wasmtime store limiter over the run's linear memories and tables together, a host pointer per table element | `--module-memory-limit`; `limits.memory` narrows it | 512 MB | `memory.grow` or `table.grow` fails and the guest decides; counted in `memory_denials_total{reason="limit"}` |
 | one run, call stack | Wasmtime's stack ceiling, engine-wide | `--module-stack-limit` | 512 KB | the guest traps: a fatal result |
 | resident compiled modules | LRU over the memory tier, on top of its 10-minute idle TTL | `--max-cached-modules` | 0 (TTL only) | the least recently used module is dropped |
@@ -48,12 +48,16 @@ for memory, restart with an empty cache and begin again.
 | concurrent runs of one step | per-digest semaphore, taken before the global slot | `limits.concurrency` | 0 (the global bound only) | a further request of this step waits under its own deadline |
 | total run memory | pool charged as guests grow | `--max-total-run-memory` | 0 (unbounded) | a growth the pool can't serve before the run's deadline is denied |
 | private `/tmp` | none in the runtime: the filesystem behind `$TMPDIR` | `TMPDIR` | the pod's `/tmp` | the guest's write fails (`ENOSPC`); the runtime is unaffected |
-| one run, HTTP egress | per-run budgets, fixed at 16 requests, 4 MiB of response bytes, 5 redirects and a 10 s timeout per request | none | as stated | the request is answered with an error the guest reads; the run goes on |
+| one run, HTTP egress | per-run budgets, fixed at 16 requests, 4 MiB of request body, 4 MiB of response bytes, 5 redirects and a 10 s timeout per request | none | as stated | the request is answered with an error the guest reads; the run goes on |
 | HTTP egress rate | token bucket per module digest | `--egress-rate-limit-per-minute`, `--egress-rate-limit-burst` | off | a budget error the guest reads; the run goes on |
 
-The wall clock of a run meters guest compute. Time blocked in `wasi:http` is
-credited back to the epoch deadline, so a slow upstream doesn't spend
-`limits.timeout`. The request's own gRPC deadline stays the hard cap. Without
+The budget of a run is wall-clock time. The epoch deadline interrupts guest
+code alone. A guest suspended in a host call, such as a WASI clock or poll,
+executes nothing, and a wall-clock timer ends its run at the same deadline
+with the same message. The time a guest waits for the host's HTTP answer in
+`wasi:http` is credited back to both, once for sends that overlap, so a slow
+upstream doesn't spend `limits.timeout`. The request's own gRPC deadline stays
+the hard cap. Without
 one the credit is still bounded: every egress request is cut at the run's
 deadline, and a run stretches to about twice its budget at most. Only
 `wasi:http` time is creditable. Crediting arbitrary host time would let a guest

@@ -171,8 +171,8 @@ plus three signature variants derived from the plain one; the `oci` profile's
 variants are the same declarations under `manifests/oci`, around the module
 as a process. One of them, `oci-root`, is built on an image that doesn't
 set a user, which the runtime refuses at load. Each has its own digest,
-because the runtime caches a signature verdict per digest and two variants
-sharing one would share a verdict. The same `fn.wasm` is the engine's `wasi:http` fixture
+because the runtime caches a signature verdict per repository and digest, and
+two variants sharing both would share a verdict. The same `fn.wasm` is the engine's `wasi:http` fixture
 (`crates/engine-wasm/tests/committed_guest.rs`).
 
 ### Running it locally
@@ -195,7 +195,10 @@ the whole suite on another Crossplane, given as the chart version without a
 ### The workflows
 
 `ci.yml` runs lint with `--all-features` and `cargo test --workspace` on every
-push, and on a pull request unless it touches only Markdown, JSON or SVG files.
+push, and on a pull request unless it touches documentation alone: `docs/`,
+the top-level, package and example Markdown files, `.claude/` and
+`extensions/`. The rule goes by path, since a Markdown or JSON file under
+`crates/` is a fixture, a golden or a template.
 Two more jobs run the `cargo test` targets that need tools of their own:
 
 - `guest-suite` runs the guest suite on every such change, with
@@ -281,9 +284,13 @@ verdict is then still going, and this one fails until that run's gate
 replaces it.
 
 A pull request's run uses the pull request's own copy of the three workflow
-files, so a change to them is exercised before it merges. A pull request
-from a fork gets a read-only token without secrets, which is all the jobs
-use.
+files, so a change to them is exercised before it merges, and
+`.github/CODEOWNERS` names the owner as the code owner of
+`.github/workflows/` for that reason. A pull request from a fork gets a
+read-only token without secrets, which is all the jobs use.
+
+Every job of every workflow has a `timeout-minutes`, so a hung cluster, VM
+or download ends its job.
 
 A pull request's run restores caches and saves none, as in `ci.yml`. A
 second workflow, `e2e-caches.yml`, saves them on `main` and

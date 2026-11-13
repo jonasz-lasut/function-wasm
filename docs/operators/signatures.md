@@ -13,8 +13,10 @@ supplies keys (see [per repository](#requiring-signatures-per-repository)).
 Only OCI artifacts have a cosign signature, so a source of another type is
 refused wherever a signature is required. With `--cosign-key` alone, that's
 every `Path` and `HTTP` source. Under a policy it's an `HTTP` source whose URL a
-`requireSignature` rule matches. A `Path` source has no repository, so no
-rule matches it and it runs unsigned.
+`requireSignature` rule matches. An `HTTP` URL the rules can't be matched
+against, one with user information or with `.`, `..` or empty path segments,
+is refused wherever the policy has a `requireSignature` rule. A `Path` source
+has no repository, so no rule matches it and it runs unsigned.
 
 ## Key-based signatures
 

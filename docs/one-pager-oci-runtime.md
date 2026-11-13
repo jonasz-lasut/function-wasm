@@ -706,9 +706,9 @@ order from these phases to 0.1, the package's first release.
    flags, the image fetch of the resolver with the manifest read out of
    the image's annotated layer, and the env bindings and the credentials
    through the init.
-4. Done, namely the `oci` e2e profile on a GitHub runner with KVM, as jobs of the
-   `/e2e` workflow beside the `wasm` ones (a build job, the engine's VM suite
-   and a cluster job with both runtimes installed), with the published
+4. Done, namely the `oci` e2e profiles on a GitHub runner with KVM, as the
+   jobs of `e2e-oci.yml` beside the `wasm` ones (a build job and a cluster
+   job per profile) and the engine's VM suite in `ci.yml`, with the published
    kernel. The kernel build, where the project builds its own, remains
    open.
 5. The egress bridge (the TLS-decrypting proxy in the init) with audit and
