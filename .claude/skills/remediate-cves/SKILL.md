@@ -257,6 +257,11 @@ gh workflow run "Publish Function" --ref "$NEW_TAG" -f function="$FUNCTION" -f v
 Must run from the **tag**, not the branch — it builds the runtime image from
 that exact tagged source. `version` is the bare `vX.Y.Z`, the image's tag.
 
+The workflow's `guard` job refuses a ref other than the tag, a version the
+registry already has and a commit no `Release Matrix E2E` run passed on
+(`-f without-matrix=true` and `-f overwrite=true` lift the last two, on the
+owner's word alone).
+
 ### 9. Sign & attest — `Supply Chain and Xpkg Extensions`, from `main`
 
 ```bash

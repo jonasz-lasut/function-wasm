@@ -296,7 +296,13 @@ esac
 ```
 
 Must run from the **tag**, not the branch, so it builds from that exact
-tagged source. `Publish guestfn` refuses any other ref and attaches the
+tagged source. `Publish Function` checks this itself in its `guard` job: it
+refuses a ref other than `<function>-<version>`'s tag, a version the
+registry already has, and a commit no `Release Matrix E2E` run passed on.
+Two inputs lift the last two, each only on the owner's word:
+`-f without-matrix=true` for a release whose matrix the owner chose not to
+run, and `-f overwrite=true` to publish a version again after a publish
+that failed part-way. `Publish guestfn` refuses any other ref and attaches the
 binaries to the GitHub release of step 7. `version` is the bare `vX.Y.Z`,
 which is the OCI tag and the version stamped into the binary.
 
