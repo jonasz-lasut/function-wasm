@@ -30,8 +30,9 @@
 # every push, a newer commit cancelling the run of the one before it, until
 # the label is removed. The scenarios are e2e-wasm.yml's and e2e-oci.yml's
 # jobs, each a check on the pull request, so nothing is posted: the jobs
-# are the report. The last job, e2e-gate, is the one a ruleset requires: it
-# passes when nothing was selected or everything selected passed.
+# are the report. One job, e2e-gate, is the one a ruleset requires: it
+# starts with the run and ends with e2e-verdict's result, which passes when
+# nothing was selected or everything selected passed.
 #
 # A pull_request run uses the pull request's own copy of this file and of
 # the two it calls, so a change to them is exercised before it merges. For
@@ -68,6 +69,8 @@ jobs:
   # nothing here; a label naming no profile fails at its make target.
   select:
     runs-on: ubuntu-26.04
+    permissions:
+      pull-requests: read
     outputs:
       relevant: ${{ steps.select.outputs.relevant }}
       wasm: ${{ steps.select.outputs.wasm }}
@@ -80,10 +83,15 @@ jobs:
       - name: Read the Labels
         id: select
         env:
+          GH_TOKEN: ${{ github.token }}
           ACTION: ${{ github.event.action }}
           LABEL: ${{ github.event.label.name }}
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
         run: |
+          # The labels the pull request has now, not the event's copy: a
+          # run started again later replays its first payload, and one from
+          # before a label was added would select nothing.
+          LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PULL_REQUEST}" --jq '[.labels[].name]')
           # profiles <runtime>: all, or the JSON array of the profiles the
           # labels name.
           profiles() {
@@ -150,20 +158,49 @@ jobs:
       profiles: ${{ needs.select.outputs.oci-profiles }}
       examples: ${{ needs.select.outputs.oci-examples == 'true' }}
 
-  # The one check a ruleset requires. It passes when nothing was selected
-  # or everything selected passed, and fails when a selected scenario, or a
-  # build it waited for, failed or was cancelled. Its check exists only once
-  # the scenarios have ended: an e2e: label added to a commit that already
-  # has a verdict leaves that verdict standing until this job replaces it.
+  # The one check a ruleset requires. It needs no other job, so its check
+  # is in progress from the run's first seconds until the scenarios have
+  # ended, and a pass an earlier run left on the commit never stands in for
+  # a run still going. It then ends as e2e-verdict did; a cancelled run
+  # cancels it, which satisfies nothing.
+  #
+  # e2e-verdict is in the run's job list only once the jobs it needs have
+  # ended, so this job polls for it. It holds a runner for the length of
+  # the run.
+  e2e-gate:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Wait for the Verdict
+        run: |
+          while true; do
+            verdict=$(gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+              --jq '.jobs[] | select(.name == "e2e-verdict" and .status == "completed") | .conclusion' || true)
+            if [ -n "$verdict" ]; then
+              echo "e2e-verdict: ${verdict}"
+              [ "$verdict" = success ]
+              exit
+            fi
+            sleep 10
+          done
+
+  # What the run decides. It passes when nothing was selected or everything
+  # selected passed, and fails when a selected scenario, or a build it
+  # waited for, failed or was cancelled.
   #
   # A label that is not an e2e: one starts a run too, with nothing to run.
-  # A skipped or passing gate from that run would replace a failed one on
-  # the same commit, so the gate looks up the verdict the commit already
-  # has, the latest e2e-gate check that ran to an end, and repeats it. With
-  # no verdict yet it passes, unless the pull request has an e2e: label:
-  # then the run that owes the verdict is still going (or was cancelled),
-  # and this gate fails until that one's replaces it.
-  e2e-gate:
+  # A passing gate from that run would replace a failed one on the same
+  # commit, so this job looks up the verdict the commit already has, the
+  # latest e2e-gate check that ran to an end, and repeats it. With no
+  # verdict yet it passes, unless the pull request has an e2e: label: then
+  # the run that owes the verdict is still going (or was cancelled), and
+  # this one fails until that run's gate replaces it.
+  e2e-verdict:
     runs-on: ubuntu-26.04
     needs:
       - select

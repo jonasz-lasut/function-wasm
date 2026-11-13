@@ -235,20 +235,25 @@ The `select` job reads the labels and calls two reusable workflows.
   pushing nothing
 
 The workflow doesn't post a comment or a commit status, because every job is
-already a check on the pull request with a link to its run. Its last job, `e2e-gate`, is
-the check a ruleset on `main` can require. It passes when no scenario was
+already a check on the pull request with a link to its run. One job,
+`e2e-gate`, is the check the ruleset on `main` requires. It starts with the
+run and stays in progress until the scenarios have ended, so the commit
+doesn't count as passed on an earlier run's result while a run is still
+going. It then ends as the `e2e-verdict` job did. That job passes when no scenario was
 selected or every selected one passed. It fails when a selected scenario, or
 a build that scenario waited for, failed or was cancelled. On a labelled pull
 request a new commit can't clear a failure, because the push starts the run
-again.
+again. The workflow reads the labels the pull request has when the run
+starts, so starting an old run again selects the current labels.
 
 Any label starts the workflow, an unrelated one such as `kind:bug` too. That
 run takes a concurrency group of its own, which keeps it from cancelling a
-run in progress, and it doesn't run a scenario. Its `e2e-gate` looks up the verdict the head commit already has
+run in progress, and it doesn't run a scenario. Its `e2e-verdict` looks up
+the verdict the head commit already has
 (the latest `e2e-gate` check that ran to an end) and repeats it, so an
-unrelated label can't replace a failure with a pass. With no verdict yet the
-gate passes, unless the pull request has an `e2e:` label: the run that owes
-the verdict is then still going, and the gate fails until that run's gate
+unrelated label can't replace a failure with a pass. With no verdict yet it
+passes, unless the pull request has an `e2e:` label: the run that owes the
+verdict is then still going, and this one fails until that run's gate
 replaces it.
 
 A pull request's run uses the pull request's own copy of the three workflow
