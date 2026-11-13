@@ -749,8 +749,10 @@ pub(crate) fn parse_grpc_timeout(v: &str) -> Option<Duration> {
     let (value, unit) = v.split_at(v.len().checked_sub(1)?);
     let value: u64 = value.parse().ok()?;
     Some(match unit {
-        "H" => Duration::from_secs(value * 3600),
-        "M" => Duration::from_secs(value * 60),
+        // A value past the eight digits gRPC allows is no timeout this
+        // function can state: it is read as none, not multiplied.
+        "H" => Duration::from_secs(value.checked_mul(3600)?),
+        "M" => Duration::from_secs(value.checked_mul(60)?),
         "S" => Duration::from_secs(value),
         "m" => Duration::from_millis(value),
         "u" => Duration::from_micros(value),
@@ -827,6 +829,17 @@ mod tests {
             "kind": "Input",
             "module": module,
         })
+    }
+
+    #[test]
+    fn a_grpc_timeout_past_what_a_duration_states_is_none() {
+        assert_eq!(parse_grpc_timeout("2H"), Some(Duration::from_secs(7200)));
+        assert_eq!(parse_grpc_timeout("18446744073709551615H"), None);
+        assert_eq!(parse_grpc_timeout("18446744073709551615M"), None);
+        // In range for a duration, and past what an instant can add: the
+        // server reads it as no deadline.
+        let far = parse_grpc_timeout("18446744073709551615S").expect("a duration");
+        assert!(std::time::Instant::now().checked_add(far).is_none());
     }
 
     #[tokio::test(flavor = "multi_thread")]
