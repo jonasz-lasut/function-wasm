@@ -1,0 +1,6 @@
+import {
+  "jonasz-lasut/function-wasm-moonbit/interface/wasi/io/error" @error,
+  "jonasz-lasut/function-wasm-moonbit/interface/wasi/io/poll" @poll,
+}
+
+warnings = "-44-implicit_impl_as_method-deprecated_syntax-deprecated"

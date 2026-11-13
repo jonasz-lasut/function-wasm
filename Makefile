@@ -418,7 +418,7 @@ PROTOC_VERSION := 36.2
 # renovate: datasource=pypi depName=nanopb versioning=pep440
 NANOPB_VERSION := 0.4.9.3
 # renovate: datasource=github-releases depName=bytecodealliance/wit-bindgen extractVersion=^v(?<version>.+)$
-WIT_BINDGEN_VERSION := 0.62.0
+WIT_BINDGEN_VERSION := 0.63.0
 
 PROTOC_OS := $(if $(filter Darwin,$(shell uname -s)),osx,linux)
 PROTOC_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),aarch_64,x86_64)
@@ -531,8 +531,8 @@ vendor-docs-highlight: ## Re-vendor the docs site's highlight.js core and Cedar 
 	@echo "vendored highlight.js $(HLJS_VERSION) and highlightjs-cedar $(HLJS_CEDAR_VERSION): review git diff, then check the Cedar pages under mdbook serve"
 
 # The go bindings are mirrored whole: wit-bindgen writes a wit_bindings.go
-# and an empty.s per package plus wit_exports, beside the hand-written slot
-# package export_wit_world. A generated Go file names the guest's module path
+# and an empty.s per package under imports/ plus exports/wit_exports, beside
+# the hand-written slot package exports/export_wit_world. A generated Go file names the guest's module path
 # in its imports, so it becomes a .go.tmpl with the path as [[ .Module ]];
 # the rest is copied as it is. The C bindings (function.c, function.h,
 # function_component_type.o) stay where the generator writes them, in the

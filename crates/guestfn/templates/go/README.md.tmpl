@@ -21,10 +21,10 @@ are allowed, as the Cedar policy layers permit it.
   `wasi:http/outgoing-handler@0.2.12` for `HTTPClient`. `guestfn build` pulls the
   packages `guestfn.lock` pins into `wit/deps/`, which stays out of git.
 - `internal/bindings/` is [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)'s
-  Go output over it (`wit-bindgen-cli` 0.62.0), checked in, so a plain
+  Go output over it (`wit-bindgen-cli` 0.63.0), checked in, so a plain
   `go build` needs only Go; regenerate it after a change to the world with
   `wit-bindgen go wit -w function --pkg-name [[ .Module ]]/internal/bindings --out-dir internal/bindings`.
-  `export_wit_world/run.go` is hand-written: the slot the glue fills with the
+  `exports/export_wit_world/run.go` is hand-written: the slot the glue fills with the
   `run` export. `go.bytecodealliance.org/pkg` in `go.mod` is the bindings'
   runtime, at the version the generator targets. `go vet ./...` flags the
   generated pointer arithmetic (`unsafeptr`): vet your own packages

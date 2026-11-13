@@ -18,12 +18,12 @@ import (
 
 	witTypes "go.bytecodealliance.org/pkg/wit/types"
 
-	exports "[[ .Module ]]/internal/bindings/export_wit_world"
-	handler "[[ .Module ]]/internal/bindings/wasi_http_outgoing_handler"
-	types "[[ .Module ]]/internal/bindings/wasi_http_types"
-	streams "[[ .Module ]]/internal/bindings/wasi_io_streams"
-	_ "[[ .Module ]]/internal/bindings/wit_exports"
-	"[[ .Module ]]/internal/bindings/wit_world"
+	exports "[[ .Module ]]/internal/bindings/exports/export_wit_world"
+	handler "[[ .Module ]]/internal/bindings/imports/wasi_http_outgoing_handler"
+	types "[[ .Module ]]/internal/bindings/imports/wasi_http_types"
+	streams "[[ .Module ]]/internal/bindings/imports/wasi_io_streams"
+	_ "[[ .Module ]]/internal/bindings/exports/wit_exports"
+	"[[ .Module ]]/internal/bindings/imports/wit_world"
 )
 
 // The generated wit_exports package calls export_wit_world.Run for the
@@ -165,7 +165,7 @@ func readBody(rsp *types.IncomingResponse) ([]byte, error) {
 	for {
 		chunk := in.BlockingRead(64 << 10)
 		if chunk.IsErr() {
-			if chunk.Err().Tag() == streams.StreamErrorClosed {
+			if chunk.Err().Tag() == streams.StreamError_Closed {
 				break
 			}
 			in.Drop()
@@ -223,7 +223,7 @@ func scheme(s string) types.Scheme {
 }
 
 func streamError(e streams.StreamError) string {
-	if e.Tag() == streams.StreamErrorLastOperationFailed {
+	if e.Tag() == streams.StreamError_LastOperationFailed {
 		err := e.LastOperationFailed()
 		defer err.Drop()
 		return err.ToDebugString()
@@ -237,7 +237,7 @@ func streamError(e streams.StreamError) string {
 // transport error - as internal-error carrying exactly the string ABI v1
 // put in the wire's error field; any other code is named by its number.
 func httpError(code types.ErrorCode) error {
-	if code.Tag() == types.ErrorCodeInternalError {
+	if code.Tag() == types.ErrorCode_InternalError {
 		if reason := code.InternalError(); reason.IsSome() {
 			return &HTTPError{Reason: reason.Some()}
 		}

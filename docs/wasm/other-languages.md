@@ -33,7 +33,7 @@ component.
 The scaffold vendors `internal/wasmfn` over the Go bindings that
 [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) writes under
 `internal/bindings`. Both are checked in. `make gen-bindings` regenerates them
-with `wit-bindgen-cli` 0.62.0. Your function is a plain function-sdk-go
+with `wit-bindgen-cli` 0.63.0. Your function is a plain function-sdk-go
 `RunFunction`. `go build` emits a wasip1 reactor, and `guestfn build` embeds the
 world from the project's `wit/` and wraps the result into a component. `run` is
 sync-lifted, and an `*http.Client` reaches the host's egress over

@@ -1,0 +1,5 @@
+import {
+  "jonasz-lasut/function-wasm-moonbit/interface/wasi/http/types" @types,
+}
+
+warnings = "-44-implicit_impl_as_method-deprecated_syntax-deprecated"

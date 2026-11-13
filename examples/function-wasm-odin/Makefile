@@ -3,7 +3,7 @@
 # half (build.zig fetches nanopb) and links the core module - and guestfn,
 # which comes from this repository (cargo run) and wraps that core module into
 # the component the runtime loads (no wasm-tools, no adapter download).
-# wit-bindgen 0.62.0 is only needed to regenerate the checked-in bindings
+# wit-bindgen 0.63.0 is only needed to regenerate the checked-in bindings
 # (make gen-bindings; the root Makefile's gen-bindings installs it pinned)
 # and nanopb_generator (pip install nanopb) the checked-in codec (make
 # gen-proto). Render needs the crossplane CLI and Docker. GUESTFN and
@@ -26,7 +26,7 @@ lint: ## Vet the Odin sources for the wasm target and check build.zig's formatti
 gen-proto: ## Regenerate src/fnv1 from proto/ (needs nanopb_generator)
 	zig build gen-proto
 
-gen-bindings: wit-deps ## Regenerate src/gen from wit/ (needs wit-bindgen 0.62.0)
+gen-bindings: wit-deps ## Regenerate src/gen from wit/ (needs wit-bindgen 0.63.0)
 	zig build gen-bindings
 
 render: build ## Start the runtime serving this directory and crossplane render example/

@@ -18,7 +18,7 @@ use crate::scaffold;
 const GUEST_WORLD: &str = "function";
 
 /// The MoonBit toolchain, detected by its module file - moon.mod (what moon
-/// writes today) or moon.mod.json (what wit-bindgen 0.62 still writes, and
+/// writes today) or moon.mod.json (what older wit-bindgen output wrote, and
 /// moon still reads): an example here, not a scaffold yet (#155).
 const LANG_MOONBIT: &str = "moonbit";
 
@@ -504,8 +504,8 @@ mod tests {
 
     /// The toolchain is told from the project's marker file, one per
     /// language: MoonBit by either spelling of its module file (moon.mod is
-    /// what moon writes today, moon.mod.json what wit-bindgen 0.62 still
-    /// writes), and a project with none is refused naming every marker.
+    /// what moon writes today, moon.mod.json what older wit-bindgen output
+    /// wrote), and a project with none is refused naming every marker.
     #[test]
     fn the_language_is_told_from_the_project() {
         let cases: [(&str, &str); 7] = [

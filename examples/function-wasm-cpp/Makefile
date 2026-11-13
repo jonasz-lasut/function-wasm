@@ -3,7 +3,7 @@
 # and guestfn, which comes from this repository (cargo run) and wraps the
 # core module zig links into the component the runtime loads (no wasm-tools;
 # the wasip1 adapter guestfn carries is linked in for the clock and the
-# randomness wasi-libc imports). wit-bindgen 0.62.0 is only needed to
+# randomness wasi-libc imports). wit-bindgen 0.63.0 is only needed to
 # regenerate the checked-in bindings (make gen-bindings; the same generator
 # over the same world as function-wasm-c's, so the two outputs match) and
 # nanopb_generator (pip install nanopb) the checked-in codec (make
@@ -26,7 +26,7 @@ lint: ## Check build.zig's formatting (the C and C++ sources are compiled by zig
 gen-proto: ## Regenerate src/fnv1 from proto/ (needs nanopb_generator)
 	zig build gen-proto
 
-gen-bindings: wit-deps ## Regenerate src/gen from wit/ (needs wit-bindgen 0.62.0)
+gen-bindings: wit-deps ## Regenerate src/gen from wit/ (needs wit-bindgen 0.63.0)
 	zig build gen-bindings
 
 render: build ## Start the runtime serving this directory and crossplane render example/

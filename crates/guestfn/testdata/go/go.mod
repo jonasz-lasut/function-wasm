@@ -8,8 +8,8 @@ go 1.26.6
 require google.golang.org/grpc v1.85.0
 
 // The canonical-ABI runtime the bindings under internal/bindings call, at
-// the version wit-bindgen 0.62.0's Go generator targets (wit-bindgen go
+// the version wit-bindgen 0.63.0's Go generator targets (wit-bindgen go
 // --print-remote-pkg-version); moves with the bindings, not on its own.
-require go.bytecodealliance.org/pkg v0.2.3
+require go.bytecodealliance.org/pkg v0.4.0
 
 require github.com/crossplane/function-sdk-go v0.7.1

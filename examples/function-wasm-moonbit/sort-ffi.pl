@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# wit-bindgen's MoonBit generator (0.62.0) writes the `extern "wasm"` FFI
+# wit-bindgen's MoonBit generator (0.63.0) writes the `extern "wasm"` FFI
 # helpers of each ffi*.mbt, and the #doc(hidden) wrappers of the exports the
 # component links (wasmExportRun, wasmExportRunPostReturn), in hash order,
 # which differs from one run to the next, so the checked-in bindings would
@@ -27,7 +27,7 @@ for my $path (@ARGV) {
         # An export wrapper: the hidden-doc marker over the pub fn the link
         # section names. Its body may hold blank lines (the world package's
         # does), so the function runs on to the block that closes it.
-        elsif ($block =~ /^#doc\(hidden\)\npub fn wasmExport/) {
+        elsif ($block =~ /^(?:\/\/\/\|\n)?#doc\(hidden\)\npub fn wasmExport/) {
             $block .= "\n\n" . shift @blocks while @blocks && $block !~ /^\}\s*\z/m;
             push @wrappers, $block;
         }
