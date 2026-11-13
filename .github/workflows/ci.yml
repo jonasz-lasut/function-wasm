@@ -42,12 +42,17 @@ jobs:
       noop: ${{ steps.noop.outputs.should_skip }}
       oci: ${{ steps.oci.outputs.changed }}
     steps:
+      # A pull request that touches documentation alone runs no job below:
+      # the book, the READMEs and other top-level Markdown, the agent
+      # skills and the package icons, which no test reads (docs.yml builds
+      # and lints the book). By path, never by extension: a JSON, Markdown
+      # or SVG file elsewhere can be a fixture, a golden or a template.
       - name: Detect No-op Changes
         id: noop
         uses: fkirc/skip-duplicate-actions@b974a9395958c231af965b70070979a577efa578 # v5.3.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          paths_ignore: '["**.md", "**.json", "**.svg"]'
+          paths_ignore: '["docs/**", "*.md", "package/**/*.md", "examples/**/*.md", ".claude/**", "extensions/**"]'
           do_not_skip: '["workflow_dispatch", "schedule", "push"]'
 
       # Whether the change touches what the OCI engine's VM suite tests: the
