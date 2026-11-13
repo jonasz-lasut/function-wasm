@@ -34,6 +34,7 @@
 - [Metrics](operators/metrics.md)
 - [Trust model](operators/trust-model.md)
 - [Signatures](operators/signatures.md)
+- [Verifying a function package](operators/verify-the-package.md)
 - [Troubleshooting](operators/troubleshooting.md)
 
 # Contract
