@@ -398,11 +398,13 @@ pub mod runtime {
     /// `function serve --insecure` does, and returns the port. The server
     /// runs on the current tokio runtime until the test ends.
     pub async fn serve(function: Arc<WasmFunction<Wasmtime>>) -> u16 {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("bind")
-            .local_addr()
-            .expect("addr")
-            .port();
+        // Bound once and handed to the server: a port learned from a
+        // listener that is then dropped could go to another process
+        // before the server binds it.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
         let args = function_sdk_rust::Args {
             debug: false,
             address: format!("127.0.0.1:{port}"),
@@ -411,7 +413,9 @@ pub mod runtime {
             max_recv_message_size: None,
             metrics_address: String::new(),
         };
-        let (_health, server) = crate::grpc::serve(function, &args).await.expect("serve");
+        let (_health, server) = crate::grpc::serve_on(function, &args, listener)
+            .await
+            .expect("serve");
         tokio::spawn(server);
         port
     }

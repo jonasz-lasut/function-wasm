@@ -144,7 +144,47 @@ pub async fn serve<E: Engine>(
         .address
         .parse()
         .map_err(|e| format!("cannot parse listen address: {e}"))?;
+    serve_from(function, args, Listen::At(address)).await
+}
 
+/// serve on a listener the caller bound, whatever args.address says: a
+/// test takes a free port once and keeps it, where binding to learn the
+/// port and binding again to serve would leave the port free for another
+/// process in between.
+#[cfg(any(test, feature = "testutil"))]
+pub async fn serve_on<E: Engine>(
+    function: Arc<WasmFunction<E>>,
+    args: &function_sdk_rust::Args,
+    listener: tokio::net::TcpListener,
+) -> Result<
+    (
+        tonic_health::server::HealthReporter,
+        impl Future<Output = Result<(), String>> + use<E>,
+    ),
+    String,
+> {
+    serve_from(function, args, Listen::On(listener)).await
+}
+
+/// Where the server accepts connections.
+enum Listen {
+    /// The address of --address, bound when the server future is awaited.
+    At(SocketAddr),
+    #[cfg(any(test, feature = "testutil"))]
+    On(tokio::net::TcpListener),
+}
+
+async fn serve_from<E: Engine>(
+    function: Arc<WasmFunction<E>>,
+    args: &function_sdk_rust::Args,
+    listen: Listen,
+) -> Result<
+    (
+        tonic_health::server::HealthReporter,
+        impl Future<Output = Result<(), String>> + use<E>,
+    ),
+    String,
+> {
     let mut builder = Server::builder();
     if !args.insecure {
         let dir = args
@@ -179,16 +219,28 @@ pub async fn serve<E: Engine>(
 
     let insecure = args.insecure;
     let server = async move {
-        tracing::info!(%address, insecure, "serving FunctionRunnerService");
-        builder
+        let router = builder
             .layer(crate::grpcmetrics::MetricsLayer)
             .add_service(service)
             .add_service(health_service)
             .add_service(reflection_v1)
-            .add_service(reflection_v1alpha)
-            .serve_with_shutdown(address, shutdown_signal())
-            .await
-            .map_err(|e| format!("gRPC server error: {e}"))
+            .add_service(reflection_v1alpha);
+        match listen {
+            Listen::At(address) => {
+                tracing::info!(%address, insecure, "serving FunctionRunnerService");
+                router.serve_with_shutdown(address, shutdown_signal()).await
+            }
+            #[cfg(any(test, feature = "testutil"))]
+            Listen::On(listener) => {
+                router
+                    .serve_with_incoming_shutdown(
+                        tonic::transport::server::TcpIncoming::from(listener),
+                        shutdown_signal(),
+                    )
+                    .await
+            }
+        }
+        .map_err(|e| format!("gRPC server error: {e}"))
     };
     Ok((health_reporter, server))
 }

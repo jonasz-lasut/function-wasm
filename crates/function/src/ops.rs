@@ -46,6 +46,11 @@ pub async fn serve_metrics(address: &str) -> Result<(), std::io::Error> {
     };
     let listener = tokio::net::TcpListener::bind(&address).await?;
     tracing::info!(address = %address, "serving metrics");
+    serve_metrics_on(listener).await
+}
+
+/// serve_metrics on a listener bound already; it never returns.
+async fn serve_metrics_on(listener: tokio::net::TcpListener) -> Result<(), std::io::Error> {
     loop {
         let Ok((mut conn, _)) = listener.accept().await else {
             // Out of descriptors, most likely: give them time to come back
@@ -113,6 +118,14 @@ pub async fn serve_health(address: &str, readiness: Readiness) -> Result<(), std
     };
     let listener = tokio::net::TcpListener::bind(&address).await?;
     tracing::info!(address = %address, "serving health endpoints");
+    serve_health_on(listener, readiness).await
+}
+
+/// serve_health on a listener bound already; it never returns.
+async fn serve_health_on(
+    listener: tokio::net::TcpListener,
+    readiness: Readiness,
+) -> Result<(), std::io::Error> {
     loop {
         let Ok((mut conn, _)) = listener.accept().await else {
             // Out of descriptors, most likely: give them time to come back
@@ -231,6 +244,18 @@ mod tests {
     use guestfn_engine::Config;
     use guestfn_engine_wasm::Wasmtime;
 
+    /// A listener on a free loopback port and its address. The server
+    /// under test gets the listener itself: a port learned from a listener
+    /// that is then dropped could go to another process before the server
+    /// binds it, and a bound listener takes connections at once.
+    async fn listener() -> (tokio::net::TcpListener, String) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr").to_string();
+        (listener, addr)
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn warms_path_entries_into_the_cache() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -289,19 +314,11 @@ mod tests {
     /// waits: the listener closes a connection that sent nothing.
     #[tokio::test(start_paused = true)]
     async fn a_silent_client_is_disconnected() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let addr = probe.local_addr().expect("addr").to_string();
-        drop(probe);
-        let server_addr = addr.clone();
-        tokio::spawn(async move {
-            let _ = serve_metrics(&server_addr).await;
-        });
-        let mut conn = loop {
-            match tokio::net::TcpStream::connect(&addr).await {
-                Ok(conn) => break conn,
-                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
-            }
-        };
+        let (listener, addr) = listener().await;
+        tokio::spawn(serve_metrics_on(listener));
+        let mut conn = tokio::net::TcpStream::connect(&addr)
+            .await
+            .expect("connect");
         let mut out = Vec::new();
         let closed = tokio::time::timeout(READ_TIMEOUT * 4, conn.read_to_end(&mut out)).await;
         assert!(matches!(closed, Ok(Ok(0))), "{closed:?}");
@@ -309,14 +326,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn the_metrics_endpoint_negotiates_the_format() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let addr = probe.local_addr().expect("addr").to_string();
-        drop(probe);
-        let server_addr = addr.clone();
-        tokio::spawn(async move {
-            let _ = serve_metrics(&server_addr).await;
-        });
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let (listener, addr) = listener().await;
+        tokio::spawn(serve_metrics_on(listener));
 
         let get = |accept: &'static str| {
             let addr = addr.clone();
@@ -359,17 +370,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn health_endpoints_answer() {
         let readiness = Readiness::default();
-        let r = readiness.clone();
-        // Bind on an ephemeral port by racing: pick a port via a throwaway
-        // listener, then serve on it.
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let addr = probe.local_addr().expect("addr").to_string();
-        drop(probe);
-        let server_addr = addr.clone();
-        tokio::spawn(async move {
-            let _ = serve_health(&server_addr, r).await;
-        });
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let (listener, addr) = listener().await;
+        tokio::spawn(serve_health_on(listener, readiness.clone()));
 
         let get = |path: &'static str| {
             let addr = addr.clone();

@@ -8,7 +8,7 @@
 //! matter, so the test asserts on the class, not on cranelift by name).
 
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -39,33 +39,44 @@ fn serve_and_run_input(
         guestfn_runtime::testing::guests::logging_component(GUEST_MSG),
     )
     .expect("write");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("bind")
-        .local_addr()
-        .expect("addr")
-        .port();
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_function-wasm"));
-    cmd.args([
-        "--insecure",
-        "--address",
-        &format!("127.0.0.1:{port}"),
-        "--health-address",
-        "",
-        "--metrics-address",
-        "",
-        "--module-dir",
-    ])
-    .arg(dir.path())
-    .args(flags)
-    .env_remove("DEBUG")
-    .env_remove("RUST_LOG")
-    .stdout(Stdio::piped())
-    .stderr(Stdio::inherit());
-    if let Some(v) = rust_log {
-        cmd.env("RUST_LOG", v);
-    }
-    let mut child = cmd.spawn().expect("spawn function");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    // The function takes an address and reports no port of its own, so
+    // the port is learned from a listener dropped before the function
+    // binds it, and another process can take it in between. A function
+    // that exits instead of serving is started again on another port.
+    let (mut child, channel) = (0..5)
+        .find_map(|_| {
+            let port = std::net::TcpListener::bind("127.0.0.1:0")
+                .expect("bind")
+                .local_addr()
+                .expect("addr")
+                .port();
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_function-wasm"));
+            cmd.args([
+                "--insecure",
+                "--address",
+                &format!("127.0.0.1:{port}"),
+                "--health-address",
+                "",
+                "--metrics-address",
+                "",
+                "--module-dir",
+            ])
+            .arg(dir.path())
+            .args(flags)
+            .env_remove("DEBUG")
+            .env_remove("RUST_LOG")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+            if let Some(v) = rust_log {
+                cmd.env("RUST_LOG", v);
+            }
+            let mut child = cmd.spawn().expect("spawn function");
+            let channel = rt.block_on(connect(port, &mut child))?;
+            Some((child, channel))
+        })
+        .expect("the function found no free port in five tries");
     let stdout = child.stdout.take().expect("stdout");
     let lines = Arc::new(Mutex::new(Vec::new()));
     let reader = {
@@ -77,9 +88,7 @@ fn serve_and_run_input(
         })
     };
 
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
-        let channel = connect(port).await;
         let mut client = FunctionRunnerServiceClient::new(channel);
         let req = RunFunctionRequest {
             meta: Some(RequestMeta {
@@ -123,7 +132,12 @@ fn serve_and_run_input(
     lines.lock().expect("lock").clone()
 }
 
-async fn connect(port: u16) -> tonic::transport::Channel {
+/// Connects to the function once it serves. None when the function has
+/// exited instead, which is what it does when its port was taken; the
+/// connection made, the function must still be running, or the listener
+/// that answered was another process's.
+async fn connect(port: u16, function: &mut Child) -> Option<tonic::transport::Channel> {
+    let exited = |function: &mut Child| function.try_wait().expect("try_wait").is_some();
     for _ in 0..100 {
         if let Ok(channel) =
             tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{port}"))
@@ -131,7 +145,10 @@ async fn connect(port: u16) -> tonic::transport::Channel {
                 .connect()
                 .await
         {
-            return channel;
+            return (!exited(function)).then_some(channel);
+        }
+        if exited(function) {
+            return None;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
