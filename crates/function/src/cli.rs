@@ -442,6 +442,7 @@ where
                 .set(store::bytes(&stores[1]) as f64);
         };
         sweep_stores();
+        let sweep_stores = Arc::new(sweep_stores);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(10 * 60));
             tick.tick().await; // The first tick fires immediately.
@@ -449,7 +450,10 @@ where
                 tick.tick().await;
                 step_slots.sweep_idle();
                 egress.sweep_rate_limiters();
-                sweep_stores();
+                // The stores' sweep lists and removes files: off the async
+                // workers, which serve requests meanwhile.
+                let sweep_stores = Arc::clone(&sweep_stores);
+                let _ = tokio::task::spawn_blocking(move || sweep_stores()).await;
             }
         });
     }
