@@ -5,8 +5,8 @@
     .fingerprint = 0x430ed5ed8f36eb28,
     .dependencies = .{
         .protobuf = .{
-            .url = "git+https://github.com/Arwalk/zig-protobuf#d412d4080248688c01252924709ba9b0ff77a3eb",
-            .hash = "protobuf-6.0.0-0e82av1hNAD32awniCHT1cV9q3INsPUIK_csmdywQTWX",
+            .url = "git+https://github.com/Arwalk/zig-protobuf#65aa24107dedbd87fece8bb95c19c2d545d23e1a",
+            .hash = "protobuf-6.0.0-0e82av9gNAAyQIEmoYivWTA-A1qim_KQuhwkbFg5WYVu",
         },
     },
     .paths = .{
