@@ -13,6 +13,14 @@ second.
 | unit and component | `cargo test --workspace`, on every push and on a pull request that changes code | the engine, the runtime and `function validate` against in-memory stand-ins and recorded goldens, and every scaffold built and run through the host (the guest suite) |
 | end-to-end | `make e2e`, an `e2e:` label on a pull request, the [release matrix](#the-release-matrix) on a release branch | each function's package installed by Crossplane in a kind cluster, as an XR author and an operator see it |
 
+On your machine, two suites of the first tier skip what the machine can't
+run. The guest suite skips a guest whose toolchain isn't installed, and the
+VM suite of the OCI engine skips every test without KVM and its tools. The
+harness still reports a skipped test as `ok`. Each one prints a `SKIPPED:`
+line with its name, the reason and the number of tests skipped so far. CI
+sets `GUESTFN_REQUIRE_TOOLCHAINS` and `GUESTFN_REQUIRE_KVM`, which turn a
+skip into a failure.
+
 ## The tier for a new test
 
 | The change | The test |

@@ -18,7 +18,9 @@
 //! unless GUESTFN_REQUIRE_TOOLCHAINS
 //! is set, as ci.yml's guest-suite job sets it, when a missing
 //! toolchain fails the guest instead: a runner that lost a toolchain would
-//! otherwise shrink the suite and stay green.
+//! otherwise shrink the suite and stay green. A skip is said on the
+//! process's own stderr (`SKIPPED: ...`, with the count so far), since the
+//! harness shows nothing a passing test printed.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -120,8 +122,26 @@ fn skip(guest: &str, reason: &str) -> Option<Vec<u8>> {
     if std::env::var_os("GUESTFN_REQUIRE_TOOLCHAINS").is_some() {
         panic!("the {guest} guest cannot build ({reason}) and GUESTFN_REQUIRE_TOOLCHAINS is set");
     }
-    eprintln!("skipping the {guest} guest: {reason}");
+    report_skip(&format!("the {guest} guest: {reason}"));
     None
+}
+
+/// Says that the calling test asserted nothing, on the process's own
+/// stderr: the harness captures what a passing test prints with eprintln!,
+/// so a skipped suite would otherwise read as a passed one. The count is
+/// this binary's so far, and the last line carries the total.
+fn report_skip(reason: &str) {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static SKIPPED: AtomicUsize = AtomicUsize::new(0);
+    let skipped = SKIPPED.fetch_add(1, Ordering::SeqCst) + 1;
+    let thread = std::thread::current();
+    let test = thread.name().unwrap_or("a test");
+    // One write, so lines from tests running side by side stay whole.
+    let line = format!(
+        "SKIPPED: {test} asserted nothing: {reason} ({skipped} skipped so far in the guest suite)\n"
+    );
+    let _ = std::io::stderr().write_all(line.as_bytes());
 }
 
 fn command(dir: &Path, name: &str, args: &[&str], envs: &[(&str, &str)]) -> bool {
@@ -432,7 +452,7 @@ fn run_guest(guest: &str) {
     // prove each guest end to end, and the runner's preinstalled Go would
     // otherwise build the go guest with an unpinned toolchain.
     if std::env::var_os("SKIP_GUEST_BUILDS").is_some() {
-        eprintln!("skipping: SKIP_GUEST_BUILDS is set");
+        report_skip("SKIP_GUEST_BUILDS is set");
         return;
     }
     let logs = LOGS.clone();
@@ -637,7 +657,7 @@ fn python_guest() {
 #[test]
 fn the_end_to_end_guest_passes_its_own_tests() {
     if std::env::var_os("SKIP_GUEST_BUILDS").is_some() {
-        eprintln!("skipping: SKIP_GUEST_BUILDS is set");
+        report_skip("SKIP_GUEST_BUILDS is set");
         return;
     }
     // Its build script runs prost-build, which shells out to protoc.
