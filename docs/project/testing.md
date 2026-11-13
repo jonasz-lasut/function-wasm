@@ -79,7 +79,9 @@ the suite's own setup binary, in three steps:
    the package, the `wasm` profiles' runtime configs and the lifecycle
    cache volume.
    The test module as a process is built in a `rust` container on any host
-   but Linux.
+   but Linux. `make e2e.up` builds it every time, and `cargo` rebuilds only
+   what changed. A path given in `E2E_OCI_GUEST` names a prebuilt binary,
+   which `make e2e.up` uses unchanged.
 
 `make e2e.wasm-profile.<p>` and `make e2e.oci-profile.<p>` run one profile's
 tests, `make e2e.test.wasm` and `make e2e.test.oci` one runtime's,

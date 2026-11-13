@@ -161,9 +161,18 @@ e2e.done: e2e.down
 
 # The steps after the cluster run through $(MAKE), in order: the oci ones
 # depend on what the node has, which is known once the cluster exists
-# (setup fails under E2E_OCI=1 on a node without /dev/kvm).
+# (setup fails under E2E_OCI=1 on a node without /dev/kvm). The test
+# module as a process is built every time at the path this file chooses,
+# cargo deciding what is stale: a binary left by an earlier run would
+# otherwise outlive a change to its source. A path given from outside
+# (E2E_OCI_GUEST in the environment or on the command line, as CI's profile
+# jobs give the one their build job made) is taken as it is.
 e2e.up: controlplane.up e2e.crossplane
+ifeq ($(origin E2E_OCI_GUEST),file)
+	@if $(e2e_oci_wanted); then $(MAKE) e2e.oci.guest; fi
+else
 	@if $(e2e_oci_wanted); then [ -f $(E2E_OCI_GUEST) ] || $(MAKE) e2e.oci.guest; fi
+endif
 	@$(MAKE) e2e.setup
 	@if $(e2e_wasm_wanted); then $(MAKE) e2e.wasm.install; \
 	else echo "function-wasm is left out (E2E_WASM=0); the wasm profiles are skipped"; fi
