@@ -86,7 +86,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
-          version: '35.1'
+          version: '36.2'
 
       - name: Cache the Rust Build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3

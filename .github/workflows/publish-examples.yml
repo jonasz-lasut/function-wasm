@@ -189,7 +189,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
-          version: '35.1'
+          version: '36.2'
 
       - name: Setup Node
         if: steps.registry.outputs.publish == 'true' && matrix.toolchain == 'node'

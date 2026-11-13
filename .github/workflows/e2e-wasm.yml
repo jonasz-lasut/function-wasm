@@ -266,7 +266,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
-          version: '35.1'
+          version: '36.2'
 
       # The guest's Makefile names its wasm target (and a rust-toolchain.toml
       # beside it may pin the compiler), so the lint follows the guest's own
@@ -472,7 +472,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
-          version: '35.1'
+          version: '36.2'
 
       # The nanopb version must match the one the checked-in codec was
       # generated with (its header names it) and the one build.zig fetches.
@@ -608,7 +608,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
-          version: '35.1'
+          version: '36.2'
 
       # The nanopb version must match the one the checked-in codec was
       # generated with (its header names it) and the one build.zig fetches.
@@ -751,7 +751,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
-          version: '35.1'
+          version: '36.2'
 
       # The nanopb version must match the one the checked-in codec was
       # generated with (its header names it) and the one build.zig fetches.
@@ -920,7 +920,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # renovate: datasource=github-releases depName=protocolbuffers/protobuf versioning=regex:^(?<major>\d+)\.(?<minor>\d+)$ extractVersion=^v(?<version>.+)$
-          version: '35.1'
+          version: '36.2'
 
       # protoc-gen-mbt is not installed: the Makefile runs the pinned release
       # through moonx, which fetches it into ~/.moon's registry.
