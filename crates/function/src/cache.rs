@@ -28,8 +28,8 @@ pub struct CacheOptions {
     /// How long a compiled module stays in memory after its last use;
     /// None means DEFAULT_IDLE_TTL.
     pub idle_ttl: Option<Duration>,
-    /// Disables the memory tier: every request maps the artifact from disk
-    /// (milliseconds) and releases it afterwards.
+    /// Disables the memory tier: every request verifies the artifact on
+    /// disk (a read of it to its end), maps it and releases it afterwards.
     pub no_memory: bool,
     /// Most compiled modules kept in memory at once; the least recently
     /// used is dropped beyond it. 0 leaves it to the idle TTL alone.
@@ -59,6 +59,14 @@ pub struct ModuleCache<E: Engine> {
 struct Entry<M> {
     module: M,
     last_used: Instant,
+}
+
+/// What the artifact store had for a digest, once the engine tried it.
+enum Found<M> {
+    Loaded(M),
+    /// An artifact the store or the engine refused.
+    Stale,
+    Miss,
 }
 
 impl<E: Engine> ModuleCache<E> {
@@ -119,31 +127,36 @@ impl<E: Engine> ModuleCache<E> {
         // recompiles.
         use guestfn_engine::metrics::{self, CACHE_EVENTS};
         if let Some(disk) = &self.disk {
-            match disk.path(digest) {
-                crate::store::Lookup::Hit(path) => {
-                    let engine = Arc::clone(&self.engine);
-                    let loaded =
-                        tokio::task::spawn_blocking(move || engine.deserialize_file(&path)).await;
-                    if let Ok(Ok(m)) = loaded {
-                        CACHE_EVENTS
-                            .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_HIT])
-                            .inc();
-                        return Ok(m);
-                    }
-                    // The artifact was there but wasmtime refused it: a miss
-                    // that cost a read.
+            // The lookup reads the artifact to its end for its MAC, and the
+            // engine then maps it: both off the async workers.
+            let engine = Arc::clone(&self.engine);
+            let disk = Arc::clone(disk);
+            let key = digest.to_string();
+            let found = tokio::task::spawn_blocking(move || match disk.path(&key) {
+                crate::store::Lookup::Hit(path) => engine
+                    .deserialize_file(&path)
+                    .map_or(Found::Stale, Found::Loaded),
+                crate::store::Lookup::Stale => Found::Stale,
+                crate::store::Lookup::Miss => Found::Miss,
+            })
+            .await;
+            match found {
+                Ok(Found::Loaded(m)) => {
                     CACHE_EVENTS
-                        .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_STALE])
+                        .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_HIT])
                         .inc();
+                    return Ok(m);
                 }
-                crate::store::Lookup::Stale => {
-                    CACHE_EVENTS
-                        .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_STALE])
-                        .inc();
-                }
-                crate::store::Lookup::Miss => {
+                Ok(Found::Miss) => {
                     CACHE_EVENTS
                         .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_MISS])
+                        .inc();
+                }
+                // The store refused the artifact, or it was there and
+                // wasmtime refused it: a miss that cost a read.
+                Ok(Found::Stale) | Err(_) => {
+                    CACHE_EVENTS
+                        .with_label_values(&[metrics::CACHE_COMPILED_DISK, metrics::EVENT_STALE])
                         .inc();
                 }
             }

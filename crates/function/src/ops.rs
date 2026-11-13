@@ -176,13 +176,21 @@ pub async fn warm<E: Engine>(
     tracing::info!(count = entries.len(), "Warming modules");
     for entry in entries {
         let source = warm_source(entry);
-        let resolved = match resolver.resolve(&source, None) {
-            Ok(resolved) => resolved,
-            Err(e) => {
-                tracing::warn!(entry = %entry, error = %e, "Cannot warm module");
-                continue;
-            }
-        };
+        // Resolving a path module hashes the file: off the async workers,
+        // as a request's resolve is.
+        let resolving = Arc::clone(resolver);
+        let resolved =
+            match tokio::task::spawn_blocking(move || resolving.resolve(&source, None)).await {
+                Ok(Ok(resolved)) => resolved,
+                Ok(Err(e)) => {
+                    tracing::warn!(entry = %entry, error = %e, "Cannot warm module");
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(entry = %entry, error = %e, "Cannot warm module");
+                    continue;
+                }
+            };
         let fetch_resolver = Arc::clone(resolver);
         let target = resolved.clone();
         let loaded = cache
