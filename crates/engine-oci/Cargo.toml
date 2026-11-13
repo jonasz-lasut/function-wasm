@@ -39,3 +39,11 @@ prost = "0.14"
 [features]
 # The testing module: the image fixtures and the fake sandbox.
 testutil = []
+# The hand-run benchmark (tests/bench.rs): the marks of a run's timeline,
+# and the squashfs compressors it compares with the one the engine writes.
+# No function is built with it.
+bench = ["backhand/zstd", "backhand/lz4"]
+
+[[test]]
+name = "bench"
+required-features = ["bench"]
