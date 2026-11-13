@@ -565,5 +565,51 @@
       matchUpdateTypes: ['major'],
       enabled: false,
     },
+    // Auto-merge, last so that nothing above overrides it. Every pull
+    // request here runs the whole end-to-end suite (the e2e:all label) and
+    // merges only once the checks the ruleset on main requires have passed.
+    // What merges by itself: a patch, a pinned digest, lock file
+    // maintenance, and a minor of a dependency that has reached 1.0. A 0.x
+    // minor may break, and a major does, so both wait for a person.
+    {
+      matchUpdateTypes: ['patch', 'pin', 'pinDigest', 'digest', 'lockFileMaintenance'],
+      automerge: true,
+    },
+    { matchUpdateTypes: ['minor'], matchCurrentVersion: '>=1.0.0', automerge: true },
+    // A release waits three days before it is proposed, as an action's
+    // does, so one pulled or replaced within hours never merges.
+    { matchManagers: ['cargo', 'npm', 'gomod', 'nuget'], minimumReleaseAge: '3 days' },
+    // Never by itself, whatever the size of the bump: the sandbox
+    // (wasmtime and what moves with it), signature verification, both
+    // policy layers' engine, the VMM, and the updates that are the signal
+    // for a step by hand (the vendored proto and the docs highlighter need
+    // their make targets run, a Vale update can need prose changed, and
+    // the examples batch is read as a whole).
+    {
+      matchPackageNames: [
+        'wasmtime',
+        'wasmtime-*',
+        'wasmtime-wasi-http',
+        'wasi-preview1-component-adapter-provider',
+        'sigstore-*',
+        'cedar-policy',
+        'cedar-policy-*',
+        '@highlightjs/cdn-assets',
+        'cedar-policy/highlightjs-cedar',
+      ],
+      automerge: false,
+    },
+    {
+      matchDepNames: [
+        'firecracker',
+        'firecracker-microvm/firecracker',
+        'crossplane/crossplane',
+        '/^errata-ai//',
+        'tbhb/vale-ai-tells',
+      ],
+      automerge: false,
+    },
+    { matchFileNames: ['examples/**'], automerge: false },
+    { matchUpdateTypes: ['major'], automerge: false },
   ],
 }
